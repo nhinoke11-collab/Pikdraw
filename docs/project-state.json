@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "project": "PikDraw",
+  "stage": "foundation",
+  "updated_at": "2026-10-14",
+  "implemented": [
+    "Provider-neutral repository structure and project instructions",
+    "Module registry and versioned contract specifications",
+    "Python standard-library harness for tasks, context packets and Git worktrees"
+  ],
+  "planned": [
+    "Professional vector editor and non-destructive raster tools",
+    "PDF/CDR/AI/EPS/DXF import/export with tested capability matrix",
+    "Production/CAD tools and basic linked 3D",
+    "Isolated plugin host and conversion workers"
+  ],
+  "stack": {
+    "harness": "Python 3.10+ standard library",
+    "application": "Native desktop proposed; decide after ADR and benchmarks",
+    "graphics": "Not selected"
+  },
+  "next_priorities": [
+    "Benchmark editable document/rendering architecture",
+    "Define and prototype document commands and persistence",
+    "Test PDF/AI/CDR conversion against synthetic and licensed fixtures"
+  ],
+  "canonical": [
+    "AGENTS.md",
+    "registry/modules.json",
+    "docs/decisions/0001-foundation.md"
+  ],
+  "limitations": [
+    "No runnable graphics editor or converters yet",
+    "No external AI provider execution or network message gateway yet",
+    "Performance and crash-recovery targets are not measured product results"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "id": "org.pikdraw.contour",
+  "version": "0.1.0",
+  "license": "MIT",
+  "host_api": {
+    "min": 1,
+    "max": 1
+  },
+  "runtime": "isolated-process",
+  "entrypoint": "worker/contour.py",
+  "capabilities": [
+    "document.read",
+    "document.commands",
+    "selection.read",
+    "ui.commands"
+  ],
+  "contributes": {
+    "commands": [
+      "contour.create"
+    ]
+  }
+}

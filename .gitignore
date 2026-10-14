@@ -1,0 +1,16 @@
+.agent/*
+!.agent/templates/
+!.agent/templates/**
+.worktrees/
+__pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+out/
+.env
+.env.*
+!.env.example
+*.log
+*.dmp
+docs/architecture/workspace-blueprint.png

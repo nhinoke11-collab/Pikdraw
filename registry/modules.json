@@ -1,0 +1,261 @@
+{
+  "schema_version": 1,
+  "modules": [
+    {
+      "id": "geometry",
+      "path": "core/geometry",
+      "status": "planned",
+      "dependencies": [],
+      "context": [
+        "core/geometry/README.md",
+        "core/geometry/AGENTS.md"
+      ],
+      "owned_paths": [
+        "core/geometry"
+      ],
+      "purpose": "Exact geometric primitives, Bézier operations, intersections, offsets and unit-aware tolerances."
+    },
+    {
+      "id": "color",
+      "path": "core/color",
+      "status": "planned",
+      "dependencies": [],
+      "context": [
+        "core/color/README.md",
+        "core/color/AGENTS.md"
+      ],
+      "owned_paths": [
+        "core/color"
+      ],
+      "purpose": "Profiles, RGB/CMYK/spot color values and deterministic conversion policy."
+    },
+    {
+      "id": "typography",
+      "path": "core/typography",
+      "status": "planned",
+      "dependencies": [
+        "geometry"
+      ],
+      "context": [
+        "core/typography/README.md",
+        "core/typography/AGENTS.md"
+      ],
+      "owned_paths": [
+        "core/typography"
+      ],
+      "purpose": "Font resolution, shaping, Vietnamese text, layout and glyph outlines."
+    },
+    {
+      "id": "document",
+      "path": "core/document",
+      "status": "planned",
+      "dependencies": [
+        "geometry",
+        "color",
+        "typography"
+      ],
+      "context": [
+        "core/document/README.md",
+        "core/document/AGENTS.md"
+      ],
+      "owned_paths": [
+        "core/document"
+      ],
+      "purpose": "Stable object IDs, pages/layers, transactions, history, persistence and recovery."
+    },
+    {
+      "id": "rendering",
+      "path": "core/rendering",
+      "status": "planned",
+      "dependencies": [
+        "document",
+        "geometry",
+        "color",
+        "typography"
+      ],
+      "context": [
+        "core/rendering/README.md",
+        "core/rendering/AGENTS.md"
+      ],
+      "owned_paths": [
+        "core/rendering"
+      ],
+      "purpose": "Viewport rendering, retained cache, incremental invalidation and output fidelity."
+    },
+    {
+      "id": "vector",
+      "path": "modules/vector",
+      "status": "planned",
+      "dependencies": [
+        "document",
+        "geometry",
+        "typography"
+      ],
+      "context": [
+        "modules/vector/README.md",
+        "modules/vector/AGENTS.md"
+      ],
+      "owned_paths": [
+        "modules/vector"
+      ],
+      "purpose": "Vector tools, contour/Boolean, shapes, text operations and editable effects."
+    },
+    {
+      "id": "raster",
+      "path": "modules/raster",
+      "status": "planned",
+      "dependencies": [
+        "document",
+        "color"
+      ],
+      "context": [
+        "modules/raster/README.md",
+        "modules/raster/AGENTS.md"
+      ],
+      "owned_paths": [
+        "modules/raster"
+      ],
+      "purpose": "Basic non-destructive image edits, masks and image asset management."
+    },
+    {
+      "id": "production",
+      "path": "modules/production",
+      "status": "planned",
+      "dependencies": [
+        "document",
+        "geometry"
+      ],
+      "context": [
+        "modules/production/README.md",
+        "modules/production/AGENTS.md"
+      ],
+      "owned_paths": [
+        "modules/production"
+      ],
+      "purpose": "CAD 2D annotations, cut/engrave/drill classification, nesting and job outputs."
+    },
+    {
+      "id": "scene3d",
+      "path": "modules/scene3d",
+      "status": "planned",
+      "dependencies": [
+        "document",
+        "geometry",
+        "color"
+      ],
+      "context": [
+        "modules/scene3d/README.md",
+        "modules/scene3d/AGENTS.md"
+      ],
+      "owned_paths": [
+        "modules/scene3d"
+      ],
+      "purpose": "Linked 2D extrusion, basic solids, materials and cameras."
+    },
+    {
+      "id": "interop",
+      "path": "modules/interop",
+      "status": "planned",
+      "dependencies": [
+        "document",
+        "geometry",
+        "color",
+        "typography"
+      ],
+      "context": [
+        "modules/interop/README.md",
+        "modules/interop/AGENTS.md"
+      ],
+      "owned_paths": [
+        "modules/interop"
+      ],
+      "purpose": "Per-format import/export adapters, fidelity diagnostics and capability matrix."
+    },
+    {
+      "id": "plugin-sdk",
+      "path": "packages/plugin-sdk",
+      "status": "planned",
+      "dependencies": [
+        "document"
+      ],
+      "context": [
+        "packages/plugin-sdk/README.md",
+        "packages/plugin-sdk/AGENTS.md"
+      ],
+      "owned_paths": [
+        "packages/plugin-sdk"
+      ],
+      "purpose": "Versioned plugin interfaces, commands and declarative UI contributions."
+    },
+    {
+      "id": "workers",
+      "path": "platform/workers",
+      "status": "planned",
+      "dependencies": [
+        "interop",
+        "plugin-sdk"
+      ],
+      "context": [
+        "platform/workers/README.md",
+        "platform/workers/AGENTS.md"
+      ],
+      "owned_paths": [
+        "platform/workers"
+      ],
+      "purpose": "Process lifecycle, timeouts, resource limits, cancellation and validated task results."
+    },
+    {
+      "id": "desktop",
+      "path": "apps/desktop",
+      "status": "planned",
+      "dependencies": [
+        "document",
+        "rendering",
+        "vector",
+        "raster",
+        "production",
+        "scene3d",
+        "interop",
+        "plugin-sdk",
+        "workers"
+      ],
+      "context": [
+        "apps/desktop/README.md",
+        "apps/desktop/AGENTS.md"
+      ],
+      "owned_paths": [
+        "apps/desktop"
+      ],
+      "purpose": "Desktop shell, dock layout, module workspaces, action routing and accessibility."
+    },
+    {
+      "id": "harness",
+      "path": "tooling",
+      "status": "implemented",
+      "dependencies": [],
+      "context": [
+        "tooling/README.md",
+        "tooling/AGENTS.md"
+      ],
+      "owned_paths": [
+        "tooling",
+        "tests/harness"
+      ],
+      "purpose": "Provider-neutral task board, worktree coordination, context routing and evidence handoffs."
+    },
+    {
+      "id": "contracts",
+      "path": "contracts",
+      "status": "specification",
+      "dependencies": [],
+      "context": [
+        "contracts/README.md",
+        "contracts/AGENTS.md"
+      ],
+      "owned_paths": [
+        "contracts"
+      ],
+      "purpose": "Public schema specifications and protocol versions shared across modules."
+    }
+  ]
+}
