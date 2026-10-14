@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "id": "pikdraw-foundation-spikes-v1",
+  "status": "proposed-consumer-review-required",
+  "units": "mm",
+  "source_scalar": "IEEE-754 binary64",
+  "render_scalar": "local binary32 after double transform and origin subtraction",
+  "axes": "2D +x right, +y down",
+  "transform": {
+    "layout": [
+      "a",
+      "b",
+      "c",
+      "d",
+      "tx",
+      "ty"
+    ],
+    "apply": "x'=a*x+c*y+tx; y'=b*x+d*y+ty",
+    "composition": "compose(parent,local) applies local first"
+  },
+  "document": {
+    "writer": "single logical writer",
+    "revision": "strictly monotonic including undo/redo",
+    "epoch": "changes on close/reopen",
+    "job": "document_id + epoch + base_revision + generation; reject on mismatch/cancel",
+    "snapshot": "immutable root and spatial index at same revision; retain referenced assets"
+  },
+  "persistence": {
+    "save": "one fixed snapshot r; only clear dirty if current epoch and revision still match",
+    "recovery": "previous or newly committed valid file; partial file never success",
+    "durability": "atomic replace alone does not prove power-loss durability"
+  },
+  "production": {
+    "survey_tolerance_mm": 0.01,
+    "topology": "correct on fixture subset or explicit diagnostic; preserve source curves",
+    "preview": "never overwrite source or become manufacturing output"
+  },
+  "worker": {
+    "wire_version": 1,
+    "finite_only": true,
+    "limits": {
+      "max_payload_bytes": 16777216,
+      "max_objects": 100000,
+      "max_depth": 64
+    },
+    "permissions": "host-enforced AppContainer/resource limits; process separation alone is not containment"
+  },
+  "build": {
+    "language": "C++20",
+    "root": "leader bootstrap CMake may read a lane source root via PIKDRAW_SPIKE_SOURCE_ROOT",
+    "required_targets": {
+      "A": "pikdraw_spike_a_viewport",
+      "B": "pikdraw_spike_b_tests",
+      "C": "pikdraw_spike_c_tests"
+    },
+    "outputs": "each lane uses its own ignored out/build directory; shared root/contracts are leader-owned"
+  },
+  "evidence": {
+    "statuses": [
+      "pass",
+      "fail",
+      "partial",
+      "not_measured"
+    ],
+    "mandatory": "all mandatory gates need exact integrated SHA, commands/raw data, fixtures and independent reviewer; no automatic promotion from process exit 0"
+  },
+  "vectors": [
+    {
+      "id": "large-sign-relative",
+      "point": [
+        20000.005,
+        500
+      ],
+      "matrix": [
+        1,
+        0,
+        0,
+        1,
+        0,
+        0
+      ],
+      "origin": [
+        20000,
+        0
+      ],
+      "expected_relative": [
+        0.005,
+        500
+      ],
+      "tolerance_mm": 1e-9
+    },
+    {
+      "id": "reflection",
+      "point": [
+        2,
+        3
+      ],
+      "matrix": [
+        -1,
+        0,
+        0,
+        1,
+        10,
+        0
+      ],
+      "expected_world": [
+        8,
+        3
+      ]
+    },
+    {
+      "id": "nonuniform-scale-translate",
+      "point": [
+        2,
+        3
+      ],
+      "matrix": [
+        2,
+        0,
+        0,
+        0.5,
+        10,
+        -4
+      ],
+      "expected_world": [
+        14,
+        -2.5
+      ]
+    },
+    {
+      "id": "undo-stale-proposal",
+      "schedule": [
+        "snapshot r=10 epoch=1 gen=1",
+        "edit ->11",
+        "undo ->12",
+        "worker returns base=10 epoch=1 gen=1"
+      ],
+      "expected": "reject"
+    },
+    {
+      "id": "close-reopen-stale-proposal",
+      "schedule": [
+        "snapshot r=10 epoch=1 gen=1",
+        "close/reopen epoch=2",
+        "worker returns epoch=1"
+      ],
+      "expected": "reject"
+    },
+    {
+      "id": "save-dirty-newer",
+      "schedule": [
+        "save snapshot r=10",
+        "edit ->11",
+        "save10 completes"
+      ],
+      "expected": "current11 remains dirty"
+    }
+  ]
+}

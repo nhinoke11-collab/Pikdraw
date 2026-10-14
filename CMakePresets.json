@@ -1,0 +1,74 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "spike-b",
+      "displayName": "Geometry/document native spike",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/spikes/b",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "PIKDRAW_SPIKE_B": "ON"
+      }
+    },
+    {
+      "name": "spike-c",
+      "displayName": "Interop/containment native spike",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/spikes/c",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "PIKDRAW_SPIKE_C": "ON"
+      }
+    },
+    {
+      "name": "spike-a-release",
+      "displayName": "Qt/Skia viewport release measurement",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/spikes/a-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "PIKDRAW_SPIKE_A": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "spike-b",
+      "configurePreset": "spike-b",
+      "jobs": 2
+    },
+    {
+      "name": "spike-c",
+      "configurePreset": "spike-c",
+      "jobs": 2
+    },
+    {
+      "name": "spike-a-release",
+      "configurePreset": "spike-a-release",
+      "jobs": 2
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "spike-b",
+      "configurePreset": "spike-b",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "spike-c",
+      "configurePreset": "spike-c",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    }
+  ]
+}
