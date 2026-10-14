@@ -3,7 +3,7 @@
 ## Sự thật hiện tại
 PikDraw đang ở giai đoạn foundation. Có bộ khung/harness; chưa có editor hoặc converter chạy được.
 Trạng thái máy đọc ở `docs/project-state.json`. Dependency và context module ở `registry/modules.json`.
-Kiến trúc native desktop được đề xuất; ngôn ngữ lõi và renderer phải qua spike/ADR trước khi chốt.
+Baseline khảo sát là C++20/Qt/Skia; backend, schema geometry/document, executor topology và budgets chưa khóa. Ba spike phải có evidence trước triển khai diện rộng: [kế hoạch hai tuần](roadmap/foundation-spikes.md). Không suy ra năng lực app từ harness checks.
 Windows: dùng `.\tooling\pikdraw.ps1` thay `python tooling/agent_harness.py` nếu alias Python chưa hoạt động.
 
 ## Đọc tối thiểu
@@ -21,6 +21,7 @@ Nếu không có task, xem `task list`; không đoán phạm vi hoặc quyền s
 - Quy tắc cụ thể: scoped AGENTS.md; hợp đồng: `contracts/`.
 - Tiến độ task trên cùng máy: bảng chung `.agent/tasks/`, được harness quản lý.
 - Đã kiểm chứng: evidence trong handoff; đề xuất thiết kế không phải tính năng đã triển khai.
+- Runtime semantics: [document, precision và snapshots](architecture/document-runtime.md); [ADR 0002](decisions/0002-runtime-and-hardware.md) tách principles Accepted khỏi implementation Proposed.
 
 ## Trước khi sửa
 Claim task bằng owner/session duy nhất; tạo worktree từ commit base; đọc `docs/agents/WORKTREES.md`.

@@ -1,6 +1,6 @@
 # Bố cục workspace PikDraw
 
-Đây là blueprint giao diện desktop, chưa phải ứng dụng có thể dùng. [Bản vẽ SVG](workspace-blueprint.svg) và [preview PNG](workspace-blueprint.png) minh họa tỷ lệ và vùng chức năng; không quy định pixel cứng cho mọi màn hình.
+Đây là blueprint giao diện desktop, chưa phải ứng dụng có thể dùng. [Bản vẽ SVG](workspace-blueprint.svg) minh họa tỷ lệ và vùng chức năng; không quy định pixel cứng cho mọi màn hình. Preview PNG không phải artifact được phân phối trong Git.
 
 ## Khung chung
 
@@ -25,7 +25,7 @@ Menu chứa command ổn định; thanh tìm lệnh truy cập tất cả chức
 
 Dock phải ưu tiên một panel chính và một vùng Layers/Assets thu gọn. Panel có tab, resize, pin, collapse và khôi phục layout. Không mở đồng thời tất cả panel của vector, in, CAD và 3D. Toolbar mở rộng theo menu hoặc flyout; tooltip có phím tắt và tên dễ hiểu.
 
-Thanh trạng thái hiển thị tọa độ, đơn vị, zoom, trạng thái profile màu, cảnh báo lựa chọn và tác vụ đang chạy. Hủy tác vụ nằm cạnh tiến độ, không buộc người dùng mở hộp thoại riêng. Autosave phải có trạng thái thực; chỉ báo “đã lưu” sau khi commit thành công.
+Thanh trạng thái hiển thị tọa độ, đơn vị, zoom, trạng thái profile màu, cảnh báo lựa chọn và tác vụ đang chạy. Hủy tác vụ nằm cạnh tiến độ, không buộc người dùng mở hộp thoại riêng. Chỉ báo “đã lưu” khi snapshot đã ghi thành công còn tương ứng revision hiện tại; save cũ hoàn tất không làm sạch edits mới. Preview giảm chất lượng/software và kết quả cần tính lại được báo bằng trạng thái dễ hiểu.
 
 ## Workspace theo công việc
 
@@ -45,6 +45,8 @@ Trang 2D và scene 3D có tab/view riêng trong cùng document. Không áp mọi
 **Nhập file:** chọn file → hiển thị progress có hủy → báo cáo thành phần hỗ trợ/chuyển dạng/thiếu tài nguyên → mở tài liệu → giữ liên kết báo cáo để tra lại. Với font thiếu, hiển thị bản xem trước và lựa chọn thay thế; không thay font âm thầm rồi ghi đè nguồn.
 
 **Xuất sản xuất:** chọn preset → preflight → lỗi có vị trí chọn trực tiếp trên canvas → sửa hoặc ghi nhận lựa chọn → xuất → ghi output revision. Khổ/đơn vị/tỷ lệ và đường cắt phải nằm trong bước kiểm tra dễ đọc, không ẩn ở một nhóm tùy chọn chung.
+
+**Tác vụ tính lâu:** chỉnh source/hủy/đóng tài liệu khi task đang chạy → kết quả lỗi thời không được áp dụng → trạng thái cho chạy lại với source mới. Tool preview khi kéo không tự trở thành đường sản xuất. Pan/zoom/selection giữ phản hồi trong lúc worker chạy.
 
 **Plugin:** danh sách có publisher, version, trạng thái và phạm vi quyền; action xuất hiện trong command registry. Plugin thiếu/lỗi được báo trong khu vực task/plugin status. Dữ liệu plugin chưa đọc được vẫn có mặt trong tài liệu và không bị xóa khi lưu.
 

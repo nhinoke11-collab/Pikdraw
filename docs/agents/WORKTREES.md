@@ -26,11 +26,15 @@ Module instructions nằm cạnh code; các quy tắc kiến trúc chung nằm t
 Harness ngăn claim chồng lấn, nhưng hiện chưa có OS sandbox chặn ghi file ngoài phạm vi.
 Reviewer kiểm tra diff/owned paths trước tích hợp. Không sửa file của task khác.
 
+Lease không tự hết hạn hoặc cho takeover theo thời gian. Coordinator cần xác nhận task đã dừng trước release; giữ checkout và uncommitted files để task có thể tiếp tục. Các checkout đã chuẩn bị từ base cũ cần đồng bộ/review integration và contract revision trước nhận implementation, không dùng base cũ như nguồn kiến trúc mới nhất.
+
 ## Bàn giao và tích hợp
 Commit thay đổi trong branch task; ghi evidence và xuất handoff theo CLI `handoff --help`.
 Reviewer làm trong checkout riêng và đánh giá kết quả, không chỉ lời báo cáo.
 Integrator dùng cherry-pick/merge sau kiểm tra contract, tests và diff.
 Chỉ integrator cập nhật docs/project-state.json cho trạng thái đã tích hợp.
+
+Integrator kiểm tra actual dependencies và consumer semantic fixtures trên merged SHA, không chỉ diff văn bản hoặc kết quả branch riêng. Nếu checkout chính có local edits được người dùng cho sửa, lưu baseline/bản sao scoped files rồi xác nhận baseline còn khớp trước áp kết quả. Không reset/stash/drop hoặc force để mất việc khác; handoff cần ghi nội dung local được kế thừa và limits review.
 
 ## Giữ và dọn worktree
 `worktree list` chỉ đọc trạng thái. Harness không tự xóa checkout hoặc chiếm lại lease.

@@ -1,6 +1,6 @@
 # Kiến trúc PikDraw
 
-Trạng thái: **đề xuất**, chưa có engine thực thi. [ADR 0001](../decisions/0001-foundation.md) tách các quyết định nền tảng đã chọn cho scaffold khỏi stack ứng dụng đang chờ benchmark.
+Trạng thái: **đặc tả, chưa có engine thực thi**. [ADR 0001](../decisions/0001-foundation.md) và [ADR 0002](../decisions/0002-runtime-and-hardware.md) chấp nhận ranh giới/ownership/resilience; stack/backend/budgets vẫn Proposed. C++20/Qt/Skia là baseline cho [ba spike](../roadmap/foundation-spikes.md), không phải năng lực đã triển khai. Runtime và precision có đặc tả chi tiết ở [document/runtime](document-runtime.md).
 
 ## Nguyên tắc
 
@@ -82,11 +82,13 @@ Không tạo vòng phụ thuộc qua header tiện ích, re-export hoặc manife
 Mỗi node có ID ổn định, type và schema version, transform, style, metadata nguồn và liên kết tài nguyên. Trang, layer, nhóm và instance là các cấu trúc rõ ràng. Nội dung mở rộng dùng typed payload đã đăng ký schema; core không tự suy đoán cấu trúc riêng của plugin.
 
 - Chỉ command/transaction public mới thay đổi tài liệu. Một thao tác thành công tạo một đơn vị undo hợp lý; thao tác hủy không để lại thay đổi dở dang.
-- Snapshots bất biến phục vụ render, export và worker. Kết quả bất đồng bộ ghi kèm document revision; nếu nguồn thay đổi, ứng dụng phải rebase theo quy tắc đã định hoặc yêu cầu chạy lại.
+- Một writer logic tuần tự công bố snapshot/root/index nhất quán. Render/export/worker chỉ đọc snapshot; job/proposal có document ID/epoch, base revision, object versions và job generation. MVP dùng strict base revision: edit/undo/cancel/close hoặc job replacement làm kết quả cũ vô hiệu; không tự rebase Boolean. Revision tăng đơn điệu cả undo/redo.
 - Đường thiết kế giữ biểu diễn chính xác; tessellation và mesh preview là dữ liệu dẫn xuất. Độ phân giải preview không được làm thay đổi đường cắt gốc.
-- 2D và 3D dùng quy ước trục/đơn vị có phiên bản. mm và số thực 64-bit là ứng viên nội bộ, cần benchmark và ADR trước khi đóng schema. Tỷ lệ hiển thị không được thay đổi kích thước thực.
+- 2D/3D dùng trục/đơn vị có phiên bản. Nguồn và transform đề xuất mm/binary64; renderer trừ camera/tile origin bằng double trước cast float. Sản xuất có error budget/topology checks riêng; integer quantization không bảo đảm sai số cả pipeline. Schema/API chờ spike và consumer review; tỷ lệ preview không đổi kích thước thực.
 - Kích thước thi công, hình đùn và output liên kết bằng ID/revision. Xóa nguồn tạo trạng thái cần sửa có thể thấy được, không âm thầm gắn sang node khác.
 - Node/plugin chưa nhận dạng phải được bảo toàn như dữ liệu opaque và đánh dấu read-only. Không bỏ payload khi lưu tài liệu chỉ vì plugin vắng mặt.
+- Text giữ Unicode/font identity/layout và liên kết outline; màu giữ RGB/CMYK/spot/ICC/overprint. Texture RGBA hoặc PDF nhìn đúng không chứng minh print separations hoặc khả năng sửa chữ.
+- COW/persistent structures theo chunk và shared immutable assets là ứng viên; không clone graph mỗi frame. Camera/selection/drag preview thuộc interaction state. Đo prepare/validate/commit/invalidation và cleanup/history retention, không chỉ pointer publication.
 
 Định dạng native đề xuất là container có manifest, document graph, assets và bảng schema versions. Cần migration có kiểm thử, lưu nguyên tử, checksum và giới hạn kích thước/nesting. Chưa chốt hậu tố hoặc định dạng binary/text trước ADR về storage.
 
@@ -104,16 +106,22 @@ Process isolation giúp giới hạn sự cố, **không tự tạo security san
 
 ## Render và tác vụ nặng
 
-Render facade cho phép thay backend; chọn GPU/CPU sau benchmark. Thiết kế cache theo document revision, viewport, color profile và DPI; invalidation rõ ràng. Đối tượng ngoài viewport được cull; hit-test dùng spatial index. Hình học vẫn tính theo độ chính xác tài liệu, rendering có thể lấy tọa độ tương đối camera để giảm sai số.
+Render facade chọn GPU/software theo capability probe, feature limits và driver/build đã kiểm chứng, không theo nhãn GPU rời/onboard. Chọn rõ implementation Ganesh/Graphite hoặc candidate khác, giữ GPU owner/lifetime theo API và Qt present prototype. CPU fallback có budget/chất lượng riêng. Recoverable device-loss có rebuild policy từ snapshot/assets; native driver crash/hang cùng process cần recovery hoặc GPU-process spike, chưa có bảo đảm switch CPU.
 
-Nhập file, encode ảnh, Boolean lớn, preflight và export chạy nền. UI không chờ worker trong event loop. Preview khi kéo có thể giảm chất lượng có chủ ý; khi kết thúc phải đánh giá lại kết quả chính xác. Task scheduler cần quota để export/import không làm viewport mất phản hồi.
+Spatial index cùng revision có bounds stroke/effects. Object culling không giải quyết zoom-to-fit hoặc một path nhiều segment; khảo sát chunking/LOD và tile cache. Cache key có dependency revision, viewport/scale/DPI/profile, clip/effect và backend generation; compositing order và halo filter phải đúng. Atlas resources/layer caches có memory cap, không là nguồn xuất sản xuất.
 
-Undo có budget và chiến lược giảm tải có thể kiểm chứng; không xóa lịch sử âm thầm. Autosave có journal/snapshot phục hồi, revision và checkpoint; ghi file đích qua file tạm và replace nguyên tử khi nền tảng hỗ trợ. Không coi autosave là backup vĩnh viễn.
+Main/UI, logical writer, render owner, compute/I/O executors và worker processes là vai trò, không số thread cố định. Nhập/encode/geometry/preflight/export chạy nền; UI không chờ trong event loop. Scheduler có count/byte/CPU quotas, ưu tiên input/render, coalesce frame/preview lỗi thời nhưng không drop commands. Tính toán cuối kiểm tra lại source revision và error budget. Qt GUI ở main thread; render/present placement chờ spike.
+
+Undo/snapshot/assets/caches/workers có budget và lifecycle; cleanup lớn không chặn input/frame. Save/export chốt một revision và giữ assets nhất quán. Save r hoàn tất không làm sạch edits r+1. Journal/checkpoint/replace có durability policy và fault injection; atomic rename không tự chứng minh chịu mất điện. Autosave không phải backup vĩnh viễn.
+
+Interop chốt version/feature matrix và tách visual/editable/export reports. PDF-compatible AI đọc phần PDF không bảo đảm authoring semantics; CDR import nghiên cứu với libcdr. CDR export/AI native round-trip ngoài MVP; PDF/SVG/tập DXF là output candidates có fixture. EPS/AI non-PDF/SKP cần khảo sát riêng. Plugin/worker output coi là untrusted, validate quyền/limits/revision trước atomic commit.
 
 ## Phát triển bởi nhiều agent
 
-Provider AI là nhãn định tuyến/adapter của tooling phát triển, không phải dependency của engine PikDraw. Harness hiện là CLI và bảng task cục bộ, chưa tự gọi model hoặc truyền message qua mạng. Mỗi nhiệm vụ có owner, allowed paths, contract revision, worktree và tiêu chí kiểm tra. Agent bàn giao task/handoff có cấu trúc; hợp đồng agent-message có schema để triển khai transport sau này. Không dùng lịch sử chat dài làm nguồn chân lý.
-
-Session mới bắt đầu tại `AGENTS.md`, đọc chỉ mục/module liên quan rồi lấy context pack của tác vụ. Context pack chỉ chứa đường dẫn, version và tóm tắt cần thiết; không chứa credentials hoặc toàn bộ kho mã. Đọc source/ADR thật trước khi sửa. Harness có validation tùy chỉnh bằng Python cho task/handoff, ownership và registry/dependency checks. Agent-message JSON Schema hiện là đặc tả; chưa có JSON Schema validator hay transport mạng. Review kỹ thuật vẫn kiểm tra chất lượng mà parser không thể chứng minh.
+- **Phân công động (Dynamic Claim Model):** Provider AI (Claude, Gemini, Codex...) là nhãn nhận dạng phiên làm việc (Session Metadata), không gán cứng cố định cho từng module. Bất kỳ subagent nào cũng có thể nhận bất kỳ tác vụ nào dựa trên yêu cầu thực tế từ người điều phối (Coordinator).
+- **Worktree và phạm vi:** Mỗi implementation task có checkout riêng và owned paths. Harness từ chối lease chồng lấn và committed diff ngoài scope khi handoff; chưa có OS write sandbox chặn mọi ghi file. Không lấy merge sạch làm evidence semantics đúng.
+- **Contract semantics:** Shared schemas/API có task riêng và consumer review. Khóa units/axes, transform composition, fill/winding/tolerance, IDs/revisions/cancel/atomic errors và text/color bằng vectors có oracle; producer/consumer chạy cùng vectors. Shape hợp schema không đủ.
+- **Tiêu chuẩn kiểm thử bằng chứng (Evidence-Based):** Mọi bàn giao task/handoff phải đi kèm bằng chứng kiểm thử thực tế (Unit tests, doctor checks), không dùng báo cáo suông. Chi tiết xem tại [ADR 0002](../decisions/0002-runtime-and-hardware.md), [worktree workflow](../agents/WORKTREES.md) và [giao thức agent](../agents/PROTOCOL.md).
+- **Gate tích hợp:** Kiểm tra actual diff/dependencies/consumers trên merged revision; bảo vệ gate/oracle chung khỏi task feature. Code scanner, semantic runner và hardware performance CI là gates cần triển khai, không là tính năng harness hiện có.
 
 Một owner integration hợp nhất các worktree sau kiểm tra và review. Sửa contract chung phải công bố impact rồi cập nhật consumers liên quan trong cùng chuỗi thay đổi. Chi tiết worktree/gateway nằm ở [worktree workflow](../agents/WORKTREES.md), [giao thức agent](../agents/PROTOCOL.md) và tooling của kho mã, tránh mô tả hai quy trình khác nhau tại đây.

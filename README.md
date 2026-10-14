@@ -28,6 +28,8 @@ Agent mới đọc [AGENTS.md](AGENTS.md), [docs/START.md](docs/START.md), sau �
 
 - [Trạng thái hiện tại](docs/project-state.json)
 - [Kiến trúc](docs/architecture/architecture.md)
+- [Document, precision và concurrency](docs/architecture/document-runtime.md)
+- [Ba spike foundation trong hai tuần](docs/roadmap/foundation-spikes.md)
 - [Bố cục giao diện](docs/architecture/workspace-layout.md)
 - [Blueprint giao diện](docs/architecture/workspace-blueprint.svg)
 - [Quy trình worktree](docs/agents/WORKTREES.md)
@@ -57,3 +59,5 @@ tests/                    kiểm thử harness; corpus đồ họa sẽ bổ sun
 Các adapter Claude/Gemini/Copilot chỉ dẫn về cùng một bộ quy tắc; chúng không tự kết nối hay chạy dịch vụ AI. Việc gọi nhà cung cấp và trao đổi giữa máy khác nhau cần tích hợp riêng.
 
 Giấy phép MIT áp dụng cho mã/tài liệu gốc của bộ khung. Giấy phép bản phân phối ứng dụng phải được chốt trong ADR khi chọn các dependency đồ họa và chuyển đổi file.
+
+Baseline khảo sát là C++20/Qt/Skia; ngôn ngữ/backend/schema và budgets ứng dụng còn chờ spike. Mục tiêu 60 FPS chỉ nghiệm thu trên corpus/máy đã xác định; software có budget riêng. Native CDR export, AI round-trip, CAM và mô phỏng quang học chưa thuộc lát cắt đầu.

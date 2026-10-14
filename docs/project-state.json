@@ -2,36 +2,61 @@
   "schema_version": 1,
   "project": "PikDraw",
   "stage": "foundation",
-  "updated_at": "2026-10-14",
+  "updated_at": "2026-10-15",
   "implemented": [
     "Provider-neutral repository structure and project instructions",
     "Module registry and versioned contract specifications",
     "Python standard-library harness for tasks, context packets and Git worktrees"
   ],
+  "specifications": [
+    "Native desktop architecture with four workspaces sharing one document model",
+    "Workspace/UI blueprint; runtime theme, localization and tools are not implemented",
+    "Single-writer document, immutable revisioned snapshots and source/production/render precision boundaries",
+    "Capability-based GPU/software rendering, executor ownership and recovery policies",
+    "Three foundation spikes with semantic, fidelity, containment and hardware acceptance evidence"
+  ],
   "planned": [
     "Professional vector editor and non-destructive raster tools",
-    "PDF/CDR/AI/EPS/DXF import/export with tested capability matrix",
+    "PDF and PDF-compatible AI subset import, research CDR import, SVG/PDF/DXF output candidates with per-feature fixtures",
     "Production/CAD tools and basic linked 3D",
-    "Isolated plugin host and conversion workers"
+    "Isolated plugin host and conversion workers with validated IPC and OS containment",
+    "C++20/Qt/Skia baseline spikes for viewport, document/geometry and interop/containment"
+  ],
+  "deferred": [
+    "Native CDR export and AI authoring-data round-trip",
+    "Full CAD constraint solver, CAM/G-code and optimized nesting",
+    "Physical lighting simulation and complex 3D modeling",
+    "EPS, non-PDF AI and SKP adapters pending separate research"
   ],
   "stack": {
     "harness": "Python 3.10+ standard library",
-    "application": "Native desktop proposed; decide after ADR and benchmarks",
-    "graphics": "Not selected"
+    "application": "Proposed spike baseline: C++20/Qt; Rust remains an evaluated alternative",
+    "graphics": "Proposed Skia facade with capability-probed GPU/software backends; implementation and budgets unselected",
+    "geometry": "Proposed mm/binary64 source coordinates and transforms; robust production approximations with explicit error budgets",
+    "runtime": "Proposed single writer, immutable snapshots, bounded executors and isolated workers; no fixed thread count"
   },
   "next_priorities": [
-    "Benchmark editable document/rendering architecture",
-    "Define and prototype document commands and persistence",
-    "Test PDF/AI/CDR conversion against synthetic and licensed fixtures"
+    "Prepare reference hardware, licensed fixtures and reviewed semantic contracts for the ten-working-day spike plan",
+    "Spike A: measure Qt/Skia viewport, invalidation, GPU/software budgets and recoverable device loss",
+    "Spike B: prove geometry precision, stale-result rejection, undo/redo and revision-consistent recovery",
+    "Spike C: measure interop loss/editability/export and enforce worker permissions/resources"
   ],
   "canonical": [
     "AGENTS.md",
     "registry/modules.json",
-    "docs/decisions/0001-foundation.md"
+    "docs/decisions/0001-foundation.md",
+    "docs/decisions/0002-runtime-and-hardware.md",
+    "docs/architecture/workspace-layout.md",
+    "docs/architecture/document-runtime.md",
+    "docs/roadmap/foundation-spikes.md",
+    "docs/quality/gates.md"
   ],
   "limitations": [
     "No runnable graphics editor or converters yet",
     "No external AI provider execution or network message gateway yet",
-    "Performance and crash-recovery targets are not measured product results"
+    "Performance, format coverage and recovery/containment are unmeasured runtime targets",
+    "Harness lease/diff checks are not OS write isolation or implemented application semantic/performance gates",
+    "Software 2D has a proposed separate budget; full-quality CPU 60 FPS and survival of fatal in-process GPU driver crashes are not verified",
+    "Backend, memory budgets, schema/API and dependency distribution obligations await spike evidence and review"
   ]
 }

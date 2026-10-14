@@ -44,6 +44,20 @@ Shared contracts có task riêng sở hữu `contracts/`, reviewer của module 
 Schema/API có version; host tương lai phải kiểm tra payload trước khi áp dụng.
 Message không tự cấp quyền; coordinator và công cụ vẫn kiểm tra owned paths, base revision và trạng thái.
 
+Schema/API phải khóa semantics: units/axes, transform composition, fill/winding/tolerance, IDs/revisions/epochs, cancellation/generation, atomic errors và text/color. Producer/consumer chạy cùng vectors có oracle độc lập; JSON shape đúng không chứng minh hợp đồng đúng. Xem [document/runtime](../architecture/document-runtime.md).
+
+Parallel implementation dùng cùng contract revision. Sửa semantics là contract change kể cả field/schema chưa đổi; cần impact, version/migration policy và consumer review. Agent không tự cập nhật gate/expected fixtures thuộc task khác để làm build xanh.
+
+## Gate tích hợp cần triển khai
+
+Harness hiện chỉ thực thi lease/structure/committed-diff checks, không OS write isolation hoặc semantic runtime runner. Gate ứng dụng theo [quality gates](../quality/gates.md): actual diff (rename/config/path escape), source include/import/link dependencies, consumer vectors, document invariants và evidence đúng revision.
+
+Reviewer geometry/interop/storage/contracts kiểm chứng độc lập bằng fixture/oracle và negative cases. Branch build xanh hoặc Git merge sạch không đủ. Integrator chạy checks liên quan trên **merged SHA**, giữ artifact toolchain/dependency/fixture/machine metadata tương ứng. Đổi dependency/gate/budget cần scope/review riêng; không ghi proposed automation là enforced.
+
+Không lấy “không merge conflict” làm tiêu chí hoàn thành. Tiêu chí là không tích hợp ngoài scope, semantics nhất quán và mọi xung đột đã được giải quyết/kiểm chứng. Nếu muốn agent không thể ghi worktree khác, cần OS permissions hoặc execution sandbox riêng; worktree không cung cấp bảo đảm đó.
+
+Trước tích hợp vào checkout có local edits, ghi baseline và giữ bản sao scoped files. Xác nhận task khác dừng trước release lease, kiểm tra baseline không thay đổi trước áp bản sửa; không reset/overwrite việc chưa commit của người dùng hoặc task khác. Chỉ cập nhật project state theo tài liệu/code thực sự đã tích hợp. Handoff giữ limitation nếu thiếu independent review hoặc hardware measurements.
+
 ## Evidence tối thiểu
 - Lệnh kiểm tra, kết quả thực tế và đường dẫn artifact nhỏ.
 - Những gì chưa kiểm chứng hoặc bị giảm khả năng chỉnh sửa.
