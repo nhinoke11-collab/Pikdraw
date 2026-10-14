@@ -93,6 +93,18 @@ Gate: mỗi fixture có classification/report, không mất dữ liệu âm th�
 | 8–9 | Negative tests, consumer tests, correctness/performance review và rerun sau fixes |
 | 10 | Integration checks và ADR implementation: accept/adjust/reject candidate, limits và next action |
 
-Mỗi artifact ghi base/head/integrated SHA, exact run commands, compiler/dependency versions, machine/driver, fixture checksum/rights, raw data và report. Kết quả là `pass`, `fail`, `partial` hoặc `not_measured` theo từng gate; không lấy 26 harness tests làm evidence app. Chưa chốt memory/regression thresholds phải ghi open decision.
+Mỗi artifact ghi base/head/integrated SHA, exact run commands, compiler/dependency versions, machine/driver, fixture checksum/rights, raw data và report. Kết quả là `pass`, `fail`, `partial` hoặc `not_measured` theo từng gate; không lấy harness tests làm evidence app. Chưa chốt memory/regression thresholds phải ghi open decision.
 
 Sau spike, ưu tiên vector/native recovery/output đã kiểm chứng. CAD constraints, CAM/G-code, physical lighting, native CDR export/AI round-trip và rộng hóa plugins là milestones riêng. Không triển khai diện rộng trước khi những giả thuyết quyết định của A/B/C có kết luận review được.
+
+## Bàn giao sang implementation
+
+[Kế hoạch triển khai sau spike](post-spike-implementation.md) và [catalog 26 task](post-spike-tasks.json)
+quy định công việc tiếp theo, owned paths, dependencies, reviewer và acceptance.
+Coordinator bắt đầu `ps00-accept-spikes`: đối chiếu evidence, chốt baseline/stack/coverage và
+kiểm kê code có thể tái sử dụng. Gate bắt buộc còn fail/partial/not_measured thì tạo task sửa spike;
+không đánh dấu ps00 done hoặc mở implementation phụ thuộc.
+
+Sau nghiệm thu: `ps01-contract-pack` → `ps02-build-gates` → geometry/color/native preview song song,
+rồi document/render/tools/storage/interop để đóng lát cắt editor đầu tiên. Catalog chưa là
+scheduler; harness/task board và protocol vẫn quyết định assignment/lease thực tế.

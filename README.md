@@ -30,6 +30,8 @@ Agent mới đọc [AGENTS.md](AGENTS.md), [docs/START.md](docs/START.md), sau �
 - [Kiến trúc](docs/architecture/architecture.md)
 - [Document, precision và concurrency](docs/architecture/document-runtime.md)
 - [Ba spike foundation trong hai tuần](docs/roadmap/foundation-spikes.md)
+- [Kế hoạch triển khai sau spike](docs/roadmap/post-spike-implementation.md) — 26 task có dependencies, scope, acceptance và vòng lặp UI native
+- [Catalog task sau spike](docs/roadmap/post-spike-tasks.json) — đặc tả điều phối, chưa là scheduler hoặc task đang chạy
 - [Bố cục giao diện](docs/architecture/workspace-layout.md)
 - [Blueprint giao diện](docs/architecture/workspace-blueprint.svg)
 - [Quy trình worktree](docs/agents/WORKTREES.md)

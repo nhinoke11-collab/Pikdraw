@@ -54,6 +54,16 @@ Trang 2D và scene 3D có tab/view riêng trong cùng document. Không áp mọi
 
 ## Design system và mở rộng
 
+Vòng lặp triển khai dự kiến là **shell Qt Widgets dùng lại cho sản phẩm**, với forms `.ui`,
+QSS và icon external trong dev. Build host lần đầu; Reload UI chỉ thay panels/style và rebind
+actions, giữ window/viewport/document/history/services. Sửa C++ hoặc custom widget vẫn build
+tăng dần. HTML có thể là bản tham chiếu bố cục; chưa có native preview chạy được hiện tại.
+
+Chi tiết lifecycle, widget allowlist, rollback UI lỗi, DPI/keyboard và release resources ở
+[kế hoạch sau spike](../roadmap/post-spike-implementation.md), task `ps05-native-preview`.
+Task `ps13-vertical-slice` thay fixture presenters bằng services thật. Mock/screenshot không
+thay E2E; không tải native plugin ngoài qua form để đi vòng process isolation.
+
 - Semantic tokens cho màu, spacing, typography, focus, stroke, trạng thái lỗi/cảnh báo và docking; token không đặt theo tên feature cụ thể.
 - Light/dark dùng cùng hierarchy và contrast. Màu nền UI không được thay đổi quản lý màu của artwork.
 - Đơn vị nhập liệu có suffix, cho phép biểu thức đơn giản nếu có đặc tả rõ, báo lỗi tại field; không tự làm tròn dữ liệu nguồn theo số chữ số hiển thị.

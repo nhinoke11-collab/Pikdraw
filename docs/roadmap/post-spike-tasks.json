@@ -1,0 +1,939 @@
+{
+  "schema_version": 1,
+  "kind": "planning-catalog",
+  "status": "specification-not-executed",
+  "updated_at": "2026-10-15",
+  "description": "Catalog kế hoạch; không phải schema task board, scheduler hoặc bằng chứng tính năng đã triển khai. Chỉ coordinator dispatch task đủ gate theo post-spike-implementation.md.",
+  "entry_task": "ps00-accept-spikes",
+  "contract_reference": "post-spike-implementation.md",
+  "board_source": ".agent/tasks",
+  "max_parallel_implementers": 3,
+  "defaults": {
+    "status": "planned",
+    "base": "Pin integrated commit containing all accepted dependencies when dispatching; never use a stale prepared worktree as base.",
+    "required_gate": "foundation-accepted for ps01 onward; ps00 may collect incomplete reports but cannot open dependent implementation.",
+    "review_policy": "Task done only after independent review and integration evidence on the merged SHA; integrator records project state separately.",
+    "paths_policy": "Proposed scopes, not active leases. Resolve exact paths before creating a harness task; no glob, no implicit scope expansion. Module-local tests/CMake/README are inside each module root.",
+    "commands_policy": "Native commands are implementation targets for ps02; no such command or runtime suite is claimed to exist today."
+  },
+  "gates": [
+    {
+      "id": "spike-reports-available",
+      "evidence": "A/B/C reports with revisions, raw measurements, fixture rights/checksums and known gaps; incomplete reports allow only ps00 review/remediation planning."
+    },
+    {
+      "id": "foundation-accepted",
+      "evidence": "All mandatory A/B/C gates accepted by independent reviewers on integrated candidates, implementation choices and baseline budgets locked by ps00; partial/not_measured mandatory gates block."
+    },
+    {
+      "id": "vector-alpha-accepted",
+      "evidence": "ps17 and ps18 integrated; actual app/package gates pass on reference hardware; release-blocking defects closed and independent review accepted."
+    },
+    {
+      "id": "production-fixtures-available",
+      "evidence": "Selected print/DXF pilot profiles, lawful fixtures, independent output oracle and operator acceptance procedure available."
+    }
+  ],
+  "tasks": [
+    {
+      "id": "ps00-accept-spikes",
+      "title": "Nghiệm thu ba spike và chọn implementation",
+      "module": "contracts",
+      "phase": "M0",
+      "depends_on": [],
+      "entry_gates": [
+        "spike-reports-available"
+      ],
+      "owned_paths": [
+        "docs/reports/foundation",
+        "docs/decisions/0001-foundation.md",
+        "docs/decisions/0002-runtime-and-hardware.md",
+        "docs/roadmap/post-spike-implementation.md",
+        "docs/roadmap/post-spike-tasks.json",
+        "docs/quality/baseline.json"
+      ],
+      "contracts": [],
+      "deliverables": [
+        "Bảng gate A/B/C dẫn tới source/integrated SHA, raw data, machines, fixtures, licenses và reviewer; mỗi gate có kết quả thực tế.",
+        "Chốt Qt shell, Skia implementation/backend, software policy, geometry/storage/IPC candidates, corpus output đầu tiên, memory/regression budgets; cập nhật ADR bằng evidence.",
+        "Kiểm kê code spike được giữ lại và mapping vào module; audit prepared tasks, base cũ và phần localization chưa commit, không xóa/ghi đè.",
+        "Catalog được hiệu chỉnh theo quyết định spike, vẫn giữ ID ổn định; nếu đổi stack phải cập nhật các task phụ thuộc trước dispatch."
+      ],
+      "checks": [
+        "Đối chiếu mọi gate bắt buộc với artifact; fail/partial/not_measured ở gate bắt buộc không được mở M1.",
+        "Reviewer độc lập kiểm tra precision/topology, frame/input, snapshot/recovery, format loss và canary containment.",
+        "Không bắt mọi format phải hỗ trợ đầy đủ: unsupported có report là kết quả đúng nếu ngoài subset được nhận; containment bắt buộc phải đạt."
+      ],
+      "reviewers": [
+        "Reviewer A, B, C độc lập với người viết prototype",
+        "Coordinator"
+      ]
+    },
+    {
+      "id": "ps01-contract-pack",
+      "title": "Khóa contracts, semantic vectors và ownership",
+      "module": "contracts",
+      "phase": "M0",
+      "depends_on": [
+        "ps00-accept-spikes"
+      ],
+      "entry_gates": [
+        "foundation-accepted"
+      ],
+      "owned_paths": [
+        "contracts",
+        "registry/modules.json",
+        "registry/boot.json",
+        "docs/architecture/document-runtime.md",
+        "docs/architecture/localization.md",
+        "docs/decisions",
+        "docs/quality/reference-fixtures",
+        "docs/quality/oracles"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C3",
+        "C4",
+        "C5",
+        "C6",
+        "C7"
+      ],
+      "deliverables": [
+        "Contracts nhỏ đủ cho lát cắt đầu, version/error/lifetime/cancellation semantics và consumer matrix; C++ API nằm ở module sở hữu, không tạo runtime core phụ thuộc ngược vào UI.",
+        "Fixture manifest/oracle chuẩn, có checksum/quyền dùng; units/transforms/fill, revision/epoch/generation, color/text, storage migration và IPC vectors.",
+        "ADR storage và UI development loop theo số ADR chưa dùng; rà lại localization đang dở, chốt tối thiểu catalog en/vi và host adapter, không tự thêm core/localization khi chưa cần.",
+        "Thống nhất naming, public include layout, module test layout, per-module CMake target; sửa registry nếu có thay đổi được review."
+      ],
+      "checks": [
+        "Mỗi contract có ít nhất producer/consumer cùng kết quả mong đợi và negative vectors; oracle không sinh từ implementation đang kiểm tra.",
+        "Registry không vòng, không module-to-UI; renderer/native pointers không thành wire/storage schema.",
+        "Người tiêu thụ document/render/vector/interop/workers/desktop ký review; giữ dữ liệu localization chưa commit."
+      ],
+      "reviewers": [
+        "Đại diện các module producer/consumer",
+        "Reviewer storage/geometry"
+      ]
+    },
+    {
+      "id": "ps02-build-gates",
+      "title": "Build tăng dần, CI và gate kiến trúc",
+      "module": "harness",
+      "phase": "M0",
+      "depends_on": [
+        "ps01-contract-pack"
+      ],
+      "entry_gates": [],
+      "owned_paths": [
+        "CMakeLists.txt",
+        "CMakePresets.json",
+        "cmake",
+        ".github/workflows/native.yml",
+        ".github/CODEOWNERS",
+        "tooling/native",
+        "tests/architecture",
+        "docs/development/native-build.md",
+        "docs/development/agent-gates.md",
+        ".gitignore",
+        "THIRD_PARTY_NOTICES.md"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C3",
+        "C4",
+        "C5",
+        "C6",
+        "C7"
+      ],
+      "deliverables": [
+        "Pin toolchain/dependencies, checksums và license inventory; CMake/Ninja presets cho Debug, Release và sanitizer phù hợp toolchain; cache riêng từng worktree/config.",
+        "Đăng ký module CMake khi module thực sự có implementation; missing required target phải fail ở milestone tương ứng. Không dùng stub trả thành công để vượt gate.",
+        "CI build/test Windows; scan include/link dependencies so registry, scoped diff/rename/path escape, protected fixtures/gates và artifact revision.",
+        "CLI build/check/preview runner theo mục 8 của kế hoạch; runner trả lỗi khi thiếu executable/test suite hoặc test không chạy.",
+        "Thiết lập required checks/branch protection trên host khi có quyền; nếu chưa có remote hỗ trợ, ghi cơ chế integrator kiểm tra thủ công, không ghi enforced."
+      ],
+      "checks": [
+        "Fresh configure/build nền tảng và incremental rebuild; đổi file module không rebuild toàn dependency khi không cần.",
+        "Negative fixture chứng minh gate bắt được dependency UI trái phép, sửa oracle/gate ngoài scope, path escape và mismatch revision.",
+        "Chạy doctor và harness tests; ghi phần native chưa có để không biến CI xanh thành app đã đạt."
+      ],
+      "reviewers": [
+        "Reviewer build/architecture"
+      ]
+    },
+    {
+      "id": "ps03-geometry",
+      "title": "Hình học nguồn và phép tính production có dung sai",
+      "module": "geometry",
+      "phase": "M1",
+      "depends_on": [
+        "ps02-build-gates"
+      ],
+      "entry_gates": [],
+      "owned_paths": [
+        "core/geometry"
+      ],
+      "contracts": [
+        "C1"
+      ],
+      "deliverables": [
+        "Đưa code B đã đạt vào API geometry: double mm, transforms/bounds/Bezier/arc, ranges/nonfinite validation.",
+        "Boolean/offset theo subset đã nhận; approximation/quantization budgets và diagnostic topology; source curve giữ nguyên.",
+        "Module tests, microbench và CMake target trong core/geometry."
+      ],
+      "checks": [
+        "Biển 20 m, xa gốc, reflection/nonuniform scale, holes/near-contact/degenerate inputs; oracle analytic/độc lập.",
+        "Dung sai và topology theo baseline đã khóa; failed computation không trả hình giả thành công."
+      ],
+      "reviewers": [
+        "Reviewer geometry"
+      ]
+    },
+    {
+      "id": "ps04-color",
+      "title": "Màu nguồn và quản lý profile tối thiểu",
+      "module": "color",
+      "phase": "M1",
+      "depends_on": [
+        "ps02-build-gates"
+      ],
+      "entry_gates": [],
+      "owned_paths": [
+        "core/color"
+      ],
+      "contracts": [
+        "C4"
+      ],
+      "deliverables": [
+        "Types RGB/CMYK/spot/ICC/overprint và identity tài nguyên theo contract; metadata không mất qua copy/serialization.",
+        "Transform preview từ profile đã chọn, cache có key profile và diagnostic missing/invalid profile; chưa tự nhận PDF/X/separations."
+      ],
+      "checks": [
+        "Reference swatches/profile fixtures có quyền dùng; preserve metadata so oracle.",
+        "Thay profile làm invalidate đúng; missing/invalid ICC có trạng thái rõ, không âm thầm đổi nguồn."
+      ],
+      "reviewers": [
+        "Reviewer color"
+      ]
+    },
+    {
+      "id": "ps05-native-preview",
+      "title": "Shell Qt và nạp lại giao diện trong dev",
+      "module": "desktop",
+      "phase": "M1",
+      "depends_on": [
+        "ps02-build-gates"
+      ],
+      "entry_gates": [],
+      "owned_paths": [
+        "apps/desktop"
+      ],
+      "contracts": [
+        "C3",
+        "C7"
+      ],
+      "deliverables": [
+        "Shell Qt Widgets thật: menu/action registry, dock, workspace switcher, status, theme, placeholder viewport; fixture presenter thay service chưa có.",
+        "Forms .ui, QSS và icons external trong dev; Reload UI theo mục 4; build lần đầu và build khi sửa C++.",
+        "Giữ window/viewport host/service lifecycle trong C++; chỉ reload forms/panels, rollback UI lỗi; release chỉ dùng tài nguyên tin cậy.",
+        "Widget factory allowlist, không tải plugin native ngoài qua .ui; test loading/empty/error/cancel states."
+      ],
+      "checks": [
+        "DPI 100/150/200%, 1366x768 và 1920x1080, keyboard/focus, chuỗi tiếng Việt dài; screenshot kèm thao tác.",
+        "50 lần reload: action không nhân đôi handler, không tăng widget/connection count tích lũy; lỗi form giữ UI cũ.",
+        "Mock mode được gắn nhãn development; không ghi tool placeholder là đã implement."
+      ],
+      "reviewers": [
+        "Reviewer desktop/UX"
+      ]
+    },
+    {
+      "id": "ps06-typography",
+      "title": "Chữ tiếng Việt chỉnh sửa được",
+      "module": "typography",
+      "phase": "M1",
+      "depends_on": [
+        "ps03-geometry"
+      ],
+      "entry_gates": [],
+      "owned_paths": [
+        "core/typography"
+      ],
+      "contracts": [
+        "C1",
+        "C4"
+      ],
+      "deliverables": [
+        "Unicode/font identity/shaping/layout/glyph outlines qua backend được chọn; giữ source text khác outline/cache.",
+        "Font resolver, fallback report, caret/selection mapping theo grapheme/cluster; hỗ trợ tiếng Việt có dấu và font thiếu.",
+        "Lát cắt đầu dùng font hệ thống/fixture tin cậy; font nhúng từ tài liệu không được tự nạp vào host. Giữ provenance và báo thiếu/unsupported nếu chưa có đường xử lý worker được nhận."
+      ],
+      "checks": [
+        "Chuỗi NFC/NFD, tổ hợp dấu, nhiều font/size và line breaks; oracle glyph advances/bounds/caret theo font fixture pin.",
+        "Không mất Unicode khi chuyển outlines; không dùng độ rộng ký tự đơn giản để thay shaping."
+      ],
+      "reviewers": [
+        "Reviewer typography"
+      ]
+    },
+    {
+      "id": "ps07-document",
+      "title": "Document single writer, snapshots và undo",
+      "module": "document",
+      "phase": "M1",
+      "depends_on": [
+        "ps03-geometry",
+        "ps04-color",
+        "ps06-typography"
+      ],
+      "entry_gates": [],
+      "owned_paths": [
+        "core/document"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C4",
+        "C5"
+      ],
+      "deliverables": [
+        "Model pages/layers/groups/path/text/image references với stable IDs, versioned source metadata và logical writer.",
+        "Atomic transactions/history, immutable snapshots và index cùng revision, bounded retention, async proposal validation.",
+        "View state camera/selection tách document; strict base revision/epoch/generation policy; trace/replay module tests."
+      ],
+      "checks": [
+        "Tái chạy schedules B gồm 10.000 commands; stale sau edit/delete/undo/cancel/close-reopen bị từ chối.",
+        "Undo/redo khôi phục semantic state, revision vẫn tăng; error/cancel không half-commit.",
+        "Đo commit/invalidation/destruction và retained bytes, không copy toàn graph mỗi frame."
+      ],
+      "reviewers": [
+        "Reviewer document/concurrency"
+      ]
+    },
+    {
+      "id": "ps08-storage",
+      "title": "Native save, autosave và phục hồi",
+      "module": "document",
+      "phase": "M1",
+      "depends_on": [
+        "ps07-document"
+      ],
+      "entry_gates": [],
+      "owned_paths": [
+        "core/document"
+      ],
+      "contracts": [
+        "C2",
+        "C4",
+        "C5"
+      ],
+      "deliverables": [
+        "Native format có schema version, manifest/assets/checksums và migration policy; parse counts/size/depth/path limits.",
+        "Async save một snapshot, dirty revision đúng, checkpoint/journal theo ADR; recover mở thành tài liệu riêng.",
+        "Giữ field/opaque payload chưa hiểu hoặc từ chối save có giải thích nếu không thể bảo toàn; không ghi đè nguồn khi load/migrate lỗi."
+      ],
+      "checks": [
+        "Save r trong khi edit r+1; fault serialize/write/flush/replace/checkpoint; disk full/access denied/corrupt/truncated native.",
+        "Round-trip giữ IDs/Bezier/text/font/color/units/assets; migration golden fixtures cũ và unknown version.",
+        "Durability report phân biệt atomic replace và mất điện; importer bên thứ ba không chạy trong host storage."
+      ],
+      "reviewers": [
+        "Reviewer storage độc lập"
+      ]
+    },
+    {
+      "id": "ps09-renderer",
+      "title": "Renderer snapshot, cache và software fallback",
+      "module": "rendering",
+      "phase": "M1",
+      "depends_on": [
+        "ps07-document"
+      ],
+      "entry_gates": [],
+      "owned_paths": [
+        "core/rendering"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C3",
+        "C4"
+      ],
+      "deliverables": [
+        "Đưa A vào render facade, camera-relative float sau double transform, immutable render input và owner thread rõ.",
+        "Culling/chunking/tile invalidation đúng effects/clip/compositing, bounded memory/LOD, source-backed GPU resource rebuild.",
+        "Capability-probed backend và software present/recoverable device loss theo baseline; instrumentation present/input/retention."
+      ],
+      "checks": [
+        "Tái chạy corpus A trên máy đã duyệt; zoom-to-fit, large path, node edits, DPI/font/profile changes.",
+        "Golden/diff có tolerance đã duyệt và semantic checks; software không đổi geometry nguồn.",
+        "Không giả lập driver fatal crash thành recoverable loss; report limitations riêng."
+      ],
+      "reviewers": [
+        "Reviewer graphics/performance"
+      ]
+    },
+    {
+      "id": "ps10-vector-basics",
+      "title": "Các command vẽ và sửa cơ bản",
+      "module": "vector",
+      "phase": "M1",
+      "depends_on": [
+        "ps07-document"
+      ],
+      "entry_gates": [],
+      "owned_paths": [
+        "modules/vector"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C4",
+        "C7"
+      ],
+      "deliverables": [
+        "Select/hit-test, rectangle/ellipse/path, text create/edit, move/scale/rotate, fill/stroke và delete qua commands.",
+        "Gesture preview transient; release tạo transaction, Escape/cancel không sửa nguồn; module không dùng Qt widgets.",
+        "Public tool/controller API nhận input độc lập UI, selection filters và capability-disabled reasons."
+      ],
+      "checks": [
+        "Replay create-select-transform-delete, undo/redo và cancel; bounds/hit-test ở zoom/scale lớn.",
+        "Edit text giữ Unicode/font; một gesture undo một bước; invalid input không commit."
+      ],
+      "reviewers": [
+        "Reviewer vector/document"
+      ]
+    },
+    {
+      "id": "ps11-interop-core",
+      "title": "Adapter chuyển đổi và output đầu tiên",
+      "module": "interop",
+      "phase": "M1",
+      "depends_on": [
+        "ps07-document"
+      ],
+      "entry_gates": [],
+      "owned_paths": [
+        "modules/interop"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C4",
+        "C5",
+        "C6"
+      ],
+      "deliverables": [
+        "Đưa subset C đã nhận vào converter API/worker-side entrypoints: PDF, PDF-compatible AI; CDR chỉ phần có evidence hoặc báo unsupported.",
+        "Validator kết quả chuyển đổi ở host, fidelity/editability/provenance report và một writer output: mặc định SVG subset, đổi khi C đã chọn khác.",
+        "Converters không tự spawn host; không phụ thuộc platform/workers hay desktop. Parser targets chỉ link vào worker executable.",
+        "Image probe/decode tối thiểu cho JPEG/PNG fixtures nằm trong worker; host chỉ nhận metadata/pixels/handles đã kiểm bounds, không chuyển codec parser vào UI. Font nhúng chưa có containment riêng phải báo unsupported."
+      ],
+      "checks": [
+        "Fixture matrix phân biệt supported/converted/unsupported/rejected; import-edit-native-save-export oracle.",
+        "Nonfinite/oversized/deep/invalid references và unsupported features không thành silent success.",
+        "Native host link/runtime scan không kéo parser bên thứ ba vào process chính; output write dở dang không báo thành công."
+      ],
+      "reviewers": [
+        "Reviewer interop/license"
+      ]
+    },
+    {
+      "id": "ps12-worker-host",
+      "title": "Host worker và giới hạn OS/IPC",
+      "module": "workers",
+      "phase": "M1",
+      "depends_on": [
+        "ps11-interop-core"
+      ],
+      "entry_gates": [],
+      "owned_paths": [
+        "platform/workers"
+      ],
+      "contracts": [
+        "C2",
+        "C6"
+      ],
+      "deliverables": [
+        "Đưa containment C vào launcher: version negotiation, handles allowlist, quotas, cancellation, bounded queues và cleanup.",
+        "Worker executable composition link converter targets; desktop gọi host, host gọi adapter/worker, interop không gọi ngược workers.",
+        "Validate payload trước writer transaction; crash/retry không double-commit; untrusted plugin loading vẫn chưa mở."
+      ],
+      "checks": [
+        "Malformed IPC, crash/hang/cancel/race/replacement; timeout dọn process/handles.",
+        "Canary file/network/child/handle ngoài quyền bị OS từ chối; test đúng sandbox identity của bản đóng gói.",
+        "Resource budget gồm toàn process tree; UI tiếp tục nhận input khi worker lỗi."
+      ],
+      "reviewers": [
+        "Reviewer containment/concurrency"
+      ]
+    },
+    {
+      "id": "ps13-vertical-slice",
+      "title": "Ghép editor dùng được từ đầu đến cuối",
+      "module": "desktop",
+      "phase": "M1",
+      "depends_on": [
+        "ps05-native-preview",
+        "ps08-storage",
+        "ps09-renderer",
+        "ps10-vector-basics",
+        "ps11-interop-core",
+        "ps12-worker-host"
+      ],
+      "entry_gates": [
+        "foundation-accepted"
+      ],
+      "owned_paths": [
+        "apps/desktop",
+        "tests/integration/vertical-slice"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C3",
+        "C4",
+        "C5",
+        "C6",
+        "C7"
+      ],
+      "deliverables": [
+        "Thay fixture presenters bằng services thật; new/open/import, vector/text edit, undo/redo, native save/recovery, output đã chọn.",
+        "Bind action enablement, dirty indicator, progress/cancel, report panel và error recovery; workspace chưa implement hiển thị khả năng đúng.",
+        "Shell reload không làm mất document/undo/camera/jobs; E2E sample biển hiệu theo mục 6.",
+        "Composition root tạo bounded compute/I/O executors theo C2/C5, inject vào services; render owner theo C3. Shutdown/cancel/backpressure và callbacks theo epoch/lifetime; module không phụ thuộc desktop."
+      ],
+      "checks": [
+        "Chạy E2E bằng UI thật và kiểm semantic file output; mock không được tính milestone.",
+        "Pan/zoom khi save/Boolean/import, lỗi font/profile/worker, close-reopen và GPU/software.",
+        "Full-app overhead so A/B budget, không dùng benchmark empty preview để thay.",
+        "Đóng document/thoát app khi compute/save/import đang chạy: không stale callback, deadlock, mất committed save hoặc retention vượt budget."
+      ],
+      "reviewers": [
+        "Reviewer tích hợp độc lập"
+      ]
+    },
+    {
+      "id": "ps14-desktop-workflows",
+      "title": "Hoàn thiện thao tác UI, en/vi và settings",
+      "module": "desktop",
+      "phase": "M2",
+      "depends_on": [
+        "ps13-vertical-slice"
+      ],
+      "entry_gates": [],
+      "owned_paths": [
+        "apps/desktop",
+        "locales",
+        "tooling/check_locales.py",
+        "tests/localization"
+      ],
+      "contracts": [
+        "C2",
+        "C7"
+      ],
+      "deliverables": [
+        "Tiếp nhận phần localization còn dùng được qua coordinator; catalog en/vi, key validation, adapter desktop theo C7, không thêm core module ngoài scope.",
+        "Layers/pages/inspector, command search, keyboard focus/shortcuts, dock layout version/reset, theme/settings persistence.",
+        "Missing/unsupported/dirty/recovery states dễ hiểu; chuyển ngôn ngữ/theme/workspace không sửa document hoặc artwork color."
+      ],
+      "checks": [
+        "Missing keys/placeholder mismatch fail; nhãn dài tiếng Việt không cắt action chính; keyboard-only flows.",
+        "Corrupt/old settings reset an toàn; switch workspace giữ selection/history; reload không trùng shortcuts.",
+        "Chỉ nhận bản localization cũ đã được kiểm kê/commit chọn lọc; giữ phần chưa dùng, không xóa worktree."
+      ],
+      "reviewers": [
+        "Reviewer desktop/localization"
+      ]
+    },
+    {
+      "id": "ps15-vector-editing",
+      "title": "Pen, node, snap và Boolean có thể sửa tiếp",
+      "module": "vector",
+      "phase": "M2",
+      "depends_on": [
+        "ps13-vertical-slice"
+      ],
+      "entry_gates": [],
+      "owned_paths": [
+        "modules/vector"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C4",
+        "C7"
+      ],
+      "deliverables": [
+        "Pen/node handles, join/close, group/ungroup, align/distribute, đơn vị và snap targets theo contract.",
+        "Boolean/offset qua worker compute proposal có cancellation; giữ source và tham số, diagnostic lỗi topology.",
+        "Không mở full CAD constraints hoặc CAM trong task này."
+      ],
+      "checks": [
+        "Fixtures self-intersection/holes/reflection/snap ở zoom khác nhau; undo group/node/Boolean giữ IDs/source theo policy.",
+        "Edit/undo/cancel khi job đang chạy không apply stale; exact/preview geometry phân biệt.",
+        "100k-node stress và retention trong full app qua ps17."
+      ],
+      "reviewers": [
+        "Reviewer geometry/vector"
+      ]
+    },
+    {
+      "id": "ps16-raster-basics",
+      "title": "Ảnh tham chiếu và chỉnh ảnh không phá nguồn",
+      "module": "raster",
+      "phase": "M2",
+      "depends_on": [
+        "ps13-vertical-slice"
+      ],
+      "entry_gates": [],
+      "owned_paths": [
+        "modules/raster"
+      ],
+      "contracts": [
+        "C2",
+        "C4",
+        "C5",
+        "C7"
+      ],
+      "deliverables": [
+        "Place/transform/crop/opacity ảnh đã decode qua worker; giữ original asset, profile, DPI và crop parameters.",
+        "Bounded thumbnail/mipmap requests qua interface đã khóa; không decode thư viện bên thứ ba trong UI/core raster.",
+        "Missing asset/relink và native persistence behavior; effects nâng cao để sau."
+      ],
+      "checks": [
+        "Ảnh lớn, corrupt/oversized payload, cancel decode, missing source; không tăng bộ nhớ vô hạn.",
+        "Undo crop và native reopen giữ pixel nguồn/profile/physical size; renderer không ghi preview lên original."
+      ],
+      "reviewers": [
+        "Reviewer raster/assets"
+      ]
+    },
+    {
+      "id": "ps17-vector-alpha-integration",
+      "title": "Nghiệm thu Vector Alpha",
+      "module": "desktop",
+      "phase": "M2",
+      "depends_on": [
+        "ps14-desktop-workflows",
+        "ps15-vector-editing",
+        "ps16-raster-basics"
+      ],
+      "entry_gates": [],
+      "owned_paths": [
+        "apps/desktop",
+        "tests/integration/vector-alpha",
+        "docs/reports/vector-alpha"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C3",
+        "C4",
+        "C5",
+        "C6",
+        "C7"
+      ],
+      "deliverables": [
+        "Bind các tool M2 vào shell; full workflow theo fixture đơn xưởng, báo cáo feature/format coverage và known limits.",
+        "Regression matrix document/render/interop/storage, 8 giờ replay có seed, memory/handle/latency và recovery reports.",
+        "Chốt internal Alpha candidate; chưa gửi cho khách hàng hoặc tuyên bố production-ready."
+      ],
+      "checks": [
+        "GPU/software từng máy theo baseline; totals include UI, history, assets và workers; no unexplained growth.",
+        "Không lỗi mất dữ liệu, wrong units không báo, stale commit, corruption/migration failure hoặc permission escape.",
+        "Reviewer độc lập kiểm E2E, fixtures, commands và evidence đúng merged SHA."
+      ],
+      "reviewers": [
+        "Reviewer release/graphics/storage"
+      ]
+    },
+    {
+      "id": "ps18-windows-package",
+      "title": "Gói Windows nội bộ và gate chuyển sang sản xuất",
+      "module": "desktop",
+      "phase": "M2",
+      "depends_on": [
+        "ps17-vector-alpha-integration"
+      ],
+      "entry_gates": [],
+      "owned_paths": [
+        "apps/desktop/CMakeLists.txt",
+        "packaging/windows",
+        "tooling/native/package.ps1",
+        ".github/workflows/package.yml",
+        "tests/integration/package",
+        "docs/releases/vector-alpha.md",
+        "docs/reports/package",
+        "THIRD_PARTY_NOTICES.md"
+      ],
+      "contracts": [
+        "C5",
+        "C6",
+        "C7"
+      ],
+      "deliverables": [
+        "Gói Windows nội bộ tái tạo với Qt/runtime/fonts/profiles/workers được phép; manifest/hash/version và license notices.",
+        "Dev reload/mock/filewatch flags bị tắt; app không lấy plugin/UI từ current directory ngoài trust policy.",
+        "Thử install/run/upgrade/uninstall không xóa user documents; clean Windows không có toolchain.",
+        "Report Alpha accepted hoặc blocked; phát hành công khai, signing identity và phân phối thương mại là quyết định riêng."
+      ],
+      "checks": [
+        "Native open-save-recover-export, GPU init failure và worker canary trên chính bản package.",
+        "Thiếu DLL/plugin/runtime, đường dẫn có dấu/space và người dùng không admin; permissions/data locations đúng.",
+        "Không coi build reproducible là bit-identical khi chưa đo; inventory dependency bắc cầu/fixtures/font rights đầy đủ."
+      ],
+      "reviewers": [
+        "Reviewer packaging/license/containment"
+      ]
+    },
+    {
+      "id": "ps19-production-contracts",
+      "title": "Khóa phạm vi và contracts Production Beta",
+      "module": "contracts",
+      "phase": "M3",
+      "depends_on": [
+        "ps18-windows-package"
+      ],
+      "entry_gates": [
+        "vector-alpha-accepted",
+        "production-fixtures-available"
+      ],
+      "owned_paths": [
+        "contracts",
+        "registry/modules.json",
+        "docs/decisions",
+        "docs/product/production-beta.md",
+        "docs/quality/reference-fixtures/production",
+        "docs/quality/oracles/production",
+        "docs/quality/baseline.json",
+        "cmake/dependencies",
+        "THIRD_PARTY_NOTICES.md"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C4",
+        "C5",
+        "C6",
+        "C7",
+        "C8"
+      ],
+      "deliverables": [
+        "Chọn một preset in, một DXF 2D profile và vật liệu/đơn vị của pilot xưởng; nhận fixture có quyền và người vận hành kiểm chứng.",
+        "Contracts preflight/errors, linked manufacturing result/source revision, offset/kerf parameters, output report và projection cho interop; consumer review/migration.",
+        "Chốt writer/library/profile/license/budgets trước code; no PDF/X/CAM/full CAD nếu chưa có gate riêng.",
+        "Lập impact matrix cho mọi consumer C8; nếu cần API mới ngoài C8/document projection đã định, bổ sung task consumer migration có owned paths trước khi dispatch M3."
+      ],
+      "checks": [
+        "Accepted Alpha artifact thật; pilot fixture/oracle/RIP hoặc viewer độc lập có sẵn, chưa có thì M3 blocked.",
+        "Production chỉ đọc metadata qua document, interop nhận projection chung; không thêm dependency ngược giữa production và interop.",
+        "Contract change có version/migration và tests cho native files từ M2."
+      ],
+      "reviewers": [
+        "Reviewer production/interop/document",
+        "Người vận hành xưởng"
+      ]
+    },
+    {
+      "id": "ps19a-production-document",
+      "title": "Dữ liệu production và migration native",
+      "module": "document",
+      "phase": "M3",
+      "depends_on": [
+        "ps19-production-contracts"
+      ],
+      "entry_gates": [],
+      "owned_paths": [
+        "core/document"
+      ],
+      "contracts": [
+        "C2",
+        "C5",
+        "C8"
+      ],
+      "deliverables": [
+        "Triển khai typed production parameters/source links và read projection cho preflight/export theo C8; default vắng metadata tương thích native Alpha.",
+        "Commands/history và serialization/migration giữ source IDs/units/unknown fields; derived result lưu source revision và invalidation semantics.",
+        "Consumer fixtures khóa compatibility cho production, interop và desktop trước triển khai tool."
+      ],
+      "checks": [
+        "Mở Alpha fixtures -> thêm production data -> save/reopen/undo; không mất field/source cũ.",
+        "Source edit/delete/undo làm derived result lỗi thời đúng policy; không biến preview thành source manufacturing.",
+        "Không thêm document dependency vào production/interop/desktop; invalid migration không ghi đè file."
+      ],
+      "reviewers": [
+        "Reviewer storage/document",
+        "Consumer production/interop"
+      ]
+    },
+    {
+      "id": "ps20-preflight",
+      "title": "Preflight có vị trí lỗi và output revision",
+      "module": "production",
+      "phase": "M3",
+      "depends_on": [
+        "ps19a-production-document"
+      ],
+      "entry_gates": [],
+      "owned_paths": [
+        "modules/production"
+      ],
+      "contracts": [
+        "C2",
+        "C4",
+        "C8"
+      ],
+      "deliverables": [
+        "Kiểm page/scale/bleed, image effective DPI, missing font/asset/profile, transparency/spot/overprint theo preset đã chốt.",
+        "Report đọc từ immutable snapshot, object IDs và severity/blocking reason; source đổi làm report cũ hết hiệu lực.",
+        "Production service không gọi UI hoặc writer interop; export decision ở host dựa report và revision."
+      ],
+      "checks": [
+        "Fixture từng lỗi có vị trí/count/severity oracle, không false pass với tài nguyên thiếu.",
+        "Sửa document trong preflight/export không dùng report r cho r+1; chọn lỗi đi đúng object tại ps23."
+      ],
+      "reviewers": [
+        "Reviewer print/color"
+      ]
+    },
+    {
+      "id": "ps21-manufacturing",
+      "title": "Đường thi công và offset có kiểm chứng",
+      "module": "production",
+      "phase": "M3",
+      "depends_on": [
+        "ps20-preflight"
+      ],
+      "entry_gates": [],
+      "owned_paths": [
+        "modules/production"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C8"
+      ],
+      "deliverables": [
+        "Classify cut/engrave/drill, dimension và validate closed/open contour/duplicates/self-intersection theo preset.",
+        "Offset/kerf parameter có đơn vị, source-linked result và error budget; preview không tự thành output máy.",
+        "Recompute/cancel/stale behavior và output projection giữ source; chưa nesting solver/G-code/postprocessor."
+      ],
+      "checks": [
+        "Holes/tangent/thin features/direction/negative scale và mm/inch conversion so analytic/độc lập.",
+        "Dung sai từng bước cộng trong budget đã nhận; topology lỗi chặn output thay vì cố sửa âm thầm.",
+        "Undo/reopen/source-edit invalidate và recompute đúng; fixtures người vận hành duyệt ở ps24."
+      ],
+      "reviewers": [
+        "Reviewer geometry/production"
+      ]
+    },
+    {
+      "id": "ps22-production-formats",
+      "title": "Xuất PDF và DXF theo profile hẹp",
+      "module": "interop",
+      "phase": "M3",
+      "depends_on": [
+        "ps19a-production-document"
+      ],
+      "entry_gates": [],
+      "owned_paths": [
+        "modules/interop"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C4",
+        "C6",
+        "C8"
+      ],
+      "deliverables": [
+        "Writer PDF theo print preset và DXF 2D entity subset, chạy trong worker khi dùng thư viện bên thứ ba.",
+        "Units/scale/pages/fonts/profile/spot/overprint và curve approximation báo rõ theo capability matrix.",
+        "Output atomic/cancel, report source revision/preset/library version; không tự gắn nhãn PDF/X hoặc round-trip source."
+      ],
+      "checks": [
+        "Reopen bằng oracle khác implementation, kiểm extents/units/entities/curves và font/color semantics.",
+        "PDF qua RIP/reference theo preset; DXF holes/arc/bulge/transform/scale so fixture được chọn.",
+        "Thiếu font/profile hoặc unsupported feature phải chặn/cảnh báo đúng policy; worker crash không để file hỏng thành success."
+      ],
+      "reviewers": [
+        "Reviewer interop/print/geometry"
+      ]
+    },
+    {
+      "id": "ps23-production-workspaces",
+      "title": "Ghép workspace In ấn và Thi công",
+      "module": "desktop",
+      "phase": "M3",
+      "depends_on": [
+        "ps21-manufacturing",
+        "ps22-production-formats"
+      ],
+      "entry_gates": [],
+      "owned_paths": [
+        "apps/desktop",
+        "tests/integration/production"
+      ],
+      "contracts": [
+        "C2",
+        "C3",
+        "C7",
+        "C8"
+      ],
+      "deliverables": [
+        "Panel In ấn/Thi công thật, preflight -> chọn lỗi -> sửa -> recheck -> export, hiển thị mm/scale/preset.",
+        "One-document state, shared undo, linked output stale warning và cancellable compute; viewport đọc source/result đã phân biệt.",
+        "Không lộ nút tác vụ chưa làm như chức năng đã hoạt động; trạng thái preview/export được giải thích tại thao tác."
+      ],
+      "checks": [
+        "End-to-end từ source nhập tới PDF/DXF, sửa giữa chừng, undo/reopen, compare accepted export revision.",
+        "UI không vượt gate hardware khi nhiều derived results; worker failures/cancel vẫn thao tác được.",
+        "Mở file Alpha và save lại theo migration không mất dữ liệu."
+      ],
+      "reviewers": [
+        "Reviewer desktop/production"
+      ]
+    },
+    {
+      "id": "ps24-production-beta",
+      "title": "Nghiệm thu pilot xưởng và Production Beta",
+      "module": "production",
+      "phase": "M3",
+      "depends_on": [
+        "ps23-production-workspaces"
+      ],
+      "entry_gates": [
+        "production-fixtures-available"
+      ],
+      "owned_paths": [
+        "tests/acceptance/production",
+        "docs/reports/production-beta",
+        "docs/releases/production-beta.md"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C4",
+        "C5",
+        "C6",
+        "C8"
+      ],
+      "deliverables": [
+        "Pilot dùng fixture/đơn được phép với operator; đối chiếu PDF/RIP và kích thước/contours DXF theo quy trình được duyệt.",
+        "Release matrix mỗi profile/format/máy với actual measurements, defects/limits/recovery và người duyệt.",
+        "Quyết định accept/fix/stop, đề xuất task cho 3D liên kết sau một spike 3D riêng; plugin/CAM tiếp tục deferred."
+      ],
+      "checks": [
+        "Không tự điều khiển thiết bị/CNC hoặc coi screenshot là bằng chứng sản xuất; ghi kết quả đo/operator.",
+        "Tất cả gate data integrity/geometry/format/containment/performance trên candidate merged SHA.",
+        "Thiếu pilot/RIP/measurements ghi not_measured và không gọi Production Beta đã đạt."
+      ],
+      "reviewers": [
+        "Reviewer độc lập",
+        "Người vận hành xưởng"
+      ]
+    }
+  ]
+}

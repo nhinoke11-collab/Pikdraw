@@ -13,7 +13,9 @@
     "Workspace/UI blueprint; runtime theme, localization and tools are not implemented",
     "Single-writer document, immutable revisioned snapshots and source/production/render precision boundaries",
     "Capability-based GPU/software rendering, executor ownership and recovery policies",
-    "Three foundation spikes with semantic, fidelity, containment and hardware acceptance evidence"
+    "Three foundation spikes with semantic, fidelity, containment and hardware acceptance evidence",
+    "Post-spike implementation roadmap and 26-task planning catalog with dependency gates, owned paths, acceptance and review; not an executing scheduler",
+    "Native Qt Widgets preview workflow with development-time UI/QSS reload and incremental C++ builds; not implemented"
   ],
   "planned": [
     "Professional vector editor and non-destructive raster tools",
@@ -39,7 +41,8 @@
     "Prepare reference hardware, licensed fixtures and reviewed semantic contracts for the ten-working-day spike plan",
     "Spike A: measure Qt/Skia viewport, invalidation, GPU/software budgets and recoverable device loss",
     "Spike B: prove geometry precision, stale-result rejection, undo/redo and revision-consistent recovery",
-    "Spike C: measure interop loss/editability/export and enforce worker permissions/resources"
+    "Spike C: measure interop loss/editability/export and enforce worker permissions/resources",
+    "After spike reports: ps00-accept-spikes reviews mandatory evidence; only after acceptance dispatch contracts/build and the post-spike catalog"
   ],
   "canonical": [
     "AGENTS.md",
@@ -49,6 +52,8 @@
     "docs/architecture/workspace-layout.md",
     "docs/architecture/document-runtime.md",
     "docs/roadmap/foundation-spikes.md",
+    "docs/roadmap/post-spike-implementation.md",
+    "docs/roadmap/post-spike-tasks.json",
     "docs/quality/gates.md"
   ],
   "limitations": [
@@ -57,6 +62,7 @@
     "Performance, format coverage and recovery/containment are unmeasured runtime targets",
     "Harness lease/diff checks are not OS write isolation or implemented application semantic/performance gates",
     "Software 2D has a proposed separate budget; full-quality CPU 60 FPS and survival of fatal in-process GPU driver crashes are not verified",
-    "Backend, memory budgets, schema/API and dependency distribution obligations await spike evidence and review"
+    "Backend, memory budgets, schema/API and dependency distribution obligations await spike evidence and review",
+    "Post-spike task dependencies/gates require coordinator dispatch; no native preview/build runner or automatic dependency scheduler exists yet"
   ]
 }
