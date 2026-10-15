@@ -1,5 +1,20 @@
 # Thực thi ba spike — 15/10/2026
 
+## Mốc mới nhất — tiếp tục sau GitHub publication
+
+Main hiện ở `8f792202f63f44c3797a845b31986a126b7eed5b`, Apache-2.0; source spike vẫn trên task branches riêng. Quyền Git/mạng/CMake đã dùng được; các đoạn lịch sử dưới ghi giới hạn quyền của lượt trước, không phải blocker hiện hành.
+
+- B: private paged COW root/index và SourcePath shared segments/cached bounds; iterator giữ root, empty-chunk pruning, native restore single publish. **26/26 native tests qua**, gồm 20.000 random map operations với oracle và history bound 500 qua Undo/Redo.
+- Release benchmark trên i7-3537U 2C/4T, RAM visible 8.254.744 KiB, Windows 10 Pro 19045, Balanced: cùng 20.000 empty path objects metadata + một path 100.001 segments, 64 transforms/65 retained roots. Baseline p95 25,3186 ms/private retained 582.148.096 bytes; candidate p95 0,0636 ms/private retained 20.619.264 bytes. Cleanup 181,184 → 7,7696 ms. Một baseline/final run; không có renderer/UI/corpus production hoặc acceptance threshold.
+- C: **8/8 local protocol/process groups qua**. Live AppContainer đã chạy đủ năm probes với positive controls: bốn explicit OS denials; mạng timeout 10060. Full test **exit 1**, containment gate **fail**. Không quy timeout hoặc worker crash thành permission pass. Test-only event whitelist và SEH shim cho strict invalid-handle fault; không nới quyền OS/global firewall.
+- Gemini 3.8 Flash High đã review B và C độc lập qua CLI. Các lần code generation đầu timeout/empty SUCCESS không được nhận là delivery; một request bị từ chối vì `--effort` không hỗ trợ cho model có mức High trong tên, đã retry cùng model và bỏ tham số đó. Leader viết implementation, xử lý findings và kiểm thử; không tuyên bố nghiệm thu độc lập sau toàn bộ sửa.
+- Findings B: xử lý iterator ownership, prune chunks, restore single publication và ràng buộc mapped value. History không unbounded: tổng hai stacks đã bị giới hạn bởi transfer; regression 500/500 xác nhận. Dirty policy bảo thủ là giới hạn UX, không đổi sang content identity chưa có contract.
+- Findings C: sửa positive handle control, fail-launch cleanup, Job handle release, trustee type và allocation guard. Response budget vốn được ValidateHeader kiểm; thêm explicit check cho dễ audit. Cancellation drain có rủi ro kernel hang còn mở; không bỏ wait trên stack OVERLAPPED vì sẽ tạo UAF.
+
+Artifacts nhỏ có thể review trong branches: `core/document/reports/cow-measurement-20261015.json`, `platform/workers/reports/live-containment-20261015.json`. Raw compiler/run/input hashes trong ignored out của các lane. Chưa có Qt/Skia viewport/hardware evidence, importer corpus/license/fidelity hoặc full containment acceptance; không mở post-spike phase.
+
+## Lịch sử lượt đầu (trước publication)
+
 Trạng thái: **bản nháp native đã build/test một phần; chưa spike nào được nghiệm thu**. Chưa dispatch implementation sau spike. Main vẫn ở `655b5ab6b4b635c06ed7be3b798a20b88db4b5be` và sạch; runtime source nằm trong bốn task worktree, chưa tích hợp.
 
 ## Kết quả thực tế
@@ -62,8 +77,8 @@ Thay lane/source-root tương ứng để chạy A math hoặc C local protocol/
 
 ## Bước tiếp theo bắt buộc
 
-1. Hoàn thiện B: chia sẻ source geometry bất biến, index/root prepare, profiling và memory/cleanup; bổ sung corpus topology/units, async schedules và recovery kill/fault còn thiếu. Không đổi oracle để làm xanh.
-2. Chuẩn bị dependency Qt/Skia cùng ABI, pin versions rồi build GUI/raster thật; chạy hardware matrix và present/input/recovery/memory theo foundation-spikes.md.
-3. Chuẩn bị fixtures hợp pháp và adapter thật cho C; chạy năm denied OS canaries với control probes trong môi trường cho phép AppContainer. Giữ parser/plugin untrusted tắt cho tới nghiệm thu.
-4. Phiên có quyền Git ghi mới commit theo lease, giao review độc lập, tích hợp và chạy lại trên integrated SHA. Formal harness handoff hiện yêu cầu clean committed worktree nên chưa xuất handoff giả từ draft.
-5. Chỉ khi mọi mandatory gate được nhận mới hoàn thành `ps00-accept-spikes` và tự dispatch catalog sau spike. Main/project-state hiện chưa được gắn nhãn runtime đã triển khai.
+1. B mở rộng benchmark sang nhiều path thực, topology/units và tải renderer/UI kết hợp; bổ sung async schedule, kill/fault recovery và sanitizer. Giữ oracle độc lập, lặp phép đo trước khi đặt ngưỡng.
+2. A cần toolchain Qt/Skia tương thích ABI, build GUI/raster thật, rồi đo present/input/recovery/memory trên Intel onboard 8 GB, AMD onboard 8 GB và RTX theo `foundation-spikes.md`.
+3. C cần chẩn đoán nguyên nhân network timeout để chứng minh explicit denial, kiểm tra resource quotas, bổ sung fixtures hợp pháp cùng parser/import-edit-save-reopen-export và license/fidelity report. Giữ parser/plugin untrusted tắt tới acceptance.
+4. Sau các sửa, mỗi lane cần independent review và formal handoff. Tích hợp rồi chạy lại source, consumer vectors và quality gates trên cùng integrated SHA; hiện tại chưa có integrated runtime SHA.
+5. Chỉ sau khi mọi mandatory gate được reviewer chấp nhận mới hoàn thành `ps00-accept-spikes` và dispatch catalog sau spike. Main/project-state vẫn ghi runtime là chưa triển khai.

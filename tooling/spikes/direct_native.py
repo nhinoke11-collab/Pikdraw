@@ -12,7 +12,7 @@ import time
 FILES = {
  "A": (["core/rendering/src/" + f for f in ["types.cpp","camera.cpp","culling.cpp","fixtures.cpp","trace.cpp"]] + ["core/rendering/tests/test_main.cpp"], ["core/rendering/include"], []),
  "B": (["core/geometry/src/" + f for f in ["transform.cpp","rect.cpp","curve.cpp","boolean_offset.cpp"]] + ["core/document/src/" + f for f in ["snapshot.cpp","document.cpp","persistence.cpp"]] + ["core/document/tests/" + f for f in ["test_main.cpp","test_geometry.cpp","test_document.cpp","test_persistence.cpp","test_trace_10k.cpp","test_review_regressions.cpp"]], ["core/geometry/include","core/document/include","core/document/tests"], []),
- "C": (["modules/interop/src/" + f for f in ["interop_types.cpp","ipc_dto.cpp","payload_validator.cpp","format_capability_matrix.cpp","fixture_manifest.cpp"]] + ["platform/workers/src/" + f for f in ["win32_common.cpp","job_object.cpp","appcontainer.cpp","process_launcher.cpp"]] + ["platform/workers/tests/spike_c_tests_main.cpp"], ["modules/interop/include","platform/workers/include"], ["-luserenv","-ladvapi32","-lws2_32"]),
+ "C": (["modules/interop/src/" + f for f in ["interop_types.cpp","ipc_dto.cpp","payload_validator.cpp","format_capability_matrix.cpp","fixture_manifest.cpp"]] + ["platform/workers/src/" + f for f in ["win32_common.cpp","job_object.cpp","appcontainer.cpp","process_launcher.cpp"]] + ["platform/workers/tests/spike_c_tests_main.cpp","platform/workers/tests/live_containment.cpp"], ["modules/interop/include","platform/workers/include"], ["-luserenv","-ladvapi32","-lws2_32"]),
 }
 
 def main():
@@ -22,7 +22,9 @@ def main():
     ap.add_argument("--source-root",type=pathlib.Path,required=True)
     ap.add_argument("--toolchain-root",type=pathlib.Path,required=True)
     ap.add_argument("--mode",choices=["build","test","all"],default="all")
+    ap.add_argument("--live-containment",action="store_true",help="Run five real local OS denied canaries for lane C")
     args=ap.parse_args()
+    if args.live_containment and args.lane!="C": ap.error("--live-containment applies only to lane C")
     root=args.source_root.resolve()
     # Explicit path avoids Git trust/configuration and global environment changes.
     cache=args.toolchain_root.resolve()/"bin"
@@ -41,7 +43,7 @@ def main():
     def fingerprint():
         return {p:hashlib.sha256((root/p).read_bytes()).hexdigest() for p in sorted(inputs)}
     manifest=fingerprint()
-    report={"lane":args.lane,"source_status":"uncommitted review draft","sources":manifest,"configuration":"Debug direct Clang C++20","full_spike_accepted":False}
+    report={"lane":args.lane,"source_status":"review draft; exact input hashes recorded","sources":manifest,"configuration":"Debug direct Clang C++20","full_spike_accepted":False}
     if args.mode=="test":
         previous=json.loads((out/"report.json").read_text(encoding="utf-8"))
         if previous.get("sources")!=manifest or previous.get("binary_sha256")!=hashlib.sha256(binary.read_bytes()).hexdigest():
@@ -50,6 +52,7 @@ def main():
             raise RuntimeError("Worker binary changed; rebuild required")
         report=previous
     report["runner_sha256"]=hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest()
+    report["test_scope"]="live_containment" if args.live_containment else "local_protocol_process" if args.lane=="C" else "native_correctness"
     env=os.environ.copy();env["PATH"]=str(cache)+os.pathsep+env.get("PATH","")
     if args.mode in {"build","all"}:
         command=[str(compiler),"-std=c++20","-O0","-g","-static","-Wall","-Wextra","-Wpedantic","-Werror"]+["-I"+str(root/p) for p in includes]+[str(root/p) for p in sources]+libs+["-o",str(binary)]
@@ -63,7 +66,8 @@ def main():
             return run.returncode
         if args.lane=="C":
             worker=out/"spike_worker.exe"
-            worker_command=[part for part in command if not part.endswith("spike_c_tests_main.cpp")]
+            worker_command=[part for part in command if not part.endswith(("spike_c_tests_main.cpp","live_containment.cpp"))]
+            worker_command.insert(1,"-fms-extensions")
             worker_command[-1]=str(worker)
             worker_command.insert(-2,str(root/"platform/workers/src/worker_main.cpp"))
             run=subprocess.run(worker_command,cwd=out,env=env,capture_output=True,text=True,encoding="utf-8",errors="replace")
@@ -78,7 +82,7 @@ def main():
         raise RuntimeError("Sources changed during build; discard this evidence and rebuild")
     if args.mode in {"test","all"}:
         # Containment writes outside this workspace; protocol-only keeps that gate unmeasured.
-        command=[str(binary)]+(["--protocol-only"] if args.lane=="C" else [])
+        command=[str(binary)]+(["--protocol-only"] if args.lane=="C" and not args.live_containment else [])
         started=time.monotonic()
         try:
             run=subprocess.run(command,cwd=out,env=env,capture_output=True,text=True,encoding="utf-8",errors="replace",timeout=120)
