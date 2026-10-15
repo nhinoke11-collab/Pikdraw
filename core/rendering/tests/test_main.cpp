@@ -133,6 +133,12 @@ void test_trace_bounded_capacity() {
         tracer.record_frame(m);
     }
     TEST_CHECK(tracer.frames().size() == ViewportTracer::MaxRecordedFrames, "tracer respects capacity limit");
+    std::ostringstream json;
+    tracer.export_json(json);
+    TEST_CHECK(json.str().find("\"frames_recorded\": 1000") != std::string::npos,
+        "trace export reports its bounded frame count");
+    TEST_CHECK(json.str().find("\"actual_present_not_measured\": true") != std::string::npos,
+        "trace export does not claim actual presentation timing");
 }
 
 void test_pixel_buffer_target_bounds_validation() {
