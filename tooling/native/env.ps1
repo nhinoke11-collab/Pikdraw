@@ -119,5 +119,17 @@ function Get-PikDrawToolchain {
         }
     }
 
+    # Prepend discovered tool directories to PATH so CMake can locate ninja, clang++, etc.
+    $pathsToAdd = @()
+    if ($tools.Ninja) { $pathsToAdd += (Split-Path $tools.Ninja -Parent) }
+    if ($tools.Clang) { $pathsToAdd += (Split-Path $tools.Clang -Parent) }
+    if ($tools.CMake) { $pathsToAdd += (Split-Path $tools.CMake -Parent) }
+    if ($tools.Python) { $pathsToAdd += (Split-Path $tools.Python -Parent) }
+    foreach ($p in ($pathsToAdd | Select-Object -Unique)) {
+        if ($env:PATH -notlike "*$p*") {
+            $env:PATH = "$p;$env:PATH"
+        }
+    }
+
     return $tools
 }

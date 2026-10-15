@@ -2,7 +2,7 @@
 # Runs architecture gates, contract validations, and integration suites.
 
 param(
-    [ValidateSet('architecture', 'contract', 'e2e', 'all')]
+    [ValidateSet('architecture', 'contract', 'unit', 'e2e', 'all')]
     [string]$Suite = 'architecture',
 
     [ValidateSet('Debug', 'Release')]
@@ -70,6 +70,26 @@ print('All fixtures and oracles parsed valid JSON.')
         }
     }
     Write-Host "Contract & oracle verification PASSED." -ForegroundColor Green
+}
+
+if ($Suite -eq 'unit' -or $Suite -eq 'all') {
+    Write-Host "`n--> Running Native C++ Unit Tests..." -ForegroundColor Yellow
+    $presetName = if ($Preset) { $Preset } else { 'win-dev' }
+    $buildDir = Join-Path $repoRoot "build\$presetName"
+    $unitExes = Get-ChildItem -Recurse -Path $buildDir -Filter "test_*.exe" -ErrorAction SilentlyContinue
+    if (-not $unitExes) {
+        Write-Host "No unit test executables found in $buildDir" -ForegroundColor Yellow
+    } else {
+        foreach ($exe in $unitExes) {
+            Write-Host "Running: $($exe.Name)..." -ForegroundColor Cyan
+            & $exe.FullName
+            if ($LASTEXITCODE -ne 0) {
+                Write-Error "Test $($exe.Name) FAILED with exit code $LASTEXITCODE"
+                exit $LASTEXITCODE
+            }
+        }
+        Write-Host "All native C++ unit tests PASSED." -ForegroundColor Green
+    }
 }
 
 if ($Suite -eq 'e2e') {

@@ -14,7 +14,9 @@ param(
 
     [switch]$Build,
 
-    [switch]$Clean
+    [switch]$Clean,
+
+    [string]$Target = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -47,8 +49,15 @@ if ($Build) {
     Write-Host "Configuring and building preset '$presetName'..." -ForegroundColor Yellow
     & $tools.CMake --preset $presetName
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    & $tools.CMake --build --preset $presetName
+    $buildArgs = @("--build", "--preset", $presetName)
+    if ($Target) {
+        $buildArgs += @("--target", $Target)
+    }
+    & $tools.CMake @buildArgs
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    if ($Target) {
+        exit 0
+    }
 }
 
 # Locate Desktop executable
