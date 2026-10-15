@@ -1,7 +1,7 @@
 # Contract C2: Document Model and Command Execution
 
-Version: 1.0.0
-Status: Locked (M0 Foundation)
+Version: 1.1.0
+Status: M0 document invariants remain locked; drawing-authoring extension proposed pending consumer review
 Producers: `core/document`
 Consumers: `core/rendering`, `modules/desktop`, `modules/vector`, `modules/raster`, `modules/production`, `modules/interop`
 
@@ -60,3 +60,13 @@ Background workers, automated tools, or async filters propose mutations by retur
   3. If `proposal.job_generation != active_document.current_job_generation`: **REJECT** (Job was superseded or cancelled).
   4. If any `target_object_id` no longer exists: **REJECT**.
 - Under no circumstance may a stale proposal overwrite or silently merge into newer revisions without explicit three-way merge resolution.
+
+## 6. Editable geometry and interaction drafts (extension 1.1)
+
+- A path-bearing document object has exactly one authoritative geometry source: `EditablePath`, `ParametricShape`, or `ConstructionGeometry`. The choice is a tagged source model, not two writable copies. Existing `Path2D` and renderer flattening are derived adapters until every consumer migrates.
+- `PathId`, `SubpathId`, `NodeId`, and `SegmentId` are stable opaque nonzero 64-bit typed IDs allocated from the document identity allocator, unique across document objects and path elements. Moving/styling/reordering an element preserves its IDs. Undo/redo restores IDs. Split/join/delete/close/reverse commands return explicit ID mappings for references and selection. IDs are not inferred from coordinates or array indices, and the allocator never wraps or reuses an ID.
+- Tool drafts and pointer previews are interaction state, not document state. A session is bound to document ID, lifecycle epoch, base revision, tool generation, and gesture generation. Pointer movement changes only the draft/preview. Finish applies one atomic document command and one revision increment; cancel applies none. Local draft undo/redo is exhausted before document history is changed.
+- Space+drag, middle-button pan, and wheel zoom suspend/resume the same draft without changing its world anchors or numeric locks. Camera changes invalidate only camera-dependent hints/previews, not confirmed draft geometry.
+- A command prepared from a stale base, a closed/reopened document, cancelled generation, or replaced tool session is rejected. Drafts are never silently rebased over external edits. A changed source invalidates center references and derived proposals.
+- If draft recovery is supported, it is a bounded, separate checkpoint with the original base identity; it is not a saved/committed document and is never auto-committed. Recovery against a changed base is rejected or offered as a user-visible reconstruction.
+- Parametric shapes retain their source parameters until an explicit Convert to Path command. Construction geometry is document data with stable object identity and undo, but is excluded from normal output unless an explicit export capability says otherwise.

@@ -1,7 +1,7 @@
 # Contract C3: Viewport State and Rendering Projection
 
-Version: 1.0.0
-Status: Locked (M0 Foundation)
+Version: 1.1.0
+Status: M0 projection invariants remain locked; tool-preview extension proposed pending consumer review
 Producers: `core/rendering`
 Consumers: `modules/desktop`, `core/document`
 
@@ -51,3 +51,10 @@ The viewport snapshot provides:
   - Level of Detail (LOD) simplifications, raster caches, or tessellation meshes are purely transient render-engine artifacts and must never overwrite source curve data.
 - **No Leaked Graphics Handles**:
   - Native graphics library types (e.g. `SkPath`, `SkCanvas`, `QPainter`, `ID3D11Device`, `VkPipeline`) are strictly internal to `core/rendering` and `platform/` implementations. They are prohibited from appearing in `contracts/`, `core/document/`, or storage schemas.
+
+## 5. Tool previews and snap hints (extension 1.1)
+
+- Tool preview inputs are immutable values stamped with document ID/epoch/revision, tool generation, gesture generation, and camera generation. Preview drawing does not mutate a document snapshot, increment revision, or allocate document undo records.
+- Snap candidates and anchors remain world/local binary64 values until the renderer subtracts the camera anchor. Screen markers, handles, hit radii, and acquisition/release radii are expressed in DIP and converted using the current device-pixel ratio; they are not model-space tolerances.
+- Preview overlays, tracking lines, snap markers, numeric HUDs, and selection handles are transient. They may be cached only with keys that include their source generations and camera/viewport state; they must never replace source curves or persist as document geometry.
+- A result stamped with an old document, tool, gesture, camera, configuration, or capability generation is discarded before display. UI must not show it as a confirmed snap.

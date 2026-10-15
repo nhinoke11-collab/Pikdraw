@@ -1,7 +1,7 @@
 # Contract C1: Geometry Core Semantics
 
-Version: 1.0.0
-Status: Locked (M0 Foundation)
+Version: 1.1.0
+Status: M0 geometry remains locked; drawing-authoring extension proposed pending consumer review
 Producers: `core/geometry`
 Consumers: `core/document`, `core/rendering`, `core/typography`, `modules/vector`, `modules/production`, `modules/interop`
 
@@ -45,7 +45,13 @@ Paths are composed of contiguous subpaths of directional segments:
 2. **Cubic Bézier Segment**: Start point $P_0$, first control point $P_1$, second control point $P_2$, end point $P_3$.
    $$B(t) = (1-t)^3 P_0 + 3(1-t)^2 t P_1 + 3(1-t) t^2 P_2 + t^3 P_3, \quad t \in [0, 1]$$
 3. **Quadratic Bézier Segment**: Start point $P_0$, control point $P_1$, end point $P_2$.
-4. **Elliptic Arc Segment**: Defined by radii $(r_x, r_y)$, x-axis rotation angle $\theta$, large-arc flag, sweep flag, and target point $P_1$. Must be preserved as analytic arc representations for CAD/manufacturing exports rather than pre-flattened polygons.
+4. **Elliptic Arc Segment**: External endpoint syntax may use radii $(r_x,r_y)$, axis rotation, large-arc and sweep flags, and target point. Convert that syntax to the canonical analytic parameterization before creating a source command; do not store a renderer-flattened polygon as source.
+
+The canonical parameterization is
+
+$$P(t)=C+U\cos(\alpha_0+t\Delta\alpha)+V\sin(\alpha_0+t\Delta\alpha),\quad t\in[0,1]$$
+
+where $C$ is a point and $U,V$ are independent axis vectors in the path's local mm frame. After an affine transform $x'=Ax+T$, transform $C'=AC+T$, $U'=AU$, and $V'=AV$; keep the parameter interval. $U,V$ need not remain orthogonal after non-uniform scale or shear. Reflection changes orientation through the transformed basis and determinant; it must not be approximated by a line or a fixed polygon. Singular transforms and invalid/collinear endpoint-arc inputs return an explicit diagnostic.
 
 ---
 
@@ -65,3 +71,14 @@ Every filled path explicitly specifies its winding evaluation rule:
   - Collinearity / flatness: Distance to chord $\le 10^{-5}\text{ mm}$.
   - Angular tolerance: $\le 10^{-7}\text{ radians}$.
 - **Degenerate Handling**: Zero-length segments, empty bounding boxes, and self-intersecting polygons must produce explicit diagnostics or valid degenerate bounds rather than throwing unhandled exceptions or causing infinite recursion.
+
+The values above are named baseline predicates, not a universal epsilon for every algorithm. New geometry queries carry an explicit tolerance profile in model units or screen DIP; point identity comes from IDs, not coordinate proximity. Hit testing and snap acquisition use screen-space DIP. Curve flattening uses a view-dependent pixel error. Boolean/offset topology uses its own bounded model-space error and reports exhaustion. User-requested join/merge carries an explicit threshold. A caller may not silently replace one tolerance class with another.
+
+## 6. Editable path and construction geometry semantics (extension 1.1)
+
+- Source coordinates and path-local transforms remain binary64 mm with world +Y up. A local construction frame has an origin and orthonormal X/Y axes expressed in world coordinates. A positive angle is counter-clockwise from that frame's +X; camera rotation and screen Y inversion do not change geometry angles.
+- `EditablePath` stores ordered subpaths, anchor nodes, and source segments. Segment kinds are line, quadratic Bézier, cubic Bézier, and analytic elliptic arc. Each source element has a stable typed ID. `Path2D`/flattened geometry is a derived read-only adapter for existing consumers, never a second writable authority.
+- Cubic control points are represented by the outgoing handle offset of the start node and incoming handle offset of the end node. Quadratic control points remain on the quadratic segment. Node handles are vectors from the anchor, in the same local mm frame.
+- Node modes: Corner imposes no handle relation and permits absent handles; Cusp keeps independently directed incoming/outgoing handles with no tangency relation; Smooth requires opposing collinear nonzero handles (geometric G1) but permits different lengths; Symmetric adds equal handle lengths. None claims C2 continuity. AutoSmooth v1 derives a shared tangent from neighboring anchors and handle lengths from adjacent chord lengths divided by three, scaled by stored tension in [0,1]. End nodes use their only adjacent chord. If the tangent is undefined, the mode yields zero handles and a diagnostic instead of NaN. Dragging a derived handle changes the node mode to Smooth unless the user explicitly chooses another mode.
+- A close operation never duplicates the first node or creates a zero-length segment. If the user targets the first node ID, the final anchor is merged into that target, the first ID survives, and an ID map is returned; the last source segment becomes the closing edge. Otherwise create one explicit closing line from last to first, or reject an exact zero-length closure with guidance to target/merge the first node. Joining separated paths is a Bridge operation. Merging endpoints is always explicit and returns the selected survivor ID.
+- Split uses a source parameter $t$ strictly inside (0,1), preserves exact source geometry (De Casteljau for Béziers and parameter interval subdivision for arcs), preserves endpoint IDs and the original segment ID for the leading segment, and returns the new node and trailing-segment IDs. Any topology edit returns before/after ID mappings; it never silently reuses a deleted ID.

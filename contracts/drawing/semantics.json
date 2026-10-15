@@ -1,0 +1,212 @@
+{
+  "contract": "pikdraw.drawing",
+  "version": "1.0.0",
+  "status": "proposed_pending_consumer_review",
+  "coordinates": {
+    "source_unit": "mm",
+    "source_precision": "IEEE754_binary64",
+    "world_y": "up",
+    "angle_unit": "degree",
+    "angle_direction": "counter_clockwise",
+    "angle_reference": "local_construction_frame_positive_x",
+    "display_units_are_preferences": true,
+    "dip_to_physical_pixel": "device_pixel_ratio"
+  },
+  "authoring_source": {
+    "exclusive_variants": ["EditablePath", "ParametricShape", "ConstructionGeometry"],
+    "legacy_path2d_role": "derived_read_only_adapter",
+    "path_schema": "1.0.0",
+    "id_format": "nonzero_64_bit_typed_id",
+    "ids_unique_across_document_objects_and_path_elements": true,
+    "id_allocator": "document_identity_allocator_reserved_from_every_id_on_load_no_wrap_or_reuse",
+    "preserve_ids_on_style_move_reorder": true,
+    "topology_edits_return_id_mapping": true,
+    "node_modes": {
+      "corner": "no_handle_relation",
+      "cusp": "independent_incoming_outgoing_handles_no_tangency_relation",
+      "smooth": "opposing_collinear_handles_G1_lengths_independent",
+      "symmetric": "smooth_plus_equal_handle_lengths_no_C2_claim",
+      "auto_smooth_v1": {
+        "tension_range": [0.0, 1.0],
+        "default_tension": 1.0,
+        "interior_tangent": "normalize(next_anchor_minus_previous_anchor)",
+        "incoming_length": "tension*distance(previous_anchor,anchor)/3",
+        "outgoing_length": "tension*distance(anchor,next_anchor)/3",
+        "endpoint_rule": "one_sided_tangent_and_one_adjacent_handle",
+        "undefined_tangent": "zero_handles_with_diagnostic",
+        "manual_handle_drag": "change_mode_to_smooth"
+      }
+    },
+    "segments": ["line", "quadratic_bezier", "cubic_bezier", "elliptic_arc"],
+    "elliptic_arc": {
+      "equation": "C + U*cos(alpha0+t*sweep) + V*sin(alpha0+t*sweep)",
+      "t_range": [0.0, 1.0],
+      "affine_transform": "transform_C_as_point_and_U_V_as_vectors; preserve_parameter_interval",
+      "singular_or_invalid_input": "diagnostic_without_silent_flattening"
+    },
+    "split": {
+      "parameter_open_interval": [0.0, 1.0],
+      "exact_curve_operation": true,
+      "preserve_endpoint_ids": true,
+      "preserve_original_segment_id_for": "leading_segment",
+      "allocate_new_node_and_trailing_segment_ids": true
+    },
+    "join": {
+      "separated_endpoints": "explicit_bridge_segment",
+      "coincident_endpoint_merge": "explicit_target_survivor_and_id_map",
+      "screen_distance_alone_never_merges": true
+    },
+    "close": {
+      "reuse_first_node": true,
+      "explicit_target_start_node_merges_last_anchor_and_returns_id_map": true,
+      "create_explicit_closing_segment_if_needed": true,
+      "duplicate_or_zero_length_closing_node": false,
+      "exact_zero_length_closure_without_target": "reject_with_guidance"
+    }
+  },
+  "tool_session": {
+    "stamp_fields": ["document_id", "document_epoch", "base_revision", "tool_generation", "gesture_generation"],
+    "preview_changes_document": false,
+    "finish": "one_atomic_command_and_one_revision",
+    "cancel": "no_document_command",
+    "stale_rebase": "reject_and_ask_user_to_retry",
+    "local_draft_undo_before_document_undo": true
+  },
+  "numeric_input": {
+    "default_length_unit": "mm",
+    "exact_unit_factors_mm": {"mm": 1.0, "cm": 10.0, "in": 25.4, "pt": 0.3527777777777778},
+    "accepted_angle_units": ["deg", "rad"],
+    "accepted_coordinate_forms": ["@distance<angle", "@dx;dy", "#x;y"],
+    "coordinate_pair_delimiter": ";",
+    "decimal_separator": "locale_dot_or_comma_per_number_token",
+    "thousands_separator": "rejected",
+    "expression_grammar": ["expr := term ((+|-) term)*", "term := unary ((*|/) unary)*", "unary := (+|-) unary | primary", "primary := number_with_unit | (expr)"],
+    "allowed_operators": ["unary_plus", "unary_minus", "add", "subtract", "multiply", "divide", "parentheses"],
+    "evaluation": "typed_dimension_expression_parser_no_script_eval",
+    "unit_addition": "same_dimension_only",
+    "unit_multiplication": "scalar_times_dimensioned_value_only",
+    "unit_division": "dimensioned_value_by_scalar_or_same_dimension_ratio",
+    "relative_coordinates_use": "active_construction_frame_or_world_when_unset",
+    "absolute_coordinates_use": "world_frame",
+    "division_by_zero_nan_inf_overflow": "reject_without_commit",
+    "endpoint_length": "straight_chord_between_anchors",
+    "bezier_handle_length": "separate_H_measurement",
+    "precedence": ["valid_numeric_locks", "hard_tool_constraints", "compatible_snap_candidate", "soft_polar_or_grid_acquisition", "raw_pointer"]
+  },
+  "snap": {
+    "master_default_action": "F3",
+    "master_enabled_default": true,
+    "master_off_preserves_child_masks": true,
+    "master_off_does_not_disable": ["numeric_locks", "shape_constraints", "ortho", "polar", "modifier_angle"],
+    "direction_modes": ["free", "ortho", "polar"],
+    "direction_modes_mutually_exclusive": true,
+    "toggle_active_direction_mode_returns": "free",
+    "mode_settings_retained_when_inactive": true,
+    "angle_reference_choices": ["world_x", "construction_frame_x", "previous_segment"],
+    "default_angle_reference": "construction_frame_x",
+    "ortho_angles_degrees": [0.0, 90.0, 180.0, 270.0],
+    "default_angle_steps_degrees": [15.0, 30.0, 45.0, 90.0],
+    "default_polar_step_degrees": 45.0,
+    "custom_angle_list": "finite_unique_values_normalized_to_[0,360)",
+    "tie_break": "retain_current_ray_if_tied_else_smallest_normalized_angle",
+    "modifier_angle": "hard_constraint_for_entire_active_gesture",
+    "polar_mode": {
+      "acquire_perpendicular_distance_dip": 6.0,
+      "retain_perpendicular_distance_dip": 10.0,
+      "minimum_ray_length_dip": 16.0
+    },
+    "object_candidate_hysteresis": {
+      "acquire_radius_dip_default": 8.0,
+      "release_radius_dip_default": 12.0,
+      "range_dip": [1.0, 64.0]
+    },
+    "groups": {
+      "object_points": ["endpoint", "source_node", "line_midpoint", "analytic_center", "quadrant", "nearest", "bezier_t_midpoint", "half_curve_length"],
+      "automatic_relations": ["intersection", "perpendicular", "tangent", "parallel", "extension", "reference_tracking"],
+      "page_grid_guides_construction": ["page_edge", "page_center", "grid", "guide", "construction_geometry"],
+      "display": ["markers", "snap_tooltips", "tracking_lines"],
+      "target_policy": ["current_layer_only", "locked_as_reference", "self_path", "control_handles"],
+      "optional_off_by_default": ["bbox_edge", "bbox_center", "pencil_auto_close"]
+    },
+    "workspace_defaults": {
+      "vector": {"master": true, "object_points": ["endpoint", "source_node", "line_midpoint"], "grid": false, "automatic_relations": [], "direction": "free"},
+      "technical": {"master": true, "object_points": ["endpoint", "source_node", "line_midpoint"], "grid": false, "automatic_relations": [], "direction": "polar", "polar_step_degrees": 45.0}
+    },
+    "target_defaults": {"current_layer_only": true, "locked_as_reference": false, "self_path": false, "control_handles": false, "hidden_layers": false},
+    "configuration_precedence": ["user_workspace_profile", "per_tool_override", "transient_gesture_modifier"],
+    "group_disable_preserves_child_mask": true,
+    "all_or_none_are_separate_actions": true,
+    "configuration_changes_dirty_document": false,
+    "candidate_stamp_fields": ["document_id", "document_epoch", "document_revision", "camera_generation", "config_generation", "capability_generation", "tool_context", "query_generation"],
+    "candidate_fields": ["source_object_id", "source_node_or_segment_id", "kind", "parameter_t", "world_point", "source_revision"],
+    "candidate_order_after_constraint_filter": ["per_tool_priority", "configured_kind_priority", "distance_dip", "stable_source_id", "parameter_t"],
+    "disabled_candidate_kinds_are_filtered_before_geometry_queries": true
+  },
+  "modifier_profiles": {
+    "PikDraw": {
+      "constrain_angle_or_aspect": "Shift",
+      "rectangle_or_ellipse_from_center": "Alt",
+      "combined_center_and_constrain": "Shift+Alt",
+      "break_bezier_handle": "Alt_during_handle_drag",
+      "temporary_node_in_pen": "Ctrl_before_handle_drag",
+      "snap_bypass": "S_when_canvas_focused_and_no_reserved_chord_consumes_it"
+    },
+    "Illustrator-inspired": {
+      "constrain_angle_or_aspect": "Shift",
+      "rectangle_or_ellipse_from_center": "Alt",
+      "combined_center_and_constrain": "Shift+Alt",
+      "break_bezier_handle": "Alt_during_handle_drag",
+      "temporary_node_in_pen": "Ctrl_before_handle_drag",
+      "snap_bypass": "S_when_canvas_focused_and_no_reserved_chord_consumes_it"
+    },
+    "Corel-inspired": {
+      "constrain_angle_or_aspect": "Ctrl",
+      "rectangle_or_ellipse_from_center": "Shift",
+      "combined_center_and_constrain": "Ctrl+Shift",
+      "break_bezier_handle": "Alt_during_handle_drag",
+      "temporary_node_in_pen": "F2_held_during_active_pen_session",
+      "snap_bypass": "S_when_canvas_focused_and_no_reserved_chord_consumes_it"
+    },
+    "pan": ["Space+drag", "middle_button_drag"],
+    "node_multi_select": "Shift+click",
+    "focus_loss_or_capture_loss": "clear_temporary_modifiers_and_rollback_uncommitted_gesture",
+    "profile_change_during_gesture": "apply_after_current_gesture",
+    "reserved_chord_example": "Ctrl+Shift+S is Save As; it wins over continuous S-bypass"
+  },
+  "shape_parameters": {
+    "rectangle_modes": ["from_corner", "from_center"],
+    "ellipse_modes": ["from_corner", "from_center"],
+    "preserve_aspect": true,
+    "center_source_reference_fields": ["object_id", "document_epoch", "document_revision", "analytic_center"],
+    "keep_center_lifetime": "gesture_session_only",
+    "invalidate_center_on": ["source_move", "source_delete", "document_switch", "epoch_change", "escape"],
+    "coincident_at_creation_is_persistent_constraint": false,
+    "multiple_driver_consistency_tolerance": {"absolute_mm": 1e-8, "relative": 1e-12},
+    "regular_polygon": {
+      "n_min": 3,
+      "n_max": 512,
+      "n_is_integer": true,
+      "source_parameters": ["N", "center", "circumradius_R", "inradius_r", "side_a", "rotation", "orientation"],
+      "orientation_values": ["vertex_up", "edge_up"],
+      "side_formula": "a=2*R*sin(pi/N)",
+      "inradius_formula": "r=R*cos(pi/N)",
+      "rotation_reference": "construction_frame_positive_x_ccw_degrees",
+      "derived_polyline_is_authoritative_source": false,
+      "stars_are_separate_shape_type": true
+    }
+  },
+  "storage": {
+    "required_native_container_version_for_authoring_source": 3,
+    "development_codec_v2_can_write_authoring_source": false,
+    "v1_lossy_migration": "reject",
+    "v2_migration": "convert_only_losslessly; allocate stable element IDs once; persist them at v3 save",
+    "unknown_required_schema_or_tag": "reject_entire_document",
+    "silent_flattening_or_v3_to_v2_downgrade": false
+  },
+  "function_key_policy": {
+    "default_function_key_bindings": {"action.snap.toggle": "F3", "other_actions": "unresolved_until_D09_conflict_audit"},
+    "actions_remain_accessible_by_name_and_remappable": true,
+    "existing_reference_conflicts": ["F10_Node", "Shift+F2_ZoomToSelection", "F8_Text"],
+    "corel_profile_conflict": "Ctrl+Shift+S_SaveAs_reserves_terminal_S"
+  }
+}
