@@ -69,9 +69,6 @@ public:
     /// Replaces document content with a loaded snapshot and starts a new lifecycle epoch.
     void reset_from_snapshot(SnapshotPtr snapshot);
 
-    /// Resets document state from a loaded snapshot, clears undo history, and publishes snapshot
-    void reset_from_snapshot(SnapshotPtr snapshot);
-
 private:
     friend class TransactionWriter;
     void require_writer() const;
