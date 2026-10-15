@@ -19,6 +19,7 @@ add_library(pikdraw_desktop STATIC
     src/development/ui_reload_controller.cpp
     src/runtime/composition_root.cpp
     src/workflows/document_workflow.cpp
+    src/shell/native_window.cpp
 )
 
 target_include_directories(pikdraw_desktop PUBLIC
@@ -34,6 +35,10 @@ target_link_libraries(pikdraw_desktop PUBLIC
     pikdraw_vector
     pikdraw_interop
 )
+
+if(WIN32)
+    target_link_libraries(pikdraw_desktop PUBLIC user32 gdi32)
+endif()
 
 # Native shell application entry point
 add_executable(pikdraw
