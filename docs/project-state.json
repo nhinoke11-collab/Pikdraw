@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "project": "PikDraw",
-  "stage": "foundation",
+  "stage": "m1_complete",
   "updated_at": "2026-10-15",
   "implemented": [
     "Provider-neutral repository structure and project instructions",
@@ -10,23 +10,32 @@
     "Remediation and formal acceptance of foundation spikes (AppContainer network canary 5/5 explicit OS denials WSAEACCES 10013 and MSVC C++20 compatibility)",
     "Locked shared contracts C1-C7, semantic reference fixtures, and quality oracles (PS01)",
     "CMakePresets, C++20 options, architecture dependency gates, and native runners dev.ps1/check.ps1 (PS02)",
-    "Milestone M0 (Foundation Lock) completed and verified"
+    "Milestone M0 (Foundation Lock) completed and verified",
+    "ps03-geometry: 2D primitives (mm/binary64), Bézier curves, Boolean ops, offset, 20m billboard precision",
+    "ps04-color: Source RGB/CMYK/spot/overprint, ICC profile registry, preview RGBA caching",
+    "ps06-typography: Vietnamese Unicode shaper (NFC/NFD + diacritics), font resolver, multiline layout, caret navigation, glyph outlines",
+    "ps07-document & ps08-storage: Single logical writer, atomic commands, COW snapshots, undo/redo, .pikdraw container with CRC32 checksums, atomic save and recovery",
+    "ps09-renderer: Camera2D origin-subtraction float projection, spatial culling, SoftwareRasterizer fallback (#12141a), ViewportRenderer facade",
+    "ps10-vector-basics: Model-space SelectionModel, ShapeFactory, pointer drag gestures, VectorController",
+    "ps11-interop-core: FormatCapabilities with unsupported format reporting, FidelityLossReport, SvgImporter, SvgExporter",
+    "ps12-workers: Host launcher, AppContainer / JobObject sandbox containment, IPC framing, stale proposal rejection, worker lifecycle and deadlines",
+    "ps05-native-preview: Cyber Dark Design System 2026 shell, ShellGeometry (responsive 1366x768/1080p, DPI 100/150/200%), WorkspaceStateManager, StatusBarModel, ActionDispatcher (18 Contract C7 actions), UIReloadController (50 F5 reloads tested), cyber_dark.qss",
+    "ps13-vertical-slice: CompositionRoot, DocumentWorkflow, end-to-end integration verified against all 13 closing matrix gates (M1-E01 to M1-E13)"
   ],
   "specifications": [
     "Native desktop architecture with four workspaces sharing one document model",
-    "Workspace/UI blueprint; runtime theme, localization and tools are not implemented",
+    "Workspace/UI blueprint; runtime theme, localization and tools are implemented for Milestone M1 Vector workspace",
     "Single-writer document, immutable revisioned snapshots and source/production/render precision boundaries",
     "Capability-based GPU/software rendering, executor ownership and recovery policies",
     "Three foundation spikes with semantic, fidelity, containment and hardware acceptance evidence",
     "Post-spike implementation roadmap and 26-task planning catalog with dependency gates, owned paths, acceptance and review; not an executing scheduler",
-    "Native Qt Widgets preview workflow with development-time UI/QSS reload and incremental C++ builds; not implemented"
+    "Native Qt Widgets preview workflow with development-time UI/QSS reload and incremental C++ builds"
   ],
   "planned": [
-    "Professional vector editor and non-destructive raster tools",
+    "Milestone M2: Advanced node editing, raster tools, pen tool, full snapping engine, print proofing, soak testing, and production packaging",
     "PDF and PDF-compatible AI subset import, research CDR import, SVG/PDF/DXF output candidates with per-feature fixtures",
     "Production/CAD tools and basic linked 3D",
-    "Isolated plugin host and conversion workers with validated IPC and OS containment",
-    "C++20/Qt/Skia baseline spikes for viewport, document/geometry and interop/containment"
+    "Isolated plugin host and conversion workers with validated IPC and OS containment"
   ],
   "deferred": [
     "Native CDR export and AI authoring-data round-trip",
@@ -36,15 +45,14 @@
   ],
   "stack": {
     "harness": "Python 3.10+ standard library",
-    "application": "Proposed spike baseline: C++20/Qt; Rust remains an evaluated alternative",
-    "graphics": "Proposed Skia facade with capability-probed GPU/software backends; implementation and budgets unselected",
-    "geometry": "Proposed mm/binary64 source coordinates and transforms; robust production approximations with explicit error budgets",
-    "runtime": "Proposed single writer, immutable snapshots, bounded executors and isolated workers; no fixed thread count"
+    "application": "C++20 native desktop core and Qt preview shell",
+    "graphics": "ViewportRenderer facade with SoftwareRasterizer fallback and capability-probed hardware path",
+    "geometry": "mm/binary64 source coordinates and transforms; robust production approximations with explicit error budgets",
+    "runtime": "Single writer, immutable snapshots, bounded executors and isolated workers"
   },
   "next_priorities": [
-    "Milestone M0 locked: Spikes remediated and accepted, contracts C1-C7 locked, CMake presets and architecture gates active.",
-    "Milestone M1 is open: dispatch parallel implementation tasks ps03-geometry (core/geometry), ps04-color (core/color), and ps05-native-preview (apps/desktop).",
-    "Proceed through document, rendering, vector tools, storage, and worker host to complete the vertical slice (ps13)."
+    "Milestone M1 successfully completed and locked: 11 parent tasks ps03-ps13 integrated, all 24 checkpoints verified, 20 native test suites and 13 E2E matrix gates passing.",
+    "Open Milestone M2: Advanced node editing, pen tool, bezier path manipulation, snapping engine, raster tool integration, and packaging."
   ],
   "canonical": [
     "AGENTS.md",
