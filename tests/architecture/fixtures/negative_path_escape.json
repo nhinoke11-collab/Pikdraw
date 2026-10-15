@@ -1,0 +1,8 @@
+{
+  "invalid_escapes": [
+    "../../outside_repo/secret.key",
+    "..\\..\\Windows\\System32\\cmd.exe",
+    "/etc/shadow",
+    "C:\\Windows\\win.ini"
+  ]
+}

@@ -64,10 +64,13 @@ build-*/
 # CMake generated files
 CMakeFiles/
 CMakeCache.txt
+CMakeUserPresets.json
 cmake_install.cmake
 Makefile
 install_manifest.txt
 compile_commands.json
+.ninja_log
+.ninja_deps
 
 # Temporary files
 *.tmp

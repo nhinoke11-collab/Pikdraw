@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "modules": [
+    {
+      "id": "module_alpha",
+      "path": "core/alpha",
+      "status": "planned",
+      "dependencies": [
+        "module_beta"
+      ],
+      "context": [],
+      "owned_paths": ["core/alpha"],
+      "purpose": "Cycle test module Alpha"
+    },
+    {
+      "id": "module_beta",
+      "path": "core/beta",
+      "status": "planned",
+      "dependencies": [
+        "module_alpha"
+      ],
+      "context": [],
+      "owned_paths": ["core/beta"],
+      "purpose": "Cycle test module Beta"
+    }
+  ]
+}

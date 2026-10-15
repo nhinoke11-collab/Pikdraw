@@ -1,0 +1,48 @@
+name: Native Build & Architecture Gates
+
+on:
+  push:
+    branches: [ main, "agent/**" ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  native-gates:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Ninja
+        uses: ashutoshvarma/setup-ninja@v1.1
+        with:
+          version: 1.11.1
+
+      - name: Harness doctor check
+        run: python tooling/agent_harness.py doctor
+
+      - name: Harness unit test suite
+        run: python -m unittest discover -s tests/harness -v
+
+      - name: Architecture gates unit test suite
+        run: python -m unittest discover -s tests/architecture -v
+
+      - name: Run native check runner (architecture & contracts)
+        shell: powershell
+        run: .\tooling\native\check.ps1 -Suite all
+
+      - name: Configure CMake preset win-dev
+        run: cmake --preset win-dev
+
+      - name: Build CMake preset win-dev
+        run: cmake --build --preset win-dev
+
+      - name: Run CTest preset win-dev
+        run: ctest --preset win-dev --output-on-failure

@@ -1,0 +1,34 @@
+# PikDraw Code Ownership Mapping
+# Synchronized with registry/modules.json and task ownership scopes.
+
+# Core specifications and architecture registry
+/contracts/                 @nhinoke11-collab/core-team
+/registry/                  @nhinoke11-collab/core-team
+/docs/                      @nhinoke11-collab/core-team
+
+# Core engine modules
+/core/geometry/             @nhinoke11-collab/geometry-team
+/core/color/                @nhinoke11-collab/color-team
+/core/typography/           @nhinoke11-collab/typography-team
+/core/document/             @nhinoke11-collab/document-team
+/core/rendering/            @nhinoke11-collab/rendering-team
+
+# Feature modules
+/modules/vector/            @nhinoke11-collab/vector-team
+/modules/raster/            @nhinoke11-collab/raster-team
+/modules/production/        @nhinoke11-collab/production-team
+/modules/scene3d/           @nhinoke11-collab/scene3d-team
+/modules/interop/           @nhinoke11-collab/interop-team
+
+# Platform, SDK, and Desktop Shell
+/platform/workers/          @nhinoke11-collab/workers-team
+/packages/plugin-sdk/       @nhinoke11-collab/plugin-team
+/apps/desktop/              @nhinoke11-collab/desktop-team
+
+# Build system, CI, harness, and architecture gates
+/CMakeLists.txt             @nhinoke11-collab/build-team
+/CMakePresets.json          @nhinoke11-collab/build-team
+/cmake/                     @nhinoke11-collab/build-team
+/tooling/                   @nhinoke11-collab/build-team
+/tests/                     @nhinoke11-collab/build-team
+/.github/                   @nhinoke11-collab/build-team
