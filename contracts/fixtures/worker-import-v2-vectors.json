@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "contract": "C6-v2-proposed",
+  "status": "proposed_reference_vectors",
+  "vectors": [
+    {"id":"negotiate_before_source_capability","given":{"host_major":2,"worker_majors":[1]},"expect":{"source_handle_granted":false,"parser_started":false,"result":"unsupported_protocol"}},
+    {"id":"no_downgrade_after_v2_request","given":{"requested_major":2,"worker_major":1,"source_bytes":20971520},"expect":{"resend_as_v1":false,"result":"unsupported_protocol"}},
+    {"id":"snapshot_is_private_and_read_only","given":{"snapshot_acl":"worker_read_only","inherited_handle_access":"read"},"expect":{"read_allowed":true,"write_allowed":false,"source_mutated":false}},
+    {"id":"reparse_source_rejected","given":{"selected_source_is_reparse_point":true},"expect":{"snapshot_created":false,"worker_launched":false}},
+    {"id":"inherited_handle_allowlist_exact","given":{"allowed_handles":["stdin_pipe","stdout_pipe","source_read_handle"],"extra_parent_handle":true},"expect":{"extra_parent_handle_visible":false,"allowed_handle_count":3}},
+    {"id":"source_token_bound_to_job","given":{"token_job":"job-a","request_job":"job-b"},"expect":{"source_read":false,"proposal_accepted":false}},
+    {"id":"source_size_over_profile","given":{"source_size":500000001,"profile_max_source_bytes":500000000},"expect":{"worker_launched":false,"staging_removed":true}},
+    {"id":"frame_payload_over_limit","given":{"frame_bytes":1048577,"max_frame_bytes":1048576},"expect":{"frame_allocated":false,"proposal_accepted":false}},
+    {"id":"frame_sequence_gap","given":{"expected_sequence":12,"received_sequence":13},"expect":{"proposal_accepted":false,"staging_cleaned":true}},
+    {"id":"chunk_checksum_mismatch","given":{"declared_checksum_matches":false},"expect":{"proposal_accepted":false,"document_changed":false}},
+    {"id":"end_hash_and_count_match","given":{"chunk_count":4,"end_count":4,"canonical_hash_matches":true},"expect":{"stream_complete":true,"document_mutated_by_worker":false}},
+    {"id":"proposal_exceeds_job_disk_quota","given":{"staged_bytes":268435457,"job_disk_quota":268435456},"expect":{"stream_cancelled":true,"staging_cleaned":true,"document_changed":false}},
+    {"id":"two_frame_backpressure","given":{"queued_frames":2,"max_queued_frames":2},"expect":{"third_frame_buffered":false,"producer_blocked_or_cancelled":true}},
+    {"id":"cancel_during_proposal","given":{"cancel_generation":9,"incoming_generation":9},"expect":{"generation_advanced_before_cleanup":true,"late_frame_accepted":false,"document_changed":false}},
+    {"id":"worker_crash_after_chunks","given":{"worker_exit":"crash","chunks_received":3,"stream_complete":false},"expect":{"partial_proposal_committed":false,"source_staging_removed":true,"output_staging_removed":true}},
+    {"id":"document_revision_changes_before_commit","given":{"base_revision":71,"current_revision":72,"stream_complete":true},"expect":{"commit":false,"rebase":false,"base_document_preserved":true}}
+  ]
+}

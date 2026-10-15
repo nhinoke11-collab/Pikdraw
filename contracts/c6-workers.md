@@ -104,18 +104,68 @@ Response đến muộn hoặc worker cũ được khởi động lại không c�
 document ID, lifecycle epoch, strict base revision, job ID và generation mới nhất ngay tại
 atomic commit. Đóng/mở, undo, cancel hoặc sửa document làm proposal cũ stale.
 
-## 6. Import file lớn — profile tương lai, chưa được wire v1 hỗ trợ
+## 6. IPC v2 — đề xuất source capability và bounded proposal stream
 
-Nâng IPC lên wire major v2 hoặc một contract transport được review trước khi đổi shape. V2 phải
-có version negotiation/fail-closed, source capability token khó đoán và gắn job, chunk offsets/
-sequences, total byte limit, backpressure, checksum per chunk/final stream, bounded queue, staging
-lifetime và fault tests. Không truyền raw pointer, renderer type, absolute user path hoặc một
-blob nhiều GB không giới hạn. Chunk thiếu/trùng/sai thứ tự/hash/length, worker stale/cancel đều
-phải bỏ toàn bộ staged document.
+Đây là **profile Proposed**, chưa được host/worker hiện tại hỗ trợ. Không phát request v2 tới
+worker v1. Negotiation xác nhận major version và danh sách message/features trước khi mở file;
+không downgrade request có source sang v1 raw bytes. Worker/host mismatch kết thúc job bằng
+unsupported_protocol, không gọi parser trong host.
 
-Max file bytes, workspace disk quota, count/depth/segments/glyphs/pixels và deadlines cần được
-đo theo corpus hợp lệ; contract v2 không tự cấp quyền nâng quota. Response của adapter là import
-proposal có [C8](c8-import-fidelity.md), không là document mutation.
+### 6.1 Nguồn đọc chỉ qua capability host
+
+1. Host kiểm tra file đã được người dùng chọn: loại file thường, không theo reparse point khi
+   broker mở nguồn, có size hữu hạn trong profile và disk budget còn đủ. Không để worker tự mở
+   user path, UNC, archive member path, font/profile folder hoặc resource URI.
+2. I/O executor host sao chép snapshot nguồn vào thư mục riêng của job với tên ngẫu nhiên; mở
+   nguồn read-only/share mode ngăn writer trong lúc copy; tính SHA-256 trên bytes đã copy và xác
+   minh size. Staging có quota, ACL tối thiểu, cleanup khi mọi kết thúc, và không chứa linked
+   assets ngoài capability được cấp riêng.
+3. Launcher truyền đúng một handle read-only tới snapshot bằng explicit inherited-handle list
+   cùng IPC pipes. Command line chỉ được mang giá trị handle do host tạo; tuyệt đối không mang
+   đường dẫn nguồn. Handle được bind vào process/job ID, source token ngẫu nhiên 128-bit, size,
+   hash, document epoch/revision và generation. Worker không thể xin handle/path khác. Không đưa
+   handle qua payload có thể chọn tùy ý từ worker.
+4. Host/worker phải có live AppContainer positive/negative canaries chứng minh worker đọc được
+   handle nguồn, không ghi được, không mở file khác, không dùng handle/pipe của process khác và
+   bị chặn network/child. Nếu handle inheritance không hoạt động trong profile OS, job fail
+   closed; không mở ACL rộng hoặc fallback sang user path.
+
+### 6.2 Framing, proposal stream và limits
+
+- Header vẫn phải validate magic, negotiated major, message type, sequence, byte length và job
+  identity trước allocation. Proposal frames có payload tối đa 1 MiB; một producer chỉ có tối đa
+  hai frame đang chờ để tạo backpressure. Consumer chỉ nhận sequence tăng liên tiếp, offset chính
+  xác, request token đúng và frame thuộc một job còn sống.
+- ImportBegin xác nhận token/hash/size/profile; worker đọc nguồn từ capability handle. ProposalChunk
+  mang bounded records, ordinal liên tiếp và checksum frame. ImportEnd mang tổng bytes/records,
+  loss-report completeness và SHA-256 của canonical proposal stream. Message sai thứ tự, thừa,
+  thiếu, trùng, trailing bytes, checksum/hash/count không khớp, record vượt range hoặc EOF giữa
+  frame làm hủy toàn proposal. Final hash không thay thế validation record host-side.
+- Host ghi chunks vào job staging riêng thay vì giữ toàn scene trong RAM, nhưng validate record
+  ngay khi đọc. Chỉ một reader/writer có quyền consume stream; queue count/bytes và disk usage có
+  trần. Hết quota, thiếu quyền hoặc staging I/O lỗi kết thúc job; không bỏ chunk hoặc giảm chất
+  lượng âm thầm.
+- Per-frame 1 MiB và hai frame queue là transport defaults đề xuất. Max source bytes, proposal
+  bytes, objects, hierarchy depth, path segments, text/glyphs, pixels/assets, staging disk, đồng
+  thời jobs và deadline thuộc versioned import profile; phải đo bằng corpus hợp lệ/negative trước
+  bật profile. Không dùng unlimited hoặc nâng quota vì một mẫu thất bại.
+- Proposal là untrusted data theo [C8](c8-import-fidelity.md), không được mutate document. Host
+  kiểm full stream, capability, provenance, loss completeness, units/precision, finite values,
+  graph refs và toàn bộ limits trước khi tạo commit proposal. Sau đó document writer áp strict
+  epoch/revision/generation và atomic transaction như C8.
+
+### 6.3 Cancel, timeout, cleanup
+
+Cancel tăng generation trước khi đóng pipes/terminating job; receiver ngừng nhận frames ngay. EOF,
+crash, deadline, cancel, worker restart, document edit/close, hash mismatch hoặc lỗi dọn đều đánh
+dấu proposal stale, terminate process/job khi cần, xóa source/output staging và giữ nguyên base
+document/history/dirty state. Retry là job/token mới và có giới hạn; không resume một stream dở.
+Supervisor có deadline khi drain pipes/cleanup để worker hỏng không treo host.
+
+V2 không truyền raw pointer, renderer type, user path, arbitrary handle, object blob không giới
+hạn hoặc source bytes lớn trong một frame. Response của adapter luôn là import proposal C8. Mọi
+limit/profile ở mục này vẫn là đề xuất đến khi implement, build và chạy live OS canaries trên
+exact merged revision.
 
 ## 7. Evidence để bật adapter
 
