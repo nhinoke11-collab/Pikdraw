@@ -17,6 +17,48 @@ struct PathHit {
     bool unsupported{false};
     bool budget_exceeded{false};
 };
+bool stroke_hit(geometry::Point2D world, geometry::Point2D local, geometry::Point2D a, geometry::Point2D b,
+                const document::PathObject &object, double tolerance, double maximum_scale,
+                bool &budget_exceeded) {
+    const double radius = object.stroke_width_mm * .5;
+    if (radius <= 0)
+        return false;
+    if (distance(local, a, b) <= radius)
+        return true;
+    if (tolerance <= 0 || distance(world, object.transform.map_point(a), object.transform.map_point(b)) >
+                              radius * maximum_scale + tolerance)
+        return false;
+    const double error = std::min(.01, tolerance * .1);
+    const double ratio = std::clamp(1 - error / (radius * maximum_scale), -1.0, 1.0);
+    const double required = std::ceil(3.141592653589793 / std::max(std::acos(ratio), 1e-12));
+    if (required > 4096) {
+        budget_exceeded = true;
+        return false;
+    }
+    const int steps = std::max(12, static_cast<int>(required));
+    const auto edge = b - a;
+    const double length = std::hypot(edge.x, edge.y);
+    if (length > 0) {
+        const geometry::Point2D normal{-edge.y / length * radius, edge.x / length * radius};
+        for (const double sign : {-1.0, 1.0})
+            if (distance(world, object.transform.map_point(a + normal * sign),
+                         object.transform.map_point(b + normal * sign)) <= tolerance)
+                return true;
+    }
+    // Affine-transformed round caps, with <=0.01mm world chord error.
+    for (const auto center : {a, b}) {
+        auto previous = object.transform.map_point({center.x + radius, center.y});
+        for (int i = 1; i <= steps; ++i) {
+            const double angle = 6.283185307179586 * i / steps;
+            const auto next = object.transform.map_point(
+                {center.x + radius * std::cos(angle), center.y + radius * std::sin(angle)});
+            if (distance(world, previous, next) <= tolerance + error)
+                return true;
+            previous = next;
+        }
+    }
+    return false;
+}
 PathHit path_hit(geometry::Point2D world, const document::PathObject &object, double tolerance) {
     PathHit result;
     for (const auto &e : object.path.elements()) {
@@ -32,8 +74,6 @@ PathHit path_hit(geometry::Point2D world, const document::PathObject &object, do
         return result;
     const auto &t = object.transform;
     const double frobenius = std::hypot(std::hypot(t.a, t.b), std::hypot(t.c, t.d));
-    const double minimum_scale = std::abs(t.determinant()) / std::max(frobenius, 1e-12);
-    const double local_tolerance = tolerance / std::max(minimum_scale, 1e-12);
     const auto local = inverse->map_point(world);
     const auto b = object.bounds();
     const double margin = tolerance + (object.has_stroke ? object.stroke_width_mm * frobenius * .5 : 0);
@@ -56,7 +96,7 @@ PathHit path_hit(geometry::Point2D world, const document::PathObject &object, do
             const auto a = path.points[i], b = path.points[(i + 1) % path.points.size()];
             const bool stroke_edge = i + 1 < path.points.size() || path.is_closed;
             if (stroke_edge && object.has_stroke &&
-                distance(local, a, b) <= object.stroke_width_mm * .5 + local_tolerance)
+                stroke_hit(world, local, a, b, object, tolerance, frobenius, result.budget_exceeded))
                 result.hit = true;
             // Filled paths implicitly close their final subpath.
             if (!object.has_fill)

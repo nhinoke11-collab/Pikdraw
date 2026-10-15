@@ -7,6 +7,7 @@
 #include <vector>
 namespace pikdraw::vector {
 enum class SelectionMode { Replace, Toggle, Add };
+enum class RegionMode { Window, Crossing };
 enum class HitQuality { SourceLines, CurveApproximation, TextApproximation };
 struct HitResult {
     document::ObjectId id;
@@ -45,6 +46,11 @@ class SelectionModel {
         selected_ids_.clear();
         id_set_.clear();
     }
+    [[nodiscard]] std::optional<geometry::Rect2D> bounds(const document::DocumentSnapshot &snapshot) const;
+    // Window contains the complete painted bounds. Crossing intersects source geometry,
+    // including fill winding and stroke; curves use the same bounded hit approximation.
+    static std::vector<document::ObjectId> query_region(const geometry::Rect2D &region, RegionMode mode,
+                                                        const document::DocumentSnapshot &snapshot);
     // Fill winding and line geometry; curves approximated <=0.01mm in world space.
     // Text uses explicitly approximate logical bounds until shaping is integrated.
     static std::optional<HitResult> hit_test_detail(geometry::Point2D pt_mm,

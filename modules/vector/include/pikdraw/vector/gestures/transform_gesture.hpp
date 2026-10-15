@@ -28,7 +28,8 @@ class TransformGesture {
             return {};
         }
         current_ = current;
-        if (!current_delta().is_finite()) {
+        delta_ = geometry::Transform2D::translation(current_.x - start_.x, current_.y - start_.y);
+        if (!delta_.is_finite()) {
             cancel();
             return {};
         }
@@ -37,7 +38,13 @@ class TransformGesture {
     geometry::Transform2D current_delta() const noexcept {
         if (!active_)
             return {};
-        return geometry::Transform2D::translation(current_.x - start_.x, current_.y - start_.y);
+        return delta_;
+    }
+    bool update_transform(const geometry::Transform2D &delta) noexcept {
+        if (!active_ || !delta.is_finite() || !delta.is_invertible())
+            return false;
+        delta_ = delta;
+        return true;
     }
     document::CommandResult commit(document::Document &doc) {
         if (!active_)
@@ -54,11 +61,11 @@ class TransformGesture {
                 ids_.clear();
                 return document::CommandResult::fail("Gesture target is no longer editable");
             }
-        if (delta.tx == 0 && delta.ty == 0) {
+        if (delta.a == 1 && delta.b == 0 && delta.c == 0 && delta.d == 1 && delta.tx == 0 && delta.ty == 0) {
             ids_.clear();
             return document::CommandResult::ok();
         }
-        auto command = std::make_unique<document::CompositeCommand>("Move Objects");
+        auto command = std::make_unique<document::CompositeCommand>("Transform Objects");
         for (auto id : ids_)
             command->add_command(std::make_unique<document::TransformObjectCommand>(id, delta));
         ids_.clear();
@@ -67,6 +74,7 @@ class TransformGesture {
     void cancel() noexcept {
         active_ = false;
         ids_.clear();
+        delta_ = {};
     }
 
   private:
@@ -74,5 +82,6 @@ class TransformGesture {
     geometry::Point2D start_, current_;
     std::vector<document::ObjectId> ids_;
     GestureStamp stamp_;
+    geometry::Transform2D delta_;
 };
 } // namespace pikdraw::vector

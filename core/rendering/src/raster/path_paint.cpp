@@ -76,19 +76,22 @@ bool fill(const std::vector<Contour> &contours, geometry::WindingRule rule,
 } // namespace
 
 bool paint(const document::PathObject &object, const Camera2D &camera,
-           PixelBufferTarget &target) {
+           PixelBufferTarget &target, const color::IccPreview *preview) {
   if ((object.has_fill && !object.fill.is_valid()) ||
       (object.has_stroke && !object.stroke.is_valid()))
     return false;
   std::vector<Contour> contours;
   if (!flatten(object, camera, contours))
     return false;
+  const auto convert = [preview](const color::ColorValue &value) {
+    return (preview ? preview->convert(value) : color::to_preview_rgba(value)).to_device();
+  };
   if (object.has_fill &&
       !fill(contours, object.path.winding_rule(),
-            color::to_preview_rgba(object.fill).to_device(), target))
+            convert(object.fill), target))
     return false;
   return !object.has_stroke ||
          stroke(contours, object, camera,
-                color::to_preview_rgba(object.stroke).to_device(), target);
+                convert(object.stroke), target);
 }
 } // namespace pikdraw::rendering::raster

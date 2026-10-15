@@ -229,39 +229,7 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
 
         std::wostringstream content;
         if (active_dock_tab_ == 0) {
-            DrawTextW(mem_dc, is_vi ? L"THUỘC TÍNH ĐANG CHỌN" : L"SELECTION", -1,
-                      &rc_head, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
-            content << (is_vi ? L"Số đối tượng: " : L"Selected objects: ") << selection.size();
-            if (selection.size() == 1) {
-                const auto object = snapshot->objects().get(selection.front());
-                if (object) {
-                    const auto name = std::visit([](const auto& value) { return value.name; }, *object);
-                    content << L"\n" << utf8_to_wide(name);
-                    if (const auto bounds = selected_bounds(*object)) {
-                        content << L"\nX: " << std::fixed << std::setprecision(1) << bounds->x
-                                << L" mm\nY: " << bounds->y << L" mm\nW: " << bounds->width
-                                << L" mm\nH: " << bounds->height << L" mm";
-                    }
-                }
-            } else {
-                content << (is_vi ? L"\nNhấp một đối tượng để xem kích thước (mm)."
-                                  : L"\nSelect an object to inspect its size in mm.");
-            }
-            RECT body = { insp_x + 14, content_y + 28, w - 14, content_y + 190 };
-            const auto text = content.str();
-            DrawTextW(mem_dc, text.c_str(), -1, &body, DT_LEFT | DT_NOPREFIX);
-            SelectObject(mem_dc, font_be_vietnam_bold);
-            SetTextColor(mem_dc, col_teal);
-            RECT tools_head = { insp_x + 14, content_y + 205, w - 14, content_y + 228 };
-            DrawTextW(mem_dc, is_vi ? L"CÔNG CỤ ĐANG CÓ" : L"AVAILABLE TOOLS", -1,
-                      &tools_head, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
-            SelectObject(mem_dc, font_secondary);
-            SetTextColor(mem_dc, col_text_white);
-            RECT tools_body = { insp_x + 14, content_y + 232, w - 14, content_y + 370 };
-            DrawTextW(mem_dc, is_vi
-                ? L"Chọn và di chuyển (V)\nHình chữ nhật (R)\nHình elip (E)\nPan: H / Space + kéo / chuột giữa\nF: Vừa trang · 1: 100%\nCtrl+Z / Ctrl+Y"
-                : L"Select and move (V)\nRectangle (R)\nEllipse (E)\nPan: H / Space + drag / middle mouse\nF: Fit page · 1: 100%\nCtrl+Z / Ctrl+Y",
-                -1, &tools_body, DT_LEFT | DT_NOPREFIX);
+            paint_style_inspector(mem_dc, insp_x, content_y, h - status_h);
         } else if (active_dock_tab_ == 1) {
             DrawTextW(mem_dc, is_vi ? L"ĐỐI TƯỢNG TRONG TÀI LIỆU" : L"DOCUMENT OBJECTS", -1,
                       &rc_head, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);

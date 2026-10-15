@@ -11,6 +11,14 @@ namespace pikdraw::rendering {
 class SoftwareRasterizer : public IRenderBackend {
 public:
   SoftwareRasterizer() = default;
+  bool set_color_preview(std::shared_ptr<const color::IccPreview> preview) override {
+    preview_ = std::move(preview);
+    return true;
+  }
+  bool set_canvas_background(color::DeviceRGBA color) override {
+    background_ = color;
+    return true;
+  }
 
   [[nodiscard]] DeviceLossStatus device_status() const noexcept override {
     return loss_status_;
@@ -34,6 +42,8 @@ public:
 
 private:
   DeviceLossStatus loss_status_{DeviceLossStatus::Healthy};
+  std::shared_ptr<const color::IccPreview> preview_;
+  color::DeviceRGBA background_{18, 20, 26, 255};
 };
 
 } // namespace pikdraw::rendering

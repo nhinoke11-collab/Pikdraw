@@ -95,8 +95,8 @@ document::ObjectId DocumentWorkflow::add_vietnamese_text(
 }
 
 void DocumentWorkflow::select_object(document::ObjectId id, bool toggle) {
-    root_.vector_controller().selection().select(
-        id,
+    root_.vector_controller().set_selection(
+        {id}, *root_.document().current_snapshot(),
         toggle ? vector::SelectionMode::Toggle : vector::SelectionMode::Replace
     );
     sync_status_bar();
@@ -137,7 +137,9 @@ void DocumentWorkflow::new_document(double page_width_mm, double page_height_mm)
         0,
         std::move(page),
         document::PersistentObjectMap{});
-    doc.reset_from_snapshot(std::move(snapshot));
+    if (!doc.reset_from_snapshot(std::move(snapshot)))
+        return;
+    root_.vector_controller().on_escape();
     root_.vector_controller().selection().clear();
     sync_status_bar();
 }
@@ -161,7 +163,10 @@ bool DocumentWorkflow::open_native(const std::string& file_path) {
     }
 
     // Replace current document content with loaded snapshot
-    root_.document().reset_from_snapshot(loaded_snapshot);
+    if (!root_.document().reset_from_snapshot(loaded_snapshot))
+        return false;
+    root_.vector_controller().on_escape();
+    root_.vector_controller().selection().clear();
     sync_status_bar();
     return true;
 }
@@ -227,6 +232,9 @@ std::string DocumentWorkflow::export_svg() {
 std::vector<uint8_t> DocumentWorkflow::render_snapshot(
     int32_t width_px, int32_t height_px
 ) {
+    if (width_px <= 0 || height_px <= 0 ||
+        static_cast<uint64_t>(width_px) * static_cast<uint64_t>(height_px) > 8388608)
+        return {};
     std::vector<uint8_t> buffer(static_cast<size_t>(width_px) * height_px * 4, 0);
     rendering::PixelBufferTarget target{buffer.data(), width_px, height_px, width_px * 4};
     root_.renderer().render_frame(*root_.document().current_snapshot(), target);

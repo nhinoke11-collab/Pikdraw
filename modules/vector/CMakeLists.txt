@@ -9,7 +9,9 @@ add_library(pikdraw_vector STATIC
     src/vector_controller.cpp
     src/selection/hit_test.cpp
     src/selection/hit_geometry.cpp
+    src/selection/region_selection.cpp
     src/gestures/style_tool.cpp
+    src/gestures/selection_resize.cpp
     src/gestures/text_tool.cpp
 )
 
@@ -44,4 +46,5 @@ if(PIKDRAW_BUILD_TESTS)
     add_vector_test(test_pikdraw_vector_selection tests/selection/test_selection.cpp)
     add_vector_test(test_pikdraw_vector_shapes tests/tools/test_shape_tools.cpp)
     add_vector_test(test_pikdraw_vector_gestures tests/gestures/test_gestures.cpp)
+    add_vector_test(test_pikdraw_editor_selection tests/selection/test_editor_selection.cpp)
 endif()

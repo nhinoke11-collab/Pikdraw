@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "native_canvas_frame.hpp"
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -57,6 +58,8 @@ void NativeWindow::toggle_language() noexcept {
 
 void NativeWindow::set_theme(ThemeMode mode) noexcept {
     theme_ = mode;
+    (void)root_.renderer().backend().set_canvas_background(mode == ThemeMode::CyberDark
+        ? color::DeviceRGBA{18, 20, 26, 255} : color::DeviceRGBA{241, 245, 249, 255});
     settings_theme_choice_ = (mode == ThemeMode::CyberDark) ? 0 : 1;
     status_msg_ = (language_ == UILanguage::Vietnamese) ?
         (mode == ThemeMode::CyberDark ? "Đã chuyển sang Chế độ Tối (Dark Mode Obsidian)" : "Đã chuyển sang Chế độ Sáng (Light Mode Silver)") :
@@ -132,6 +135,9 @@ void NativeWindow::set_settings_unit_choice(int unit) noexcept {
 void NativeWindow::set_active_tool(int tool_index) noexcept {
     if (tool_index < 0 || tool_index > 3)
         return;
+#ifdef _WIN32
+    cancel_canvas_interaction();
+#endif
     active_tool_ = tool_index;
     const auto mode = tool_index == 1 ? vector::ToolMode::Rectangle
                     : tool_index == 2 ? vector::ToolMode::Ellipse
@@ -376,6 +382,13 @@ bool NativeWindow::initialize(const std::string& title) {
     if (!hwnd_) return false;
 
     SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+    RECT client{};
+    GetClientRect(hwnd_, &client);
+    width_ = client.right;
+    height_ = client.bottom;
+    shell_.set_window_size(width_, height_);
+    fit_page_to_canvas();
+    load_color_preferences();
     ShowWindow(hwnd_, SW_SHOW);
     UpdateWindow(hwnd_);
     return true;

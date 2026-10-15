@@ -35,7 +35,13 @@ class VectorController {
     const HitDiagnostics &last_hit_diagnostics() const noexcept {
         return hit_diagnostics_;
     }
-    void on_pointer_down(geometry::Point2D point, const document::DocumentSnapshot &snapshot);
+    void on_pointer_down(geometry::Point2D point, const document::DocumentSnapshot &snapshot,
+                         SelectionMode selection_mode = SelectionMode::Replace, double tolerance_mm = 2.0);
+    void set_selection(const std::vector<document::ObjectId> &ids, const document::DocumentSnapshot &snapshot,
+                       SelectionMode mode = SelectionMode::Replace);
+    void select_region(const geometry::Rect2D &region, RegionMode region_mode,
+                       const document::DocumentSnapshot &snapshot,
+                       SelectionMode mode = SelectionMode::Replace);
     geometry::Transform2D on_pointer_move(geometry::Point2D point);
     document::CommandResult on_pointer_up(geometry::Point2D point, document::Document &doc);
     std::optional<geometry::Rect2D> shape_preview() const noexcept;

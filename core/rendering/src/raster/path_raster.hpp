@@ -15,6 +15,7 @@ bool flatten(const document::PathObject &, const Camera2D &,
              std::vector<Contour> &);
 bool stroke(const std::vector<Contour> &, const document::PathObject &,
             const Camera2D &, color::DeviceRGBA, PixelBufferTarget &);
-bool paint(const document::PathObject &, const Camera2D &, PixelBufferTarget &);
+bool paint(const document::PathObject &, const Camera2D &, PixelBufferTarget &,
+           const color::IccPreview *preview = nullptr);
 Point project(Point, const geometry::Transform2D &, const Camera2D &);
 } // namespace pikdraw::rendering::raster

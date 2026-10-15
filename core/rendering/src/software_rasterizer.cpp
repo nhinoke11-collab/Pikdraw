@@ -33,12 +33,12 @@ bool render_page(const document::Page &page, const Camera2D &camera,
 }
 bool render_object(const document::ObjectVariant &variant,
                    const Camera2D &camera, PixelBufferTarget &target,
-                   [[maybe_unused]] RenderMetric &metric) {
+                   [[maybe_unused]] RenderMetric &metric, const color::IccPreview *preview) {
   return std::visit(
       [&](const auto &object) -> bool {
         using T = std::decay_t<decltype(object)>;
         if constexpr (std::is_same_v<T, document::PathObject>) {
-          return raster::paint(object, camera, target);
+          return raster::paint(object, camera, target, preview);
         } else if constexpr (std::is_same_v<T, document::TextObject>) {
       // Enabled only when a genuine platform outline backend is compiled in.
 #ifdef PIKDRAW_TYPOGRAPHY_REAL_OUTLINES
@@ -60,7 +60,7 @@ bool render_object(const document::ObjectVariant &variant,
                                  geometry::Transform2D::scale(1, -1);
             outlines.fill = object.fill;
             outlines.has_stroke = false;
-            return raster::paint(outlines, camera, target);
+            return raster::paint(outlines, camera, target, preview);
           } catch (const std::exception &) {
             return false;
           }
@@ -98,14 +98,14 @@ bool SoftwareRasterizer::render(const document::DocumentSnapshot &snapshot,
               static_cast<uint64_t>(target.height) >
           kMaxTargetPixels)
     return fail("Invalid target, pixel budget exceeded or backend not healthy");
-  target.clear(18, 20, 26, 255);
+  target.clear(background_.r, background_.g, background_.b, background_.a);
   if (!render_page(snapshot.page(), camera, target))
     return fail("Invalid/unsupported page projection");
   const auto visible = SpatialCuller::query_visible_refs(
       snapshot, camera.visible_world_bounds());
   bool success = true;
   for (const auto &item : visible) {
-    if (render_object(*item.object, camera, target, metric))
+    if (render_object(*item.object, camera, target, metric, preview_.get()))
       ++metric.rendered_objects;
     else {
       diagnostic(metric, item.id, true,

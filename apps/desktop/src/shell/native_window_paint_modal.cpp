@@ -301,11 +301,11 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
         RECT rc_s3_b = { cx, sec3_y + 34, cx + 490, sec3_y + 110 };
         const wchar_t* tags_text = is_vi ?
             L"✓ Bo nhẹ công nghệ (Micro-Radius 6px) trên toàn bộ dock và nút bấm\n"
-            L"✓ Bảo toàn màu sắc Artwork khi đổi theme: Khóa chuẩn ICC FOGRA39\n"
-            L"✓ Tự động lưu cấu hình màn hình làm việc (Workspace Persistence)" :
+            L"✓ Đổi theme giữ nguyên các kênh màu nguồn\n"
+            L"✓ Profile preview ICC được lưu riêng trên máy" :
             L"✓ Micro-Radius (6px) rounded styling across all docks and toolbars\n"
-            L"✓ Artwork Color Integrity on theme change: Locked to ICC FOGRA39\n"
-            L"✓ Automatic workspace persistence across application sessions";
+            L"✓ Theme changes preserve source color channels\n"
+            L"✓ ICC preview profiles are saved on this machine";
         DrawTextW(mem_dc, tags_text, -1, &rc_s3_b, DT_LEFT | DT_NOPREFIX);
 
     } else if (settings_active_tab_ == 2) {
@@ -377,14 +377,14 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
         SetTextColor(mem_dc, m_text_mut);
         RECT rc_c_b = { cx, cy + 26, cx + 490, cy + 140 };
         const wchar_t* icc_text = is_vi ?
-            L"• Không gian RGB: sRGB IEC61966-2.1 (Mặc định hiển thị màn hình & Web)\n"
-            L"• Không gian CMYK: ISO Coated v2 (ECI) / FOGRA39 (Chuẩn in ấn Quốc Tế)\n"
-            L"• Bảng màu biển hiệu: Bảng màu thực tế tấm Alcorest & Decal 3M\n"
-            L"• Phương thức chuyển màu (Intent): Perceptual (Cảm nhận thị giác)" :
-            L"• RGB Space: sRGB IEC61966-2.1 (Standard Monitor & Web Display)\n"
-            L"• CMYK Space: ISO Coated v2 (ECI) / FOGRA39 (Standard Offset Print)\n"
-            L"• Signage Palette: Real Alcorest Alu & 3M Decal Swatches\n"
-            L"• Rendering Intent: Perceptual (Optimal for graphics and signage)";
+            L"• Profile nguồn RGB/CMYK: nạp file ICC/ICM thực tế\n"
+            L"• Preview chuyển về sRGB bằng Windows Color Management\n"
+            L"• Intent: Relative Colorimetric\n"
+            L"• Chưa nạp ICC CMYK: preview dùng công thức gần đúng" :
+            L"• Source RGB/CMYK profiles: load an actual ICC/ICM file\n"
+            L"• Preview converts to sRGB through Windows Color Management\n"
+            L"• Intent: Relative Colorimetric\n"
+            L"• Without a CMYK ICC, CMYK preview is approximate";
         DrawTextW(mem_dc, icc_text, -1, &rc_c_b, DT_LEFT | DT_NOPREFIX);
 
         SelectObject(mem_dc, font_vn_bold);
@@ -396,13 +396,20 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
         SetTextColor(mem_dc, m_text_pri);
         RECT rc_c_s2_b = { cx, cy + 176, cx + 490, cy + 260 };
         const wchar_t* pol_text = is_vi ?
-            L"☑ Giữ nguyên cấu hình màu đính kèm trong tệp (Preserve Embedded Profiles)\n"
-            L"☑ Cảnh báo màu vượt ngưỡng (Out-of-Gamut Warning) khi in ấn CMYK\n"
-            L"☑ Tự động bù dải đen sâu (Black Point Compensation BPC)" :
-            L"☑ Preserve embedded ICC profiles from source files\n"
-            L"☑ Out-of-Gamut visual warning for unprintable CMYK colors\n"
-            L"☑ Black Point Compensation (BPC) enabled by default";
+            L"✓ RGB/CMYK/spot và overprint nguồn được giữ khi sửa và lưu native.\n"
+            L"Thiết lập ICC ở đây chỉ đổi preview của máy.\n"
+            L"Chưa hỗ trợ gán/nhúng ICC tài liệu, gamut warning, soft proof hoặc PDF/X." :
+            L"✓ Source RGB/CMYK/spot and overprint survive edits and native saves.\n"
+            L"These ICC settings affect this machine's preview only.\n"
+            L"Document ICC embedding, gamut warning, soft proof and PDF/X are unavailable.";
         DrawTextW(mem_dc, pol_text, -1, &rc_c_s2_b, DT_LEFT | DT_NOPREFIX);
+        RECT manage{cx, cy + 280, cx + 490, cy + 312};
+        HBRUSH manage_brush = CreateSolidBrush(m_header_bg);
+        FillRect(mem_dc, &manage, manage_brush);
+        DeleteObject(manage_brush);
+        SetTextColor(mem_dc, m_teal);
+        DrawTextW(mem_dc, is_vi ? L"Nạp và quản lý profile ICC…" : L"Load and manage ICC profiles…", -1,
+                  &manage, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
     } else if (settings_active_tab_ == 4) {
         // Tab 4: Thi công & CNC

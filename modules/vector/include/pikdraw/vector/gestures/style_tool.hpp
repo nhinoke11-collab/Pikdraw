@@ -1,6 +1,16 @@
 #pragma once
 #include "pikdraw/vector/gestures/edit_target.hpp"
 namespace pikdraw::vector {
+struct StylePatch {
+    std::optional<color::ColorValue> fill, stroke;
+    std::optional<double> width_mm;
+    std::optional<bool> has_fill, has_stroke;
+};
+// One atomic command and one undo unit. Existing per-object overprint is preserved.
+document::CommandResult apply_object_styles(document::Document &doc,
+                                            const std::vector<document::ObjectId> &ids,
+                                            const StylePatch &patch);
+
 class SetObjectStyleCommand : public document::DocumentCommand {
   public:
     SetObjectStyleCommand(document::ObjectId id, std::optional<color::ColorValue> fill,

@@ -12,7 +12,7 @@ namespace pikdraw::desktop {
 
 #ifdef _WIN32
 
-void NativeWindow::handle_mouse_down(int x, int y) {
+void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
     int w = width_;
 
     // Handle clicks inside or dismissing the Settings Modal (Corel Options Dialog)
@@ -83,6 +83,11 @@ void NativeWindow::handle_mouse_down(int x, int y) {
                 int ux = modal_x + 205 + i * 115;
                 if (x >= ux && x <= ux + 105) { set_settings_unit_choice(i); return; }
             }
+        }
+        if (settings_active_tab_ == 3 && x >= modal_x + 205 && x <= modal_x + 695 &&
+            y >= modal_y + 338 && y <= modal_y + 370) {
+            show_color_profiles();
+            return;
         }
 
         // Footer buttons
@@ -302,21 +307,23 @@ void NativeWindow::handle_mouse_down(int x, int y) {
         if (x >= w - 45 && x <= w - 20) { zoom_in(); return; }
     }
 
-    handle_canvas_mouse_down(x, y);
+    if (handle_style_click(x, y))
+        return;
+    handle_canvas_mouse_down(x, y, modifiers);
 }
 
-void NativeWindow::handle_mouse_move(int x, int y) {
-    handle_canvas_mouse_move(x, y);
+void NativeWindow::handle_mouse_move(int x, int y, unsigned modifiers) {
+    handle_canvas_mouse_move(x, y, modifiers);
 }
 
-void NativeWindow::handle_mouse_up(int x, int y) {
+void NativeWindow::handle_mouse_up(int x, int y, unsigned modifiers) {
     if (is_panning_) {
         is_panning_ = false;
         if (GetCapture() == hwnd_)
             ReleaseCapture();
         return;
     }
-    handle_canvas_mouse_up(x, y);
+    handle_canvas_mouse_up(x, y, modifiers);
 }
 
 bool NativeWindow::handle_key_down(WPARAM key) {
@@ -327,14 +334,24 @@ bool NativeWindow::handle_key_down(WPARAM key) {
         if (key == 'O') { open_document_dialog(); return true; }
         if (key == 'S') { save_document_dialog(shift); return true; }
         if (key == 'E') { export_svg_dialog(); return true; }
-        if (key == 'Z' || (key == 'Y' && shift)) {
+        if (key == 'J') { open_settings_modal(); return true; }
+        if (key == 'A') {
+            const auto snapshot = root_.document().current_snapshot();
+            std::vector<document::ObjectId> ids;
+            for (const auto &layer : snapshot->page().layers)
+                ids.insert(ids.end(), layer.object_ids.begin(), layer.object_ids.end());
+            root_.vector_controller().set_selection(ids, *snapshot);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
+        if (key == 'Z' && !shift) {
             workflow_.undo();
             root_.vector_controller().selection().clear();
             status_msg_ = language_ == UILanguage::Vietnamese ? "Đã hoàn tác" : "Undo complete";
             InvalidateRect(hwnd_, nullptr, FALSE);
             return true;
         }
-        if (key == 'Y') {
+        if (key == 'Y' || (key == 'Z' && shift)) {
             workflow_.redo();
             root_.vector_controller().selection().clear();
             status_msg_ = language_ == UILanguage::Vietnamese ? "Đã làm lại" : "Redo complete";
@@ -346,18 +363,24 @@ bool NativeWindow::handle_key_down(WPARAM key) {
         if (show_settings_modal_) close_settings_modal();
         else if (show_file_menu_) close_file_menu();
         else if (is_panning_) {
-            is_panning_ = false;
-            if (GetCapture() == hwnd_) ReleaseCapture();
+            cancel_canvas_interaction();
             InvalidateRect(hwnd_, nullptr, FALSE);
         } else if (pointer_active_) {
-            root_.vector_controller().on_escape();
-            pointer_active_ = false;
-            is_dragging_ = false;
-            is_creating_shape_ = false;
-            drag_preview_bounds_.reset();
-            if (GetCapture() == hwnd_) ReleaseCapture();
+            cancel_canvas_interaction();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        } else {
+            root_.vector_controller().selection().clear();
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
+        return true;
+    }
+    if (key == VK_DELETE) {
+        cancel_canvas_interaction();
+        const auto result = root_.vector_controller().delete_selected(root_.document());
+        status_msg_ = result.success ? (language_ == UILanguage::Vietnamese ? "Đã xóa đối tượng" : "Objects deleted")
+                                     : result.error_message;
+        workflow_.sync_status_bar();
+        InvalidateRect(hwnd_, nullptr, FALSE);
         return true;
     }
     if (key == 'F') { fit_page_to_canvas(); return true; }
@@ -397,23 +420,24 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
     case WM_KILLFOCUS:
         if (self) {
             self->space_down_ = false;
-            if (self->is_panning_) {
-                self->is_panning_ = false;
-                if (GetCapture() == hwnd) ReleaseCapture();
-            }
+            self->cancel_canvas_interaction();
         }
         break;
     case WM_LBUTTONDOWN:
         if (self) {
             SetFocus(hwnd);
-            self->handle_mouse_down(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+            self->handle_mouse_down(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), static_cast<unsigned>(wParam));
         }
         return 0;
     case WM_MOUSEMOVE:
-        if (self) self->handle_mouse_move(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+        if (self) self->handle_mouse_move(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), static_cast<unsigned>(wParam));
         return 0;
     case WM_LBUTTONUP:
-        if (self) self->handle_mouse_up(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+        if (self) self->handle_mouse_up(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), static_cast<unsigned>(wParam));
+        return 0;
+    case WM_RBUTTONDOWN:
+        if (self && !self->show_settings_modal_ && !self->show_file_menu_ && !self->show_home_screen_)
+            self->handle_style_click(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), true);
         return 0;
     case WM_MBUTTONDOWN:
         if (self && self->is_canvas_point(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) {
@@ -450,8 +474,10 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         return 0;
     case WM_SETCURSOR:
         if (self && LOWORD(lParam) == HTCLIENT) {
-            const WORD cursor_id = self->is_panning_ ? 32646
-                : self->active_tool_ == 3 ? 32649 : 32512;
+            POINT point;
+            GetCursorPos(&point);
+            ScreenToClient(hwnd, &point);
+            const WORD cursor_id = self->canvas_cursor_at(point.x, point.y);
             SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(cursor_id)));
             return TRUE;
         }
@@ -481,15 +507,8 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
     }
     case WM_CAPTURECHANGED:
         if (self) {
-            self->is_panning_ = false;
-            if (self->pointer_active_) {
-                self->root_.vector_controller().on_escape();
-                self->pointer_active_ = false;
-                self->is_dragging_ = false;
-                self->is_creating_shape_ = false;
-                self->drag_preview_bounds_.reset();
-                InvalidateRect(hwnd, nullptr, FALSE);
-            }
+            self->cancel_canvas_interaction();
+            InvalidateRect(hwnd, nullptr, FALSE);
         }
         return 0;
     case WM_DESTROY:

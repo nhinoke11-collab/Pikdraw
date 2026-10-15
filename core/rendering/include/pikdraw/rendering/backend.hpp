@@ -3,6 +3,7 @@
 #include "pikdraw/document/snapshots/document_snapshot.hpp"
 #include "pikdraw/rendering/camera.hpp"
 #include "pikdraw/rendering/frame_target.hpp"
+#include "pikdraw/color/preview/icc_preview.hpp"
 #include <chrono>
 #include <string>
 #include <vector>
@@ -34,6 +35,8 @@ public:
 
   [[nodiscard]] virtual DeviceLossStatus device_status() const noexcept = 0;
   virtual bool recover_device() = 0;
+  virtual bool set_color_preview(std::shared_ptr<const color::IccPreview>) { return false; }
+  virtual bool set_canvas_background(color::DeviceRGBA) { return false; }
 
   virtual bool render(const document::DocumentSnapshot &snapshot,
                       const Camera2D &camera, PixelBufferTarget &target,

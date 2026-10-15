@@ -10,7 +10,11 @@ add_library(pikdraw_color STATIC
     src/profiles/profile_registry.cpp
     src/preview/color_transform.cpp
     src/preview/preview_cache.cpp
+    src/preview/icc_preview.cpp
 )
+if(WIN32)
+    target_link_libraries(pikdraw_color PRIVATE mscms)
+endif()
 
 target_include_directories(pikdraw_color PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -35,4 +39,7 @@ if(PIKDRAW_BUILD_TESTS)
     )
 
     add_test(NAME pikdraw_color_tests COMMAND test_pikdraw_color)
+    add_executable(test_pikdraw_icc_preview tests/preview/test_icc_preview.cpp)
+    target_link_libraries(test_pikdraw_icc_preview PRIVATE pikdraw_color)
+    add_test(NAME test_pikdraw_icc_preview COMMAND test_pikdraw_icc_preview)
 endif()

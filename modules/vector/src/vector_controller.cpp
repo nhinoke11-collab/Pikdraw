@@ -9,19 +9,37 @@ void VectorController::bind_selection(const document::DocumentSnapshot &snapshot
         selection_.clear();
     selection_stamp_ = GestureStamp(snapshot);
 }
-void VectorController::on_pointer_down(geometry::Point2D point, const document::DocumentSnapshot &snapshot) {
+void VectorController::set_selection(const std::vector<document::ObjectId> &ids,
+                                     const document::DocumentSnapshot &snapshot, SelectionMode mode) {
+    bind_selection(snapshot);
+    if (mode == SelectionMode::Replace)
+        selection_.clear();
+    for (const auto id : ids)
+        if (editable_target(snapshot, id))
+            selection_.select(id, mode == SelectionMode::Replace ? SelectionMode::Add : mode);
+}
+void VectorController::select_region(const geometry::Rect2D &region, RegionMode region_mode,
+                                     const document::DocumentSnapshot &snapshot, SelectionMode mode) {
+    set_selection(SelectionModel::query_region(region, region_mode, snapshot), snapshot, mode);
+}
+void VectorController::on_pointer_down(geometry::Point2D point, const document::DocumentSnapshot &snapshot,
+                                       SelectionMode selection_mode, double tolerance_mm) {
     on_escape();
     if (!finite_point(point))
         return;
     bind_selection(snapshot);
     if (mode_ == ToolMode::Select) {
-        const auto hit = SelectionModel::hit_test_detail(point, snapshot, 2.0, true, &hit_diagnostics_);
+        const auto hit =
+            SelectionModel::hit_test_detail(point, snapshot, tolerance_mm, true, &hit_diagnostics_);
         if (!hit) {
-            selection_.clear();
+            if (selection_mode == SelectionMode::Replace)
+                selection_.clear();
             return;
         }
-        if (!selection_.is_selected(hit->id))
-            selection_.select(hit->id);
+        if (selection_mode != SelectionMode::Replace || !selection_.is_selected(hit->id))
+            selection_.select(hit->id, selection_mode);
+        if (selection_mode != SelectionMode::Replace)
+            return;
         (void)gesture_.begin(point, selection_.selected_ids(), snapshot);
     } else if (mode_ == ToolMode::Rectangle || mode_ == ToolMode::Ellipse) {
         if (!valid_layer(snapshot))

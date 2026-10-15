@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "native_canvas_frame.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -11,16 +12,6 @@ namespace pikdraw::desktop {
 
 #ifdef _WIN32
 namespace {
-
-std::optional<geometry::Rect2D> object_bounds(const document::ObjectVariant& object) {
-    return std::visit([](const auto& value) -> std::optional<geometry::Rect2D> {
-        using T = std::decay_t<decltype(value)>;
-        if constexpr (std::is_same_v<T, document::GroupObject>)
-            return std::nullopt;
-        else
-            return value.bounds();
-    }, object);
-}
 
 RECT screen_rect(const rendering::Camera2D& camera, const geometry::Rect2D& bounds,
                  int origin_x, int origin_y) {
@@ -88,17 +79,32 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
     FillRect(dc, &area, background);
     DeleteObject(background);
 
-    const auto rgba = workflow_.render_snapshot(canvas_width, canvas_height);
+    auto &camera = root_.renderer().camera();
+    camera.set_viewport_size(canvas_width, canvas_height);
+    const auto snapshot = root_.document().current_snapshot();
+    if (!canvas_frame_)
+        canvas_frame_ = std::make_unique<CanvasFrameCache>();
+    auto &frame = *canvas_frame_;
     const size_t expected = static_cast<size_t>(canvas_width) *
                             static_cast<size_t>(canvas_height) * 4;
-    if (rgba.size() == expected) {
-        std::vector<uint8_t> bgra(expected);
-        for (size_t index = 0; index < expected; index += 4) {
-            bgra[index] = rgba[index + 2];
-            bgra[index + 1] = rgba[index + 1];
-            bgra[index + 2] = rgba[index];
-            bgra[index + 3] = 255;
+    if (!frame.matches(snapshot, camera, canvas_width, canvas_height, color_preview_, theme_ == ThemeMode::CyberDark)) {
+        const auto rgba = workflow_.render_snapshot(canvas_width, canvas_height);
+        frame.bgra.resize(rgba.size());
+        for (size_t index = 0; index < rgba.size(); index += 4) {
+            frame.bgra[index] = rgba[index + 2];
+            frame.bgra[index + 1] = rgba[index + 1];
+            frame.bgra[index + 2] = rgba[index];
+            frame.bgra[index + 3] = 255;
         }
+        frame.snapshot = snapshot;
+        frame.profile = color_preview_;
+        frame.center = camera.center();
+        frame.zoom = camera.zoom();
+        frame.width = canvas_width;
+        frame.height = canvas_height;
+        frame.dark = theme_ == ThemeMode::CyberDark;
+    }
+    if (frame.bgra.size() == expected) {
         BITMAPINFO bitmap{};
         bitmap.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
         bitmap.bmiHeader.biWidth = canvas_width;
@@ -107,7 +113,7 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
         bitmap.bmiHeader.biBitCount = 32;
         bitmap.bmiHeader.biCompression = BI_RGB;
         StretchDIBits(dc, area.left, area.top, canvas_width, canvas_height,
-                      0, 0, canvas_width, canvas_height, bgra.data(), &bitmap,
+                      0, 0, canvas_width, canvas_height, frame.bgra.data(), &bitmap,
                       DIB_RGB_COLORS, SRCCOPY);
     } else {
         SetBkMode(dc, TRANSPARENT);
@@ -118,9 +124,6 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
         TextOutW(dc, area.left + 18, area.top + 18, error,
                  static_cast<int>(wcslen(error)));
     }
-
-    auto& camera = root_.renderer().camera();
-    const auto snapshot = root_.document().current_snapshot();
 
     // Draw only the page's external shadow after rendering, leaving page pixels untouched.
     const auto page_top_left = camera.world_to_screen({0.0, snapshot->page().height_mm});
@@ -138,28 +141,28 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
     FillRect(dc, &shadow_bottom, shadow);
     DeleteObject(shadow);
 
-    for (const auto id : root_.vector_controller().selection().selected_ids()) {
-        const auto object = snapshot->objects().get(id);
-        if (object) {
-            if (const auto bounds = object_bounds(*object))
-                draw_outline(dc, camera, *bounds, area.left, area.top,
-                             RGB(14, 165, 233), PS_DOT, false);
-        }
-    }
-
-    if (is_dragging_ && drag_preview_bounds_) {
-        auto preview = *drag_preview_bounds_;
-        preview.x += drag_preview_delta_.x;
-        preview.y += drag_preview_delta_.y;
-        draw_outline(dc, camera, preview, area.left, area.top,
-                     RGB(0, 242, 195), PS_DASH, false);
-    }
+    paint_selection_overlay(dc);
 
     if (is_creating_shape_) {
         const auto preview = bounds_between(pointer_down_world_, pointer_current_world_);
         const bool ellipse = active_tool_ == 2;
         draw_outline(dc, camera, preview, area.left, area.top,
                      RGB(0, 242, 195), PS_DASH, ellipse);
+    }
+    const auto &diagnostics = root_.renderer().last_metric().diagnostics;
+    const auto errors = std::count_if(diagnostics.begin(), diagnostics.end(),
+        [](const auto &item) { return item.error; });
+    const bool icc_error = color_preview_ && color_preview_->conversion_failure_count() > 0;
+    if (errors > 0 || icc_error) {
+        const auto warning = icc_error ? (language_ == UILanguage::Vietnamese
+            ? L"ICC preview có lỗi; một số màu đang được hiển thị gần đúng."
+            : L"ICC preview failed for some colors; approximate preview is active.")
+            : language_ == UILanguage::Vietnamese
+            ? L"Một số đối tượng chưa dựng được. Dữ liệu nguồn được giữ nguyên."
+            : L"Some objects could not be displayed. Source data is preserved.";
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, RGB(205, 125, 45));
+        TextOutW(dc, area.left + 12, area.bottom - 24, warning, static_cast<int>(wcslen(warning)));
     }
     RestoreDC(dc, saved);
     paint_canvas_rulers(dc, width, height);
@@ -261,116 +264,6 @@ void NativeWindow::paint_canvas_rulers(HDC dc, int width, int height) {
     SelectObject(dc, old_pen);
     DeleteObject(ruler_font);
     DeleteObject(line);
-}
-
-void NativeWindow::handle_canvas_mouse_down(int x, int y) {
-    if (!is_canvas_point(x, y))
-        return;
-    SetCapture(hwnd_);
-    if (active_tool_ == 3) {
-        is_panning_ = true;
-        last_pointer_x_ = x;
-        last_pointer_y_ = y;
-        return;
-    }
-    pointer_active_ = true;
-    pointer_down_world_ = canvas_to_world(x, y);
-    pointer_current_world_ = pointer_down_world_;
-    drag_preview_delta_ = {};
-    drag_preview_bounds_.reset();
-    const auto snapshot = root_.document().current_snapshot();
-    pointer_start_revision_ = snapshot->revision();
-
-    if (active_tool_ == 0) {
-        auto& controller = root_.vector_controller();
-        controller.on_pointer_down(pointer_down_world_, *snapshot);
-        is_dragging_ = controller.gesture().is_active();
-        if (is_dragging_) {
-            for (const auto id : controller.selection().selected_ids()) {
-                const auto object = snapshot->objects().get(id);
-                if (object) {
-                    if (const auto bounds = object_bounds(*object))
-                        drag_preview_bounds_ = drag_preview_bounds_
-                            ? drag_preview_bounds_->united(*bounds) : *bounds;
-                }
-            }
-        }
-    } else {
-        is_creating_shape_ = true;
-    }
-    InvalidateRect(hwnd_, nullptr, FALSE);
-}
-
-void NativeWindow::handle_canvas_mouse_move(int x, int y) {
-    if (is_canvas_point(x, y)) {
-        const auto point = canvas_to_world(x, y);
-        cursor_mm_x_ = point.x;
-        cursor_mm_y_ = point.y;
-    }
-    if (is_panning_) {
-        root_.renderer().camera().pan_pixels(
-            static_cast<double>(x - last_pointer_x_),
-            static_cast<double>(y - last_pointer_y_));
-        last_pointer_x_ = x;
-        last_pointer_y_ = y;
-        InvalidateRect(hwnd_, nullptr, FALSE);
-        return;
-    }
-    if (!pointer_active_)
-        return;
-
-    pointer_current_world_ = canvas_to_world(x, y);
-    if (is_dragging_) {
-        (void)root_.vector_controller().on_pointer_move(pointer_current_world_);
-        drag_preview_delta_ = {pointer_current_world_.x - pointer_down_world_.x,
-                               pointer_current_world_.y - pointer_down_world_.y};
-    }
-    InvalidateRect(hwnd_, nullptr, FALSE);
-}
-
-void NativeWindow::handle_canvas_mouse_up(int x, int y) {
-    if (!pointer_active_)
-        return;
-    pointer_current_world_ = canvas_to_world(x, y);
-    bool changed = false;
-    if (is_creating_shape_) {
-        const auto bounds = bounds_between(pointer_down_world_, pointer_current_world_);
-        if (bounds.width > 1.0 && bounds.height > 1.0) {
-            document::ObjectId id = document::kInvalidObjectId;
-            if (active_tool_ == 1) {
-                id = workflow_.add_rectangle(bounds.x, bounds.y, bounds.width, bounds.height,
-                                             "#00f2c3", "#0ea5e9", 2.0);
-            } else if (active_tool_ == 2) {
-                id = workflow_.add_ellipse(bounds.x + bounds.width * 0.5,
-                                           bounds.y + bounds.height * 0.5,
-                                           bounds.width * 0.5, bounds.height * 0.5,
-                                           "#00f2c3", "#0ea5e9", 2.0);
-            }
-            if (id != document::kInvalidObjectId) {
-                root_.vector_controller().selection().select(id);
-                changed = true;
-            }
-        }
-    } else if (is_dragging_) {
-        const auto result = root_.vector_controller().on_pointer_up(
-            pointer_current_world_, root_.document());
-        changed = result.success &&
-            root_.document().current_snapshot()->revision() != pointer_start_revision_;
-    }
-
-    pointer_active_ = false;
-    is_dragging_ = false;
-    is_creating_shape_ = false;
-    drag_preview_bounds_.reset();
-    drag_preview_delta_ = {};
-    if (GetCapture() == hwnd_)
-        ReleaseCapture();
-    workflow_.sync_status_bar();
-    status_msg_ = changed
-        ? (language_ == UILanguage::Vietnamese ? "Đã cập nhật tài liệu · Ctrl+Z để hoàn tác"
-                                               : "Document updated · Ctrl+Z to undo")
-        : (language_ == UILanguage::Vietnamese ? "Sẵn sàng" : "Ready");
-    InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 #endif
