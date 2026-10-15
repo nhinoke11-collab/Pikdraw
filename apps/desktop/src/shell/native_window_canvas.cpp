@@ -310,7 +310,7 @@ void NativeWindow::handle_canvas_mouse_move(int x, int y) {
     if (is_panning_) {
         root_.renderer().camera().pan_pixels(
             static_cast<double>(x - last_pointer_x_),
-            static_cast<double>(last_pointer_y_ - y));
+            static_cast<double>(y - last_pointer_y_));
         last_pointer_x_ = x;
         last_pointer_y_ = y;
         InvalidateRect(hwnd_, nullptr, FALSE);

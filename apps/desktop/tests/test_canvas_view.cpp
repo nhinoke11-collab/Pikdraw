@@ -34,6 +34,33 @@ int main() {
     window.zoom_out();
     assert(std::abs(camera.zoom() - zoom_before) < 1e-9);
 
+#ifdef _WIN32
+    assert(window.initialize("PikDraw pan direction regression"));
+    ShowWindow(window.hwnd(), SW_HIDE);
+    window.fit_page_to_canvas();
+
+    const auto send_mouse = [&window](UINT message, WPARAM buttons, int x, int y) {
+        SendMessageW(window.hwnd(), message, buttons, MAKELPARAM(x, y));
+    };
+    send_mouse(WM_LBUTTONDOWN, MK_LBUTTON, 20, 220);
+    send_mouse(WM_LBUTTONUP, 0, 20, 220);
+    assert(window.active_tool() == 3);
+
+    const auto drag_and_check_vertical_pan = [&](int start_y, int end_y) {
+        const auto anchor = camera.center();
+        const auto before = camera.world_to_screen(anchor);
+        send_mouse(WM_LBUTTONDOWN, MK_LBUTTON, 600, start_y);
+        send_mouse(WM_MOUSEMOVE, MK_LBUTTON, 600, end_y);
+        send_mouse(WM_LBUTTONUP, 0, 600, end_y);
+        const auto after = camera.world_to_screen(anchor);
+        const float expected_delta = static_cast<float>(end_y - start_y);
+        assert(std::abs((after.y - before.y) - expected_delta) < 0.1f);
+    };
+
+    drag_and_check_vertical_pan(400, 409);
+    drag_and_check_vertical_pan(409, 403);
+#endif
+
     std::cout << "[PASS] A4 landscape default, page-fit camera, and zoom controls\n";
     return 0;
 }
