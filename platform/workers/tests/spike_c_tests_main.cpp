@@ -18,6 +18,7 @@
 
 using namespace pikdraw::interop;
 using namespace pikdraw::workers;
+int RunLiveContainment();
 
 namespace {
 
@@ -164,6 +165,13 @@ void TestJobObjectConfiguration() {
     JobObjectGuard job;
     TEST_ASSERT(job.Create(config), "JobObject creation failed");
     TEST_ASSERT(job.IsValid(), "JobObject handle invalid");
+    config.active_process_limit=8;
+    config.prevent_child_processes=true;
+    JobObjectGuard strict;
+    TEST_ASSERT(strict.Create(config), "Strict JobObject creation failed");
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION actual{};
+    TEST_ASSERT(QueryInformationJobObject(strict.Get(),JobObjectExtendedLimitInformation,&actual,sizeof(actual),nullptr), "Cannot query actual Job limits");
+    TEST_ASSERT(actual.BasicLimitInformation.ActiveProcessLimit==1, "Prevent-child policy must override a larger process limit");
 
     g_tests_passed++;
     std::cout << "[PASS] TestJobObjectConfiguration\n";
@@ -218,8 +226,8 @@ void TestFormatMatrixAndFixtures() {
 // Test 7: AppContainer Canaries Execution or Truthful Gate Report
 // --------------------------------------------------------------------
 void TestAppContainerSecurityCanaries() {
-    std::cout << "[GATE] containment=NOT_MEASURED; five live denied canaries are not implemented.\n";
-    ++g_tests_failed; // Profile creation alone must never pass this gate.
+    if (RunLiveContainment()==0) ++g_tests_passed;
+    else ++g_tests_failed; // No skip/profile/transport failure is a containment pass.
 
 }
 

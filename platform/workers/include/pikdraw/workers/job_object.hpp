@@ -30,6 +30,7 @@ public:
 
     [[nodiscard]] HANDLE Get() const noexcept { return job_handle_.Get(); }
     [[nodiscard]] bool IsValid() const noexcept { return job_handle_.IsValid(); }
+    void Reset() noexcept { job_handle_.Close(); }
 
 private:
     ScopedHandle job_handle_;

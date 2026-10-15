@@ -18,9 +18,10 @@ bool JobObjectGuard::Create(const JobLimitsConfig& config) {
         limits.ProcessMemoryLimit = config.max_memory_bytes;
         limits.JobMemoryLimit = config.max_memory_bytes;
     }
-    if (config.active_process_limit > 0) {
+    const auto process_limit=config.prevent_child_processes ? 1u : config.active_process_limit;
+    if (process_limit > 0) {
         limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
-        limits.BasicLimitInformation.ActiveProcessLimit = config.active_process_limit;
+        limits.BasicLimitInformation.ActiveProcessLimit = process_limit;
     }
 
     if (!SetInformationJobObject(

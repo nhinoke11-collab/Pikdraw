@@ -17,6 +17,7 @@ struct WorkerLaunchConfig {
     // Only repository-owned smoke-test binaries may use this opt-in.
     // Production parsers/plugins must never receive this launch configuration.
     bool trusted_test_worker{false};
+    HANDLE test_inherited_handle{INVALID_HANDLE_VALUE}; // Positive control only; never sandboxed/plugin launches.
     std::vector<std::wstring> arguments;
     std::wstring appcontainer_profile_name;
     JobLimitsConfig job_limits;
@@ -42,6 +43,8 @@ public:
         std::chrono::milliseconds timeout);
 
     [[nodiscard]] bool IsAlive() const noexcept;
+    [[nodiscard]] const char* LastTransportFailure() const noexcept { return last_transport_failure_; }
+    [[nodiscard]] DWORD LastWorkerExitCode() const noexcept { return last_worker_exit_code_; }
     [[nodiscard]] const AppContainerProfileGuard& GetAppContainer() const noexcept { return app_container_; }
 
 private:
@@ -52,6 +55,8 @@ private:
     JobObjectGuard job_object_;
     AppContainerProfileGuard app_container_;
     uint32_t process_id_{0};
+    const char* last_transport_failure_{"none"};
+    DWORD last_worker_exit_code_{STILL_ACTIVE};
 };
 
 } // namespace pikdraw::workers

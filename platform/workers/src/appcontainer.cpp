@@ -55,7 +55,7 @@ bool AppContainerProfileGuard::GrantDirectoryAccess(const std::wstring& director
     ea.grfAccessMode = GRANT_ACCESS;
     ea.grfInheritance = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE;
     ea.Trustee.TrusteeForm = TRUSTEE_IS_SID;
-    ea.Trustee.TrusteeType = TRUSTEE_IS_WELL_KNOWN_GROUP;
+    ea.Trustee.TrusteeType = TRUSTEE_IS_UNKNOWN;
     ea.Trustee.ptstrName = reinterpret_cast<LPWSTR>(appcontainer_sid);
 
     PACL new_dacl = nullptr;
@@ -71,7 +71,7 @@ bool AppContainerProfileGuard::GrantDirectoryAccess(const std::wstring& director
     }
 
     if (sd) LocalFree(sd);
-    return (res == ERROR_SUCCESS);
+    return (res == ERROR_SUCCESS && new_dacl != nullptr);
 }
 
 } // namespace pikdraw::workers

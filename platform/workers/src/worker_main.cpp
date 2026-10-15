@@ -15,6 +15,32 @@ using namespace pikdraw::workers;
 
 namespace {
 
+BOOL ProbeHandleInformation(HANDLE handle,DWORD* flags,bool* strict_exception) noexcept {
+    *strict_exception=false;
+#if defined(_MSC_VER) || (defined(__clang__) && defined(_WIN64))
+    // Windows strict-handle mitigation can raise this status instead of returning FALSE.
+    // Catch only this expected probe fault; never reinterpret arbitrary crashes as denial.
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wlanguage-extension-token"
+#endif
+    __try { return GetHandleInformation(handle,flags); }
+    __except(GetExceptionCode()==0xC0000008u ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+        *strict_exception=true; SetLastError(ERROR_INVALID_HANDLE); return FALSE;
+    }
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+#else
+    PROCESS_MITIGATION_STRICT_HANDLE_CHECK_POLICY policy{};
+    if (!GetProcessMitigationPolicy(GetCurrentProcess(),ProcessStrictHandleCheckPolicy,&policy,sizeof(policy)) ||
+        policy.RaiseExceptionOnInvalidHandleReference) {
+        SetLastError(ERROR_NOT_SUPPORTED); return FALSE; // No unsupported compiler crash can pass a gate.
+    }
+    return GetHandleInformation(handle,flags);
+#endif
+}
+
 bool ReadExact(HANDLE h, void* buf, DWORD bytes) {
     DWORD total = 0;
     while (total < bytes) {
@@ -95,17 +121,24 @@ CanaryPayloadResponse HandleCanary(const CanaryPayloadRequest& req) {
                 addr.sin_family = AF_INET;
                 addr.sin_port = htons(req.network_port);
                 inet_pton(AF_INET, req.network_address.c_str(), &addr.sin_addr);
-                int conn = connect(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
-                if (conn == SOCKET_ERROR) {
-                    resp.os_error_code = static_cast<uint32_t>(WSAGetLastError());
-                    // WSAEACCES indicates AppContainer network capability denied
-                    resp.denied_by_os = (resp.os_error_code == WSAEACCES);
-                    resp.diagnostic_message = "connect() failed with error: " + std::to_string(resp.os_error_code);
-                } else {
-                    resp.denied_by_os = false;
-                    resp.os_error_code = 0;
-                    resp.diagnostic_message = "FAIL: Network connection succeeded without capability";
+                u_long nonblocking=1;
+                int error=0;
+                if (ioctlsocket(s,FIONBIO,&nonblocking)==SOCKET_ERROR) error=WSAGetLastError();
+                else if (connect(s,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))==SOCKET_ERROR) {
+                    error=WSAGetLastError();
+                    if (error==WSAEWOULDBLOCK) {
+                        fd_set writable,failed; FD_ZERO(&writable); FD_ZERO(&failed); FD_SET(s,&writable); FD_SET(s,&failed);
+                        timeval deadline{1,0};
+                        const int ready=select(0,nullptr,&writable,&failed,&deadline);
+                        if (ready>0) {
+                            int bytes=sizeof(error);
+                            if (getsockopt(s,SOL_SOCKET,SO_ERROR,reinterpret_cast<char*>(&error),&bytes)==SOCKET_ERROR) error=WSAGetLastError();
+                        } else error=ready==0 ? WSAETIMEDOUT : WSAGetLastError();
+                    }
                 }
+                resp.os_error_code=static_cast<uint32_t>(error);
+                resp.denied_by_os=error==WSAEACCES;
+                resp.diagnostic_message="Bounded connect() result: "+std::to_string(error);
                 closesocket(s);
             }
             WSACleanup();
@@ -115,13 +148,15 @@ CanaryPayloadResponse HandleCanary(const CanaryPayloadRequest& req) {
             STARTUPINFOW si{};
             si.cb = sizeof(si);
             PROCESS_INFORMATION pi{};
-            std::wstring cmd = L"cmd.exe /c exit 0";
-            BOOL ok = CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi);
+            const std::wstring executable=Utf8ToWide(req.target_path);
+            std::wstring cmd=QuoteCommandLineArgument(executable)+L" --test-child-exit";
+            BOOL ok=CreateProcessW(executable.c_str(),cmd.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,nullptr,&si,&pi);
             if (!ok) {
                 resp.os_error_code = GetLastError();
-                resp.denied_by_os = (resp.os_error_code == ERROR_ACCESS_DENIED || resp.os_error_code == ERROR_NOT_SUPPORTED);
+                resp.denied_by_os = (resp.os_error_code == ERROR_ACCESS_DENIED || resp.os_error_code == ERROR_NOT_ENOUGH_QUOTA);
                 resp.diagnostic_message = "CreateProcessW denied with error: " + std::to_string(resp.os_error_code);
             } else {
+                WaitForSingleObject(pi.hProcess,2000);
                 CloseHandle(pi.hThread);
                 CloseHandle(pi.hProcess);
                 resp.denied_by_os = false;
@@ -133,11 +168,12 @@ CanaryPayloadResponse HandleCanary(const CanaryPayloadRequest& req) {
         case CanaryUngrantedHandle: {
             HANDLE h = reinterpret_cast<HANDLE>(req.test_handle_value);
             DWORD flags = 0;
-            BOOL ok = GetHandleInformation(h, &flags);
+            bool strict_exception=false;
+            BOOL ok = ProbeHandleInformation(h, &flags, &strict_exception);
             if (!ok) {
                 resp.os_error_code = GetLastError();
                 resp.denied_by_os = (resp.os_error_code == ERROR_INVALID_HANDLE);
-                resp.diagnostic_message = "Ungranted handle is invalid (not inherited)";
+                resp.diagnostic_message = strict_exception ? "OS strict handle check raised STATUS_INVALID_HANDLE; probe caught expected fault" : "Ungranted handle is invalid (not inherited)";
             } else {
                 resp.denied_by_os = false;
                 resp.os_error_code = 0;
@@ -158,6 +194,7 @@ CanaryPayloadResponse HandleCanary(const CanaryPayloadRequest& req) {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc==2 && std::string_view(argv[1])=="--test-child-exit") return 0;
     // Deterministic repository-owned failure fixtures, never a source-format adapter.
     if (argc==2 && std::string_view(argv[1])=="--test-stall-before-read") { Sleep(10000); return 0; }
     if (argc==2 && std::string_view(argv[1])=="--test-truncated-response") {

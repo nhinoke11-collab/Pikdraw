@@ -68,6 +68,11 @@ bool Transfer(HANDLE pipe, HANDLE process, uint8_t* bytes, size_t count, bool wr
 
 bool WorkerProcessHost::Launch(const WorkerLaunchConfig& config) {
     Terminate();
+    bool committed=false;
+    struct FailedLaunchCleanup {
+        WorkerProcessHost* host; bool& committed;
+        ~FailedLaunchCleanup() { if (!committed) host->Terminate(); }
+    } cleanup{this,committed};
     if (config.worker_executable_path.empty() ||
         (!config.use_appcontainer && !config.trusted_test_worker) ||
         (config.use_appcontainer && config.appcontainer_profile_name.empty())) return false;
@@ -117,7 +122,13 @@ bool WorkerProcessHost::Launch(const WorkerLaunchConfig& config) {
         return false;
     }
 
-    std::array<HANDLE, 3> inherit_handles = { auto_stdin_read.Get(), auto_stdout_write.Get(), child_stderr.Get() };
+    std::vector<HANDLE> inherit_handles = { auto_stdin_read.Get(), auto_stdout_write.Get(), child_stderr.Get() };
+    if (config.test_inherited_handle!=INVALID_HANDLE_VALUE) {
+        if (!config.trusted_test_worker || config.use_appcontainer || !config.test_inherited_handle) {
+            DeleteProcThreadAttributeList(siex.lpAttributeList); return false;
+        }
+        inherit_handles.push_back(config.test_inherited_handle);
+    }
     if (!UpdateProcThreadAttribute(
         siex.lpAttributeList, 0,
         PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
@@ -167,6 +178,7 @@ bool WorkerProcessHost::Launch(const WorkerLaunchConfig& config) {
         Terminate(); return false;
     }
 
+    committed=true;
     return true;
 }
 
@@ -182,6 +194,7 @@ void WorkerProcessHost::Terminate() noexcept {
     thread_handle_.Close();
     stdin_write_handle_.Close();
     stdout_read_handle_.Close();
+    job_object_.Reset();
     app_container_.Cleanup();
     process_id_ = 0;
 }
@@ -200,33 +213,40 @@ std::optional<std::vector<uint8_t>> WorkerProcessHost::TransactBinaryPayload(
     std::chrono::milliseconds timeout)
 {
     using namespace pikdraw::interop;
-    const auto reject=[&]() -> std::optional<std::vector<uint8_t>> { Terminate(); return std::nullopt; };
+    const auto reject=[&](const char* reason) -> std::optional<std::vector<uint8_t>> {
+        last_transport_failure_=reason;
+        if (process_handle_.IsValid()) (void)GetExitCodeProcess(process_handle_.Get(),&last_worker_exit_code_);
+        Terminate(); return std::nullopt;
+    };
+    last_transport_failure_="none"; last_worker_exit_code_=STILL_ACTIVE;
     if (!IsAlive() || !stdin_write_handle_.IsValid() || !stdout_read_handle_.IsValid() ||
         timeout.count()<=0 || timeout>std::chrono::minutes(1) || request_bytes.size()<sizeof(IpcHeader) ||
-        request_bytes.size()>sizeof(IpcHeader)+IPC_MAX_PAYLOAD_BYTES) return reject();
+        request_bytes.size()>sizeof(IpcHeader)+IPC_MAX_PAYLOAD_BYTES) return reject("invalid request/lifecycle");
     IpcHeader request{};
     std::memcpy(&request,request_bytes.data(),sizeof(request));
     if (!PayloadValidator::ValidateHeader(request).IsOk() ||
-        request_bytes.size()!=sizeof(request)+request.payload_bytes) return reject();
+        request_bytes.size()!=sizeof(request)+request.payload_bytes) return reject("invalid request frame");
     uint16_t expected=0;
     switch (static_cast<MessageType>(request.message_type)) {
         case MessageType::Ping: expected=static_cast<uint16_t>(MessageType::Pong); break;
         case MessageType::ImportRequest: expected=static_cast<uint16_t>(MessageType::ImportResponse); break;
         case MessageType::CanaryRequest: expected=static_cast<uint16_t>(MessageType::CanaryResponse); break;
-        default: return reject();
+        default: return reject("unknown request type");
     }
     const auto deadline=std::chrono::steady_clock::now()+timeout;
     if (!Transfer(stdin_write_handle_.Get(),process_handle_.Get(),const_cast<uint8_t*>(request_bytes.data()),
-                  request_bytes.size(),true,deadline)) return reject();
+                  request_bytes.size(),true,deadline)) return reject("request write failed/timeout");
     IpcHeader response{};
     if (!Transfer(stdout_read_handle_.Get(),process_handle_.Get(),reinterpret_cast<uint8_t*>(&response),
-                  sizeof(response),false,deadline)) return reject();
-    if (!PayloadValidator::ValidateHeader(response).IsOk() || response.sequence_id!=request.sequence_id ||
-        response.message_type!=expected || (expected==static_cast<uint16_t>(MessageType::Pong) && response.payload_bytes)) return reject();
-    std::vector<uint8_t> packet(sizeof(response)+response.payload_bytes);
+                  sizeof(response),false,deadline)) return reject("response header failed/timeout");
+    if (response.payload_bytes>IPC_MAX_PAYLOAD_BYTES || !PayloadValidator::ValidateHeader(response).IsOk() || response.sequence_id!=request.sequence_id ||
+        response.message_type!=expected || (expected==static_cast<uint16_t>(MessageType::Pong) && response.payload_bytes)) return reject("invalid response frame");
+    std::vector<uint8_t> packet;
+    try { packet.resize(sizeof(response)+response.payload_bytes); }
+    catch (const std::bad_alloc&) { return reject("response allocation failed"); }
     std::memcpy(packet.data(),&response,sizeof(response));
     if (!Transfer(stdout_read_handle_.Get(),process_handle_.Get(),packet.data()+sizeof(response),
-                  response.payload_bytes,false,deadline)) return reject();
+                  response.payload_bytes,false,deadline)) return reject("response body failed/timeout");
     return packet;
 }
 

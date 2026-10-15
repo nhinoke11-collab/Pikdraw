@@ -37,10 +37,14 @@ add_executable(pikdraw_spike_c_worker
 target_link_libraries(pikdraw_spike_c_worker PRIVATE
     pikdraw_worker_common
 )
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(pikdraw_spike_c_worker PRIVATE -fms-extensions)
+endif()
 
 # Test suite runner
 add_executable(pikdraw_spike_c_tests
     tests/spike_c_tests_main.cpp
+    tests/live_containment.cpp
 )
 target_link_libraries(pikdraw_spike_c_tests PRIVATE
     pikdraw_worker_common
