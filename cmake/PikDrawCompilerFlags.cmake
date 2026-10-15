@@ -1,5 +1,7 @@
-# cmake/PikDrawCompilerFlags.cmake
-# Strict compiler flags and warnings for MSVC, Clang, and GCC.
+if(MINGW)
+    # Statically link runtime libraries so native executables run standalone
+    add_link_options(-static)
+endif()
 
 function(pikdraw_apply_compiler_flags target_name)
     target_compile_features(${target_name} PUBLIC cxx_std_20)

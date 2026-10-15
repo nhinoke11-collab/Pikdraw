@@ -55,6 +55,24 @@ if ($Build) {
     }
     & $tools.CMake @buildArgs
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    # Ensure toolchain runtime DLLs are copied next to executables for direct Explorer launches
+    if ($tools.Clang) {
+        $toolchainBin = Split-Path $tools.Clang -Parent
+        $runtimeDlls = Get-ChildItem -Path $toolchainBin -Filter "*.dll" -ErrorAction SilentlyContinue
+        if ($runtimeDlls) {
+            $destDirs = @(
+                (Join-Path $buildDir "apps\desktop"),
+                (Join-Path $buildDir "bin")
+            )
+            foreach ($d in $destDirs) {
+                if (Test-Path -LiteralPath $d) {
+                    $runtimeDlls | Copy-Item -Destination $d -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+    }
+
     if ($Target) {
         exit 0
     }
