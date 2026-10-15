@@ -147,7 +147,7 @@ ps05 chạy với fixture presenters cho selection rỗng/có nhiều object, lo
 
 Ưu tiên nút/manual shortcut Reload trước file watcher để giảm lỗi và code phụ. Chỉ thêm watcher/debounce khi có nhu cầu đo được. Kiểm 50 lần reload không nhân đôi action handler hoặc giữ widget cũ; khi đã ghép services, document/undo/jobs phải còn đúng.
 
-HTML hiện có có thể dùng làm tham chiếu bố cục. Kế hoạch không tạo thêm một editor HTML phải chuyển lại sang Qt, không hứa C++ chạy trong HTML khi chưa biên dịch, và không đưa WebAssembly vào critical path.
+Bản thiết kế tương tác [ui_design_2026.html](../architecture/ui-reference/ui_design_2026.html) (và các biến thể `ui_light_mode.html`, `ui_english_2026.html`) tại `docs/architecture/ui-reference/` là **nguồn tham chiếu giao diện chuẩn bắt buộc** cho ps05 và ps13. Toàn bộ mã màu (Cyber Teal `#00f2c3`, nền đen sâu `#070b10` / `#0c131d`, hairline borders), kích thước chuẩn (Topbar 38px, Context ribbon 34px, Tool strip 48–56px, Dock phải 280–320px, Status bar 26px) và components (Logo gradient PK, Spotlight search Ctrl+K, Pill workspace switcher, quick theme toggle) phải được ánh xạ chính xác sang Qt Widgets (`.ui`) và QSS (`themes/theme-dark.qss`, `themes/theme-light.qss`). Kế hoạch không tạo thêm một editor HTML phải chuyển lại sang Qt, không hứa C++ chạy trong HTML khi chưa biên dịch, và không đưa WebAssembly vào critical path.
 
 ## 5. Điều phối 2–3 agent và dispatch task
 

@@ -76,3 +76,30 @@ To enable rapid UI iteration without long recompilations:
   - `locales/vi_VN.json` (Vietnamese - Primary user locale)
 - **Key Hierarchy**: Keys strictly mirror action and UI component domains (e.g. `"action.file.save": "Lưu tệp"`).
 - **Runtime Language Switching**: Changing language re-translates existing action titles and tooltip labels dynamically without restarting the application.
+
+---
+
+## 4. Visual Design Tokens & Shell Geometry Contract
+
+All UI components and QSS stylesheets in `apps/desktop/` must adhere to the 2026 canonical design reference: [docs/architecture/ui-reference/ui_design_2026.html](../docs/architecture/ui-reference/ui_design_2026.html).
+
+- **Shell Dimensions**:
+  - `topbar_height`: 38px
+  - `context_ribbon_height`: 34px
+  - `tool_strip_width`: 48px – 56px
+  - `inspector_dock_width`: 280px – 320px
+  - `status_bar_height`: 26px
+- **Cyber Dark Color Tokens**:
+  - `color_bg_app`: `#070b10`
+  - `color_bg_header`: `#0c131d`
+  - `color_bg_ribbon`: `#0e1622`
+  - `color_bg_dock`: `#0c131d`
+  - `color_border_tech`: `rgba(255, 255, 255, 0.08)` / `#1d2636`
+  - `color_accent_cyber`: `#00f2c3` (hover: `#00d2aa`, light: `#00a884`, dim: `rgba(0, 242, 195, 0.12)`)
+  - `color_text_primary`: `#e2e8f0` / `#ffffff`
+  - `color_text_muted`: `rgba(255, 255, 255, 0.6)`
+  - `canvas_grid_dot`: `rgba(255, 255, 255, 0.14)` on `#070c12`
+- **Typography**:
+  - `font_family_ui`: `Plus Jakarta Sans`, `Segoe UI`, sans-serif
+  - `font_family_numeric`: `JetBrains Mono`, monospace (with tabular figures)
+

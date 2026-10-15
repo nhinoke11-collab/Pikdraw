@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PikDraw PRO 2026 — English Workspace (Corel/Illustrator/CAD Inspired)</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+    * { box-sizing: border-box; user-select: none; }
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      overflow: hidden;
+      margin: 0;
+      padding: 0;
+      height: 100vh;
+      width: 100vw;
+      background-color: #070b10;
+      color: #e2e8f0;
+    }
+    .font-mono-num {
+      font-family: 'JetBrains Mono', monospace;
+      font-feature-settings: "tnum" 1, "zero" 1;
+    }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: rgba(10, 16, 23, 0.5); }
+    ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(0, 242, 195, 0.4); }
+
+    .border-tech { border: 1px solid rgba(255, 255, 255, 0.08); }
+    .tool-btn {
+      transition: all 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .tool-btn:hover {
+      background: rgba(255, 255, 255, 0.09);
+      color: #00f2c3;
+    }
+    .tool-btn.active {
+      background: rgba(0, 242, 195, 0.15);
+      color: #00f2c3;
+      box-shadow: 0 0 12px rgba(0, 242, 195, 0.25);
+      border-color: rgba(0, 242, 195, 0.4);
+    }
+    .input-field {
+      background: rgba(10, 16, 24, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      transition: all 0.15s ease;
+    }
+    .input-field:focus-within, .input-field:hover {
+      border-color: rgba(0, 242, 195, 0.45);
+      background: rgba(12, 20, 30, 0.95);
+    }
+    .canvas-grid {
+      background-color: #070c12;
+      background-size: 24px 24px;
+      background-image: radial-gradient(circle, rgba(255, 255, 255, 0.14) 1px, transparent 1px);
+    }
+  </style>
+</head>
+<body class="flex flex-col h-screen w-screen text-xs select-none antialiased bg-[#070b10] text-[#e2e8f0]">
+
+  <!-- ================= TOPBAR (H: 38px) ================= -->
+  <header class="h-[38px] min-h-[38px] bg-[#0c131d] border-b border-tech flex items-center justify-between px-2.5 z-40 select-none">
+    <!-- Left: App Brand & English Menus -->
+    <div class="flex items-center space-x-2">
+      <!-- App Logo -->
+      <div class="flex items-center justify-center w-6 h-6 rounded-md bg-gradient-to-br from-[#00f2c3] to-[#0ea5e9] text-[#070b10] font-bold text-[11px] shadow-sm tracking-tighter">
+        PK
+      </div>
+      <span class="font-bold text-[13px] tracking-wide text-white flex items-center gap-1.5 pl-0.5">
+        PikDraw
+        <span class="text-[9px] px-1.5 py-0.2 rounded font-semibold bg-[#00f2c3]/15 text-[#00f2c3] border border-[#00f2c3]/30">PRO 2026</span>
+      </span>
+
+      <span class="text-white/20 px-1">/</span>
+
+      <!-- File title -->
+      <div class="flex items-center space-x-1.5 hover:bg-white/5 px-2 py-1 rounded cursor-pointer transition">
+        <svg class="w-3.5 h-3.5 text-[#00f2c3]" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+        <span class="text-white/90 font-medium text-[12px]">AnPhat_Signboard_Master.pik</span>
+        <span class="w-1.5 h-1.5 rounded-full bg-[#00f2c3] animate-pulse ml-0.5" title="Saved to cloud"></span>
+      </div>
+
+      <!-- Professional English Menus -->
+      <nav class="hidden lg:flex items-center space-x-0.5 text-white/60 ml-2">
+        <button class="px-2 py-1 hover:text-white hover:bg-white/5 rounded text-[11px] transition">File</button>
+        <button class="px-2 py-1 hover:text-white hover:bg-white/5 rounded text-[11px] transition">Edit</button>
+        <button class="px-2 py-1 hover:text-white hover:bg-white/5 rounded text-[11px] transition">View</button>
+        <button class="px-2 py-1 hover:text-white hover:bg-white/5 rounded text-[11px] transition">Layout</button>
+        <button class="px-2 py-1 hover:text-white hover:bg-white/5 rounded text-[11px] transition">Object</button>
+        <button class="px-2 py-1 hover:text-white hover:bg-white/5 rounded text-[11px] transition">Effects</button>
+        <button class="px-2 py-1 hover:text-white hover:bg-white/5 rounded text-[11px] transition">Production</button>
+        <button class="px-2 py-1 hover:text-white hover:bg-white/5 rounded text-[11px] transition">Plugins</button>
+      </nav>
+    </div>
+
+    <!-- Center: Command Palette (⌘K) -->
+    <div class="flex-1 max-w-[300px] mx-4">
+      <div class="relative flex items-center h-[26px] bg-[#080d14]/80 border border-tech rounded-lg px-2 text-white/50 hover:border-[#00f2c3]/40 cursor-pointer transition shadow-inner">
+        <svg class="w-3.5 h-3.5 mr-1.5 text-white/40" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <span class="text-[11px] text-white/50 flex-1 truncate">Search commands, tools, materials...</span>
+        <kbd class="text-[9px] font-mono-num px-1 py-0.2 rounded bg-white/10 text-white/70 border border-white/10 ml-1">⌘K</kbd>
+      </div>
+    </div>
+
+    <!-- Right: Workspaces, Language Badge, Settings & Export -->
+    <div class="flex items-center space-x-2">
+      <!-- Workspace Switcher Pills -->
+      <div class="flex p-0.5 bg-[#080d14] border border-tech rounded-lg">
+        <button class="px-2.5 py-0.5 rounded-md text-[11px] font-semibold bg-[#162536] text-[#00f2c3] shadow-sm border border-[#00f2c3]/30 flex items-center gap-1">
+          <span class="w-1.5 h-1.5 rounded-full bg-[#00f2c3]"></span>
+          Vector
+        </button>
+        <button class="px-2.5 py-0.5 rounded-md text-[11px] text-white/60 hover:text-white hover:bg-white/5 transition">
+          Print
+        </button>
+        <button class="px-2.5 py-0.5 rounded-md text-[11px] text-white/60 hover:text-white hover:bg-white/5 transition">
+          CAD & CNC
+        </button>
+        <button class="px-2.5 py-0.5 rounded-md text-[11px] text-white/60 hover:text-white hover:bg-white/5 transition">
+          3D Mockup
+        </button>
+      </div>
+
+      <!-- Language Chip -->
+      <span class="h-[25px] px-2 rounded-lg bg-white/5 text-[#00f2c3] border border-white/10 flex items-center gap-1 text-[11px] font-semibold">
+        EN
+      </span>
+
+      <!-- Settings Button -->
+      <button class="h-[25px] px-2 rounded-lg bg-white/5 hover:bg-white/10 text-white/80 border border-tech flex items-center gap-1 text-[11px] transition">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg>
+        Settings
+      </button>
+
+      <!-- Export Button -->
+      <button class="h-[25px] px-2.5 rounded-lg bg-gradient-to-r from-[#00f2c3]/20 to-[#0ea5e9]/20 hover:from-[#00f2c3]/30 hover:to-[#0ea5e9]/30 text-[#00f2c3] border border-[#00f2c3]/40 font-medium text-[11px] flex items-center gap-1.5 transition">
+        Export
+      </button>
+
+      <!-- Window controls -->
+      <div class="flex items-center space-x-1 pl-1 text-white/40">
+        <button class="w-5 h-5 flex items-center justify-center hover:bg-white/10 hover:text-white rounded">─</button>
+        <button class="w-5 h-5 flex items-center justify-center hover:bg-white/10 hover:text-white rounded">□</button>
+        <button class="w-5 h-5 flex items-center justify-center hover:bg-rose-500 hover:text-white rounded">✕</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ================= CONTEXT TOOL RIBBON (H: 34px) ================= -->
+  <section class="h-[34px] min-h-[34px] bg-[#0e1622] border-b border-tech flex items-center justify-between px-3 text-[11px] z-30 select-none">
+    <!-- Left: Object Context & Geometry matrix -->
+    <div class="flex items-center space-x-2 text-white/70">
+      <!-- Target indicator -->
+      <div class="flex items-center gap-1.5 pr-2 border-r border-white/10">
+        <span class="w-2 h-2 rounded-sm bg-[#00f2c3]"></span>
+        <span class="font-semibold text-white">Artistic Text</span>
+        <span class="text-white/40 text-[10px]">(Group #402)</span>
+      </div>
+
+      <!-- Geometry Inputs -->
+      <div class="flex items-center space-x-1.5 font-mono-num">
+        <div class="input-field flex items-center h-[22px] px-1.5 rounded-md">
+          <span class="text-white/40 text-[10px] mr-1">X</span>
+          <span class="text-white font-medium">100.00</span>
+          <span class="text-white/30 text-[9px] ml-0.5">mm</span>
+        </div>
+        <div class="input-field flex items-center h-[22px] px-1.5 rounded-md">
+          <span class="text-white/40 text-[10px] mr-1">Y</span>
+          <span class="text-white font-medium">150.00</span>
+          <span class="text-white/30 text-[9px] ml-0.5">mm</span>
+        </div>
+        <button class="w-5 h-5 flex items-center justify-center text-[#00f2c3] hover:bg-white/5 rounded transition" title="Maintain Aspect Ratio">
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+        </button>
+        <div class="input-field flex items-center h-[22px] px-1.5 rounded-md">
+          <span class="text-white/40 text-[10px] mr-1">W</span>
+          <span class="text-white font-medium">1,850.00</span>
+          <span class="text-white/30 text-[9px] ml-0.5">mm</span>
+        </div>
+        <div class="input-field flex items-center h-[22px] px-1.5 rounded-md">
+          <span class="text-white/40 text-[10px] mr-1">H</span>
+          <span class="text-white font-medium">420.00</span>
+          <span class="text-white/30 text-[9px] ml-0.5">mm</span>
+        </div>
+        <div class="input-field flex items-center h-[22px] px-1.5 rounded-md">
+          <span class="text-white/40 text-[10px] mr-1">∠</span>
+          <span class="text-white font-medium">0.0°</span>
+        </div>
+      </div>
+
+      <!-- Align cluster -->
+      <div class="flex items-center space-x-0.5 pl-2 border-l border-white/10">
+        <button class="w-6 h-6 flex items-center justify-center hover:bg-white/10 rounded text-white/70 hover:text-white" title="Align Left"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 4v16M8 8h10M8 16h6"/></svg></button>
+        <button class="w-6 h-6 flex items-center justify-center hover:bg-white/10 rounded text-white/70 hover:text-white" title="Align Center"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 4v16M6 8h12M8 16h8"/></svg></button>
+        <button class="w-6 h-6 flex items-center justify-center hover:bg-white/10 rounded text-white/70 hover:text-white" title="Align Right"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 4v16M6 8h10M10 16h6"/></svg></button>
+      </div>
+
+      <!-- Corel/CAD Boolean Operations (Weld, Trim, Intersect, Simplify) -->
+      <div class="flex items-center space-x-0.5 pl-2 border-l border-white/10">
+        <button class="px-2 py-0.5 hover:bg-white/10 rounded text-white/70 hover:text-[#00f2c3] text-[10.5px]" title="Combine all shapes into one (Weld / Union)">Weld</button>
+        <button class="px-2 py-0.5 hover:bg-white/10 rounded text-white/70 hover:text-[#00f2c3] text-[10.5px]" title="Cut out portion of an object (Trim / Subtract)">Trim</button>
+        <button class="px-2 py-0.5 hover:bg-white/10 rounded text-white/70 hover:text-[#00f2c3] text-[10.5px]" title="Create shape from overlap (Intersect)">Intersect</button>
+        <button class="px-2 py-0.5 hover:bg-white/10 rounded text-white/70 hover:text-[#00f2c3] text-[10.5px]" title="Simplify overlapping curves (Simplify / Exclude)">Simplify</button>
+      </div>
+    </div>
+
+    <!-- Right: Quick actions -->
+    <div class="flex items-center space-x-2 text-white/60">
+      <button class="px-2 py-0.5 rounded bg-white/5 hover:bg-white/10 text-white/80 border border-white/10 text-[10.5px] transition" title="Convert selected text into vector paths">
+        <span>Convert to Curves (Ctrl+Q)</span>
+      </button>
+      <span class="text-white/20">|</span>
+      <span class="text-white/40 text-[10.5px]">Scale: <strong class="text-white font-medium">1:10</strong> (3000 × 1000 mm)</span>
+    </div>
+  </section>
+
+  <!-- ================= WORKSPACE BODY (FLEX ROW) ================= -->
+  <div class="flex-1 flex overflow-hidden relative">
+
+    <!-- ================= EXPANDED PROFESSIONAL TOOLBAR (W: 44px) ================= -->
+    <!-- Fully integrated with CorelDRAW, Adobe Illustrator, and AutoCAD essential tools -->
+    <aside class="w-[44px] min-w-[44px] bg-[#0c131d] border-r border-tech flex flex-col items-center py-1.5 z-20 justify-between select-none">
+      
+      <!-- Top Primary Tools Stack -->
+      <div class="flex flex-col items-center space-y-0.5 w-full px-1 overflow-y-auto max-h-[calc(100vh-140px)]">
+        
+        <!-- 1. Pick Tool (V) - ACTIVE [Corel/Illustrator] -->
+        <button class="tool-btn active w-8 h-7.5 rounded-md flex items-center justify-center relative group" title="Pick Tool (V) • Selection & Transform">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 3l7 18 3-7 7-3L3 3z"/></svg>
+          <span class="absolute bottom-0.5 right-0.5 w-1 h-1 bg-[#00f2c3] rounded-full"></span>
+        </button>
+
+        <!-- 2. Shape / Node Edit Tool (F10 / A) [Corel Shape Tool / Illustrator Direct Select] -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-white/60 relative group" title="Shape / Node Edit (F10 / A) • Curve points, handles & corner smoothing">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 15l6-6m-6 6l-3-3m3 3V9m-6 6l-3-3m3 3v6m6-12L9 3"/></svg>
+          <span class="absolute bottom-0.5 right-0.5 w-1 h-1 bg-white/30 rounded-full"></span>
+        </button>
+
+        <!-- 3. Bézier Pen & Curve Tool (P) [Illustrator Pen / Corel Bézier] -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-white/60 relative group" title="Bézier Pen (P) • Precision vector curve drafting">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19l7-7 3 3-7 7-3-3zM18 13l-1.5-7.5L2 2l3.5 14.5L13 18"/></svg>
+          <span class="absolute bottom-0.5 right-0.5 w-1 h-1 bg-white/30 rounded-full"></span>
+        </button>
+
+        <!-- 4. Rectangle & Chamfer Tool (M / F6) -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-white/60 relative group" title="Rectangle (M / F6) • Box & Filleted Corners">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/></svg>
+          <span class="absolute bottom-0.5 right-0.5 w-1 h-1 bg-white/30 rounded-full"></span>
+        </button>
+
+        <!-- 5. Ellipse & Arc Tool (L / F7) -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-white/60 group" title="Ellipse & Circle (L / F7) • 3-Point Ellipse">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></svg>
+        </button>
+
+        <!-- 6. Polygon & Star Tool (Y) -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-white/60 relative group" title="Polygon & Star (Y) • Mechanical Gears & Badges">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+          <span class="absolute bottom-0.5 right-0.5 w-1 h-1 bg-white/30 rounded-full"></span>
+        </button>
+
+        <!-- 7. Artistic Text Tool (T / F8) -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-white/60 relative group" title="Text Tool (T / F8) • Artistic typography & text on curve">
+          <span class="font-serif font-bold text-[14px]">T</span>
+          <span class="absolute bottom-0.5 right-0.5 w-1 h-1 bg-white/30 rounded-full"></span>
+        </button>
+
+        <div class="w-5 h-[1px] bg-white/10 my-0.5"></div>
+
+        <!-- 8. Virtual Segment Delete & Knife (X / C) [Corel/CAD Trimming] -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-white/60 relative group" title="Virtual Segment Delete & Knife (X / C) • Trim vector intersections & cut paths">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.828 2.828a2 2 0 11-2.828-2.828L9.172 9.172"/></svg>
+          <span class="absolute bottom-0.5 right-0.5 w-1 h-1 bg-white/30 rounded-full"></span>
+        </button>
+
+        <!-- 9. Smart Fill & Shape Builder (Shift+M) [Corel Smart Fill / Illustrator Shape Builder] -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-white/60 group" title="Smart Fill & Shape Builder (Shift+M) • Fill closed regions & merge overlapping segments">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+        </button>
+
+        <!-- 10. Contour & Offset Path (O) [Corel Contour / Signmaking LED & CNC Offset] -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-white/60 group" title="Contour / Offset Path (O) • Inward/Outward offsets for LED channels & CNC toolpaths">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" stroke-dasharray="2 2"/><rect x="2" y="2" width="20" height="20" rx="3"/></svg>
+        </button>
+
+        <!-- 11. Extrude & Block Shadow (E) [Corel 3D Extrude / Channel Letter Depth] -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-white/60 group" title="Extrude & Block Shadow (E) • 3D channel letter extrusion & drop block shadow">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+        </button>
+
+        <!-- 12. CAD Dimensioning & Snap (D) [AutoCAD Linear, Aligned & Angular Dimensions] -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-white/60 relative group" title="CAD Dimension & Measurement (D) • Linear, radius, angle & fabrication annotations">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 7V4m0 0h16m0 0v3M4 17v3m0 0h16m0 0v-3M7 12h10"/></svg>
+          <span class="absolute bottom-0.5 right-0.5 w-1 h-1 bg-white/30 rounded-full"></span>
+        </button>
+
+        <!-- 13. Interactive Gradient & Mesh Fill (G) -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-white/60 group" title="Interactive Gradient & Mesh Fill (G) • Linear, radial & freeform gradients">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4h16v16H4z"/><path d="M4 20L20 4"/></svg>
+        </button>
+
+        <!-- 14. Color Eyedropper & Attributes (I) -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-white/60 group" title="Color & Attributes Eyedropper (I) • Sample fill, stroke & font specs">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 11l-8-8-8 8m14-6l2 2m-6 6l-6 6H3v-4l6-6"/></svg>
+        </button>
+
+        <!-- 15. Hand Pan & Zoom (H / Z) -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-white/60 group" title="Pan (H) & Zoom (Z) • Canvas navigation">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7 11V7a2 2 0 014 0v4m0-2a2 2 0 014 0v2m0-2a2 2 0 014 0v6a6 6 0 01-12 0v-4"/></svg>
+        </button>
+      </div>
+
+      <!-- Bottom Swatch Dual Chip -->
+      <div class="flex flex-col items-center space-y-1.5 w-full px-1 pt-1 border-t border-white/10">
+        <div class="relative w-7 h-7 cursor-pointer" title="Active Fill & Stroke (Swap: Shift+X)">
+          <div class="absolute bottom-0 right-0 w-4.5 h-4.5 rounded border-2 border-white/80 bg-transparent"></div>
+          <div class="absolute top-0 left-0 w-4.5 h-4.5 rounded bg-gradient-to-br from-[#00f2c3] to-[#0ea5e9] border border-black/40 shadow"></div>
+        </div>
+        <button class="w-7 h-5 flex items-center justify-center text-white/40 hover:text-white rounded text-[10px]" title="Customize Toolbar...">
+          ⋯
+        </button>
+      </div>
+    </aside>
+
+    <!-- ================= CANVAS AREA & VIEWPORT ================= -->
+    <main class="flex-1 flex flex-col relative overflow-hidden">
+
+      <!-- Document Tab Strip -->
+      <div class="h-[28px] min-h-[28px] bg-[#0b121b] border-b border-tech flex items-center justify-between px-2 select-none">
+        <div class="flex items-center space-x-1 h-full">
+          <div class="flex items-center space-x-2 h-[24px] px-3 rounded-t-md bg-[#111a26] border-t border-x border-tech text-white text-[11px] font-medium shadow-sm">
+            <span class="w-1.5 h-1.5 rounded-full bg-[#00f2c3]"></span>
+            <span>AnPhat_Signboard_Master (Page 1)</span>
+            <button class="text-white/40 hover:text-white ml-1 text-[10px]">✕</button>
+          </div>
+          <div class="flex items-center space-x-2 h-[22px] px-2.5 rounded-t text-white/50 hover:text-white hover:bg-white/5 text-[11px] transition">
+            <span>Iron_Frame_CNC_Layout</span>
+          </div>
+        </div>
+
+        <div class="flex items-center space-x-2 text-[10px] text-white/50">
+          <span class="px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-white/70">Units: mm</span>
+          <span class="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Snap: Smart Guides On</span>
+        </div>
+      </div>
+
+      <!-- Precision Ruler (16px) -->
+      <div class="h-[16px] min-h-[16px] bg-[#0e1622] border-b border-white/10 flex items-end relative overflow-hidden font-mono-num text-[9px] text-white/40 pl-6 select-none">
+        <div class="absolute left-10">0</div>
+        <div class="absolute left-32">500</div>
+        <div class="absolute left-64">1000</div>
+        <div class="absolute left-96">1500</div>
+        <div class="absolute left-[512px]">2000</div>
+        <div class="absolute left-[640px]">2500</div>
+        <div class="absolute left-[768px]">3000 mm</div>
+        <div class="w-full h-2 flex justify-between opacity-30">
+          <div class="border-l border-white h-2"></div><div class="border-l border-white h-1"></div>
+          <div class="border-l border-white h-2"></div><div class="border-l border-white h-1"></div>
+          <div class="border-l border-white h-2"></div><div class="border-l border-white h-1"></div>
+          <div class="border-l border-white h-2"></div><div class="border-l border-white h-1"></div>
+          <div class="border-l border-white h-2"></div>
+        </div>
+      </div>
+
+      <!-- Viewport Canvas Area -->
+      <div class="flex-1 relative overflow-auto canvas-grid flex items-center justify-center p-8">
+        
+        <!-- ARTBOARD (ORIGINAL PRESERVED ARTWORK) -->
+        <div class="relative w-[780px] h-[260px] bg-white rounded-md shadow-2xl transition duration-200" style="box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255,255,255,0.05);">
+          
+          <!-- Outer Bleed -->
+          <div class="absolute -inset-1.5 border border-dashed border-rose-500/40 rounded-lg pointer-events-none">
+            <span class="absolute -top-3.5 left-2 text-[8px] font-mono-num text-rose-400 bg-[#080d14] px-1 rounded border border-rose-500/30">Bleed Zone (5.00 mm)</span>
+          </div>
+
+          <!-- Dimension Banner Callout (Top CAD Measurement) -->
+          <div class="absolute -top-7 left-0 w-full flex items-center justify-between text-[#00f2c3] font-mono-num text-[10px]">
+            <div class="w-2 h-2 border-l border-t border-[#00f2c3]"></div>
+            <div class="flex-1 flex items-center justify-center mx-2">
+              <div class="h-[1px] flex-1 bg-[#00f2c3]/50"></div>
+              <span class="px-2 py-0.5 rounded-full bg-[#0a1420] border border-[#00f2c3]/40 text-[#00f2c3] font-semibold text-[10px] mx-1 shadow-sm">
+                3,000.00 mm (Scale 1:10)
+              </span>
+              <div class="h-[1px] flex-1 bg-[#00f2c3]/50"></div>
+            </div>
+            <div class="w-2 h-2 border-r border-t border-[#00f2c3]"></div>
+          </div>
+
+          <!-- Artwork Content Canvas -->
+          <div class="w-full h-full relative overflow-hidden rounded-md bg-gradient-to-r from-[#0c4a45] via-[#09353e] to-[#061e2a] flex flex-col justify-between p-6">
+            <div class="absolute right-0 top-0 bottom-0 w-[42%] bg-gradient-to-l from-[#00f2c3]/20 via-[#0ea5e9]/10 to-transparent transform skew-x-[-18deg] origin-top-right border-l border-[#00f2c3]/30"></div>
+            <div class="absolute right-12 top-0 bottom-0 w-[24%] bg-[#00f2c3]/15 transform skew-x-[-18deg] origin-top-right border-l border-[#00f2c3]/20"></div>
+
+            <div class="relative z-10 flex items-center space-x-2">
+              <span class="tracking-[0.3em] font-semibold text-[11px] text-[#7decd7] uppercase">
+                ADVERTISING · DIGITAL PRINTING · ALU FABRICATION
+              </span>
+            </div>
+
+            <div class="relative z-10 my-auto inline-block">
+              <!-- Selection Box with micro-handles -->
+              <div class="absolute -inset-2 border-2 border-[#00f2c3] rounded-md pointer-events-none">
+                <div class="absolute -top-1.5 -left-1.5 w-3 h-3 bg-white border-2 border-[#00f2c3] rounded-sm"></div>
+                <div class="absolute -top-1.5 -right-1.5 w-3 h-3 bg-white border-2 border-[#00f2c3] rounded-sm"></div>
+                <div class="absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-white border-2 border-[#00f2c3] rounded-sm"></div>
+                <div class="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-white border-2 border-[#00f2c3] rounded-sm"></div>
+                
+                <div class="absolute -bottom-9 left-1/2 -translate-x-1/2 bg-[#09111c] border border-tech rounded-md px-2 py-1 flex items-center space-x-2 text-[10px] text-white/90 shadow-lg pointer-events-auto">
+                  <span class="text-[#00f2c3] font-medium font-mono-num">1,850 × 420 mm</span>
+                  <span class="text-white/20">|</span>
+                  <button class="hover:text-[#00f2c3]">Lock</button>
+                  <button class="hover:text-[#00f2c3]">Flip</button>
+                  <button class="hover:text-[#00f2c3]">Export SVG</button>
+                </div>
+              </div>
+
+              <h1 class="text-white font-extrabold text-[54px] tracking-tight leading-none drop-shadow-md">
+                AN PHAT
+              </h1>
+              <p class="text-[#a5e8de] text-[15px] font-medium mt-1">
+                Smart Engineering Design · Millimeter Precision Production
+              </p>
+            </div>
+
+            <div class="relative z-10 flex items-center space-x-3">
+              <span class="px-3 py-1 rounded-md bg-[#00f2c3] text-[#052328] font-bold text-[11px] tracking-wider uppercase shadow-md flex items-center gap-1">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                CLIENT APPROVED PROOF
+              </span>
+              <span class="text-white/70 text-[10.5px]">Specs: 25x25mm steel tubing, Alcorest 3mm outdoor panel</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Floating Page/Zoom Widget -->
+        <div class="absolute bottom-3 left-6 bg-[#0c1420]/90 backdrop-blur-md border border-tech rounded-lg px-2.5 py-1 flex items-center space-x-2.5 text-[11px] shadow-xl z-20 text-white">
+          <button class="text-white/60 hover:text-white">◀</button>
+          <span class="font-medium text-[10.5px]">Page 1 / 2</span>
+          <button class="text-white/60 hover:text-white">▶</button>
+          <span class="text-white/20">|</span>
+          <span class="text-[#00f2c3] font-mono-num font-semibold text-[10.5px]">33.3%</span>
+        </div>
+      </div>
+
+      <!-- ================= COLOR PALETTE BAR (ENGLISH) ================= -->
+      <div class="h-[34px] min-h-[34px] bg-[#0b121b] border-t border-tech flex items-center px-2 select-none justify-between z-20 shadow-inner">
+        <!-- Left: Palette Selector -->
+        <div class="flex items-center space-x-1.5 pr-2 border-r border-white/10">
+          <button class="flex items-center space-x-1 px-2 py-1 rounded-md bg-[#15202e] border border-white/10 text-white hover:border-[#00f2c3]/40 text-[11px] font-semibold transition shadow-sm" title="Switch active palette">
+            <span class="w-2.5 h-2.5 rounded-full bg-gradient-to-tr from-[#00f2c3] via-sky-400 to-amber-400"></span>
+            <span class="truncate max-w-[130px]">Alu & Vinyl Swatches</span>
+            <span class="text-slate-400 text-[9px]">▾</span>
+          </button>
+          
+          <div class="flex items-center space-x-0.5 text-white/40">
+            <button class="w-5 h-5 flex items-center justify-center hover:bg-white/10 rounded text-[10px]" title="Scroll left">◀</button>
+            <button class="w-5 h-5 flex items-center justify-center hover:bg-white/10 rounded text-[10px]" title="Scroll right">▶</button>
+          </div>
+        </div>
+
+        <!-- Center: Swatches Stream -->
+        <div class="flex-1 flex items-center space-x-1 px-2 overflow-x-auto py-1">
+          <!-- None Swatch -->
+          <button class="w-5 h-5 min-w-[20px] rounded border border-white/20 bg-white relative flex items-center justify-center hover:scale-110 transition shadow-sm" title="None (No Fill / No Stroke)">
+            <div class="w-full h-[1.5px] bg-rose-500 rotate-45"></div>
+          </button>
+
+          <!-- Core Swatches -->
+          <button class="w-5 h-5 min-w-[20px] rounded border border-white/20 bg-[#ffffff] hover:scale-110 transition shadow-sm" title="Pure White (C0 M0 Y0 K0)"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-white/20 bg-[#00f2c3] hover:scale-110 transition shadow-sm relative" title="Cyber Mint (#00F2C3)">
+            <span class="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-white ring-1 ring-black"></span>
+          </button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-white/20 bg-[#0c4a45] hover:scale-110 transition shadow-sm" title="An Phat Teal (EV-2008)"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-white/20 bg-[#09353e] hover:scale-110 transition shadow-sm" title="Gloss Deep Teal"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-white/20 bg-[#061e2a] hover:scale-110 transition shadow-sm" title="Midnight Navy"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-white/20 bg-[#7decd7] hover:scale-110 transition shadow-sm" title="Soft Pastel Mint (3M Vinyl)"></button>
+
+          <div class="w-[1px] h-4 bg-white/10 mx-0.5"></div>
+
+          <!-- Production Primaries -->
+          <button class="w-5 h-5 min-w-[20px] rounded border border-white/20 bg-[#00a3e0] hover:scale-110 transition shadow-sm" title="Process Cyan 100%"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-white/20 bg-[#0055b8] hover:scale-110 transition shadow-sm" title="Royal Blue Vinyl"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-white/20 bg-[#16a34a] hover:scale-110 transition shadow-sm" title="Forest Green Alu"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-white/20 bg-[#eab308] hover:scale-110 transition shadow-sm" title="Warm Yellow"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-white/20 bg-[#f97316] hover:scale-110 transition shadow-sm" title="Vivid Orange"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-white/20 bg-[#dc2626] hover:scale-110 transition shadow-sm" title="Signal Red (EV-2005)"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-white/20 bg-[#ec008c] hover:scale-110 transition shadow-sm" title="Process Magenta 100%"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-white/20 bg-[#9333ea] hover:scale-110 transition shadow-sm" title="Violet Purple"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-white/20 bg-[#d4af37] hover:scale-110 transition shadow-sm" title="Gold Brushed Alu"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-white/20 bg-[#c0c0c0] hover:scale-110 transition shadow-sm" title="Silver Metallic Alu"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-white/20 bg-[#64748b] hover:scale-110 transition shadow-sm" title="Anodized Aluminum Gray"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-white/20 bg-[#1e293b] hover:scale-110 transition shadow-sm" title="Matte Black Alu"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-white/20 bg-[#000000] hover:scale-110 transition shadow-sm" title="Rich Black (C60 M40 Y40 K100)"></button>
+
+          <!-- Add swatch button -->
+          <button class="w-5 h-5 min-w-[20px] rounded border border-dashed border-white/30 text-white/50 hover:text-[#00f2c3] hover:border-[#00f2c3] flex items-center justify-center text-[12px] font-bold" title="Add active color to palette">+</button>
+        </div>
+
+        <!-- Right: Mouse Guide & Manager -->
+        <div class="flex items-center space-x-2 pl-2 border-l border-white/10 text-white/40">
+          <span class="text-[9.5px] hidden xl:inline">
+            <kbd class="px-1 py-0.5 rounded bg-white/10 text-white/70 font-mono text-[9px]">L-Click</kbd> Fill · <kbd class="px-1 py-0.5 rounded bg-white/10 text-white/70 font-mono text-[9px]">R-Click</kbd> Stroke
+          </span>
+          <button class="w-6 h-6 flex items-center justify-center hover:bg-white/10 rounded text-white/60 hover:text-white" title="Open Swatches Library...">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
+          </button>
+        </div>
+      </div>
+    </main>
+
+    <!-- ================= RIGHT INSPECTOR DOCK (W: 280px) ================= -->
+    <aside class="w-[280px] min-w-[280px] bg-[#0c131d] border-l border-tech flex flex-col z-20 select-none">
+      
+      <!-- Dock Tabs (English) -->
+      <div class="h-[34px] min-h-[34px] bg-[#0e1622] border-b border-tech flex items-center justify-between px-2 text-[11px]">
+        <div class="flex items-center space-x-1">
+          <button class="px-2.5 py-1 rounded-md font-semibold text-[#00f2c3] bg-[#162536] border border-[#00f2c3]/30 shadow-sm">
+            Properties
+          </button>
+          <button class="px-2.5 py-1 rounded-md text-white/60 hover:text-white hover:bg-white/5 transition">
+            Layers
+          </button>
+          <button class="px-2.5 py-1 rounded-md text-white/60 hover:text-white hover:bg-white/5 transition">
+            Preflight
+          </button>
+        </div>
+        <button class="w-6 h-6 flex items-center justify-center text-white/40 hover:text-white rounded">⋯</button>
+      </div>
+
+      <!-- Dock Scrollable Body -->
+      <div class="flex-1 overflow-y-auto p-3 space-y-3.5 text-white/80">
+
+        <!-- SECTION 1: TYPOGRAPHY -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-[#00f2c3]"></span>
+              Typography
+            </span>
+            <span class="text-[10px] text-white/40">OpenType</span>
+          </div>
+
+          <!-- Font selector -->
+          <div class="input-field rounded-lg px-2.5 py-1.5 flex items-center justify-between cursor-pointer">
+            <span class="font-medium text-white text-[12px]">Plus Jakarta Sans</span>
+            <span class="text-white/40 text-[10px]">Bold ▾</span>
+          </div>
+
+          <!-- Font Size & Tracking -->
+          <div class="grid grid-cols-2 gap-1.5 font-mono-num">
+            <div class="input-field rounded-md px-2 py-1 flex items-center justify-between">
+              <span class="text-white/40 text-[10px]">Size</span>
+              <span class="font-semibold text-white">54 pt</span>
+            </div>
+            <div class="input-field rounded-md px-2 py-1 flex items-center justify-between">
+              <span class="text-white/40 text-[10px]">Track</span>
+              <span class="font-semibold text-white">+15</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="w-full h-[1px] bg-white/10"></div>
+
+        <!-- SECTION 2: FILL & STROKE -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] font-bold text-white uppercase tracking-wider">Fill & Outline</span>
+            <span class="text-[10px] text-[#00f2c3] cursor-pointer hover:underline">+ Effects</span>
+          </div>
+
+          <!-- Fill row -->
+          <div class="flex items-center justify-between p-1.5 bg-[#080d14] border border-tech rounded-lg">
+            <div class="flex items-center space-x-2">
+              <div class="w-5 h-5 rounded bg-white border border-white/20 shadow-sm"></div>
+              <div>
+                <div class="text-[11px] font-medium text-white">Pure White</div>
+                <div class="text-[9.5px] text-white/40 font-mono-num">CMYK: 0 / 0 / 0 / 0</div>
+              </div>
+            </div>
+            <span class="font-mono-num text-[11px] font-semibold text-white/80">100%</span>
+          </div>
+
+          <!-- Stroke row -->
+          <div class="flex items-center justify-between p-1.5 bg-[#080d14] border border-tech rounded-lg">
+            <div class="flex items-center space-x-2">
+              <div class="w-5 h-5 rounded bg-transparent border-2 border-dashed border-rose-400/60 relative flex items-center justify-center">
+                <div class="w-full h-[1px] bg-rose-500 rotate-45"></div>
+              </div>
+              <div>
+                <div class="text-[11px] font-medium text-white/60">None</div>
+                <div class="text-[9.5px] text-white/30">0.00 mm</div>
+              </div>
+            </div>
+            <button class="text-[10px] text-[#00f2c3] hover:underline">+ Add Stroke</button>
+          </div>
+
+          <!-- Document Swatches -->
+          <div class="pt-1">
+            <div class="flex items-center justify-between text-[10px] text-white/50 mb-1.5">
+              <span>Document Swatches</span>
+              <button class="text-[#00f2c3] hover:underline">+ Add</button>
+            </div>
+            <div class="grid grid-cols-6 gap-1">
+              <button class="h-5 rounded border border-white/20 bg-white hover:scale-105 transition" title="Pure White"></button>
+              <button class="h-5 rounded border border-white/20 bg-[#00f2c3] hover:scale-105 transition ring-1 ring-[#00f2c3]" title="Cyber Mint"></button>
+              <button class="h-5 rounded border border-white/20 bg-[#0c4a45] hover:scale-105 transition" title="An Phat Teal"></button>
+              <button class="h-5 rounded border border-white/20 bg-[#061e2a] hover:scale-105 transition" title="Midnight Navy"></button>
+              <button class="h-5 rounded border border-white/20 bg-[#7decd7] hover:scale-105 transition" title="Pastel Mint"></button>
+              <button class="h-5 rounded border border-white/20 bg-[#d4af37] hover:scale-105 transition" title="Gold Brushed"></button>
+            </div>
+          </div>
+        </div>
+
+        <div class="w-full h-[1px] bg-white/10"></div>
+
+        <!-- SECTION 3: FABRICATION & CNC SPECS -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] font-bold text-white uppercase tracking-wider">Fabrication Specs</span>
+            <span class="text-[9px] px-1 rounded bg-[#00f2c3]/20 text-[#00f2c3] font-semibold">CAD Ready</span>
+          </div>
+
+          <div class="bg-[#080d14] border border-tech rounded-lg p-2 space-y-1.5 text-[10.5px]">
+            <div class="flex justify-between">
+              <span class="text-white/50">Product Type:</span>
+              <span class="font-medium text-white">Illuminated Alu Box</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-white/50">Material:</span>
+              <span class="font-medium text-white">Alcorest 3mm Panel</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-white/50">Toolpath Bit:</span>
+              <span class="font-medium text-[#00f2c3]">3.175mm Spiral Bit</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-white/50">Kerf Offset:</span>
+              <span class="font-mono-num font-medium text-white">0.25 mm</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="w-full h-[1px] bg-white/10"></div>
+
+        <!-- SECTION 4: LAYERS TREE -->
+        <div class="space-y-1.5">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] font-bold text-white uppercase tracking-wider">Layers</span>
+            <span class="text-[10px] text-white/40">4 Objects</span>
+          </div>
+
+          <div class="space-y-1">
+            <div class="flex items-center justify-between px-2 py-1.5 rounded-md bg-[#162536] border border-[#00f2c3]/30 text-white text-[11px]">
+              <div class="flex items-center space-x-1.5">
+                <span class="text-[#00f2c3]">👁</span>
+                <span class="text-white/40">🔓</span>
+                <span class="font-semibold text-white">T AN PHAT</span>
+              </div>
+              <span class="w-2 h-2 rounded-full bg-[#00f2c3]"></span>
+            </div>
+            <div class="flex items-center justify-between px-2 py-1 rounded-md hover:bg-white/5 text-white/60 text-[11px]">
+              <div class="flex items-center space-x-1.5">
+                <span>👁</span>
+                <span class="text-white/40">🔓</span>
+                <span>T Tagline Subtitle</span>
+              </div>
+            </div>
+            <div class="flex items-center justify-between px-2 py-1 rounded-md hover:bg-white/5 text-white/60 text-[11px]">
+              <div class="flex items-center space-x-1.5">
+                <span>👁</span>
+                <span class="text-white/40">🔓</span>
+                <span>■ Angled Geometric Facet</span>
+              </div>
+            </div>
+            <div class="flex items-center justify-between px-2 py-1 rounded-md hover:bg-white/5 text-white/60 text-[11px]">
+              <div class="flex items-center space-x-1.5">
+                <span>👁</span>
+                <span class="text-white/40">🔒</span>
+                <span>▧ Base Alu Panel</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </aside>
+
+  </div>
+
+  <!-- ================= STATUS BAR (H: 25px) ================= -->
+  <footer class="h-[25px] min-h-[25px] bg-[#0c131d] border-t border-tech flex items-center justify-between px-3 text-[10.5px] text-white/60 select-none z-30">
+    <div class="flex items-center space-x-3">
+      <div class="flex items-center space-x-1.5">
+        <span class="w-1.5 h-1.5 rounded-full bg-[#00f2c3] animate-pulse"></span>
+        <span class="text-white/80 font-medium">Ready for Output</span>
+      </div>
+      <span class="text-white/20">|</span>
+      <span class="text-[10px] px-1.5 py-0.2 rounded font-medium bg-white/10 text-[#00f2c3]">
+        Locale: EN-US
+      </span>
+    </div>
+
+    <div class="flex items-center space-x-3 font-mono-num text-[10px] text-white/50">
+      <span>Cursor: <strong class="text-white font-medium">X: 1,420.50 mm · Y: 320.10 mm</strong></span>
+      <span class="text-white/20">|</span>
+      <span>Selection: <strong class="text-white font-medium">1,850.00 × 420.00 mm</strong></span>
+    </div>
+
+    <div class="flex items-center space-x-2.5">
+      <span class="px-1.5 py-0.2 rounded bg-white/5 border border-white/10 text-white/70 text-[9.5px]">ISO Coated v2 (300 DPI)</span>
+      <span class="text-emerald-400 font-semibold flex items-center gap-1 text-[10px]">
+        <span>✓</span> Preflight Passed
+      </span>
+      <span class="text-white/20">|</span>
+      <div class="flex items-center space-x-1 font-mono-num">
+        <span class="text-white font-medium text-[10.5px]">33.3%</span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

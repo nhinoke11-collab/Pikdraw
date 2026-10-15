@@ -234,13 +234,14 @@
         "C7"
       ],
       "deliverables": [
-        "Shell Qt Widgets thật: menu/action registry, dock, workspace switcher, status, theme, placeholder viewport; fixture presenter thay service chưa có.",
-        "Forms .ui, QSS và icons external trong dev; Reload UI theo mục 4; build lần đầu và build khi sửa C++.",
+        "Shell Qt Widgets thật bám sát thiết kế chuẩn docs/architecture/ui-reference/ui_design_2026.html: Topbar 38px (logo PK gradient, file title với pulse đã lưu, menu bar, spotlight search Ctrl+K, pill workspace switcher Vector/In ấn/Thi công/3D, theme toggle, settings modal, nút xuất), Context ribbon 34px (indicator, X/Y/W/H mm), Tool strip trái 48-56px, Inspector & Layers phải 280-320px, Status bar đáy 26px.",
+        "Bộ stylesheet QSS chuẩn Cyber 2026 tại apps/desktop/themes/theme-dark.qss (Cyber Teal #00f2c3, nền đen sâu #070b10/#0c131d, hairline borders) và theme-light.qss theo ui_light_mode.html; font Plus Jakarta Sans và JetBrains Mono.",
+        "Forms .ui tại apps/desktop/ui/ và cơ chế Reload UI (F5) trong dev theo mục 4; build lần đầu và build khi sửa C++.",
         "Giữ window/viewport host/service lifecycle trong C++; chỉ reload forms/panels, rollback UI lỗi; release chỉ dùng tài nguyên tin cậy.",
         "Widget factory allowlist, không tải plugin native ngoài qua .ui; test loading/empty/error/cancel states."
       ],
       "checks": [
-        "DPI 100/150/200%, 1366x768 và 1920x1080, keyboard/focus, chuỗi tiếng Việt dài; screenshot kèm thao tác.",
+        "Đối chiếu visual và layout khớp 100% với ui_design_2026.html; DPI 100/150/200%, 1366x768 và 1920x1080, keyboard/focus (Ctrl+K), chuỗi tiếng Việt dài; screenshot kèm thao tác.",
         "50 lần reload: action không nhân đôi handler, không tăng widget/connection count tích lũy; lỗi form giữ UI cũ.",
         "Mock mode được gắn nhãn development; không ghi tool placeholder là đã implement."
       ],

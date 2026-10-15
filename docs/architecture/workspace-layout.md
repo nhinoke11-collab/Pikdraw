@@ -1,74 +1,133 @@
-# Bố cục workspace PikDraw
+# Bố cục Workspace và Design System PikDraw 2026
 
-Đây là blueprint giao diện desktop, chưa phải ứng dụng có thể dùng. [Bản vẽ SVG](workspace-blueprint.svg) minh họa tỷ lệ và vùng chức năng; không quy định pixel cứng cho mọi màn hình. Preview PNG không phải artifact được phân phối trong Git.
+Tài liệu này xác định đặc tả giao diện desktop, hệ thống Design Tokens và cấu trúc layout chuẩn cho PikDraw.
+Bản thiết kế chuẩn tương tác (canonical visual reference) được lưu trữ tại [ui_design_2026.html](ui-reference/ui_design_2026.html), [ui_light_mode.html](ui-reference/ui_light_mode.html) và [ui_english_2026.html](ui-reference/ui_english_2026.html). Bản vẽ này thay thế toàn diện bản phác thảo SVG trước đây và là kim chỉ nam bắt buộc cho mọi agent triển khai UI tại tác vụ `ps05-native-preview` và `ps13-vertical-slice`.
 
-## Khung chung
+---
+
+## 1. Khung Bố Cục Chuẩn (2026 Cyber Layout)
 
 ```text
-┌──────────────────── Menu / tìm lệnh / tài liệu ─────────────────────┐
-│ Vector | In ấn | Thi công | 3D       Tự lưu · tiến độ tác vụ         │
-├──────────────── Thuộc tính theo công cụ/selection ─────────────────┤
-│ Tool  │ Tab tài liệu · ruler                            │ Inspector │
-│ strip │                                                 │ theo ngữ  │
-│       │              CANVAS / VIEWPORT                   │ cảnh      │
-│       │        chiếm phần lớn không gian làm việc         │           │
-│       │                                                 │ Layers /  │
-│       │                                                 │ Assets    │
-├───────┴─────────────────────────────────────────────────┴───────────┤
-│ Trang / màu / tùy chọn dock      Tọa độ · mm · zoom · màu · cảnh báo │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│ TOPBAR (38px): [PK PRO 2026] [Tên file · pulse] [Menus] [⌘K Search] [Pill Tabs] [Theme/Settings/Xuất] │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│ CONTEXT RIBBON (34px): [Target Indicator] [X, Y mm] [🔒] [W, H mm] [Align/Boolean]│
+├──────┬───────────────────────────────────────────────────────────┬───────────────┤
+│ Tool │ Tab tài liệu · Thước đo mm ngang                          │ DOCK PHẢI     │
+│ Strip├───────────────────────────────────────────────────────────┤ (280–320 px)  │
+│ 48px │ Thước │                                                   │               │
+│      │ dọc   │                     CANVAS / VIEWPORT             │ • Inspector   │
+│ Select│       │            Chiếm 65–75% không gian làm việc       │   Thuộc tính  │
+│ Node │       │                 Lưới chấm hạt 24×24px             │   Typography  │
+│ Pen  │       │                                                   │   Tô/Viền/Hiệu ứng│
+│ Shape│       │                                                   │               │
+│ Text │       │                                                   │ • Layers &    │
+│ Cut  │       │                                                   │   Assets      │
+├──────┴───────┴───────────────────────────────────────────────────┴───────────────┤
+│ STATUS BAR (26px): Đối tượng chọn · Tọa độ chuột mm · ICC Profile · Preflight · Zoom 25%│
+└──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Canvas là vùng chính. Với màn hình desktop 1440 × 900, điểm khởi đầu là canvas khoảng 65–75% bề ngang, thanh công cụ trái 44–56 px và dock phải 260–320 px. Đây là tỷ lệ thử nghiệm, cần kiểm tra DPI, tiếng Việt, màn hình nhỏ và thao tác thực tế trước khi chốt design tokens.
+---
 
-Menu chứa command ổn định; thanh tìm lệnh truy cập tất cả chức năng đã đăng ký. Workspace switcher đổi bộ công cụ và panel, giữ nguyên tài liệu, selection và lịch sử. Thanh thuộc tính hiển thị trường liên quan trực tiếp đến công cụ/selection; Inspector chứa phần sâu hơn.
+## 2. Hệ Thống Design Tokens (Bám sát `ui_design_2026.html`)
 
-Dock phải ưu tiên một panel chính và một vùng Layers/Assets thu gọn. Panel có tab, resize, pin, collapse và khôi phục layout. Không mở đồng thời tất cả panel của vector, in, CAD và 3D. Toolbar mở rộng theo menu hoặc flyout; tooltip có phím tắt và tên dễ hiểu.
+Mọi file Qt Style Sheets (`.qss`) và form Qt Designer (`.ui`) trong `apps/desktop/` phải áp dụng nghiêm ngặt các mã màu và kích thước sau:
 
-Thanh trạng thái hiển thị tọa độ, đơn vị, zoom, trạng thái profile màu, cảnh báo lựa chọn và tác vụ đang chạy. Hủy tác vụ nằm cạnh tiến độ, không buộc người dùng mở hộp thoại riêng. Chỉ báo “đã lưu” khi snapshot đã ghi thành công còn tương ứng revision hiện tại; save cũ hoàn tất không làm sạch edits mới. Preview giảm chất lượng/software và kết quả cần tính lại được báo bằng trạng thái dễ hiểu.
+### 2.1. Cyber Dark Palette (Chế độ Tối mặc định)
+- **Nền chính ứng dụng (App Background)**: `#070b10`
+- **Thanh Topbar / Header**: `#0c131d`
+- **Thanh Context Ribbon**: `#0e1622`
+- **Thanh công cụ trái (Tool Strip)**: `#0c131d`
+- **Khung Dock phải (Inspector & Layers)**: `#0c131d`
+- **Viền công nghệ mảnh (Hairline Tech Border)**: `rgba(255, 255, 255, 0.08)` hoặc `#1d2636`
+- **Ô nhập liệu (Input Field)**: Nền `rgba(10, 16, 24, 0.7)`, viền `rgba(255, 255, 255, 0.09)`, hover/focus viền `rgba(0, 242, 195, 0.45)` nền `rgba(12, 20, 30, 0.95)`
+- **Màu điểm nhấn (Cyber Accent Teal)**:
+  - `DEFAULT`: `#00f2c3`
+  - `HOVER`: `#00d2aa`
+  - `LIGHT`: `#00a884`
+  - `DIM GLOW`: `rgba(0, 242, 195, 0.12)`
+  - Active tool shadow: `box-shadow: 0 0 14px rgba(0, 242, 195, 0.25)`
+- **Văn bản**:
+  - Tiêu chuẩn: `#e2e8f0` hoặc `#ffffff`
+  - Mờ (Muted/Secondary): `rgba(255, 255, 255, 0.6)`
+  - Chú thích nhỏ: `rgba(255, 255, 255, 0.4)`
+- **Lưới Canvas (Dark Canvas Grid)**: Nền `#070c12`, lưới chấm tròn radial 24×24px với màu chấm `rgba(255, 255, 255, 0.14)`.
 
-## Workspace theo công việc
+### 2.2. Light Mode Palette (Chế độ Sáng)
+- **Nền chính**: `#ffffff` / `#f8fafc`
+- **Panels & Docks**: `#f1f5f9` / `#e8ecf2`
+- **Viền mảnh**: `rgba(0, 0, 0, 0.08)` / `#dcdfe6`
+- **Màu điểm nhấn (Emerald Accent)**: `#00876a` / `#00a884`
+- **Lưới Canvas**: Nền `#e8ecf2`, lưới chấm `rgba(0, 0, 0, 0.12)`.
 
-| Workspace | Công cụ ưu tiên | Inspector/context dock | Output |
-| --- | --- | --- | --- |
-| Vector | Select, node, pen, shapes, text, fill, outline, Boolean | Transform, text, fill/stroke, effects, pages/layers | Native/SVG, bản duyệt |
-| In ấn | Page/scale, bleed, chia khổ, preflight | Profile màu, ảnh/DPI, khổ vật liệu, vùng in | PDF theo preset được kiểm chứng |
-| Thi công | Snap, dimension, holes, cut/engrave, parts | Đơn vị, vật liệu, độ dày, số lượng, lỗi đường, bảng kê | DXF, bản vẽ và danh sách chi tiết |
-| 3D | Extrude, orbit, pan, material, camera | Chiều dày, liên kết đường nguồn, scene tree, camera | Preview, ảnh duyệt, dữ liệu 3D theo phạm vi hỗ trợ |
+### 2.3. Typography Chuẩn
+- **Nhãn UI, Menu, Tiêu đề**: Font `Plus Jakarta Sans`, `-apple-system`, `Segoe UI`, `Roboto`.
+- **Số liệu kỹ thuật, Tọa độ, Thước đo**: Font `JetBrains Mono`, `monospace` (`font-mono-num` với tính năng `tnum` tabular numbers).
 
-Chỉnh ảnh cơ bản xuất hiện theo selection hoặc task-specific panel trong Vector/In ấn. Có thể thêm workspace Raster khi lượng công cụ tăng; không cần mở một cửa sổ sửa ảnh độc lập ngay từ đầu.
+---
 
-Trang 2D và scene 3D có tab/view riêng trong cùng document. Không áp mọi thao tác 2D lên mesh hoặc ngược lại. Selection/command phải công bố loại đối tượng hỗ trợ và vô hiệu hóa có giải thích khi không phù hợp.
+## 3. Quy Cách Từng Thành Phần Chi Tiết
 
-## Những luồng phải thiết kế trước
+### 3.1. Topbar / Titlebar (Chiều cao cố định 38px)
+1. **Logo & Brand**:
+   - Icon vuông 24×24px bo góc `rounded-md` với nền gradient từ `#00f2c3` sang `#0ea5e9`, chữ `PK` đậm màu đen `#070b10`.
+   - Nhãn thương hiệu: `PikDraw` kèm badge `PRO 2026` nền `#00f2c3/15`, chữ `#00f2c3`, viền `#00f2c3/30`.
+2. **File Title & Trạng thái lưu**:
+   - Tên tệp (vd: `Bien_Hieu_An_Phat.pik`) kèm icon file SVG màu `#00f2c3`.
+   - Đèn LED tròn xanh `#00f2c3` hiệu ứng `animate-pulse` hiển thị trạng thái "Đã lưu tức thì".
+3. **Thanh menu**: `Tệp`, `Sửa`, `Đối tượng`, `Thi công`, `Plugin` với kích thước 11px, hover đổi màu nhẹ.
+4. **Spotlight Command Search (`Ctrl+K` / `⌘K`)**:
+   - Hộp tìm kiếm bo tròn trung tâm, chiều cao 26px, chiều rộng tối đa 300px.
+   - Placeholder: `"Tìm nhanh lệnh, công cụ..."` kèm phím tắt `⌘K`.
+5. **Workspace Switcher dạng viên thuốc (Pill Tabs)**:
+   - Cụm pill bo góc gồm 4 nút: `Vector` (có chấm tròn xanh active), `In ấn`, `Thi công`, `3D`.
+   - Nhấn chuyển tab chỉ đổi bộ công cụ và panel, giữ nguyên tài liệu, selection và lịch sử undo/redo.
+6. **Thao tác nhanh**:
+   - Nút chuyển giao diện Sáng / Tối (Sun / Moon icon).
+   - Nút mở Cài đặt (Settings Modal).
+   - Nút `Xuất file` màu xanh gradient nổi bật.
+   - Nút điều khiển cửa sổ (`─`, `□`, `✕`).
 
-**Nhập file:** chọn file → hiển thị progress có hủy → báo cáo thành phần hỗ trợ/chuyển dạng/thiếu tài nguyên → mở tài liệu → giữ liên kết báo cáo để tra lại. Với font thiếu, hiển thị bản xem trước và lựa chọn thay thế; không thay font âm thầm rồi ghi đè nguồn.
+### 3.2. Context Tool Ribbon (Chiều cao cố định 34px)
+- **Target Indicator**: Khối nhỏ bên trái hiển thị loại đối tượng đang chọn (vd: `Văn bản nghệ thuật (Group #402)`).
+- **Geometry Matrix (Hệ thống nhập tọa độ hình học)**:
+  - Các ô nhập: `X`, `Y`, nút Khóa tỷ lệ (Lock aspect ratio), `W`, `H`.
+  - Hiển thị đơn vị thực tế (mm) với font số `JetBrains Mono`.
+- **Căn chỉnh & Boolean**: Các nút Căn lề trái/giữa/phải, Phân bố đều, và menu dropdown Boolean (Hợp, Giao, Trừ, Chia).
 
-**Xuất sản xuất:** chọn preset → preflight → lỗi có vị trí chọn trực tiếp trên canvas → sửa hoặc ghi nhận lựa chọn → xuất → ghi output revision. Khổ/đơn vị/tỷ lệ và đường cắt phải nằm trong bước kiểm tra dễ đọc, không ẩn ở một nhóm tùy chọn chung.
+### 3.3. Tool Strip Trái (Chiều rộng 48–56px)
+- Chứa các nút công cụ chính (Selection, Direct Select/Node, Pen, Shapes: Rectangle/Ellipse, Text, Contour/Cut, Dimension, Zoom/Pan).
+- Nút active có viền sáng và glow xanh Cyber Teal `#00f2c3`.
 
-**Tác vụ tính lâu:** chỉnh source/hủy/đóng tài liệu khi task đang chạy → kết quả lỗi thời không được áp dụng → trạng thái cho chạy lại với source mới. Tool preview khi kéo không tự trở thành đường sản xuất. Pan/zoom/selection giữ phản hồi trong lúc worker chạy.
+### 3.4. Canvas Viewport Trung Tâm (Chiếm 65–75% màn hình)
+- Thước đo mm ngang và dọc chính xác.
+- Vùng canvas hiển thị trang in/biển hiệu với khung viền selection màu xanh dương `#2788df` và 8 điểm mút neo (handles).
+- Đường kích thước kỹ thuật hiển thị mũi tên hai chiều và thông số (vd: `3000 mm · 1:10`).
 
-**Plugin:** danh sách có publisher, version, trạng thái và phạm vi quyền; action xuất hiện trong command registry. Plugin thiếu/lỗi được báo trong khu vực task/plugin status. Dữ liệu plugin chưa đọc được vẫn có mặt trong tài liệu và không bị xóa khi lưu.
+### 3.5. Inspector Dock Phải (Chiều rộng 280–320px)
+- **Khu vực Thuộc tính**:
+  - Thông số Font (Family, Size pt, Tracking, Line height).
+  - Khối màu Tô (Fill) và Viền (Stroke) trực quan (kèm ô gạch chéo đỏ khi không có viền).
+  - Danh sách Hiệu ứng sống (Non-destructive editable effects).
+  - Nút chuyển Outline giữ nguyên bản chữ nguồn.
+- **Khu vực Layers & Assets**:
+  - Cây đối tượng phân cấp (Trang 1 -> Nền biển -> Dòng mô tả -> AN PHÁT -> Đường sản xuất).
+  - Trạng thái khóa/ẩn hiện từng layer.
 
-**Phục hồi:** danh sách checkpoint có thời gian và tên tài liệu → preview → mở thành bản phục hồi riêng → cho người dùng lưu/so sánh. Tránh ghi đè file gốc trước khi xác nhận lưu.
+### 3.6. Status Bar Đáy (Chiều cao 26px)
+- Hiển thị số lượng đối tượng đang chọn (`1 đối tượng · chữ sống`).
+- Tọa độ chuột trực tiếp theo mm (`X: 100.00 · Y: 150.00 mm`).
+- Profile màu hiện hành (`Màu: ICC profile mẫu`).
+- Trạng thái Preflight (`Preflight: cần chạy` hoặc cờ xanh).
+- Thanh trượt điều khiển Zoom (`25% − ▬ +`).
 
-## Design system và mở rộng
+---
 
-Vòng lặp triển khai dự kiến là **shell Qt Widgets dùng lại cho sản phẩm**, với forms `.ui`,
-QSS và icon external trong dev. Build host lần đầu; Reload UI chỉ thay panels/style và rebind
-actions, giữ window/viewport/document/history/services. Sửa C++ hoặc custom widget vẫn build
-tăng dần. HTML có thể là bản tham chiếu bố cục; chưa có native preview chạy được hiện tại.
+## 4. Hướng Dẫn Kỹ Thuật Cho Agent Triển Khai
 
-Chi tiết lifecycle, widget allowlist, rollback UI lỗi, DPI/keyboard và release resources ở
-[kế hoạch sau spike](../roadmap/post-spike-implementation.md), task `ps05-native-preview`.
-Task `ps13-vertical-slice` thay fixture presenters bằng services thật. Mock/screenshot không
-thay E2E; không tải native plugin ngoài qua form để đi vòng process isolation.
-
-- Semantic tokens cho màu, spacing, typography, focus, stroke, trạng thái lỗi/cảnh báo và docking; token không đặt theo tên feature cụ thể.
-- Light/dark dùng cùng hierarchy và contrast. Màu nền UI không được thay đổi quản lý màu của artwork.
-- Đơn vị nhập liệu có suffix, cho phép biểu thức đơn giản nếu có đặc tả rõ, báo lỗi tại field; không tự làm tròn dữ liệu nguồn theo số chữ số hiển thị.
-- Keyboard navigation, focus ring, shortcut editor, screen-reader names, DPI và văn bản tiếng Việt là yêu cầu nền tảng.
-- Plugin dùng host components và command model chung. Chỉ được chiếm vùng canvas/workspace khi có extension point được review; không vẽ menu/chrome riêng tùy tiện.
-- Lưu layout theo người dùng/workspace với schema version và nút reset. Thêm plugin hoặc nâng cấp không được khiến layout cũ không mở được.
-
-Mỗi tính năng mới nộp command, selection types, icon token, empty/loading/error states, shortcut và vị trí workspace. Nếu chỉ thêm chức năng vào menu, phải giải thích được người dùng tìm thấy nó trong luồng nào. Screenshot/mockup dùng dữ liệu mẫu, không thay thế kiểm thử bàn phím, tốc độ và tài liệu lớn.
+Khi nhận task liên quan đến UI (`ps05-native-preview` và `ps13-vertical-slice`):
+1. **Đọc tệp tham chiếu gốc**: Mở xem mã nguồn và giao diện tại [docs/architecture/ui-reference/ui_design_2026.html](ui-reference/ui_design_2026.html).
+2. **Tuân thủ QSS Design Tokens**: Không tự ý bịa mã màu hoặc dùng màu xám mặc định của Qt. Mọi stylesheet phải sử dụng bảng mã màu mục 2.
+3. **Cơ chế nạp động trong dev**: Tách biệt `.ui` forms trong `apps/desktop/ui/` và `.qss` styles trong `apps/desktop/themes/` để hỗ trợ tính năng **Reload UI (`F5`)** mà không cần build lại C++.
+4. **Không đưa WebAssembly hoặc HTML runtime vào app native**: HTML chỉ là bản vẽ tham chiếu; runtime đích thực là **C++20 Qt Widgets + Skia**.

@@ -1,0 +1,1021 @@
+<!DOCTYPE html>
+<html lang="vi" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PikDraw — UI/UX Workspace & Settings (Dark & Light Mode 2026)</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            cyber: {
+              DEFAULT: '#00f2c3',
+              hover: '#00d2aa',
+              light: '#00a884',
+              dim: 'rgba(0, 242, 195, 0.12)'
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+    
+    * {
+      box-sizing: border-box;
+      user-select: none;
+    }
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      overflow: hidden;
+      margin: 0;
+      padding: 0;
+      height: 100vh;
+      width: 100vw;
+      transition: background-color 0.2s ease, color 0.2s ease;
+    }
+    .font-mono-num {
+      font-family: 'JetBrains Mono', monospace;
+      font-feature-settings: "tnum" 1, "zero" 1;
+    }
+    /* Scrollbars */
+    ::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+    .dark ::-webkit-scrollbar-track { background: rgba(10, 16, 23, 0.5); }
+    .dark ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border-radius: 4px; }
+    .dark ::-webkit-scrollbar-thumb:hover { background: rgba(0, 242, 195, 0.4); }
+
+    html:not(.dark) ::-webkit-scrollbar-track { background: rgba(240, 243, 248, 0.8); }
+    html:not(.dark) ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.15); border-radius: 4px; }
+    html:not(.dark) ::-webkit-scrollbar-thumb:hover { background: rgba(0, 168, 132, 0.4); }
+
+    /* Hairline borders */
+    .dark .border-tech { border: 1px solid rgba(255, 255, 255, 0.08); }
+    html:not(.dark) .border-tech { border: 1px solid rgba(0, 0, 0, 0.08); }
+
+    /* Interactive buttons */
+    .tool-btn {
+      transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .dark .tool-btn:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: #00f2c3;
+    }
+    .dark .tool-btn.active {
+      background: rgba(0, 242, 195, 0.14);
+      color: #00f2c3;
+      box-shadow: 0 0 14px rgba(0, 242, 195, 0.25);
+      border-color: rgba(0, 242, 195, 0.35);
+    }
+    html:not(.dark) .tool-btn:hover {
+      background: rgba(0, 0, 0, 0.06);
+      color: #00876a;
+    }
+    html:not(.dark) .tool-btn.active {
+      background: rgba(0, 168, 132, 0.12);
+      color: #00876a;
+      box-shadow: 0 2px 8px rgba(0, 168, 132, 0.18);
+      border-color: rgba(0, 168, 132, 0.3);
+    }
+
+    /* Inputs */
+    .dark .input-field {
+      background: rgba(10, 16, 24, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.09);
+    }
+    .dark .input-field:focus-within, .dark .input-field:hover {
+      border-color: rgba(0, 242, 195, 0.45);
+      background: rgba(12, 20, 30, 0.95);
+    }
+    html:not(.dark) .input-field {
+      background: #ffffff;
+      border: 1px solid #dcdfe6;
+    }
+    html:not(.dark) .input-field:focus-within, html:not(.dark) .input-field:hover {
+      border-color: #00a884;
+      background: #ffffff;
+      box-shadow: 0 0 0 2px rgba(0, 168, 132, 0.1);
+    }
+
+    /* Canvas Grid */
+    .dark .canvas-grid {
+      background-color: #070c12;
+      background-size: 24px 24px;
+      background-image: radial-gradient(circle, rgba(255, 255, 255, 0.14) 1px, transparent 1px);
+    }
+    html:not(.dark) .canvas-grid {
+      background-color: #e8ecf2;
+      background-size: 24px 24px;
+      background-image: radial-gradient(circle, rgba(0, 0, 0, 0.12) 1px, transparent 1px);
+    }
+
+    /* Modal Backdrop */
+    .modal-backdrop {
+      background: rgba(0, 0, 0, 0.65);
+      backdrop-filter: blur(8px);
+    }
+  </style>
+</head>
+<body class="flex flex-col h-screen w-screen text-xs select-none antialiased bg-[#070b10] text-[#e2e8f0] dark:bg-[#070b10] dark:text-[#e2e8f0]">
+
+  <!-- ================= TOPBAR / TITLEBAR (H: 38px) ================= -->
+  <header class="h-[38px] min-h-[38px] bg-[#f8fafc] dark:bg-[#0c131d] border-b border-tech flex items-center justify-between px-2.5 z-40 select-none transition-colors">
+    <!-- Left: App Brand & Document Info -->
+    <div class="flex items-center space-x-2">
+      <!-- 2026 App Logo -->
+      <div class="flex items-center justify-center w-6 h-6 rounded-md bg-gradient-to-br from-[#00f2c3] to-[#0ea5e9] text-[#070b10] font-bold text-[11px] shadow-sm tracking-tighter">
+        PK
+      </div>
+      <span class="font-bold text-[13px] tracking-wide text-slate-900 dark:text-white flex items-center gap-1.5 pl-0.5">
+        PikDraw
+        <span class="text-[9px] px-1.5 py-0.2 rounded font-semibold bg-[#00a884]/15 dark:bg-[#00f2c3]/15 text-[#00876a] dark:text-[#00f2c3] border border-[#00a884]/30 dark:border-[#00f2c3]/30">PRO 2026</span>
+      </span>
+
+      <span class="text-slate-400 dark:text-white/20 px-1">/</span>
+
+      <!-- File title -->
+      <div class="flex items-center space-x-1.5 hover:bg-slate-200 dark:hover:bg-white/5 px-2 py-1 rounded cursor-pointer transition">
+        <svg class="w-3.5 h-3.5 text-[#00a884] dark:text-[#00f2c3]" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/></svg>
+        <span class="text-slate-800 dark:text-white/90 font-medium text-[12px]">Bien_Hieu_An_Phat.pik</span>
+        <span class="w-1.5 h-1.5 rounded-full bg-[#00a884] dark:bg-[#00f2c3] animate-pulse ml-0.5" title="Đã lưu tức thì"></span>
+      </div>
+
+      <!-- Quick Menus -->
+      <nav class="hidden lg:flex items-center space-x-0.5 text-slate-600 dark:text-white/60 ml-2">
+        <button class="px-2 py-1 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-white/5 rounded text-[11px] transition">Tệp</button>
+        <button class="px-2 py-1 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-white/5 rounded text-[11px] transition">Sửa</button>
+        <button class="px-2 py-1 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-white/5 rounded text-[11px] transition">Đối tượng</button>
+        <button class="px-2 py-1 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-white/5 rounded text-[11px] transition">Thi công</button>
+        <button class="px-2 py-1 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-white/5 rounded text-[11px] transition">Plugin</button>
+      </nav>
+    </div>
+
+    <!-- Center: Modern Spotlight Search (⌘K) -->
+    <div class="flex-1 max-w-[300px] mx-4">
+      <div class="relative flex items-center h-[26px] bg-slate-100 dark:bg-[#080d14]/80 border border-tech rounded-lg px-2 text-slate-500 dark:text-white/50 hover:border-[#00a884] dark:hover:border-[#00f2c3]/40 cursor-pointer transition group shadow-inner">
+        <svg class="w-3.5 h-3.5 mr-1.5 text-slate-400 dark:text-white/40 group-hover:text-[#00a884] dark:group-hover:text-[#00f2c3] transition" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <span class="text-[11px] text-slate-500 dark:text-white/50 flex-1 truncate">Tìm nhanh lệnh, công cụ...</span>
+        <kbd class="text-[9px] font-mono-num px-1 py-0.2 rounded bg-slate-200 dark:bg-white/10 text-slate-600 dark:text-white/70 border border-slate-300 dark:border-white/10 ml-1">⌘K</kbd>
+      </div>
+    </div>
+
+    <!-- Right: Workspace Switcher, THEME TOGGLE, Settings & Export -->
+    <div class="flex items-center space-x-2">
+      <!-- Workspace Pill Switcher -->
+      <div class="flex p-0.5 bg-slate-200/80 dark:bg-[#080d14] border border-tech rounded-lg">
+        <button class="px-2.5 py-0.5 rounded-md text-[11px] font-semibold bg-white dark:bg-[#162536] text-[#00876a] dark:text-[#00f2c3] shadow-sm border border-slate-300/60 dark:border-[#00f2c3]/30 flex items-center gap-1">
+          <span class="w-1.5 h-1.5 rounded-full bg-[#00a884] dark:bg-[#00f2c3]"></span>
+          Vector
+        </button>
+        <button class="px-2.5 py-0.5 rounded-md text-[11px] text-slate-600 dark:text-white/60 hover:text-slate-900 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 transition">
+          In ấn
+        </button>
+        <button class="px-2.5 py-0.5 rounded-md text-[11px] text-slate-600 dark:text-white/60 hover:text-slate-900 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 transition">
+          Thi công
+        </button>
+        <button class="px-2.5 py-0.5 rounded-md text-[11px] text-slate-600 dark:text-white/60 hover:text-slate-900 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 transition">
+          3D
+        </button>
+      </div>
+
+      <!-- QUICK THEME TOGGLE (SUN / MOON) -->
+      <button id="themeToggleBtn" onclick="toggleTheme()" class="h-[25px] px-2 rounded-lg bg-slate-200 dark:bg-white/10 hover:bg-slate-300 dark:hover:bg-white/15 text-slate-700 dark:text-[#00f2c3] border border-tech flex items-center gap-1 text-[11px] font-medium transition" title="Chuyển Chế độ Sáng / Tối">
+        <!-- Sun icon (shown in dark mode) -->
+        <span class="hidden dark:inline-flex items-center gap-1">
+          <svg class="w-3.5 h-3.5 text-amber-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+          Sáng
+        </span>
+        <!-- Moon icon (shown in light mode) -->
+        <span class="inline-flex dark:hidden items-center gap-1">
+          <svg class="w-3.5 h-3.5 text-indigo-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          Tối
+        </span>
+      </button>
+
+      <!-- SETTINGS BUTTON (OPEN MODAL) -->
+      <button onclick="openSettingsModal()" class="h-[25px] px-2 rounded-lg bg-slate-200 dark:bg-white/5 hover:bg-slate-300 dark:hover:bg-white/10 text-slate-700 dark:text-white/80 border border-tech flex items-center gap-1 text-[11px] transition" title="Cài đặt hệ thống (Settings)">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg>
+        Cài đặt
+      </button>
+
+      <!-- Export Button -->
+      <button class="h-[25px] px-2.5 rounded-lg bg-emerald-600 dark:bg-gradient-to-r dark:from-[#00f2c3]/20 dark:to-[#0ea5e9]/20 text-white dark:text-[#00f2c3] border border-emerald-700 dark:border-[#00f2c3]/40 font-medium text-[11px] flex items-center gap-1.5 transition">
+        Xuất file
+      </button>
+
+      <!-- Window controls -->
+      <div class="flex items-center space-x-1 pl-1 text-slate-400 dark:text-white/40">
+        <button class="w-5 h-5 flex items-center justify-center hover:bg-black/10 dark:hover:bg-white/10 rounded">─</button>
+        <button class="w-5 h-5 flex items-center justify-center hover:bg-black/10 dark:hover:bg-white/10 rounded">□</button>
+        <button class="w-5 h-5 flex items-center justify-center hover:bg-rose-500 hover:text-white rounded">✕</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ================= CONTEXT TOOL RIBBON (H: 34px) ================= -->
+  <section class="h-[34px] min-h-[34px] bg-slate-100 dark:bg-[#0e1622] border-b border-tech flex items-center justify-between px-3 text-[11px] z-30 select-none transition-colors">
+    <!-- Left: Object Context & Geometry matrix -->
+    <div class="flex items-center space-x-2 text-slate-700 dark:text-white/70">
+      <!-- Target indicator -->
+      <div class="flex items-center gap-1.5 pr-2 border-r border-slate-300 dark:border-white/10">
+        <span class="w-2 h-2 rounded-sm bg-[#00a884] dark:bg-[#00f2c3]"></span>
+        <span class="font-semibold text-slate-900 dark:text-white">Văn bản nghệ thuật</span>
+        <span class="text-slate-500 dark:text-white/40 text-[10px]">(Group #402)</span>
+      </div>
+
+      <!-- Geometry Inputs -->
+      <div class="flex items-center space-x-1.5 font-mono-num">
+        <div class="input-field flex items-center h-[22px] px-1.5 rounded-md">
+          <span class="text-slate-400 dark:text-white/40 text-[10px] mr-1">X</span>
+          <span class="text-slate-900 dark:text-white font-medium">100.00</span>
+          <span class="text-slate-400 dark:text-white/30 text-[9px] ml-0.5">mm</span>
+        </div>
+        <div class="input-field flex items-center h-[22px] px-1.5 rounded-md">
+          <span class="text-slate-400 dark:text-white/40 text-[10px] mr-1">Y</span>
+          <span class="text-slate-900 dark:text-white font-medium">150.00</span>
+          <span class="text-slate-400 dark:text-white/30 text-[9px] ml-0.5">mm</span>
+        </div>
+        <button class="w-5 h-5 flex items-center justify-center text-[#00a884] dark:text-[#00f2c3] hover:bg-black/5 dark:hover:bg-white/5 rounded transition" title="Khóa tỷ lệ">
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+        </button>
+        <div class="input-field flex items-center h-[22px] px-1.5 rounded-md">
+          <span class="text-slate-400 dark:text-white/40 text-[10px] mr-1">W</span>
+          <span class="text-slate-900 dark:text-white font-medium">1,850.00</span>
+          <span class="text-slate-400 dark:text-white/30 text-[9px] ml-0.5">mm</span>
+        </div>
+        <div class="input-field flex items-center h-[22px] px-1.5 rounded-md">
+          <span class="text-slate-400 dark:text-white/40 text-[10px] mr-1">H</span>
+          <span class="text-slate-900 dark:text-white font-medium">420.00</span>
+          <span class="text-slate-400 dark:text-white/30 text-[9px] ml-0.5">mm</span>
+        </div>
+        <div class="input-field flex items-center h-[22px] px-1.5 rounded-md">
+          <span class="text-slate-400 dark:text-white/40 text-[10px] mr-1">∠</span>
+          <span class="text-slate-900 dark:text-white font-medium">0.0°</span>
+        </div>
+      </div>
+
+      <!-- Align cluster -->
+      <div class="flex items-center space-x-0.5 pl-2 border-l border-slate-300 dark:border-white/10">
+        <button class="w-6 h-6 flex items-center justify-center hover:bg-slate-200 dark:hover:bg-white/10 rounded text-slate-700 dark:text-white/70" title="Căn trái"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 4v16M8 8h10M8 16h6"/></svg></button>
+        <button class="w-6 h-6 flex items-center justify-center hover:bg-slate-200 dark:hover:bg-white/10 rounded text-slate-700 dark:text-white/70" title="Căn giữa"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 4v16M6 8h12M8 16h8"/></svg></button>
+        <button class="w-6 h-6 flex items-center justify-center hover:bg-slate-200 dark:hover:bg-white/10 rounded text-slate-700 dark:text-white/70" title="Căn phải"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20 4v16M6 8h10M10 16h6"/></svg></button>
+      </div>
+
+      <!-- Boolean Operation Pills -->
+      <div class="flex items-center space-x-0.5 pl-2 border-l border-slate-300 dark:border-white/10">
+        <button class="px-2 py-0.5 hover:bg-slate-200 dark:hover:bg-white/10 rounded text-slate-700 dark:text-white/70 hover:text-[#00876a] dark:hover:text-[#00f2c3] text-[10.5px]">Hợp nhất</button>
+        <button class="px-2 py-0.5 hover:bg-slate-200 dark:hover:bg-white/10 rounded text-slate-700 dark:text-white/70 hover:text-[#00876a] dark:hover:text-[#00f2c3] text-[10.5px]">Trừ khuôn</button>
+      </div>
+    </div>
+
+    <!-- Right: Quick actions -->
+    <div class="flex items-center space-x-2 text-slate-600 dark:text-white/60">
+      <button class="px-2 py-0.5 rounded bg-white dark:bg-white/5 hover:bg-slate-50 dark:hover:bg-white/10 text-slate-800 dark:text-white/80 border border-slate-300 dark:border-white/10 text-[10.5px] transition">
+        <span>Chuyển Outline (Ctrl+Q)</span>
+      </button>
+      <span class="text-slate-300 dark:text-white/20">|</span>
+      <span class="text-slate-500 dark:text-white/40 text-[10.5px]">Tỷ lệ: <strong class="text-slate-800 dark:text-white font-medium">1:10</strong> (3000 × 1000 mm)</span>
+    </div>
+  </section>
+
+  <!-- ================= WORKSPACE BODY (FLEX ROW) ================= -->
+  <div class="flex-1 flex overflow-hidden relative">
+
+    <!-- ================= EXPANDED PROFESSIONAL TOOLBAR (W: 44px) ================= -->
+    <aside class="w-[44px] min-w-[44px] bg-slate-50 dark:bg-[#0c131d] border-r border-tech flex flex-col items-center py-1.5 z-20 justify-between select-none transition-colors">
+      <div class="flex flex-col items-center space-y-0.5 w-full px-1 overflow-y-auto max-h-[calc(100vh-140px)]">
+        <!-- 1. Pick Tool (V) -->
+        <button class="tool-btn active w-8 h-7.5 rounded-md flex items-center justify-center relative" title="Con trỏ chọn / Biến đổi (V)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 3l7 18 3-7 7-3L3 3z"/></svg>
+          <span class="absolute bottom-0.5 right-0.5 w-1 h-1 bg-[#00a884] dark:bg-[#00f2c3] rounded-full"></span>
+        </button>
+
+        <!-- 2. Shape / Node Edit (F10 / A) -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-slate-600 dark:text-white/60 relative" title="Chỉnh Node đường cong (F10 / A)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 15l6-6m-6 6l-3-3m3 3V9m-6 6l-3-3m3 3v6m6-12L9 3"/></svg>
+          <span class="absolute bottom-0.5 right-0.5 w-1 h-1 bg-slate-400 dark:bg-white/30 rounded-full"></span>
+        </button>
+
+        <!-- 3. Bézier Pen (P) -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-slate-600 dark:text-white/60 relative" title="Bút vẽ Bézier / Đường cong (P)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 19l7-7 3 3-7 7-3-3zM18 13l-1.5-7.5L2 2l3.5 14.5L13 18"/></svg>
+          <span class="absolute bottom-0.5 right-0.5 w-1 h-1 bg-slate-400 dark:bg-white/30 rounded-full"></span>
+        </button>
+
+        <!-- 4. Rectangle (M / F6) -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-slate-600 dark:text-white/60 relative" title="Hình hộp / Bo vát góc R (M / F6)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/></svg>
+          <span class="absolute bottom-0.5 right-0.5 w-1 h-1 bg-slate-400 dark:bg-white/30 rounded-full"></span>
+        </button>
+
+        <!-- 5. Ellipse (L / F7) -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-slate-600 dark:text-white/60" title="Hình Elip / Đường tròn 3 điểm (L / F7)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/></svg>
+        </button>
+
+        <!-- 6. Polygon & Star (Y) -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-slate-600 dark:text-white/60 relative" title="Đa giác & Ngôi sao kỹ thuật (Y)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+          <span class="absolute bottom-0.5 right-0.5 w-1 h-1 bg-slate-400 dark:bg-white/30 rounded-full"></span>
+        </button>
+
+        <!-- 7. Typography (T / F8) -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-slate-600 dark:text-white/60 relative" title="Văn bản nghệ thuật / Uốn cong đường dẫn (T / F8)">
+          <span class="font-serif font-bold text-[14px]">T</span>
+          <span class="absolute bottom-0.5 right-0.5 w-1 h-1 bg-slate-400 dark:bg-white/30 rounded-full"></span>
+        </button>
+
+        <div class="w-5 h-[1px] bg-slate-300 dark:bg-white/10 my-0.5"></div>
+
+        <!-- 8. Virtual Segment Delete & Knife (X / C) [Corel/CAD Trimming] -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-slate-600 dark:text-white/60 relative" title="Cắt xén đoạn thừa vector / Dao cắt (X / C)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M14.121 14.121L19 19m-7-7l7-7m-7 7l-2.828 2.828a2 2 0 11-2.828-2.828L9.172 9.172"/></svg>
+          <span class="absolute bottom-0.5 right-0.5 w-1 h-1 bg-slate-400 dark:bg-white/30 rounded-full"></span>
+        </button>
+
+        <!-- 9. Smart Fill & Shape Builder (Shift+M) [Corel/Illustrator] -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-slate-600 dark:text-white/60" title="Tô màu thông minh vùng khép kín / Gộp mảng (Shift+M)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+        </button>
+
+        <!-- 10. Contour & Offset Path (O) [Corel Contour / Signmaking LED/CNC] -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-slate-600 dark:text-white/60" title="Tạo viền nở LED / Chân chữ CNC Offset (O)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" stroke-dasharray="2 2"/><rect x="2" y="2" width="20" height="20" rx="3"/></svg>
+        </button>
+
+        <!-- 11. Extrude & Block Shadow (E) [Corel 3D Extrude] -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-slate-600 dark:text-white/60" title="Kéo khối nổi 3D chân chữ / Bóng đổ khối (E)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg>
+        </button>
+
+        <!-- 12. CAD Dimension & Snap (D) [AutoCAD Dimensioning] -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-slate-600 dark:text-white/60 relative" title="Thước đo thi công CAD: Đo thẳng, đo góc, bán kính R (D)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 7V4m0 0h16m0 0v3M4 17v3m0 0h16m0 0v-3M7 12h10"/></svg>
+          <span class="absolute bottom-0.5 right-0.5 w-1 h-1 bg-slate-400 dark:bg-white/30 rounded-full"></span>
+        </button>
+
+        <!-- 13. Interactive Gradient & Mesh Fill (G) -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-slate-600 dark:text-white/60" title="Tô màu chuyển sắc tương tác / Lưới Gradient Mesh (G)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4h16v16H4z"/><path d="M4 20L20 4"/></svg>
+        </button>
+
+        <!-- 14. Pipette & Attributes Eyedropper (I) -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-slate-600 dark:text-white/60" title="Hút màu & Sao chép thuộc tính đối tượng (I)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 11l-8-8-8 8m14-6l2 2m-6 6l-6 6H3v-4l6-6"/></svg>
+        </button>
+
+        <!-- 15. Hand Pan & Zoom (H / Z) -->
+        <button class="tool-btn w-8 h-7.5 rounded-md flex items-center justify-center text-slate-600 dark:text-white/60" title="Di chuyển bàn vẽ (H) / Phóng to thu nhỏ (Z)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7 11V7a2 2 0 014 0v4m0-2a2 2 0 014 0v2m0-2a2 2 0 014 0v6a6 6 0 01-12 0v-4"/></svg>
+        </button>
+      </div>
+
+      <!-- Bottom Overlapping Swatches & Options -->
+      <div class="flex flex-col items-center space-y-1.5 w-full px-1 pt-1 border-t border-slate-300 dark:border-white/10">
+        <div class="relative w-7 h-7 cursor-pointer" title="Màu nền / Màu viền (Đổi chỗ: Shift+X)">
+          <div class="absolute bottom-0 right-0 w-4.5 h-4.5 rounded border-2 border-slate-800 dark:border-white/80 bg-transparent"></div>
+          <div class="absolute top-0 left-0 w-4.5 h-4.5 rounded bg-gradient-to-br from-[#00f2c3] to-[#0ea5e9] border border-black/30 shadow"></div>
+        </div>
+        <button class="w-7 h-5 flex items-center justify-center text-slate-400 dark:text-white/40 hover:text-slate-800 dark:hover:text-white rounded text-[10px]" title="Tùy biến thanh công cụ...">
+          ⋯
+        </button>
+      </div>
+    </aside>
+
+    <!-- ================= CANVAS AREA & VIEWPORT ================= -->
+    <main class="flex-1 flex flex-col relative overflow-hidden transition-colors">
+
+      <!-- Document Tab Strip -->
+      <div class="h-[28px] min-h-[28px] bg-slate-200/90 dark:bg-[#0b121b] border-b border-tech flex items-center justify-between px-2 select-none transition-colors">
+        <div class="flex items-center space-x-1 h-full">
+          <div class="flex items-center space-x-2 h-[24px] px-3 rounded-t-md bg-white dark:bg-[#111a26] border-t border-x border-tech text-slate-900 dark:text-white text-[11px] font-medium shadow-sm">
+            <span class="w-1.5 h-1.5 rounded-full bg-[#00a884] dark:bg-[#00f2c3]"></span>
+            <span>Biển hiệu An Phát (Trang 1)</span>
+            <button class="text-slate-400 dark:text-white/40 hover:text-slate-800 dark:hover:text-white ml-1 text-[10px]">✕</button>
+          </div>
+          <div class="flex items-center space-x-2 h-[22px] px-2.5 rounded-t text-slate-600 dark:text-white/50 hover:text-slate-900 dark:hover:text-white text-[11px]">
+            <span>Bản vẽ cắt CNC khung sắt</span>
+          </div>
+        </div>
+
+        <div class="flex items-center space-x-2 text-[10px] text-slate-600 dark:text-white/50">
+          <span class="px-1.5 py-0.5 rounded bg-white dark:bg-white/5 border border-slate-300 dark:border-white/10 text-slate-800 dark:text-white/70">Đơn vị: mm</span>
+          <span class="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30">Snap: Bật</span>
+        </div>
+      </div>
+
+      <!-- Precision Ruler (16px) -->
+      <div class="h-[16px] min-h-[16px] bg-slate-100 dark:bg-[#0e1622] border-b border-slate-300 dark:border-white/10 flex items-end relative overflow-hidden font-mono-num text-[9px] text-slate-500 dark:text-white/40 pl-6 select-none transition-colors">
+        <div class="absolute left-10">0</div>
+        <div class="absolute left-32">500</div>
+        <div class="absolute left-64">1000</div>
+        <div class="absolute left-96">1500</div>
+        <div class="absolute left-[512px]">2000</div>
+        <div class="absolute left-[640px]">2500</div>
+        <div class="absolute left-[768px]">3000 mm</div>
+        <!-- Tick marks -->
+        <div class="w-full h-2 flex justify-between opacity-40">
+          <div class="border-l border-slate-600 dark:border-white h-2"></div><div class="border-l border-slate-600 dark:border-white h-1"></div>
+          <div class="border-l border-slate-600 dark:border-white h-2"></div><div class="border-l border-slate-600 dark:border-white h-1"></div>
+          <div class="border-l border-slate-600 dark:border-white h-2"></div><div class="border-l border-slate-600 dark:border-white h-1"></div>
+          <div class="border-l border-slate-600 dark:border-white h-2"></div><div class="border-l border-slate-600 dark:border-white h-1"></div>
+          <div class="border-l border-slate-600 dark:border-white h-2"></div>
+        </div>
+      </div>
+
+      <!-- Viewport Canvas -->
+      <div class="flex-1 relative overflow-auto canvas-grid flex items-center justify-center p-8 transition-colors">
+        
+        <!-- ================= THE ARTWORK ARTBOARD (BẢNG HIỆU AN PHÁT) ================= -->
+        <div class="relative w-[780px] h-[260px] bg-white rounded-md shadow-2xl transition duration-200" style="box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(0,0,0,0.08);">
+          
+          <!-- Outer Bleed (Vùng bù xén 5mm) -->
+          <div class="absolute -inset-1.5 border border-dashed border-rose-500/50 rounded-lg pointer-events-none">
+            <span class="absolute -top-3.5 left-2 text-[8px] font-mono-num text-rose-500 dark:text-rose-400 bg-white dark:bg-[#080d14] px-1 rounded border border-rose-500/30">Vùng bù xén (Bleed 5mm)</span>
+          </div>
+
+          <!-- Dimension Banner Callout -->
+          <div class="absolute -top-7 left-0 w-full flex items-center justify-between text-[#00876a] dark:text-[#00f2c3] font-mono-num text-[10px]">
+            <div class="w-2 h-2 border-l border-t border-[#00876a] dark:border-[#00f2c3]"></div>
+            <div class="flex-1 flex items-center justify-center mx-2">
+              <div class="h-[1px] flex-1 bg-[#00876a]/40 dark:bg-[#00f2c3]/50"></div>
+              <span class="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-[#0a1420] border border-[#00876a]/30 dark:border-[#00f2c3]/40 text-[#00876a] dark:text-[#00f2c3] font-semibold text-[10px] mx-1 shadow-sm">
+                3,000.00 mm (Tỷ lệ 1:10)
+              </span>
+              <div class="h-[1px] flex-1 bg-[#00876a]/40 dark:bg-[#00f2c3]/50"></div>
+            </div>
+            <div class="w-2 h-2 border-r border-t border-[#00876a] dark:border-[#00f2c3]"></div>
+          </div>
+
+          <!-- Artwork Content Canvas (EXACT COLOR FIDELITY IN BOTH LIGHT/DARK) -->
+          <div class="w-full h-full relative overflow-hidden rounded-md bg-gradient-to-r from-[#0c4a45] via-[#09353e] to-[#061e2a] flex flex-col justify-between p-6">
+            <div class="absolute right-0 top-0 bottom-0 w-[42%] bg-gradient-to-l from-[#00f2c3]/20 via-[#0ea5e9]/10 to-transparent transform skew-x-[-18deg] origin-top-right border-l border-[#00f2c3]/30"></div>
+            <div class="absolute right-12 top-0 bottom-0 w-[24%] bg-[#00f2c3]/15 transform skew-x-[-18deg] origin-top-right border-l border-[#00f2c3]/20"></div>
+
+            <!-- Top Tagline -->
+            <div class="relative z-10 flex items-center space-x-2">
+              <span class="tracking-[0.3em] font-semibold text-[11px] text-[#7decd7] uppercase">
+                QUẢNG CÁO · IN ẤN KỸ THUẬT SỐ · THI CÔNG ALU
+              </span>
+            </div>
+
+            <!-- Main Brand Typography with SELECTION BOUNDING BOX -->
+            <div class="relative z-10 my-auto inline-block">
+              <!-- Selection Micro-handles -->
+              <div class="absolute -inset-2 border-2 border-[#00f2c3] rounded-md pointer-events-none">
+                <div class="absolute -top-1.5 -left-1.5 w-3 h-3 bg-white border-2 border-[#00f2c3] rounded-sm"></div>
+                <div class="absolute -top-1.5 -right-1.5 w-3 h-3 bg-white border-2 border-[#00f2c3] rounded-sm"></div>
+                <div class="absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-white border-2 border-[#00f2c3] rounded-sm"></div>
+                <div class="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-white border-2 border-[#00f2c3] rounded-sm"></div>
+                
+                <div class="absolute -bottom-9 left-1/2 -translate-x-1/2 bg-[#09111c] border border-tech rounded-md px-2 py-1 flex items-center space-x-2 text-[10px] text-white/90 shadow-lg pointer-events-auto">
+                  <span class="text-[#00f2c3] font-medium font-mono-num">1,850 × 420 mm</span>
+                  <span class="text-white/20">|</span>
+                  <button class="hover:text-[#00f2c3]">Khóa</button>
+                  <button class="hover:text-[#00f2c3]">Lật</button>
+                  <button class="hover:text-[#00f2c3]">Xuất SVG</button>
+                </div>
+              </div>
+
+              <!-- Brand Name Text -->
+              <h1 class="text-white font-extrabold text-[54px] tracking-tight leading-none drop-shadow-md">
+                AN PHÁT
+              </h1>
+              <p class="text-[#a5e8de] text-[15px] font-medium mt-1">
+                Thiết kế thông minh · Sản xuất cơ khí chuẩn milimet
+              </p>
+            </div>
+
+            <!-- Bottom Left Badge -->
+            <div class="relative z-10 flex items-center space-x-3">
+              <span class="px-3 py-1 rounded-md bg-[#00f2c3] text-[#052328] font-bold text-[11px] tracking-wider uppercase shadow-md flex items-center gap-1">
+                <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+                BẢN DUYỆT KHÁCH HÀNG
+              </span>
+              <span class="text-white/80 text-[10.5px]">Vật liệu: Khung hộp 25x25mm, Mặt Alu Alcorest 3mm</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Floating Page/Zoom Widget -->
+        <div class="absolute bottom-3 left-6 bg-white/95 dark:bg-[#0c1420]/90 backdrop-blur-md border border-tech rounded-lg px-2.5 py-1 flex items-center space-x-2.5 text-[11px] shadow-xl z-20 text-slate-800 dark:text-white transition-colors">
+          <button class="text-slate-500 dark:text-white/60 hover:text-slate-900 dark:hover:text-white">◀</button>
+          <span class="font-medium text-[10.5px]">Trang 1 / 2</span>
+          <button class="text-slate-500 dark:text-white/60 hover:text-slate-900 dark:hover:text-white">▶</button>
+          <span class="text-slate-300 dark:text-white/20">|</span>
+          <span class="text-[#00876a] dark:text-[#00f2c3] font-mono-num font-semibold text-[10.5px]">33.3%</span>
+        </div>
+      </div>
+
+      <!-- ================= DẢI BẢNG MÀU CHUYÊN NGHIỆP (COLOR PALETTE BAR 2026) ================= -->
+      <div class="h-[34px] min-h-[34px] bg-slate-100 dark:bg-[#0b121b] border-t border-tech flex items-center px-2 select-none justify-between z-20 transition-colors shadow-inner">
+        <!-- Left: Palette Selector & Scroll -->
+        <div class="flex items-center space-x-1.5 pr-2 border-r border-slate-300 dark:border-white/10">
+          <button class="flex items-center space-x-1 px-2 py-1 rounded-md bg-white dark:bg-[#15202e] border border-slate-300 dark:border-white/10 text-slate-800 dark:text-white hover:border-[#00a884] dark:hover:border-[#00f2c3]/40 text-[11px] font-semibold transition shadow-sm" title="Đổi bảng màu">
+            <span class="w-2.5 h-2.5 rounded-full bg-gradient-to-tr from-[#00f2c3] via-sky-400 to-amber-400"></span>
+            <span class="truncate max-w-[130px]">Màu Alu & Decal</span>
+            <span class="text-slate-400 text-[9px]">▾</span>
+          </button>
+          
+          <div class="flex items-center space-x-0.5 text-slate-500 dark:text-white/40">
+            <button class="w-5 h-5 flex items-center justify-center hover:bg-slate-200 dark:hover:bg-white/10 rounded text-[10px]" title="Cuộn trái">◀</button>
+            <button class="w-5 h-5 flex items-center justify-center hover:bg-slate-200 dark:hover:bg-white/10 rounded text-[10px]" title="Cuộn phải">▶</button>
+          </div>
+        </div>
+
+        <!-- Center: Swatches Stream (Pro Vector / Signage / Print Swatches) -->
+        <div class="flex-1 flex items-center space-x-1 px-2 overflow-x-auto py-1">
+          <!-- None Swatch -->
+          <button class="w-5 h-5 min-w-[20px] rounded border border-slate-300 dark:border-white/20 bg-white relative flex items-center justify-center hover:scale-110 transition shadow-sm" title="Không màu (None) | Trái: Nền | Phải: Viền">
+            <div class="w-full h-[1.5px] bg-rose-500 rotate-45"></div>
+          </button>
+
+          <!-- Core Brand Swatches -->
+          <button class="w-5 h-5 min-w-[20px] rounded border border-slate-300 dark:border-white/20 bg-[#ffffff] hover:scale-110 transition shadow-sm ring-1 ring-slate-400/30" title="Trắng tinh Pure White (C0 M0 Y0 K0)"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-slate-300 dark:border-white/20 bg-[#00f2c3] hover:scale-110 transition shadow-sm relative" title="Cyber Mint / Xanh ngọc phát sáng (#00F2C3)">
+            <span class="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-white ring-1 ring-black"></span>
+          </button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-slate-300 dark:border-white/20 bg-[#0c4a45] hover:scale-110 transition shadow-sm" title="Alu EV-2008 Xanh An Phát (CMYK: 92/28/62/18)"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-slate-300 dark:border-white/20 bg-[#09353e] hover:scale-110 transition shadow-sm" title="Alu Xanh đậm bóng (C95 M40 Y50 K35)"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-slate-300 dark:border-white/20 bg-[#061e2a] hover:scale-110 transition shadow-sm" title="Midnight Navy Alu (C100 M60 Y40 K60)"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-slate-300 dark:border-white/20 bg-[#7decd7] hover:scale-110 transition shadow-sm" title="Soft Pastel Mint (Decal 3M)"></button>
+
+          <!-- Separator -->
+          <div class="w-[1px] h-4 bg-slate-300 dark:bg-white/10 mx-0.5"></div>
+
+          <!-- Standard CMYK / Decal Primary Colors -->
+          <button class="w-5 h-5 min-w-[20px] rounded border border-slate-300 dark:border-white/20 bg-[#00a3e0] hover:scale-110 transition shadow-sm" title="Cyan 100% (Xanh lơ in ấn)"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-slate-300 dark:border-white/20 bg-[#0055b8] hover:scale-110 transition shadow-sm" title="Decal Xanh dương đậm"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-slate-300 dark:border-white/20 bg-[#16a34a] hover:scale-110 transition shadow-sm" title="Alu Lá cây EV-2015"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-slate-300 dark:border-white/20 bg-[#eab308] hover:scale-110 transition shadow-sm" title="Decal Vàng nghệ (C0 M20 Y100 K0)"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-slate-300 dark:border-white/20 bg-[#f97316] hover:scale-110 transition shadow-sm" title="Decal Cam tươi"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-slate-300 dark:border-white/20 bg-[#dc2626] hover:scale-110 transition shadow-sm" title="Alu Đỏ cờ EV-2005 (C0 M100 Y100 K0)"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-slate-300 dark:border-white/20 bg-[#ec008c] hover:scale-110 transition shadow-sm" title="Magenta 100% (Hồng cánh sen)"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-slate-300 dark:border-white/20 bg-[#9333ea] hover:scale-110 transition shadow-sm" title="Decal Tím huế"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-slate-300 dark:border-white/20 bg-[#d4af37] hover:scale-110 transition shadow-sm" title="Alu Gương Vàng xước (Gold Brushed)"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-slate-300 dark:border-white/20 bg-[#c0c0c0] hover:scale-110 transition shadow-sm" title="Alu Gương Bạc xước (Silver Metallic)"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-slate-300 dark:border-white/20 bg-[#64748b] hover:scale-110 transition shadow-sm" title="Alu Xám nhôm định hình"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-slate-300 dark:border-white/20 bg-[#1e293b] hover:scale-110 transition shadow-sm" title="Alu Đen mờ EV-2017"></button>
+          <button class="w-5 h-5 min-w-[20px] rounded border border-slate-300 dark:border-white/20 bg-[#000000] hover:scale-110 transition shadow-sm" title="Đen tuyền Rich Black (C60 M40 Y40 K100)"></button>
+
+          <!-- Add custom swatch button -->
+          <button class="w-5 h-5 min-w-[20px] rounded border border-dashed border-slate-400 dark:border-white/30 text-slate-500 dark:text-white/50 hover:text-slate-900 dark:hover:text-[#00f2c3] hover:border-[#00a884] dark:hover:border-[#00f2c3] flex items-center justify-center text-[12px] font-bold transition" title="Lưu màu hiện tại vào bảng">+</button>
+        </div>
+
+        <!-- Right: Palette Actions & Mouse Guide -->
+        <div class="flex items-center space-x-2 pl-2 border-l border-slate-300 dark:border-white/10 text-slate-500 dark:text-white/40">
+          <span class="text-[9.5px] hidden xl:inline text-slate-500 dark:text-white/40">
+            <kbd class="px-1 py-0.5 rounded bg-slate-200 dark:bg-white/10 text-slate-700 dark:text-white/70 font-mono text-[9px]">L-Click</kbd> Tô nền · <kbd class="px-1 py-0.5 rounded bg-slate-200 dark:bg-white/10 text-slate-700 dark:text-white/70 font-mono text-[9px]">R-Click</kbd> Viền
+          </span>
+          <button class="w-6 h-6 flex items-center justify-center hover:bg-slate-200 dark:hover:bg-white/10 rounded text-slate-600 dark:text-white/60 hover:text-slate-900 dark:hover:text-white" title="Mở bảng màu lớn / Quản lý thư viện màu">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
+          </button>
+        </div>
+      </div>
+    </main>
+
+    <!-- ================= RIGHT INSPECTOR DOCK (W: 280px) ================= -->
+    <aside class="w-[280px] min-w-[280px] bg-slate-50 dark:bg-[#0c131d] border-l border-tech flex flex-col z-20 select-none transition-colors">
+      <div class="h-[34px] min-h-[34px] bg-slate-100 dark:bg-[#0e1622] border-b border-tech flex items-center justify-between px-2 text-[11px] transition-colors">
+        <div class="flex items-center space-x-1">
+          <button class="px-2.5 py-1 rounded-md font-semibold text-[#00876a] dark:text-[#00f2c3] bg-white dark:bg-[#162536] border border-slate-300 dark:border-[#00f2c3]/30 shadow-sm">
+            Thuộc tính
+          </button>
+          <button class="px-2.5 py-1 rounded-md text-slate-600 dark:text-white/60 hover:text-slate-900 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 transition">
+            Layers
+          </button>
+          <button class="px-2.5 py-1 rounded-md text-slate-600 dark:text-white/60 hover:text-slate-900 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 transition">
+            Preflight
+          </button>
+        </div>
+        <button class="w-6 h-6 flex items-center justify-center text-slate-400 dark:text-white/40 hover:text-slate-800 dark:hover:text-white rounded">⋯</button>
+      </div>
+
+      <!-- Dock Scrollable Body -->
+      <div class="flex-1 overflow-y-auto p-3 space-y-3.5 text-slate-800 dark:text-white/80">
+
+        <!-- TYPOGRAPHY -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] font-bold text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-1.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-[#00a884] dark:bg-[#00f2c3]"></span>
+              Văn bản nghệ thuật
+            </span>
+            <span class="text-[10px] text-slate-400 dark:text-white/40">OpenType</span>
+          </div>
+
+          <div class="input-field rounded-lg px-2.5 py-1.5 flex items-center justify-between cursor-pointer">
+            <span class="font-medium text-slate-900 dark:text-white text-[12px]">Plus Jakarta Sans</span>
+            <span class="text-slate-500 dark:text-white/40 text-[10px]">Bold ▾</span>
+          </div>
+
+          <div class="grid grid-cols-2 gap-1.5 font-mono-num">
+            <div class="input-field rounded-md px-2 py-1 flex items-center justify-between">
+              <span class="text-slate-500 dark:text-white/40 text-[10px]">Size</span>
+              <span class="font-semibold text-slate-900 dark:text-white">54 pt</span>
+            </div>
+            <div class="input-field rounded-md px-2 py-1 flex items-center justify-between">
+              <span class="text-slate-500 dark:text-white/40 text-[10px]">Track</span>
+              <span class="font-semibold text-slate-900 dark:text-white">+15</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="w-full h-[1px] bg-slate-300 dark:bg-white/10"></div>
+
+        <!-- FILL & STROKE -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] font-bold text-slate-900 dark:text-white uppercase tracking-wider">Tô màu / Màu viền</span>
+            <span class="text-[10px] text-[#00876a] dark:text-[#00f2c3] cursor-pointer hover:underline">+ Hiệu ứng</span>
+          </div>
+
+          <div class="flex items-center justify-between p-1.5 bg-white dark:bg-[#080d14] border border-tech rounded-lg shadow-sm">
+            <div class="flex items-center space-x-2">
+              <div class="w-5 h-5 rounded bg-white border border-slate-300 dark:border-white/20 shadow-sm"></div>
+              <div>
+                <div class="text-[11px] font-medium text-slate-900 dark:text-white">Trắng tinh (Pure White)</div>
+                <div class="text-[9.5px] text-slate-500 dark:text-white/40 font-mono-num">CMYK: 0 / 0 / 0 / 0</div>
+              </div>
+            </div>
+            <span class="font-mono-num text-[11px] font-semibold text-slate-800 dark:text-white/80">100%</span>
+          </div>
+
+          <div class="flex items-center justify-between p-1.5 bg-white dark:bg-[#080d14] border border-tech rounded-lg shadow-sm">
+            <div class="flex items-center space-x-2">
+              <div class="w-5 h-5 rounded bg-transparent border-2 border-dashed border-rose-400 relative flex items-center justify-center">
+                <div class="w-full h-[1px] bg-rose-500 rotate-45"></div>
+              </div>
+              <div>
+                <div class="text-[11px] font-medium text-slate-600 dark:text-white/60">Không viền (None)</div>
+                <div class="text-[9.5px] text-slate-400 dark:text-white/30">0.00 mm</div>
+              </div>
+            </div>
+            <button class="text-[10px] text-[#00876a] dark:text-[#00f2c3] hover:underline">+ Thêm viền</button>
+          </div>
+
+          <!-- Quick Palette Tray in Inspector -->
+          <div class="pt-1">
+            <div class="flex items-center justify-between text-[10px] text-slate-500 dark:text-white/50 mb-1.5">
+              <span>Màu tài liệu (Document Swatches)</span>
+              <button class="text-[#00876a] dark:text-[#00f2c3] hover:underline">+ Thêm</button>
+            </div>
+            <div class="grid grid-cols-6 gap-1">
+              <button class="h-5 rounded border border-slate-300 dark:border-white/20 bg-white hover:scale-105 transition" title="Pure White"></button>
+              <button class="h-5 rounded border border-slate-300 dark:border-white/20 bg-[#00f2c3] hover:scale-105 transition ring-1 ring-[#00f2c3]" title="Cyber Mint"></button>
+              <button class="h-5 rounded border border-slate-300 dark:border-white/20 bg-[#0c4a45] hover:scale-105 transition" title="Alu Xanh An Phát"></button>
+              <button class="h-5 rounded border border-slate-300 dark:border-white/20 bg-[#061e2a] hover:scale-105 transition" title="Midnight Navy"></button>
+              <button class="h-5 rounded border border-slate-300 dark:border-white/20 bg-[#7decd7] hover:scale-105 transition" title="Pastel Mint"></button>
+              <button class="h-5 rounded border border-slate-300 dark:border-white/20 bg-[#d4af37] hover:scale-105 transition" title="Gold Brushed"></button>
+            </div>
+          </div>
+        </div>
+
+        <div class="w-full h-[1px] bg-slate-300 dark:bg-white/10"></div>
+
+        <!-- THI CÔNG & CNC -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] font-bold text-slate-900 dark:text-white uppercase tracking-wider">Thông số thi công</span>
+            <span class="text-[9px] px-1 rounded bg-[#00a884]/20 dark:bg-[#00f2c3]/20 text-[#00876a] dark:text-[#00f2c3] font-semibold">CAD Ready</span>
+          </div>
+
+          <div class="bg-white dark:bg-[#080d14] border border-tech rounded-lg p-2 space-y-1.5 text-[10.5px] shadow-sm">
+            <div class="flex justify-between">
+              <span class="text-slate-500 dark:text-white/50">Mặt tấm:</span>
+              <span class="font-medium text-slate-900 dark:text-white">Alu Alcorest 3mm</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-slate-500 dark:text-white/50">Đường cắt:</span>
+              <span class="font-medium text-[#00876a] dark:text-[#00f2c3]">Dao xoắn CNC 3.175mm</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </aside>
+
+  </div>
+
+  <!-- ================= STATUS BAR (H: 25px) ================= -->
+  <footer class="h-[25px] min-h-[25px] bg-slate-200 dark:bg-[#0c131d] border-t border-tech flex items-center justify-between px-3 text-[10.5px] text-slate-700 dark:text-white/60 select-none z-30 transition-colors">
+    <div class="flex items-center space-x-3">
+      <div class="flex items-center space-x-1.5">
+        <span class="w-1.5 h-1.5 rounded-full bg-[#00a884] dark:bg-[#00f2c3] animate-pulse"></span>
+        <span class="font-semibold text-slate-900 dark:text-white/80">Sẵn sàng xuất file</span>
+      </div>
+      <span class="text-slate-300 dark:text-white/20">|</span>
+      <!-- Theme mode badge -->
+      <span class="text-[10px] px-1.5 py-0.2 rounded font-medium bg-slate-300 dark:bg-white/10 text-slate-800 dark:text-[#00f2c3]" id="currentThemeBadge">
+        Theme: Dark Mode
+      </span>
+    </div>
+
+    <div class="flex items-center space-x-3 font-mono-num text-[10px] text-slate-600 dark:text-white/50">
+      <span>Con trỏ: <strong class="text-slate-900 dark:text-white font-medium">X: 1,420.50 mm · Y: 320.10 mm</strong></span>
+    </div>
+
+    <div class="flex items-center space-x-2.5">
+      <span class="px-1.5 py-0.2 rounded bg-white dark:bg-white/5 border border-slate-300 dark:border-white/10 text-slate-700 dark:text-white/70 text-[9.5px]">ISO Coated v2 (300 DPI)</span>
+      <span class="text-emerald-700 dark:text-emerald-400 font-semibold flex items-center gap-1 text-[10px]">
+        <span>✓</span> Preflight chuẩn
+      </span>
+      <span class="text-slate-300 dark:text-white/20">|</span>
+      <div class="flex items-center space-x-1 font-mono-num">
+        <span class="text-slate-900 dark:text-white font-medium text-[10.5px]">33.3%</span>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ========================================================================= -->
+  <!-- ================= SETTINGS MODAL DIALOG (HOT 2026 CYBER-TECH) ============ -->
+  <!-- ========================================================================= -->
+  <div id="settingsModal" style="display: none;" class="fixed inset-0 z-50 flex items-center justify-center p-4 modal-backdrop transition-opacity duration-200">
+    <!-- Modal Card (680px width) -->
+    <div class="relative w-full max-w-[680px] bg-white dark:bg-[#0f1722] border border-slate-300 dark:border-white/10 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh] transition-colors">
+      
+      <!-- Modal Header -->
+      <div class="h-[46px] min-h-[46px] px-5 bg-slate-50 dark:bg-[#131d2b] border-b border-tech flex items-center justify-between">
+        <div class="flex items-center space-x-2.5">
+          <div class="w-6 h-6 rounded-lg bg-[#00a884]/15 dark:bg-[#00f2c3]/15 flex items-center justify-center text-[#00876a] dark:text-[#00f2c3]">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><circle cx="12" cy="12" r="3"/></svg>
+          </div>
+          <h2 class="text-[13px] font-bold text-slate-900 dark:text-white">Cài đặt hệ thống (PikDraw Preferences)</h2>
+        </div>
+        <button onclick="closeSettingsModal()" class="w-7 h-7 flex items-center justify-center rounded-lg text-slate-400 dark:text-white/40 hover:text-slate-800 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-white/10 transition">
+          ✕
+        </button>
+      </div>
+
+      <!-- Modal Body (Two-column layout) -->
+      <div class="flex-1 flex overflow-hidden">
+        
+        <!-- Left Sidebar Navigation (180px) -->
+        <div class="w-[180px] bg-slate-50/70 dark:bg-[#0c141f] border-r border-tech p-3 space-y-1">
+          <button class="w-full text-left px-3 py-2 rounded-lg text-[11.5px] font-semibold bg-white dark:bg-[#162536] text-[#00876a] dark:text-[#00f2c3] shadow-sm border border-slate-300 dark:border-[#00f2c3]/30 flex items-center gap-2">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+            Giao diện (Theme)
+          </button>
+          <button class="w-full text-left px-3 py-2 rounded-lg text-[11.5px] text-slate-600 dark:text-white/60 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/60 dark:hover:bg-white/5 transition flex items-center gap-2">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16m-7 6h7"/></svg>
+            Không gian làm việc
+          </button>
+          <button class="w-full text-left px-3 py-2 rounded-lg text-[11.5px] text-slate-600 dark:text-white/60 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/60 dark:hover:bg-white/5 transition flex items-center gap-2">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 000 20 14.5 14.5 0 000-20"/></svg>
+            Quản lý màu & ICC
+          </button>
+          <button class="w-full text-left px-3 py-2 rounded-lg text-[11.5px] text-slate-600 dark:text-white/60 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/60 dark:hover:bg-white/5 transition flex items-center gap-2">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3zM7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3"/></svg>
+            Thi công & Máy CNC
+          </button>
+          <button class="w-full text-left px-3 py-2 rounded-lg text-[11.5px] text-slate-600 dark:text-white/60 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/60 dark:hover:bg-white/5 transition flex items-center gap-2">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+            Phím tắt & Thao tác
+          </button>
+        </div>
+
+        <!-- Right Content Area (500px) -->
+        <div class="flex-1 p-5 overflow-y-auto space-y-5">
+          
+          <!-- SECTION 1: CHỌN THEME (DARK / LIGHT / SYSTEM) -->
+          <div class="space-y-3">
+            <div>
+              <h3 class="text-[12.5px] font-bold text-slate-900 dark:text-white">Chế độ hiển thị giao diện (Theme Mode)</h3>
+              <p class="text-[11px] text-slate-500 dark:text-white/50">Tối ưu độ tập trung và độ chính xác hiển thị màu sắc theo môi trường làm việc.</p>
+            </div>
+
+            <!-- 3 Theme Visual Selection Cards -->
+            <div class="grid grid-cols-3 gap-3">
+              
+              <!-- CARD 1: DARK MODE (ACTIVE) -->
+              <div onclick="setTheme('dark')" id="cardDark" class="theme-card relative rounded-xl border-2 p-2.5 cursor-pointer transition border-[#00a884] dark:border-[#00f2c3] bg-emerald-500/5 dark:bg-[#00f2c3]/10 shadow-md">
+                <!-- Mini UI preview illustration -->
+                <div class="w-full h-16 rounded-lg bg-[#0c131d] border border-white/10 p-1.5 flex flex-col justify-between mb-2">
+                  <div class="h-2 w-full bg-[#162536] rounded-sm flex items-center px-1 gap-1">
+                    <span class="w-1 h-1 rounded-full bg-[#00f2c3]"></span>
+                    <div class="w-6 h-1 bg-white/30 rounded-sm"></div>
+                  </div>
+                  <div class="flex-1 flex gap-1 my-1">
+                    <div class="w-3 h-full bg-[#111a26] rounded-sm"></div>
+                    <div class="flex-1 h-full bg-[#070b10] rounded-sm flex items-center justify-center">
+                      <div class="w-10 h-4 bg-white rounded-sm shadow-sm"></div>
+                    </div>
+                    <div class="w-6 h-full bg-[#111a26] rounded-sm"></div>
+                  </div>
+                  <div class="h-1.5 w-full bg-[#111a26] rounded-sm"></div>
+                </div>
+
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="text-[11.5px] font-bold text-slate-900 dark:text-white flex items-center gap-1">
+                      <span>Chế độ Tối</span>
+                      <span class="text-[9px] px-1 py-0.2 rounded bg-[#00f2c3]/20 text-[#00f2c3] font-semibold hidden dark:inline">Đang dùng</span>
+                    </div>
+                    <div class="text-[10px] text-slate-500 dark:text-white/50">Obsidian Slate-Teal</div>
+                  </div>
+                  <div class="w-4 h-4 rounded-full border-2 border-[#00a884] dark:border-[#00f2c3] flex items-center justify-center">
+                    <div class="w-2 h-2 rounded-full bg-[#00a884] dark:bg-[#00f2c3] check-indicator-dark"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- CARD 2: LIGHT MODE -->
+              <div onclick="setTheme('light')" id="cardLight" class="theme-card relative rounded-xl border p-2.5 cursor-pointer transition border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-white/5 hover:border-slate-400 dark:hover:border-white/20">
+                <!-- Mini UI preview illustration -->
+                <div class="w-full h-16 rounded-lg bg-[#f8fafc] border border-slate-300 p-1.5 flex flex-col justify-between mb-2 shadow-sm">
+                  <div class="h-2 w-full bg-[#e2e8f0] rounded-sm flex items-center px-1 gap-1">
+                    <span class="w-1 h-1 rounded-full bg-[#00876a]"></span>
+                    <div class="w-6 h-1 bg-slate-500 rounded-sm"></div>
+                  </div>
+                  <div class="flex-1 flex gap-1 my-1">
+                    <div class="w-3 h-full bg-[#f1f5f9] rounded-sm"></div>
+                    <div class="flex-1 h-full bg-[#e2e8f0] rounded-sm flex items-center justify-center">
+                      <div class="w-10 h-4 bg-white rounded-sm shadow-sm border border-slate-200"></div>
+                    </div>
+                    <div class="w-6 h-full bg-[#f1f5f9] rounded-sm"></div>
+                  </div>
+                  <div class="h-1.5 w-full bg-[#e2e8f0] rounded-sm"></div>
+                </div>
+
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="text-[11.5px] font-bold text-slate-900 dark:text-white flex items-center gap-1">
+                      <span>Chế độ Sáng</span>
+                      <span class="text-[9px] px-1 py-0.2 rounded bg-emerald-600 text-white font-semibold inline dark:hidden">Đang dùng</span>
+                    </div>
+                    <div class="text-[10px] text-slate-500 dark:text-white/50">Silver Slate Tech</div>
+                  </div>
+                  <div class="w-4 h-4 rounded-full border border-slate-400 dark:border-white/30 flex items-center justify-center">
+                    <div class="w-2 h-2 rounded-full bg-emerald-600 hidden check-indicator-light"></div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- CARD 3: AUTO / SYSTEM -->
+              <div onclick="setTheme('system')" id="cardSystem" class="theme-card relative rounded-xl border p-2.5 cursor-pointer transition border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-white/5 hover:border-slate-400 dark:hover:border-white/20">
+                <div class="w-full h-16 rounded-lg bg-gradient-to-r from-[#0c131d] to-[#f8fafc] border border-slate-300 dark:border-white/10 p-1.5 flex flex-col justify-between mb-2">
+                  <div class="h-2 w-full bg-gradient-to-r from-[#162536] to-[#e2e8f0] rounded-sm"></div>
+                  <div class="flex-1 flex items-center justify-center text-[10px] font-bold text-white/90">
+                    <span class="bg-black/60 px-1.5 py-0.5 rounded text-[9px]">Tự động (OS)</span>
+                  </div>
+                  <div class="h-1.5 w-full bg-gradient-to-r from-[#162536] to-[#e2e8f0] rounded-sm"></div>
+                </div>
+
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="text-[11.5px] font-bold text-slate-900 dark:text-white">Theo hệ thống</div>
+                    <div class="text-[10px] text-slate-500 dark:text-white/50">Windows / macOS</div>
+                  </div>
+                  <div class="w-4 h-4 rounded-full border border-slate-400 dark:border-white/30 flex items-center justify-center"></div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          <div class="w-full h-[1px] bg-slate-200 dark:bg-white/10"></div>
+
+          <!-- SECTION 2: MÀU ĐIỂM NHẤN CÔNG NGHỆ (ACCENT COLOR) -->
+          <div class="space-y-2">
+            <h3 class="text-[12px] font-bold text-slate-900 dark:text-white">Màu điểm nhấn (Accent Color)</h3>
+            <div class="flex items-center space-x-3">
+              <!-- Cyber Mint (Default) -->
+              <label class="flex items-center space-x-1.5 cursor-pointer">
+                <div class="w-5 h-5 rounded-full bg-[#00f2c3] border-2 border-white dark:border-black shadow-sm ring-2 ring-[#00f2c3]"></div>
+                <span class="text-[11px] font-medium text-slate-800 dark:text-white">Cyber Mint</span>
+              </label>
+
+              <!-- Electric Blue -->
+              <label class="flex items-center space-x-1.5 cursor-pointer opacity-70 hover:opacity-100">
+                <div class="w-5 h-5 rounded-full bg-[#0ea5e9] border border-white dark:border-black shadow-sm"></div>
+                <span class="text-[11px] font-medium text-slate-700 dark:text-white/70">Sky Blue</span>
+              </label>
+
+              <!-- Neon Purple -->
+              <label class="flex items-center space-x-1.5 cursor-pointer opacity-70 hover:opacity-100">
+                <div class="w-5 h-5 rounded-full bg-[#a855f7] border border-white dark:border-black shadow-sm"></div>
+                <span class="text-[11px] font-medium text-slate-700 dark:text-white/70">Purple Tech</span>
+              </label>
+
+              <!-- Industrial Amber -->
+              <label class="flex items-center space-x-1.5 cursor-pointer opacity-70 hover:opacity-100">
+                <div class="w-5 h-5 rounded-full bg-[#f59e0b] border border-white dark:border-black shadow-sm"></div>
+                <span class="text-[11px] font-medium text-slate-700 dark:text-white/70">Amber CAD</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="w-full h-[1px] bg-slate-200 dark:bg-white/10"></div>
+
+          <!-- SECTION 3: MẬT ĐỘ & BO GÓC CÔNG NGHỆ -->
+          <div class="space-y-2.5">
+            <h3 class="text-[12px] font-bold text-slate-900 dark:text-white">Đặc tính công nghệ (Style 2026)</h3>
+            
+            <div class="space-y-2">
+              <div class="flex items-center justify-between p-2 rounded-lg bg-slate-100 dark:bg-white/5 border border-tech">
+                <div>
+                  <div class="font-medium text-[11px] text-slate-900 dark:text-white">Bo nhẹ công nghệ (Micro-Radius 6px)</div>
+                  <div class="text-[10px] text-slate-500 dark:text-white/50">Cạnh vát tinh tế cho nút bấm, ô nhập tọa độ và dock panel.</div>
+                </div>
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#00a884]/20 dark:bg-[#00f2c3]/20 text-[#00876a] dark:text-[#00f2c3]">Đã bật</span>
+              </div>
+
+              <div class="flex items-center justify-between p-2 rounded-lg bg-slate-100 dark:bg-white/5 border border-tech">
+                <div>
+                  <div class="font-medium text-[11px] text-slate-900 dark:text-white">Bảo toàn màu sắc Artwork khi đổi theme</div>
+                  <div class="text-[10px] text-slate-500 dark:text-white/50">Màu nền UI sáng/tối không làm biến dạng profile CMYK/RGB bản in.</div>
+                </div>
+                <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/20 text-emerald-700 dark:text-emerald-400">Khóa chuẩn ICC</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="h-[46px] min-h-[46px] px-5 bg-slate-50 dark:bg-[#131d2b] border-t border-tech flex items-center justify-between">
+        <button onclick="setTheme('dark')" class="text-[11px] text-slate-500 dark:text-white/50 hover:underline">Khôi phục mặc định</button>
+        <div class="flex items-center space-x-2">
+          <button onclick="closeSettingsModal()" class="px-3 py-1 rounded-lg text-slate-700 dark:text-white/80 hover:bg-slate-200 dark:hover:bg-white/10 text-[11.5px] font-medium transition">Đóng</button>
+          <button onclick="closeSettingsModal()" class="px-4 py-1 rounded-lg bg-[#00a884] dark:bg-[#00f2c3] text-white dark:text-[#070b10] font-bold text-[11.5px] shadow-sm hover:opacity-90 transition">Áp dụng</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- SCRIPT FOR SWITCHING THEMES & MODAL INTERACTION -->
+  <script>
+    function setTheme(mode) {
+      const html = document.documentElement;
+      const cardDark = document.getElementById('cardDark');
+      const cardLight = document.getElementById('cardLight');
+      const cardSystem = document.getElementById('cardSystem');
+      const badge = document.getElementById('currentThemeBadge');
+
+      if (mode === 'dark') {
+        html.classList.add('dark');
+        badge.textContent = 'Theme: Dark Mode (Obsidian)';
+        // Update cards styling
+        cardDark.className = "theme-card relative rounded-xl border-2 p-2.5 cursor-pointer transition border-[#00a884] dark:border-[#00f2c3] bg-emerald-500/5 dark:bg-[#00f2c3]/10 shadow-md";
+        cardLight.className = "theme-card relative rounded-xl border p-2.5 cursor-pointer transition border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-white/5 hover:border-slate-400 dark:hover:border-white/20";
+        cardSystem.className = "theme-card relative rounded-xl border p-2.5 cursor-pointer transition border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-white/5 hover:border-slate-400 dark:hover:border-white/20";
+      } else if (mode === 'light') {
+        html.classList.remove('dark');
+        badge.textContent = 'Theme: Light Mode (Silver)';
+        // Update cards styling
+        cardLight.className = "theme-card relative rounded-xl border-2 p-2.5 cursor-pointer transition border-emerald-600 bg-emerald-50 shadow-md";
+        cardDark.className = "theme-card relative rounded-xl border p-2.5 cursor-pointer transition border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-white/5 hover:border-slate-400 dark:hover:border-white/20";
+        cardSystem.className = "theme-card relative rounded-xl border p-2.5 cursor-pointer transition border-slate-300 dark:border-white/10 bg-slate-50 dark:bg-white/5 hover:border-slate-400 dark:hover:border-white/20";
+      } else if (mode === 'system') {
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (prefersDark) {
+          html.classList.add('dark');
+          badge.textContent = 'Theme: System (Dark)';
+        } else {
+          html.classList.remove('dark');
+          badge.textContent = 'Theme: System (Light)';
+        }
+        cardSystem.className = "theme-card relative rounded-xl border-2 p-2.5 cursor-pointer transition border-emerald-600 dark:border-[#00f2c3] bg-emerald-50 dark:bg-[#00f2c3]/10 shadow-md";
+      }
+    }
+
+    function toggleTheme() {
+      const html = document.documentElement;
+      if (html.classList.contains('dark')) {
+        setTheme('light');
+      } else {
+        setTheme('dark');
+      }
+    }
+
+    function openSettingsModal() {
+      const modal = document.getElementById('settingsModal');
+      modal.style.display = 'flex';
+    }
+
+    function closeSettingsModal() {
+      const modal = document.getElementById('settingsModal');
+      modal.style.display = 'none';
+    }
+
+    // Default: Check URL parameter or start with modal closed if requested
+    // If URL has ?view=settings, open modal.
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('modal') === 'false') {
+      closeSettingsModal();
+    }
+    if (urlParams.get('theme') === 'light') {
+      setTheme('light');
+    }
+  </script>
+
+</body>
+</html>
