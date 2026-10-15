@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <optional>
+#include <stdexcept>
 #include "pikdraw/geometry/point.hpp"
 #include "pikdraw/geometry/transform.hpp"
 
@@ -67,11 +68,14 @@ public:
     }
 
     [[nodiscard]] Rect2D transformed(const Transform2D& t) const {
+        if (!is_finite() || !t.is_finite()) throw std::invalid_argument("Invalid bounds transform");
         const Point2D p0 = t.apply({min_x, min_y});
         const Point2D p1 = t.apply({max_x, min_y});
         const Point2D p2 = t.apply({max_x, max_y});
         const Point2D p3 = t.apply({min_x, max_y});
 
+        for (const auto& point : {p0,p1,p2,p3})
+            if (!std::isfinite(point.x) || !std::isfinite(point.y)) throw std::invalid_argument("Nonfinite transformed bounds");
         const double n_min_x = std::min({p0.x, p1.x, p2.x, p3.x});
         const double n_min_y = std::min({p0.y, p1.y, p2.y, p3.y});
         const double n_max_x = std::max({p0.x, p1.x, p2.x, p3.x});

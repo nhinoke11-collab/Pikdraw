@@ -45,3 +45,9 @@ target_link_libraries(pikdraw_spike_b_tests PRIVATE
 
 enable_testing()
 add_test(NAME pikdraw_spike_b_tests COMMAND pikdraw_spike_b_tests)
+
+if(WIN32)
+    add_executable(pikdraw_spike_b_benchmark tests/benchmark_document.cpp)
+    target_compile_definitions(pikdraw_spike_b_benchmark PRIVATE PIKDRAW_BENCHMARK_PHASES=1)
+    target_link_libraries(pikdraw_spike_b_benchmark PRIVATE pikdraw_document psapi)
+endif()

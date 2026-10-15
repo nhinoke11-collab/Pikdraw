@@ -1,6 +1,8 @@
 #pragma once
 
 #include <vector>
+#include <memory>
+#include <stdexcept>
 #include <cmath>
 #include <algorithm>
 #include "pikdraw/geometry/point.hpp"
@@ -56,17 +58,29 @@ struct PathSegment {
 // Preserves exact source curves without destructive polygonization
 class SourcePath {
 public:
-    std::vector<PathSegment> segments;
-
-    void move_to(const Point2D& p) { segments.push_back(PathSegment::make_move_to(p)); }
-    void line_to(const Point2D& p) { segments.push_back(PathSegment::make_line_to(p)); }
-    void cubic_to(const Point2D& cp1, const Point2D& cp2, const Point2D& end) {
-        segments.push_back(PathSegment::make_cubic_to(cp1, cp2, end));
+    static constexpr size_t MaxSegments=250000;
+    // Const-only access: a copied path shares immutable segment storage until edited.
+    [[nodiscard]] const std::vector<PathSegment>& segments() const noexcept {
+        static const std::vector<PathSegment> empty;
+        return data_ ? data_->segments : empty;
     }
-    void close() { segments.push_back(PathSegment::make_close()); }
-
-    [[nodiscard]] Rect2D compute_bounds() const;
+    void append_segment(const PathSegment& segment);
+    void set_segment(size_t index, const PathSegment& segment);
+    void reserve(size_t count);
+    void move_to(const Point2D& p) { append_segment(PathSegment::make_move_to(p)); }
+    void line_to(const Point2D& p) { append_segment(PathSegment::make_line_to(p)); }
+    void cubic_to(const Point2D& cp1,const Point2D& cp2,const Point2D& end) {
+        append_segment(PathSegment::make_cubic_to(cp1,cp2,end));
+    }
+    void close() { append_segment(PathSegment::make_close()); }
+    [[nodiscard]] Rect2D compute_bounds() const noexcept { return data_ ? data_->bounds : Rect2D{}; }
     [[nodiscard]] SourcePath transformed(const Transform2D& t) const;
+private:
+    struct Data { std::vector<PathSegment> segments; Rect2D bounds; bool has_bounds{false}; };
+    std::shared_ptr<Data> data_;
+    void detach();
+    static void validate(const PathSegment& segment);
+    static void include_bounds(Data& data,const PathSegment& segment) noexcept;
 };
 
 // Manufacturing approximations are separate from source curve models

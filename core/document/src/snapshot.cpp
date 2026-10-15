@@ -7,7 +7,7 @@ DocumentSnapshot::DocumentSnapshot(
     Epoch epoch,
     Revision revision,
     ChunkMap chunks,
-    std::unordered_map<ObjectId, pikdraw::geometry::Rect2D> spatial_index
+    SpatialIndex spatial_index
 ) : doc_id_(std::move(doc_id)),
     epoch_(epoch),
     revision_(revision),

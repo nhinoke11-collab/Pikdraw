@@ -71,10 +71,10 @@ PIK_TEST_CASE(curve_source_preservation_and_discretization) {
     path.close();
 
     // Verify source segments are strictly preserved
-    PIK_CHECK_EQUAL(path.segments.size(), 3);
-    PIK_CHECK(path.segments[1].type == SegmentType::CubicTo);
-    PIK_CHECK_NEAR(path.segments[1].p1.x, 10.0, 1e-9);
-    PIK_CHECK_NEAR(path.segments[1].p2.x, 30.0, 1e-9);
+    PIK_CHECK_EQUAL(path.segments().size(), 3);
+    PIK_CHECK(path.segments()[1].type == SegmentType::CubicTo);
+    PIK_CHECK_NEAR(path.segments()[1].p1.x, 10.0, 1e-9);
+    PIK_CHECK_NEAR(path.segments()[1].p2.x, 30.0, 1e-9);
 
     // Discretize for manufacturing with 0.01mm tolerance
     const auto approx = discretize_for_manufacturing(path, 0.01);

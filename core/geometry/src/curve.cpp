@@ -3,44 +3,52 @@
 
 namespace pikdraw::geometry {
 
-Rect2D SourcePath::compute_bounds() const {
-    if (segments.empty()) {
-        return Rect2D(0, 0, 0, 0);
-    }
-    double min_x = 1e30, min_y = 1e30, max_x = -1e30, max_y = -1e30;
-    auto update_pt = [&](const Point2D& p) {
-        min_x = std::min(min_x, p.x);
-        min_y = std::min(min_y, p.y);
-        max_x = std::max(max_x, p.x);
-        max_y = std::max(max_y, p.y);
+void SourcePath::detach() {
+    if (!data_) data_=std::make_shared<Data>();
+    else if (data_.use_count()!=1) data_=std::make_shared<Data>(*data_);
+}
+void SourcePath::validate(const PathSegment& segment) {
+    if (segment.type<SegmentType::MoveTo || segment.type>SegmentType::Close) throw std::invalid_argument("Unknown source segment");
+    for (const auto& point:{segment.p0,segment.p1,segment.p2,segment.p3})
+        if (!std::isfinite(point.x) || !std::isfinite(point.y) || std::abs(point.x)>1e7 || std::abs(point.y)>1e7)
+            throw std::invalid_argument("Source coordinate outside finite supported range");
+}
+void SourcePath::include_bounds(Data& data,const PathSegment& segment) noexcept {
+    const auto include=[&](const Point2D& p) {
+        if (!data.has_bounds) { data.bounds=Rect2D(p.x,p.y,p.x,p.y); data.has_bounds=true; }
+        else { data.bounds.min_x=std::min(data.bounds.min_x,p.x); data.bounds.min_y=std::min(data.bounds.min_y,p.y);
+               data.bounds.max_x=std::max(data.bounds.max_x,p.x); data.bounds.max_y=std::max(data.bounds.max_y,p.y); }
     };
-
-    for (const auto& s : segments) {
-        switch (s.type) {
-            case SegmentType::MoveTo:
-                update_pt(s.p0);
-                break;
-            case SegmentType::LineTo:
-                update_pt(s.p1);
-                break;
-            case SegmentType::CubicTo:
-                // Fast bounding box covering control polygon
-                update_pt(s.p1);
-                update_pt(s.p2);
-                update_pt(s.p3);
-                break;
-            case SegmentType::Close:
-                break;
-        }
+    switch (segment.type) {
+        case SegmentType::MoveTo: include(segment.p0); break;
+        case SegmentType::LineTo: include(segment.p1); break;
+        case SegmentType::CubicTo: include(segment.p1); include(segment.p2); include(segment.p3); break;
+        case SegmentType::Close: break;
     }
-    if (min_x > max_x) return Rect2D(0, 0, 0, 0);
-    return Rect2D(min_x, min_y, max_x, max_y);
+}
+void SourcePath::append_segment(const PathSegment& segment) {
+    const PathSegment value=segment; // Input may alias a segment in the same vector.
+    validate(value);
+    if (segments().size()>=MaxSegments) throw std::length_error("Source segment budget exceeded");
+    detach(); data_->segments.push_back(value); include_bounds(*data_,value);
+}
+void SourcePath::set_segment(size_t index,const PathSegment& segment) {
+    const PathSegment value=segment;
+    validate(value);
+    if (index>=segments().size()) throw std::out_of_range("Source segment index");
+    detach(); data_->segments[index]=value;
+    data_->has_bounds=false; data_->bounds={};
+    for (const auto& current:data_->segments) include_bounds(*data_,current);
+}
+void SourcePath::reserve(size_t count) {
+    if (count>MaxSegments) throw std::length_error("Source reserve budget exceeded");
+    detach(); data_->segments.reserve(count);
 }
 
 SourcePath SourcePath::transformed(const Transform2D& t) const {
     SourcePath result;
-    result.segments.reserve(segments.size());
-    for (const auto& s : segments) {
+    result.reserve(segments().size());
+    for (const auto& s : segments()) {
         PathSegment ns;
         ns.type = s.type;
         switch (s.type) {
@@ -58,7 +66,7 @@ SourcePath SourcePath::transformed(const Transform2D& t) const {
             case SegmentType::Close:
                 break;
         }
-        result.segments.push_back(ns);
+        result.append_segment(ns);
     }
     return result;
 }
@@ -105,8 +113,8 @@ ManufacturingApproximation discretize_for_manufacturing(
 ) {
     if (!std::isfinite(tolerance_mm) || tolerance_mm < 1e-9 || tolerance_mm > 1e6)
         throw std::invalid_argument("Tolerance outside supported spike range [1e-9, 1e6] mm");
-    if (source.segments.size() > 1000000) throw std::invalid_argument("Too many source segments");
-    for (const auto& s : source.segments) {
+    if (source.segments().size() > 1000000) throw std::invalid_argument("Too many source segments");
+    for (const auto& s : source.segments()) {
         for (const auto& p : {s.p0, s.p1, s.p2, s.p3})
             if (!std::isfinite(p.x) || !std::isfinite(p.y) || std::abs(p.x) > 1e7 || std::abs(p.y) > 1e7)
                 throw std::invalid_argument("Source coordinate outside finite spike range");
@@ -120,7 +128,7 @@ ManufacturingApproximation discretize_for_manufacturing(
     Point2D start{};
     bool started = false, closed = false;
 
-    for (const auto& s : source.segments) {
+    for (const auto& s : source.segments()) {
         switch (s.type) {
             case SegmentType::MoveTo:
                 if (started) throw std::invalid_argument("Multiple contours require a contour-aware result; unsupported");

@@ -35,7 +35,7 @@ public:
     [[nodiscard]] virtual pikdraw::geometry::Rect2D bounds() const = 0;
 };
 
-class PathObject : public DocumentObject {
+class PathObject final : public DocumentObject {
 public:
     pikdraw::geometry::SourcePath path;
 
@@ -49,7 +49,7 @@ public:
     }
 };
 
-class TextObject : public DocumentObject {
+class TextObject final : public DocumentObject {
 public:
     std::string utf8_text;
     std::string font_family{"Noto Sans"};
@@ -70,7 +70,7 @@ public:
     }
 };
 
-class GroupObject : public DocumentObject {
+class GroupObject final : public DocumentObject {
 public:
     std::vector<ObjectId> child_ids;
 
@@ -94,15 +94,11 @@ inline void validate_source_object(const DocumentObject& object) {
             throw std::invalid_argument("Invalid source color metadata");
     }
     if (const auto* path=dynamic_cast<const PathObject*>(&object)) {
-        if (path->path.segments.size()>250000) throw std::invalid_argument("Path segment budget exceeded");
-        for (const auto& segment:path->path.segments) {
-            if (segment.type>pikdraw::geometry::SegmentType::Close) throw std::invalid_argument("Unknown segment");
-            for (auto point : {segment.p0,segment.p1,segment.p2,segment.p3}) {
-                const auto world=object.transform.apply(point);
-                if (!std::isfinite(point.x) || !std::isfinite(point.y) || std::abs(point.x)>1e7 || std::abs(point.y)>1e7 ||
-                    !std::isfinite(world.x) || !std::isfinite(world.y)) throw std::invalid_argument("Invalid curve coordinates");
-            }
-        }
+        // SourcePath validates on construction/edit and only exposes const segments.
+        // Cached conservative bounds make a transform/style edit independent of point count.
+        if (path->path.segments().size()>pikdraw::geometry::SourcePath::MaxSegments)
+            throw std::invalid_argument("Path segment budget exceeded");
+        (void)path->path.compute_bounds().transformed(object.transform);
     } else if (const auto* text=dynamic_cast<const TextObject*>(&object)) {
         if (!std::isfinite(text->font_size_pt) || text->font_size_pt<=0 || text->utf8_text.size()>1024*1024 ||
             text->font_family.size()>1024*1024) throw std::invalid_argument("Invalid text metadata");

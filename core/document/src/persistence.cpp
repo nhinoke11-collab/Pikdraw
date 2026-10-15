@@ -153,8 +153,8 @@ std::vector<uint8_t> PersistenceManager::serialize_to_buffer(const DocumentSnaps
 
         if (obj->type() == ObjectType::Path) {
             const auto* p = static_cast<const PathObject*>(obj.get());
-            write_u32(payload, static_cast<uint32_t>(p->path.segments.size()));
-            for (const auto& s : p->path.segments) {
+            write_u32(payload, static_cast<uint32_t>(p->path.segments().size()));
+            for (const auto& s : p->path.segments()) {
                 payload.push_back(static_cast<uint8_t>(s.type));
                 write_f64(payload, s.p0.x); write_f64(payload, s.p0.y);
                 write_f64(payload, s.p1.x); write_f64(payload, s.p1.y);
@@ -221,7 +221,7 @@ std::shared_ptr<const DocumentSnapshot> PersistenceManager::deserialize_from_buf
     }
 
     ChunkMap chunks;
-    std::unordered_map<ObjectId, pikdraw::geometry::Rect2D> spatial_index;
+    SpatialIndex spatial_index;
 
     for (uint32_t i = 0; i < obj_count; ++i) {
         if (ptr >= end) throw std::runtime_error("Premature end of objects");
@@ -268,7 +268,7 @@ std::shared_ptr<const DocumentSnapshot> PersistenceManager::deserialize_from_buf
                 ps.p1.x = read_f64(ptr, end); ps.p1.y = read_f64(ptr, end);
                 ps.p2.x = read_f64(ptr, end); ps.p2.y = read_f64(ptr, end);
                 ps.p3.x = read_f64(ptr, end); ps.p3.y = read_f64(ptr, end);
-                po->path.segments.push_back(ps);
+                po->path.append_segment(ps);
             }
             obj = po;
         } else if (otype == ObjectType::Text) {
@@ -300,12 +300,12 @@ std::shared_ptr<const DocumentSnapshot> PersistenceManager::deserialize_from_buf
         if (!oid || spatial_index.contains(oid) || oid/OBJECTS_PER_CHUNK>std::numeric_limits<ChunkId>::max() ||
             !obj->transform.is_finite() || !obj->bounds().is_finite()) throw std::runtime_error("Invalid object ID or geometry");
         const ChunkId cid = static_cast<ChunkId>(oid / OBJECTS_PER_CHUNK);
-        auto& chunk_ptr = chunks[cid];
-        if (!chunk_ptr) {
-            chunk_ptr = std::make_shared<ObjectChunk>();
-        }
-        const_cast<ObjectChunk*>(chunk_ptr.get())->objects.push_back(obj);
-        spatial_index[oid] = obj->bounds();
+        const auto found=chunks.find(cid);
+        auto chunk=std::make_shared<ObjectChunk>();
+        if (found!=chunks.end()) chunk->objects=found->second->objects;
+        chunk->objects.push_back(obj);
+        chunks.set(cid,chunk);
+        spatial_index.set(oid,obj->bounds());
     }
 
     if (ptr!=end) throw std::runtime_error("Trailing native payload");

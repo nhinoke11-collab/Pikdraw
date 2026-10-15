@@ -40,6 +40,11 @@ struct AsyncJobProposal {
     std::vector<std::shared_ptr<DocumentObject>> updated_objects;
 };
 
+struct TransactionMetrics {
+    double prepare_us{},operation_us{},source_validation_us{},snapshot_us{},history_cleanup_us{},publish_us{},total_us{};
+    bool committed{false};
+};
+
 class Document {
 public:
     explicit Document(DocumentId id);
@@ -71,6 +76,9 @@ public:
     bool redo();
 
     [[nodiscard]] std::shared_ptr<const DocumentSnapshot> create_snapshot() const;
+    [[nodiscard]] const TransactionMetrics& last_transaction_metrics() const {
+        assert_writer_thread(); return last_metrics_;
+    }
 
     JobGeneration advance_generation() {
         assert_writer_thread();
@@ -109,6 +117,7 @@ private:
     using Snapshot = std::shared_ptr<const DocumentSnapshot>;
     Snapshot published_;
     bool transaction_active_{false};
+    TransactionMetrics last_metrics_;
     DocumentId doc_id_;
     Epoch epoch_{1};
     Revision revision_{0};
@@ -122,7 +131,7 @@ private:
 
     // COW chunks
     ChunkMap chunks_;
-    std::unordered_map<ObjectId, pikdraw::geometry::Rect2D> spatial_index_;
+    SpatialIndex spatial_index_;
 
     // Bounded history
     size_t max_history_{500};

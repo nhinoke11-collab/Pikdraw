@@ -5,9 +5,83 @@
 #include <atomic>
 #include <limits>
 #include <chrono>
+#include <map>
+#include <random>
 
 using namespace pikdraw::document;
 using namespace pikdraw::geometry;
+
+PIK_TEST_CASE(paged_iterator_owns_root_after_map_replacement) {
+    auto iterator=[] { PersistentMap<uint64_t,int> map; map.set(7,91); return map.begin(); }();
+    PIK_CHECK(iterator->first==7 && iterator->second==91);
+    auto held=iterator; ++iterator;
+    PersistentMap<uint64_t,int> empty;
+    PIK_CHECK(iterator==empty.end());
+    PIK_CHECK(held->second==91);
+    PersistentMap<uint64_t,int> current; current.set(2,4);
+    auto old=current.begin(); current.set(2,5); current.erase(2);
+    PIK_CHECK(old->second==4 && current.empty());
+}
+
+PIK_TEST_CASE(empty_chunk_is_pruned_but_retained_root_survives) {
+    Document doc("prune"); auto object=std::make_shared<PathObject>(); object->id=doc.allocate_id();
+    doc.execute_command(std::make_unique<InsertObjectCommand>(object));
+    auto retained=doc.create_snapshot();
+    doc.execute_command(std::make_unique<RemoveObjectCommand>(object->id));
+    PIK_CHECK(doc.create_snapshot()->chunks().empty());
+    PIK_CHECK(retained->get_object(object->id));
+    PIK_CHECK(doc.undo()); PIK_CHECK(doc.create_snapshot()->get_object(object->id));
+}
+
+PIK_TEST_CASE(history_total_remains_bounded_across_undo_redo) {
+    Document doc("bounded-history"); auto object=std::make_shared<PathObject>(); object->id=doc.allocate_id();
+    doc.execute_command(std::make_unique<InsertObjectCommand>(object));
+    for (int i=0;i<600;++i) doc.execute_command(std::make_unique<TransformObjectCommand>(object->id,Transform2D::translation(1,0)));
+    int undone=0; while (doc.undo()) ++undone; PIK_CHECK_EQUAL(undone,500);
+    int redone=0; while (doc.redo()) ++redone; PIK_CHECK_EQUAL(redone,500);
+}
+
+PIK_TEST_CASE(source_curve_storage_is_shared_but_edits_detach) {
+    SourcePath original; original.move_to({0,0}); original.line_to({10,20});
+    SourcePath copy=original;
+    PIK_CHECK(original.segments().data()==copy.segments().data());
+    original.set_segment(1,PathSegment::make_line_to({99,100}));
+    PIK_CHECK(original.segments().data()!=copy.segments().data());
+    PIK_CHECK(copy.segments()[1].p1.x==10 && copy.compute_bounds().max_x==10);
+    PIK_CHECK(original.compute_bounds().max_x==99);
+    copy.append_segment(copy.segments()[1]); // Alias remains safe if push reallocates.
+    PIK_CHECK(copy.segments().back().p1.y==20);
+    PIK_CHECK_THROWS(original.line_to({std::numeric_limits<double>::quiet_NaN(),0}));
+    PIK_CHECK(original.segments().size()==2);
+    Document doc("shared-path"); auto object=std::make_shared<PathObject>(); object->id=doc.allocate_id(); object->path=copy;
+    doc.execute_command(std::make_unique<InsertObjectCommand>(object));
+    auto before=doc.create_snapshot();
+    doc.execute_command(std::make_unique<TransformObjectCommand>(1,Transform2D::translation(5,0)));
+    auto after=doc.create_snapshot();
+    const auto& a=static_cast<const PathObject&>(*before->get_object(1));
+    const auto& b=static_cast<const PathObject&>(*after->get_object(1));
+    PIK_CHECK(a.path.segments().data()==b.path.segments().data());
+    object->path.line_to({500,500});
+    PIK_CHECK(a.path.segments().size()==3 && a.path.compute_bounds().max_x==10);
+}
+
+PIK_TEST_CASE(paged_roots_match_independent_map_and_survive_old_copy) {
+    PersistentMap<uint64_t,int> map;
+    std::map<uint64_t,int> oracle;
+    std::mt19937_64 random(34819);
+    for (int step=0;step<20000;++step) {
+        const uint64_t key=random()%1024;
+        auto old=map; const auto old_oracle=oracle;
+        if (random()%3==0) PIK_CHECK_EQUAL(map.erase(key),oracle.erase(key));
+        else { const int value=static_cast<int>(random()%10000); map.set(key,value); oracle[key]=value; }
+        PIK_CHECK_EQUAL(map.size(),oracle.size());
+        std::map<uint64_t,int> seen,old_seen;
+        for (const auto& pair:map) seen.insert(pair);
+        for (const auto& pair:old) old_seen.insert(pair);
+        PIK_CHECK(seen==oracle && old_seen==old_oracle);
+        if (map.contains(key)) { auto found=map.find(key); PIK_CHECK(found->second==oracle.at(key)); ++found; }
+    }
+}
 
 PIK_TEST_CASE(rectangle_subset_rejects_nonfinite_and_preserves_failed_output) {
     Rect2D valid(0,0,10,10), invalid=valid; invalid.max_x=std::numeric_limits<double>::infinity();
@@ -19,7 +93,7 @@ PIK_TEST_CASE(rectangle_subset_rejects_nonfinite_and_preserves_failed_output) {
     PIK_CHECK_NEAR(expanded.width(),12.0,0.0); PIK_CHECK_NEAR(expanded.min_x,-1.0,0.0);
     SourcePath result; result.move_to({99,99});
     PIK_CHECK(!evaluate_general_path_boolean({}, {}, result).ok());
-    PIK_CHECK(result.segments.size()==1 && result.segments[0].p0.x==99);
+    PIK_CHECK(result.segments().size()==1 && result.segments()[0].p0.x==99);
 }
 
 PIK_TEST_CASE(recreated_document_identity_rejects_previous_lifetime) {

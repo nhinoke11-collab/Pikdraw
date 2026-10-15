@@ -1,7 +1,7 @@
 #pragma once
 
 #include <memory>
-#include <unordered_map>
+#include "pikdraw/document/persistent_map.hpp"
 #include <vector>
 #include "pikdraw/document/types.hpp"
 #include "pikdraw/document/object.hpp"
@@ -16,7 +16,8 @@ struct ObjectChunk {
     std::vector<std::shared_ptr<const DocumentObject>> objects;
 };
 
-using ChunkMap = std::unordered_map<ChunkId, std::shared_ptr<const ObjectChunk>>;
+using ChunkMap = PersistentMap<ChunkId, std::shared_ptr<const ObjectChunk>>;
+using SpatialIndex = PersistentMap<ObjectId, pikdraw::geometry::Rect2D>;
 
 // Truly immutable snapshot with chunk COW and matching revisioned spatial index
 class DocumentSnapshot {
@@ -26,7 +27,7 @@ public:
         Epoch epoch,
         Revision revision,
         ChunkMap chunks,
-        std::unordered_map<ObjectId, pikdraw::geometry::Rect2D> spatial_index
+        SpatialIndex spatial_index
     );
 
     [[nodiscard]] const DocumentId& doc_id() const { return doc_id_; }
@@ -37,7 +38,7 @@ public:
     [[nodiscard]] std::shared_ptr<const DocumentObject> get_object(ObjectId id) const;
     [[nodiscard]] std::vector<ObjectId> query_rect(const pikdraw::geometry::Rect2D& query_bounds) const;
     [[nodiscard]] const ChunkMap& chunks() const { return chunks_; }
-    [[nodiscard]] const std::unordered_map<ObjectId, pikdraw::geometry::Rect2D>& spatial_index() const {
+    [[nodiscard]] const SpatialIndex& spatial_index() const {
         return spatial_index_;
     }
 
@@ -46,7 +47,7 @@ private:
     Epoch epoch_{0};
     Revision revision_{0};
     ChunkMap chunks_;
-    std::unordered_map<ObjectId, pikdraw::geometry::Rect2D> spatial_index_;
+    SpatialIndex spatial_index_;
 };
 
 } // namespace pikdraw::document
