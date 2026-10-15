@@ -9,6 +9,7 @@ int main(int argc, char* argv[]) {
     std::string screenshot_path;
     bool headless = false;
     int timeout_ms = 0;
+    pikdraw::desktop::UILanguage initial_lang = pikdraw::desktop::UILanguage::Vietnamese;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -19,10 +20,18 @@ int main(int argc, char* argv[]) {
             headless = true;
         } else if (arg == "--timeout" && i + 1 < argc) {
             timeout_ms = std::stoi(argv[++i]) * 1000;
+        } else if (arg == "--lang" && i + 1 < argc) {
+            std::string l = argv[++i];
+            if (l == "en" || l == "EN") {
+                initial_lang = pikdraw::desktop::UILanguage::English;
+            } else {
+                initial_lang = pikdraw::desktop::UILanguage::Vietnamese;
+            }
         }
     }
 
     pikdraw::desktop::NativeWindow window(1440, 900);
+    window.set_language(initial_lang);
 
     const auto area = window.shell().canvas_area();
     std::cout << "Shell Initialized:\n"
