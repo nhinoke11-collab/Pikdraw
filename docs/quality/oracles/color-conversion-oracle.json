@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "oracle_id": "color_conversion_ground_truth",
+  "description": "Standard color transform oracle for sRGB and CMYK preview conversions",
+  "srgb_to_linear_rgb": [
+    {
+      "srgb_8bit": [0, 0, 0],
+      "linear_float": [0.0, 0.0, 0.0]
+    },
+    {
+      "srgb_8bit": [255, 255, 255],
+      "linear_float": [1.0, 1.0, 1.0]
+    },
+    {
+      "srgb_8bit": [128, 128, 128],
+      "linear_float": [0.2158605, 0.2158605, 0.2158605],
+      "tolerance": 1e-5
+    }
+  ],
+  "cmyk_preview_approximation": [
+    {
+      "cmyk": [0.0, 0.0, 0.0, 0.0],
+      "expected_rgb_preview": [1.0, 1.0, 1.0]
+    },
+    {
+      "cmyk": [0.0, 0.0, 0.0, 1.0],
+      "expected_rgb_preview": [0.0, 0.0, 0.0]
+    },
+    {
+      "name": "pure_cyan",
+      "cmyk": [1.0, 0.0, 0.0, 0.0],
+      "expected_rgb_preview": [0.0, 1.0, 1.0]
+    },
+    {
+      "name": "pure_magenta",
+      "cmyk": [0.0, 1.0, 0.0, 0.0],
+      "expected_rgb_preview": [1.0, 0.0, 1.0]
+    },
+    {
+      "name": "pure_yellow",
+      "cmyk": [0.0, 0.0, 1.0, 0.0],
+      "expected_rgb_preview": [1.0, 1.0, 0.0]
+    }
+  ]
+}

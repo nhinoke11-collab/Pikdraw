@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "oracle_id": "geometry_math_ground_truth",
+  "description": "Independent analytical math oracle for curves, bounds, and areas (independent of engine implementation)",
+  "bezier_cubic_split_t05": {
+    "input_curve": [
+      {"x": 0.0, "y": 0.0},
+      {"x": 0.0, "y": 100.0},
+      {"x": 100.0, "y": 100.0},
+      {"x": 100.0, "y": 0.0}
+    ],
+    "split_t": 0.5,
+    "left_curve": [
+      {"x": 0.0, "y": 0.0},
+      {"x": 0.0, "y": 50.0},
+      {"x": 25.0, "y": 75.0},
+      {"x": 50.0, "y": 75.0}
+    ],
+    "right_curve": [
+      {"x": 50.0, "y": 75.0},
+      {"x": 75.0, "y": 75.0},
+      {"x": 100.0, "y": 50.0},
+      {"x": 100.0, "y": 0.0}
+    ],
+    "midpoint_at_t05": {"x": 50.0, "y": 75.0}
+  },
+  "polygon_area_shoelace": [
+    {
+      "name": "rectangle_100x50",
+      "vertices": [
+        {"x": 0.0, "y": 0.0},
+        {"x": 100.0, "y": 0.0},
+        {"x": 100.0, "y": 50.0},
+        {"x": 0.0, "y": 50.0}
+      ],
+      "expected_area": 5000.0,
+      "expected_winding": "counter_clockwise"
+    },
+    {
+      "name": "triangle_right_angled",
+      "vertices": [
+        {"x": 0.0, "y": 0.0},
+        {"x": 60.0, "y": 0.0},
+        {"x": 0.0, "y": 80.0}
+      ],
+      "expected_area": 2400.0,
+      "expected_winding": "counter_clockwise"
+    }
+  ],
+  "point_line_segment_distance": [
+    {
+      "segment": [{"x": 0.0, "y": 0.0}, {"x": 100.0, "y": 0.0}],
+      "query_point": {"x": 50.0, "y": 25.0},
+      "expected_distance": 25.0,
+      "expected_projection": {"x": 50.0, "y": 0.0}
+    },
+    {
+      "segment": [{"x": 0.0, "y": 0.0}, {"x": 100.0, "y": 0.0}],
+      "query_point": {"x": 150.0, "y": 0.0},
+      "expected_distance": 50.0,
+      "expected_projection": {"x": 100.0, "y": 0.0}
+    }
+  ]
+}

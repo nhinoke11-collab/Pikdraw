@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "fixture_type": "worker_ipc_envelope",
+  "magic": "PKWP",
+  "magic_hex": "0x504B5750",
+  "max_frame_bytes": 67108864,
+  "header_size_bytes": 24,
+  "positive_vectors": [
+    {
+      "name": "ping_frame",
+      "msg_type": 1,
+      "sequence_id": 101,
+      "payload_bytes": 0,
+      "expected_frame_size": 24,
+      "expected_valid": true
+    },
+    {
+      "name": "import_request_frame",
+      "msg_type": 2,
+      "sequence_id": 102,
+      "payload_bytes": 4096,
+      "expected_frame_size": 4120,
+      "expected_valid": true
+    }
+  ],
+  "negative_vectors": [
+    {
+      "name": "corrupt_magic_frame",
+      "magic": "BADM",
+      "expected_error": "INVALID_IPC_MAGIC"
+    },
+    {
+      "name": "truncated_header",
+      "frame_bytes_received": 16,
+      "expected_error": "TRUNCATED_FRAME_HEADER"
+    },
+    {
+      "name": "oversized_payload",
+      "payload_bytes": 100000000,
+      "expected_error": "FRAME_EXCEEDS_MAX_LIMIT"
+    },
+    {
+      "name": "crc_mismatch",
+      "declared_crc": "0x12345678",
+      "calculated_crc": "0x87654321",
+      "expected_error": "CRC_VERIFICATION_FAILED"
+    }
+  ]
+}

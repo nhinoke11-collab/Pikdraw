@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "fixture_type": "geometry_transform_vectors",
+  "units": "mm",
+  "precision": "IEEE-754 binary64",
+  "positive_vectors": [
+    {
+      "name": "large_sign_relative",
+      "description": "20m signboard offset point relative to 20m origin",
+      "input_point": {"x": 20000.005, "y": 500.0},
+      "transform": {"a": 1.0, "b": 0.0, "c": 0.0, "d": 1.0, "tx": 0.0, "ty": 0.0},
+      "origin": {"x": 20000.0, "y": 0.0},
+      "expected_relative": {"x": 0.005, "y": 500.0},
+      "tolerance_mm": 1e-9
+    },
+    {
+      "name": "reflection_across_vertical_axis",
+      "description": "Reflect horizontally across x = 5.0mm",
+      "input_point": {"x": 2.0, "y": 3.0},
+      "transform": {"a": -1.0, "b": 0.0, "c": 0.0, "d": 1.0, "tx": 10.0, "ty": 0.0},
+      "expected_point": {"x": 8.0, "y": 3.0},
+      "tolerance_mm": 1e-9
+    },
+    {
+      "name": "nonuniform_scale_translate",
+      "description": "Scale 2x in X, 0.5x in Y, translated by (10, -4)",
+      "input_point": {"x": 2.0, "y": 3.0},
+      "transform": {"a": 2.0, "b": 0.0, "c": 0.0, "d": 0.5, "tx": 10.0, "ty": -4.0},
+      "expected_point": {"x": 14.0, "y": -2.5},
+      "tolerance_mm": 1e-9
+    },
+    {
+      "name": "rotation_90_deg",
+      "description": "Rotate 90 degrees counter-clockwise about origin",
+      "input_point": {"x": 10.0, "y": 0.0},
+      "transform": {"a": 0.0, "b": 1.0, "c": -1.0, "d": 0.0, "tx": 0.0, "ty": 0.0},
+      "expected_point": {"x": 0.0, "y": 10.0},
+      "tolerance_mm": 1e-9
+    }
+  ],
+  "negative_vectors": [
+    {
+      "name": "non_finite_nan_x",
+      "input_point": {"x": "NaN", "y": 10.0},
+      "expected_error": "NON_FINITE_COORDINATE"
+    },
+    {
+      "name": "non_finite_infinity_y",
+      "input_point": {"x": 10.0, "y": "Infinity"},
+      "expected_error": "NON_FINITE_COORDINATE"
+    },
+    {
+      "name": "singular_matrix_zero_scale",
+      "transform": {"a": 0.0, "b": 0.0, "c": 0.0, "d": 0.0, "tx": 0.0, "ty": 0.0},
+      "expected_invertible": false,
+      "expected_error": "NON_INVERTIBLE_TRANSFORM"
+    },
+    {
+      "name": "coordinate_out_of_world_bounds",
+      "input_point": {"x": 10000000.0, "y": 0.0},
+      "expected_error": "OUT_OF_BOUNDS_COORDINATE"
+    }
+  ]
+}

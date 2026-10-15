@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "fixture_type": "document_snapshot_vectors",
+  "positive_vectors": [
+    {
+      "name": "monotonic_revision_commit",
+      "initial_revision": 10,
+      "command": "InsertRectangle",
+      "expected_revision": 11,
+      "undo_revision": 12,
+      "redo_revision": 13
+    },
+    {
+      "name": "immutable_snapshot_readers",
+      "initial_revision": 42,
+      "retained_reader_snapshot_revision": 42,
+      "writer_commits_count": 10,
+      "active_writer_revision": 52,
+      "expected_reader_snapshot_revision": 42,
+      "expected_data_isolation": true
+    },
+    {
+      "name": "atomic_rollback_on_failure",
+      "initial_revision": 100,
+      "fault_trigger": "MemoryAllocationFailure",
+      "expected_post_failure_revision": 100,
+      "expected_document_clean": true
+    }
+  ],
+  "negative_vectors": [
+    {
+      "name": "stale_proposal_older_revision",
+      "active_revision": 15,
+      "proposal_base_revision": 14,
+      "expected_decision": "REJECT",
+      "error_code": "STALE_DOCUMENT_REVISION"
+    },
+    {
+      "name": "stale_proposal_mismatched_epoch",
+      "active_epoch": 1002,
+      "proposal_epoch": 1001,
+      "expected_decision": "REJECT",
+      "error_code": "STALE_DOCUMENT_EPOCH"
+    },
+    {
+      "name": "stale_proposal_cancelled_generation",
+      "active_generation": 5,
+      "proposal_generation": 4,
+      "expected_decision": "REJECT",
+      "error_code": "STALE_JOB_GENERATION"
+    },
+    {
+      "name": "unknown_object_id_mutation",
+      "target_object_id": 99999999,
+      "expected_decision": "REJECT",
+      "error_code": "OBJECT_NOT_FOUND"
+    }
+  ]
+}

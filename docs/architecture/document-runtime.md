@@ -1,6 +1,6 @@
 # Document, độ chính xác và runtime PikDraw
 
-Trạng thái: **đặc tả thiết kế cho spike; chưa có implementation hoặc schema/API đã khóa**. Tuân theo [ADR 0001](../decisions/0001-foundation.md), [ADR 0002](../decisions/0002-runtime-and-hardware.md) và registry. Semantics dưới đây phải thành public contracts trong task riêng có consumer review trước parallel implementation.
+Trạng thái: **Khóa theo bộ hợp đồng Contracts C1–C7 tại M0 Foundation**. Tuân theo [ADR 0001](../decisions/0001-foundation.md), [ADR 0002](../decisions/0002-runtime-and-hardware.md), [ADR 0003](../decisions/0003-storage-durability.md), [ADR 0004](../decisions/0004-ui-development-loop.md) và các hợp đồng trong `contracts/`.
 
 ## Ba biểu diễn cùng nguồn
 
