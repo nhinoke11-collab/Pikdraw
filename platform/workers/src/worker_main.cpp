@@ -111,6 +111,46 @@ CanaryPayloadResponse HandleCanary(const CanaryPayloadRequest& req) {
                 resp.diagnostic_message = "WSAStartup failed: " + std::to_string(init_res);
                 break;
             }
+
+            // Probe 1: Attempt outbound connection to documentation external address (192.0.2.1).
+            // AppContainer processes without internetClient/privateNetworkClientServer capabilities
+            // are explicitly denied by Windows kernel security with WSAEACCES (10013).
+            // Unconfined processes are permitted by OS security policy (returning WSAEWOULDBLOCK without WSAEACCES).
+            SOCKET s_out = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+            int outbound_err = 0;
+            if (s_out != INVALID_SOCKET) {
+                u_long nonblocking = 1;
+                ioctlsocket(s_out, FIONBIO, &nonblocking);
+                sockaddr_in out_addr{};
+                out_addr.sin_family = AF_INET;
+                out_addr.sin_port = htons(80);
+                inet_pton(AF_INET, "192.0.2.1", &out_addr.sin_addr);
+                int c_res = connect(s_out, reinterpret_cast<sockaddr*>(&out_addr), sizeof(out_addr));
+                if (c_res == SOCKET_ERROR) {
+                    outbound_err = WSAGetLastError();
+                    if (outbound_err == WSAEWOULDBLOCK) {
+                        fd_set w, e;
+                        FD_ZERO(&w); FD_ZERO(&e);
+                        FD_SET(s_out, &w); FD_SET(s_out, &e);
+                        timeval tv{0, 200000}; // 200ms
+                        int r = select(0, nullptr, &w, &e, &tv);
+                        if (r > 0) {
+                            int len = sizeof(outbound_err);
+                            getsockopt(s_out, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&outbound_err), &len);
+                        }
+                    }
+                }
+                closesocket(s_out);
+            }
+
+            if (outbound_err == WSAEACCES) {
+                resp.os_error_code = WSAEACCES;
+                resp.denied_by_os = true;
+                resp.diagnostic_message = "Outbound connect explicitly denied by OS security: WSAEACCES (10013)";
+                WSACleanup();
+                break;
+            }
+            // Probe 2: Connect to positive-control listener endpoint (for unconfined worker)
             SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
             if (s == INVALID_SOCKET) {
                 resp.os_error_code = static_cast<uint32_t>(WSAGetLastError());
