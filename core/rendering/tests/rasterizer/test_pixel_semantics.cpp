@@ -137,6 +137,17 @@ void test_clipping_and_failure() {
   line.stroke_width_mm = 2;
   line.path.move_to(-1e10, 32);
   line.path.line_to(1e10, 32);
+  bool rejected_coordinate = false;
+  try {
+    f.add(line);
+  } catch (const std::invalid_argument &) {
+    rejected_coordinate = true;
+  }
+  require(rejected_coordinate && f.objects.empty(),
+          "out-of-range source coordinate entered an immutable snapshot");
+  line.path = {};
+  line.path.move_to(geometry::limits::kCanvasMinMm, 32);
+  line.path.line_to(geometry::limits::kCanvasMaxMm, 32);
   f.add(line);
   const auto start = std::chrono::steady_clock::now();
   require(f.render(), "huge clipped line failed");
@@ -153,17 +164,24 @@ void test_clipping_and_failure() {
   Fixture invalid;
   auto bad_color =
       rectangle(1, {std::numeric_limits<double>::quiet_NaN(), 0, 0, 1});
-  invalid.add(bad_color);
-  require(!invalid.render(), "invalid color falsely succeeded");
-  require(!metric.diagnostics.empty() && metric.diagnostics[0].error &&
-              metric.diagnostics[0].object_id == 1,
-          "missing per-object failure diagnostic");
+  bool rejected_color = false;
+  try {
+    invalid.add(bad_color);
+  } catch (const std::invalid_argument &) {
+    rejected_color = true;
+  }
+  require(rejected_color && invalid.objects.empty(),
+          "invalid source color entered an immutable snapshot");
   Fixture group;
   GroupObject g;
   g.id = 1;
   group.objects = group.objects.set(1, g);
   group.page.layers[0].object_ids = {1};
-  require(!group.render(), "unsupported group falsely succeeded");
+  RenderMetric group_metric;
+  require(!group.render(&group_metric), "unsupported group falsely succeeded");
+  require(group_metric.diagnostics.size() == 1 && group_metric.diagnostics[0].error &&
+              group_metric.diagnostics[0].object_id == 1,
+          "missing per-object failure diagnostic");
   for (ObjectId id = 2; id <= 70; ++id) {
     g.id = id;
     group.objects = group.objects.set(id, g);
