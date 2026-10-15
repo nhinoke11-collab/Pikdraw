@@ -17,15 +17,24 @@ CommandResult AddObjectCommand::execute(Document& doc) {
     if (layer_idx_ >= page.layers.size()) {
         return CommandResult::fail("Invalid layer index for AddObjectCommand");
     }
+    if (page.layers[layer_idx_].locked)
+        return CommandResult::fail("Cannot add to a locked layer");
 
     ObjectId id = object_id();
     if (id == kInvalidObjectId) {
         return CommandResult::fail("Cannot add object with invalid ID");
     }
 
+    if (doc.objects().contains(id)) {
+        return CommandResult::fail("Object ID already exists");
+    }
+    if (!std::visit([](const auto& obj) { return obj.transform.is_finite(); }, object_))
+        return CommandResult::fail("Non-finite object transform");
+
     PersistentObjectMap map = doc.objects().set(id, object_);
     page.layers[layer_idx_].object_ids.push_back(id);
     doc.apply_mutation(std::move(page), std::move(map));
+    reserve_object_id(id);
     executed_ = true;
     return CommandResult::ok();
 }
@@ -71,6 +80,7 @@ CommandResult RemoveObjectCommand::execute(Document& doc) {
         auto& ids = page.layers[i].object_ids;
         for (auto it = ids.begin(); it != ids.end(); ++it) {
             if (*it == id_) {
+                object_idx_ = static_cast<size_t>(it - ids.begin());
                 ids.erase(it);
                 layer_idx_ = i;
                 found_in_layer = true;
@@ -95,7 +105,9 @@ CommandResult RemoveObjectCommand::undo(Document& doc) {
     }
 
     PersistentObjectMap map = doc.objects().set(id_, *removed_object_);
-    page.layers[layer_idx_].object_ids.push_back(id_);
+    auto& ids = page.layers[layer_idx_].object_ids;
+    if (object_idx_ > ids.size()) return CommandResult::fail("Invalid saved z-order index");
+    ids.insert(ids.begin() + static_cast<std::ptrdiff_t>(object_idx_), id_);
     doc.apply_mutation(std::move(page), std::move(map));
     return CommandResult::ok();
 }
@@ -106,6 +118,7 @@ TransformObjectCommand::TransformObjectCommand(ObjectId id, geometry::Transform2
     : id_(id), delta_(delta) {}
 
 CommandResult TransformObjectCommand::execute(Document& doc) {
+    if (!delta_.is_finite()) return CommandResult::fail("Non-finite transform delta");
     auto opt = doc.objects().get(id_);
     if (!opt) {
         return CommandResult::fail("Object to transform not found in document");
@@ -116,6 +129,9 @@ CommandResult TransformObjectCommand::execute(Document& doc) {
         previous_transform_ = obj.transform;
         obj.transform = delta_ * obj.transform;
     }, updated);
+
+    if (!std::visit([](const auto& obj) { return obj.transform.is_finite(); }, updated))
+        return CommandResult::fail("Transform overflow");
 
     PersistentObjectMap map = doc.objects().set(id_, std::move(updated));
     doc.apply_mutation(doc.page(), std::move(map));

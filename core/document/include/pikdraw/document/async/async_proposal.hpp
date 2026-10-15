@@ -15,6 +15,7 @@ struct AsyncProposalMetadata {
     uint64_t base_revision{0};
     uint64_t job_id{0};
     uint64_t job_generation{0};
+    std::vector<ObjectId> target_object_ids;
 };
 
 /// Result code for asynchronous proposal validation and commitment

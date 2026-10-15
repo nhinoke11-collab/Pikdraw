@@ -10,8 +10,11 @@ namespace pikdraw::document {
 /// Undo/Redo stack manager with configurable memory/step budget
 class UndoHistory {
 public:
-    explicit UndoHistory(size_t max_steps = 100) noexcept
-        : max_steps_(max_steps) {}
+    explicit UndoHistory(size_t max_steps = 100)
+        : max_steps_(max_steps) {
+        undo_stack_.reserve(max_steps_);
+        redo_stack_.reserve(max_steps_);
+    }
 
     [[nodiscard]] bool can_undo() const noexcept {
         return !undo_stack_.empty();
@@ -29,13 +32,13 @@ public:
         return redo_stack_.size();
     }
 
-    void push_undo(CommandPtr cmd) {
-        if (!cmd) return;
+    void push_undo(CommandPtr cmd, bool new_action = true) {
+        if (new_action) redo_stack_.clear();
+        if (!cmd || max_steps_ == 0) return;
         if (undo_stack_.size() >= max_steps_) {
             undo_stack_.erase(undo_stack_.begin());
         }
         undo_stack_.push_back(std::move(cmd));
-        redo_stack_.clear(); // New user action clears redo branch
     }
 
     [[nodiscard]] CommandPtr pop_undo() {
@@ -46,7 +49,7 @@ public:
     }
 
     void push_redo(CommandPtr cmd) {
-        if (!cmd) return;
+        if (!cmd || max_steps_ == 0) return;
         redo_stack_.push_back(std::move(cmd));
     }
 

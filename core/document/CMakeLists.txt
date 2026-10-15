@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(pikdraw_document STATIC
+    src/async/proposal_validator.cpp
+    src/snapshots/structure_validator.cpp
     src/commands/command.cpp
     src/commands/transaction_writer.cpp
     src/storage/native_format.cpp
@@ -41,6 +43,8 @@ if(PIKDRAW_BUILD_TESTS)
 
     add_doc_test(test_pikdraw_document_commands tests/commands/test_commands.cpp)
     add_doc_test(test_pikdraw_document_snapshots tests/snapshots/test_snapshots.cpp)
+    add_doc_test(test_pikdraw_document_persistent_map tests/snapshots/test_persistent_map.cpp)
     add_doc_test(test_pikdraw_document_async tests/async/test_stale_proposals.cpp)
+    add_doc_test(test_pikdraw_document_writer_safety tests/async/test_writer_safety.cpp)
     add_doc_test(test_pikdraw_document_storage tests/storage/test_storage.cpp)
 endif()

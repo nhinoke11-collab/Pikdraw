@@ -1,5 +1,6 @@
 #include "pikdraw/document/commands/transaction_writer.hpp"
 #include "pikdraw/document/document.hpp"
+#include <stdexcept>
 
 namespace pikdraw::document {
 
@@ -36,10 +37,13 @@ CommandResult CompositeCommand::undo(Document& doc) {
 // --- TransactionWriter ---
 
 void TransactionWriter::begin_transaction(std::string transaction_name) {
+    doc_.require_idle_writer();
+    if (active_transaction_) throw std::logic_error("A transaction is already active");
     active_transaction_ = std::make_unique<CompositeCommand>(std::move(transaction_name));
 }
 
 CommandResult TransactionWriter::stage_command(CommandPtr cmd) {
+    doc_.require_idle_writer();
     if (!active_transaction_) {
         return CommandResult::fail("No active transaction to stage command");
     }
@@ -51,6 +55,7 @@ CommandResult TransactionWriter::stage_command(CommandPtr cmd) {
 }
 
 CommandResult TransactionWriter::commit_transaction() {
+    doc_.require_idle_writer();
     if (!active_transaction_) {
         return CommandResult::fail("No active transaction to commit");
     }
@@ -63,6 +68,7 @@ CommandResult TransactionWriter::commit_transaction() {
 }
 
 void TransactionWriter::rollback_transaction() {
+    doc_.require_writer();
     active_transaction_ = nullptr;
 }
 

@@ -2,6 +2,7 @@
 
 #include "pikdraw/document/model/object.hpp"
 #include "pikdraw/document/snapshots/persistent_map.hpp"
+#include "pikdraw/document/model/structure.hpp"
 #include <memory>
 #include <vector>
 
@@ -10,8 +11,14 @@ namespace pikdraw::document {
 /// Immutable Document Snapshot consumed by concurrent readers (Renderer, Exporters)
 class DocumentSnapshot {
 public:
-    DocumentSnapshot(uint64_t epoch, uint64_t revision, Page page, PersistentObjectMap objects)
-        : epoch_(epoch), revision_(revision), page_(std::move(page)), objects_(std::move(objects)) {}
+    DocumentSnapshot(uint64_t epoch, uint64_t revision, Page page, PersistentObjectMap objects,
+                     std::string document_id = {})
+        : epoch_(epoch), revision_(revision), page_(std::move(page)), objects_(std::move(objects)),
+          document_id_(std::move(document_id)) {
+        validate_document_structure(page_, objects_);
+    }
+
+    [[nodiscard]] const std::string& document_id() const noexcept { return document_id_; }
 
     [[nodiscard]] uint64_t epoch() const noexcept { return epoch_; }
     [[nodiscard]] uint64_t revision() const noexcept { return revision_; }
@@ -31,6 +38,7 @@ private:
     uint64_t revision_{0};
     Page page_;
     PersistentObjectMap objects_;
+    std::string document_id_;
 };
 
 using SnapshotPtr = std::shared_ptr<const DocumentSnapshot>;

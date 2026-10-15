@@ -9,10 +9,7 @@ void test_valid_proposal() {
     Document doc("doc-async-1");
 
     AsyncProposal proposal;
-    proposal.metadata.document_id = "doc-async-1";
-    proposal.metadata.epoch = doc.epoch();
-    proposal.metadata.base_revision = doc.revision(); // rev 0
-    proposal.metadata.job_id = 101;
+    proposal.metadata = doc.begin_job(101);
     proposal.description = "Async worker contour simplification";
 
     PathObject p;
