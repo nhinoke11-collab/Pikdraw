@@ -10,6 +10,7 @@ add_library(pikdraw_worker_common STATIC
     src/job_object.cpp
     src/appcontainer.cpp
     src/process_launcher.cpp
+    src/source_snapshot.cpp
 )
 
 target_include_directories(pikdraw_worker_common PUBLIC
@@ -21,6 +22,7 @@ target_link_libraries(pikdraw_worker_common PUBLIC
     advapi32
     userenv
     ws2_32
+    bcrypt
 )
 
 # Worker standalone executable (must be compiled so host process can launch it)

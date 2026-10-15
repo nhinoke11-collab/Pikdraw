@@ -80,6 +80,68 @@ namespace {
     }
 } // namespace
 
+bool IsV2MessageType(uint16_t message_type) noexcept {
+    switch (static_cast<MessageType>(message_type)) {
+        case MessageType::V2NegotiateRequest:
+        case MessageType::V2NegotiateResponse:
+        case MessageType::V2ImportBegin:
+        case MessageType::V2ProposalChunk:
+        case MessageType::V2ImportEnd:
+        case MessageType::V2ErrorResponse:
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool ValidateV2FrameHeader(const IpcHeader& header) noexcept {
+    return header.magic == IPC_MAGIC &&
+           header.wire_version == IPC_WIRE_VERSION_V2 &&
+           IsV2MessageType(header.message_type) &&
+           header.payload_bytes <= IPC_V2_MAX_FRAME_BYTES;
+}
+
+std::vector<uint8_t> SerializeV2Frame(
+    MessageType message_type,
+    uint32_t sequence_id,
+    std::span<const uint8_t> payload) {
+    if (!IsV2MessageType(static_cast<uint16_t>(message_type)) ||
+        payload.size() > IPC_V2_MAX_FRAME_BYTES) {
+        throw std::invalid_argument("Invalid v2 message type or payload size");
+    }
+
+    IpcHeader header{};
+    header.wire_version = IPC_WIRE_VERSION_V2;
+    header.message_type = static_cast<uint16_t>(message_type);
+    header.sequence_id = sequence_id;
+    header.payload_bytes = static_cast<uint32_t>(payload.size());
+
+    std::vector<uint8_t> packet(sizeof(IpcHeader) + payload.size());
+    std::memcpy(packet.data(), &header, sizeof(header));
+    if (!payload.empty()) {
+        std::memcpy(packet.data() + sizeof(header), payload.data(), payload.size());
+    }
+    return packet;
+}
+
+std::optional<IpcV2Frame> DeserializeV2Frame(std::span<const uint8_t> packet) {
+    if (packet.size() < sizeof(IpcHeader)) return std::nullopt;
+
+    IpcV2Frame frame{};
+    std::memcpy(&frame.header, packet.data(), sizeof(frame.header));
+    if (!ValidateV2FrameHeader(frame.header) ||
+        packet.size() != sizeof(IpcHeader) + frame.header.payload_bytes) {
+        return std::nullopt;
+    }
+
+    try {
+        frame.payload.assign(packet.begin() + sizeof(IpcHeader), packet.end());
+    } catch (const std::bad_alloc&) {
+        return std::nullopt;
+    }
+    return frame;
+}
+
 std::vector<uint8_t> SerializeImportRequest(const ImportPayloadRequest& req, uint32_t sequence_id) {
     std::vector<uint8_t> payload;
     WriteString(payload, req.job.document_id);

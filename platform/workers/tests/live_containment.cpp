@@ -10,12 +10,20 @@
 #include <securityappcontainer.h>
 #include "pikdraw/workers/process_launcher.hpp"
 #include "pikdraw/workers/canary_definitions.hpp"
+#include "pikdraw/workers/source_snapshot.hpp"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <cstring>
 #include <array>
+#include <algorithm>
+#include <chrono>
+#include <cctype>
+#include <map>
+#include <vector>
+#include <algorithm>
+#include <vector>
 
 using namespace pikdraw::workers;
 using namespace pikdraw::interop;
@@ -56,17 +64,69 @@ CanaryPayloadResponse request(WorkerProcessHost& host,CanaryPayloadRequest input
         "Canary action was not executed");
     return *response;
 }
+struct LocalProbeRecord {
+    std::string id;
+    std::string extension;
+    std::string result;
+    uint64_t source_bytes{0};
+    uint64_t elapsed_ms{0};
+};
+
+struct ScratchDirectoryGuard {
+    fs::path path;
+    ~ScratchDirectoryGuard() {
+        std::error_code ignored;
+        if (!path.empty()) fs::remove_all(path, ignored);
+    }
+};
+
+std::wstring DigestArgument(const SourceDigest& digest) {
+    constexpr wchar_t digits[] = L"0123456789abcdef";
+    std::wstring result;
+    result.reserve(digest.size() * 2);
+    for (const uint8_t byte : digest) {
+        result.push_back(digits[byte >> 4]);
+        result.push_back(digits[byte & 0x0f]);
+    }
+    return result;
 }
+
+const char* SnapshotFailureName(SourceSnapshotFailure failure) {
+    switch (failure) {
+        case SourceSnapshotFailure::InvalidLimit: return "invalid_profile_limit";
+        case SourceSnapshotFailure::SourceOpenFailed: return "source_open_failed";
+        case SourceSnapshotFailure::SourceIsReparsePoint: return "source_reparse_rejected";
+        case SourceSnapshotFailure::SourceIsNotRegularFile: return "source_not_regular";
+        case SourceSnapshotFailure::SourceTooLarge: return "source_limit_exceeded";
+        case SourceSnapshotFailure::StagingCreateFailed: return "snapshot_stage_failed";
+        case SourceSnapshotFailure::SourceReadFailed: return "source_read_failed";
+        case SourceSnapshotFailure::StagingWriteFailed: return "snapshot_write_failed";
+        case SourceSnapshotFailure::SnapshotVerificationFailed: return "snapshot_verify_failed";
+        case SourceSnapshotFailure::CryptographicFailure: return "sha256_failed";
+        case SourceSnapshotFailure::None: return "none";
+    }
+    return "unknown";
+}
+
+bool HasProbeExtension(const std::string& extension) {
+    return extension == ".cdr" || extension == ".ai" || extension == ".pdf" ||
+        extension == ".eps" || extension == ".dxf" || extension == ".svg" ||
+        extension == ".png" || extension == ".jpg" || extension == ".jpeg";
+}
+
+} // namespace
 
 int RunLiveContainment() {
     const auto evidence=fs::current_path()/"live-containment-report.json";
     std::ostringstream rows;
     int passed=0;
+    bool source_handle_read_only=false;
     const auto write_report=[&](const char* status,const std::string& error) {
         std::ofstream out(evidence,std::ios::binary);
         require(static_cast<bool>(out),"Cannot write containment evidence");
         out << "{\"status\":\"" << status << "\",\"denied_canaries\":" << passed
-            << ",\"required_canaries\":5,\"full_spike_accepted\":false,\"error\":\"" << escaped(error)
+            << ",\"required_canaries\":5,\"source_handle_read_only\":" << (source_handle_read_only?"true":"false")
+            << ",\"full_spike_accepted\":false,\"error\":\"" << escaped(error)
             << "\",\"limits\":\"One Windows local run; no format fidelity, parser corpus, CPU/memory quota or full Spike C acceptance\",\"cases\":["
             << rows.str() << "]}\n";
     };
@@ -136,7 +196,68 @@ int RunLiveContainment() {
         require(sandbox.GetAppContainer().IsValid() && EqualSid(sid.Get(),sandbox.GetAppContainer().GetSid()),
             "Worker AppContainer SID differs from granted unique SID");
         ping(sandbox);
-        // A Job quota probe can terminate the offending process; run it last.
+
+        const auto selected_source = scratch / L"selected-source.bin";
+        constexpr uint64_t selected_source_bytes = 20ULL * 1024ULL * 1024ULL + 19;
+        {
+            std::ofstream source(selected_source, std::ios::binary);
+            require(static_cast<bool>(source), "Cannot create synthetic large source");
+            std::vector<uint8_t> bytes(256 * 1024);
+            uint64_t offset = 0;
+            while (offset < selected_source_bytes) {
+                const size_t count = static_cast<size_t>(
+                    std::min<uint64_t>(bytes.size(), selected_source_bytes - offset));
+                for (size_t i = 0; i < count; ++i) {
+                    bytes[i] = static_cast<uint8_t>((offset + i) * 17 + 3);
+                }
+                source.write(reinterpret_cast<const char*>(bytes.data()),
+                             static_cast<std::streamsize>(count));
+                require(static_cast<bool>(source), "Cannot write synthetic large source");
+                offset += count;
+            }
+        }
+        SourceSnapshotFailure snapshot_failure = SourceSnapshotFailure::None;
+        auto snapshot = SourceSnapshot::Create(
+            selected_source.wstring(), 64ULL * 1024ULL * 1024ULL, &snapshot_failure);
+        require(snapshot && snapshot->SizeBytes() == selected_source_bytes,
+                "Cannot create bounded large-source snapshot");
+
+        const auto source_profile = profile + L".Source";
+        PSID source_derived = nullptr;
+        const HRESULT source_derived_result = DeriveAppContainerSidFromAppContainerName(source_profile.c_str(), &source_derived);
+        require(SUCCEEDED(source_derived_result) && source_derived != nullptr,
+                "Cannot derive source-probe AppContainer SID");
+        ScopedSid source_sid(source_derived);
+        require(AppContainerProfileGuard::GrantDirectoryAccess(bin.wstring(), source_sid.Get()),
+                "Cannot grant source-probe worker RX");
+
+        WorkerLaunchConfig source_config = sandbox_config;
+        source_config.appcontainer_profile_name = source_profile;
+        source_config.source_snapshot = &*snapshot;
+        source_config.arguments = {
+            L"--test-source-probe",
+            L"--test-source-size",
+            std::to_wstring(snapshot->SizeBytes()),
+            L"--test-source-sha256",
+            [&] {
+                constexpr wchar_t digits[] = L"0123456789abcdef";
+                std::wstring text;
+                text.reserve(snapshot->Sha256().size() * 2);
+                for (const uint8_t byte : snapshot->Sha256()) {
+                    text.push_back(digits[byte >> 4]);
+                    text.push_back(digits[byte & 0x0f]);
+                }
+                return text;
+            }()
+        };
+        WorkerProcessHost source_worker;
+        require(source_worker.Launch(source_config),
+                "AppContainer worker with source capability failed to launch");
+        require(source_worker.WaitForExit(std::chrono::seconds(10)) &&
+                    source_worker.LastWorkerExitCode() == 0,
+                "AppContainer could not read exact large source or write was not denied");
+        source_worker.Terminate();
+        source_handle_read_only = true;        // A Job quota probe can terminate the offending process; run it last.
         for (uint32_t type:std::array<uint32_t,5>{1,2,3,5,4}) {
             CanaryPayloadRequest input{}; input.canary_type=type;
             if (type==CanaryFileRead) input.target_path=WideToUtf8(read_probe.wstring());
@@ -167,4 +288,216 @@ int RunLiveContainment() {
     } catch (const std::exception& error) {
         write_report("fail",error.what()); std::cerr << "[FAIL] Live containment: " << error.what() << '\n'; return 1;
     }
+}
+int RunLocalSourceCorpusProbe(const fs::path& corpus_root) {
+    constexpr uint64_t max_source_bytes = 1024ULL * 1024ULL * 1024ULL;
+    constexpr uint64_t max_corpus_bytes = 4ULL * 1024ULL * 1024ULL * 1024ULL;
+    constexpr size_t max_files = 256;
+    std::error_code filesystem_error;
+    if (!fs::is_directory(corpus_root, filesystem_error) || filesystem_error) {
+        std::cerr << "[FAIL] Local corpus directory unavailable\n";
+        return 2;
+    }
+
+    auto worker_source = fs::absolute("spike_worker.exe", filesystem_error);
+    if (filesystem_error || !fs::exists(worker_source)) {
+        worker_source = fs::absolute("build/win-dev/platform/workers/spike_worker.exe", filesystem_error);
+    }
+    if (filesystem_error || !fs::is_regular_file(worker_source)) {
+        std::cerr << "[FAIL] Worker test executable unavailable\n";
+        return 2;
+    }
+
+    const auto run_id = std::to_wstring(GetCurrentProcessId()) + L"-" +
+        std::to_wstring(GetTickCount64());
+    ScratchDirectoryGuard scratch{fs::temp_directory_path() / (L"PikDraw-Probe-" + run_id)};
+    if (!fs::create_directory(scratch.path, filesystem_error) || filesystem_error) {
+        std::cerr << "[FAIL] Cannot create private worker directory\n";
+        return 2;
+    }
+    const auto worker_bin = scratch.path / L"bin";
+    if (!fs::create_directory(worker_bin, filesystem_error) || filesystem_error) {
+        std::cerr << "[FAIL] Cannot create worker execution directory\n";
+        return 2;
+    }
+    const auto worker_executable = worker_bin / L"spike_worker.exe";
+    fs::copy_file(worker_source, worker_executable, fs::copy_options::none, filesystem_error);
+    if (filesystem_error) {
+        std::cerr << "[FAIL] Cannot prepare worker executable\n";
+        return 2;
+    }
+
+    std::vector<fs::path> files;
+    const auto options = fs::directory_options::skip_permission_denied;
+    for (fs::recursive_directory_iterator it(corpus_root, options, filesystem_error), end;
+         it != end && files.size() <= max_files; it.increment(filesystem_error)) {
+        if (filesystem_error) {
+            filesystem_error.clear();
+            continue;
+        }
+        const auto filename = it->path().filename().wstring();
+        if (it->is_directory(filesystem_error) &&
+            (filename == L"test-reports" || filename == L"_reports")) {
+            it.disable_recursion_pending();
+            continue;
+        }
+        const auto entry_status = it->symlink_status(filesystem_error);
+        if (filesystem_error) {
+            filesystem_error.clear();
+            continue;
+        }
+        if (fs::is_directory(entry_status)) continue;
+        const auto extension_wide = it->path().extension().wstring();
+        std::string extension;
+        extension.reserve(extension_wide.size());
+        for (wchar_t c : extension_wide) {
+            if (c > 0x7f) {
+                extension.clear();
+                break;
+            }
+            extension.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        }
+        if (HasProbeExtension(extension)) files.push_back(it->path());
+    }
+    if (files.size() > max_files) {
+        std::cerr << "[FAIL] Corpus exceeds local probe limit\n";
+        return 2;
+    }
+    std::sort(files.begin(), files.end(), [](const fs::path& left, const fs::path& right) {
+        return left.generic_wstring() < right.generic_wstring();
+    });
+    if (files.empty()) {
+        std::cerr << "[FAIL] No supported source samples found in local corpus\n";
+        return 2;
+    }
+
+    std::vector<LocalProbeRecord> records;
+    records.reserve(files.size());
+    uint64_t corpus_bytes = 0;
+    bool all_verified = true;
+    for (size_t index = 0; index < files.size(); ++index) {
+        LocalProbeRecord record;
+        record.id = "sample-" + std::to_string(index + 1);
+        const auto extension_wide = files[index].extension().wstring();
+        for (wchar_t c : extension_wide) {
+            if (c <= 0x7f) record.extension.push_back(
+                static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        }
+        const auto started = std::chrono::steady_clock::now();
+        filesystem_error.clear();
+        record.source_bytes = fs::file_size(files[index], filesystem_error);
+        if (filesystem_error) {
+            record.result = "source_stat_failed";
+        } else if (record.source_bytes > max_source_bytes ||
+                   record.source_bytes > max_corpus_bytes - corpus_bytes) {
+            record.result = "resource_limit";
+        } else {
+            corpus_bytes += record.source_bytes;
+            SourceSnapshotFailure snapshot_failure = SourceSnapshotFailure::None;
+            auto snapshot = SourceSnapshot::Create(
+                files[index].wstring(), max_source_bytes, &snapshot_failure);
+            if (!snapshot) {
+                record.result = SnapshotFailureName(snapshot_failure);
+            } else {
+                const auto profile = L"PikDraw.ImportProbe." +
+                    std::to_wstring(GetCurrentProcessId()) + L"." + std::to_wstring(index + 1);
+                PSID raw_sid = nullptr;
+                const HRESULT derive = DeriveAppContainerSidFromAppContainerName(
+                    profile.c_str(), &raw_sid);
+                if (FAILED(derive) || raw_sid == nullptr) {
+                    if (raw_sid) FreeSid(raw_sid);
+                    record.result = "sandbox_sid_failed";
+                } else {
+                    ScopedSid sid(raw_sid);
+                    if (!AppContainerProfileGuard::GrantDirectoryAccess(
+                            worker_bin.wstring(), sid.Get())) {
+                        record.result = "sandbox_acl_failed";
+                    } else {
+                        WorkerLaunchConfig config;
+                        config.worker_executable_path = worker_executable.wstring();
+                        config.working_directory = worker_bin.wstring();
+                        config.use_appcontainer = true;
+                        config.appcontainer_profile_name = profile;
+                        config.source_snapshot = &*snapshot;
+                        config.arguments = {
+                            L"--test-source-probe",
+                            L"--test-source-size",
+                            std::to_wstring(snapshot->SizeBytes()),
+                            L"--test-source-sha256",
+                            DigestArgument(snapshot->Sha256())
+                        };
+                        WorkerProcessHost worker;
+                        if (!worker.Launch(config)) {
+                            record.result = "sandbox_launch_failed";
+                        } else if (!worker.WaitForExit(std::chrono::seconds(60))) {
+                            worker.Terminate();
+                            record.result = "worker_timeout";
+                        } else {
+                            record.result = worker.LastWorkerExitCode() == 0
+                                ? "read_only_verified" : "worker_read_or_write_probe_failed";
+                            worker.Terminate();
+                        }
+                    }
+                }
+            }
+        }
+        record.elapsed_ms = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - started).count());
+        if (record.result != "read_only_verified") all_verified = false;
+        records.push_back(std::move(record));
+    }
+
+    const auto report_directory = corpus_root / L"test-reports";
+    fs::create_directories(report_directory, filesystem_error);
+    if (filesystem_error) {
+        std::cerr << "[FAIL] Cannot create local report directory\n";
+        return 2;
+    }
+    const auto report_path = report_directory / L"worker-source-probe.json";
+    const auto temporary_report = report_directory /
+        (L"worker-source-probe-" + run_id + L".tmp");
+    {
+        std::ofstream report(temporary_report, std::ios::binary);
+        if (!report) {
+            std::cerr << "[FAIL] Cannot write local probe report\n";
+            return 2;
+        }
+        report << "{\"schema_version\":1,\"test_scope\":\"appcontainer_source_read_only_transport\","
+               << "\"parser_executed\":false,\"max_source_bytes\":" << max_source_bytes
+               << ",\"total_source_bytes\":" << corpus_bytes << ",\"samples\":[";
+        for (size_t i = 0; i < records.size(); ++i) {
+            if (i) report << ',';
+            const auto& record = records[i];
+            report << "{\"id\":\"" << record.id << "\",\"extension\":\""
+                   << escaped(record.extension) << "\",\"bytes\":" << record.source_bytes
+                   << ",\"result\":\"" << escaped(record.result)
+                   << "\",\"elapsed_ms\":" << record.elapsed_ms << '}';
+        }
+        report << "]}\n";
+        if (!report) {
+            std::cerr << "[FAIL] Cannot finish local probe report\n";
+            return 2;
+        }
+    }
+    if (!MoveFileExW(
+            temporary_report.c_str(),
+            report_path.c_str(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        std::cerr << "[FAIL] Cannot finalize local probe report\n";
+        return 2;
+    }
+
+    std::map<std::string, std::pair<uint32_t, uint32_t>> summary;
+    for (const auto& record : records) {
+        auto& counts = summary[record.extension];
+        ++counts.first;
+        if (record.result == "read_only_verified") ++counts.second;
+    }
+    for (const auto& [extension, counts] : summary) {
+        std::cout << extension << ": " << counts.second << "/" << counts.first
+                  << " read-only worker probes passed\n";
+    }
+    std::cout << "Parser/fidelity import tests: not run; local report is under cdr/test-reports\n";
+    return all_verified ? 0 : 1;
 }

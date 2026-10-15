@@ -1,18 +1,22 @@
 #pragma once
 
 #include "interop_types.hpp"
+#include <array>
 #include <cstdint>
-#include <string>
-#include <vector>
 #include <optional>
 #include <span>
+#include <string>
+#include <vector>
 
 namespace pikdraw::interop {
 
 inline constexpr uint32_t IPC_MAGIC = 0x50494B43; // 'PIKC'
 inline constexpr uint16_t IPC_WIRE_VERSION = 1;
+inline constexpr uint16_t IPC_WIRE_VERSION_V2 = 2;
 
 inline constexpr size_t IPC_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024; // 16 MiB
+inline constexpr size_t IPC_V2_MAX_FRAME_BYTES = 1024 * 1024; // 1 MiB
+inline constexpr size_t IPC_V2_MAX_QUEUED_FRAMES = 2;
 inline constexpr size_t IPC_MAX_OBJECTS = 100000;
 inline constexpr uint32_t IPC_MAX_DEPTH = 64;
 
@@ -23,6 +27,12 @@ enum class MessageType : uint16_t {
     ImportResponse = 11,
     CanaryRequest = 20,
     CanaryResponse = 21,
+    V2NegotiateRequest = 30,
+    V2NegotiateResponse = 31,
+    V2ImportBegin = 32,
+    V2ProposalChunk = 33,
+    V2ImportEnd = 34,
+    V2ErrorResponse = 35,
     ErrorResponse = 99
 };
 
@@ -35,6 +45,11 @@ struct IpcHeader {
     uint32_t payload_bytes{0};
 };
 #pragma pack(pop)
+
+struct IpcV2Frame {
+    IpcHeader header{};
+    std::vector<uint8_t> payload;
+};
 
 struct JobEnvelope {
     std::string document_id;
@@ -80,7 +95,17 @@ struct CanaryPayloadResponse {
     std::string diagnostic_message;
 };
 
-// Binary serialization helpers for wire protocol
+// V2 frames use the same fixed header layout but a separate negotiated major version.
+[[nodiscard]] bool IsV2MessageType(uint16_t message_type) noexcept;
+[[nodiscard]] bool ValidateV2FrameHeader(const IpcHeader& header) noexcept;
+[[nodiscard]] std::vector<uint8_t> SerializeV2Frame(
+    MessageType message_type,
+    uint32_t sequence_id,
+    std::span<const uint8_t> payload);
+[[nodiscard]] std::optional<IpcV2Frame> DeserializeV2Frame(
+    std::span<const uint8_t> packet);
+
+// Binary serialization helpers for wire v1.
 std::vector<uint8_t> SerializeImportRequest(const ImportPayloadRequest& req, uint32_t sequence_id);
 std::optional<ImportPayloadRequest> DeserializeImportRequest(std::span<const uint8_t> data);
 

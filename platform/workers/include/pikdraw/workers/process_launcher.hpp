@@ -3,8 +3,10 @@
 #include "win32_common.hpp"
 #include "job_object.hpp"
 #include "appcontainer.hpp"
+#include "source_snapshot.hpp"
 #include "pikdraw/interop/ipc_dto.hpp"
 #include <chrono>
+#include <functional>
 #include <optional>
 #include <span>
 
@@ -20,6 +22,7 @@ struct WorkerLaunchConfig {
     HANDLE test_inherited_handle{INVALID_HANDLE_VALUE}; // Positive control only; never sandboxed/plugin launches.
     std::vector<std::wstring> arguments;
     std::wstring appcontainer_profile_name;
+    const SourceSnapshot* source_snapshot{nullptr};
     JobLimitsConfig job_limits;
     std::chrono::milliseconds default_timeout{5000};
 };
@@ -37,12 +40,21 @@ public:
     [[nodiscard]] bool Launch(const WorkerLaunchConfig& config);
     void Terminate() noexcept;
 
+    // Streams bounded v2 proposal frames to one consumer with backpressure.
+    [[nodiscard]] bool TransactV2ProposalStream(
+        std::span<const uint8_t> request_bytes,
+        std::chrono::milliseconds timeout,
+        uint64_t max_total_payload_bytes,
+        uint32_t max_response_frames,
+        const std::function<bool(const pikdraw::interop::IpcV2Frame&)>& consumer);
+
     // Sends framed packet and waits for response up to timeout
     [[nodiscard]] std::optional<std::vector<uint8_t>> TransactBinaryPayload(
         std::span<const uint8_t> request_bytes,
         std::chrono::milliseconds timeout);
 
     [[nodiscard]] bool IsAlive() const noexcept;
+    [[nodiscard]] bool WaitForExit(std::chrono::milliseconds timeout) noexcept;
     [[nodiscard]] const char* LastTransportFailure() const noexcept { return last_transport_failure_; }
     [[nodiscard]] DWORD LastWorkerExitCode() const noexcept { return last_worker_exit_code_; }
     [[nodiscard]] const AppContainerProfileGuard& GetAppContainer() const noexcept { return app_container_; }

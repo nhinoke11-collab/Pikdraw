@@ -1,9 +1,12 @@
 #include "pikdraw/interop/ipc_dto.hpp"
 #include "pikdraw/interop/payload_validator.hpp"
 #include "pikdraw/workers/canary_definitions.hpp"
+#include "pikdraw/workers/source_snapshot.hpp"
 #include "pikdraw/workers/win32_common.hpp"
 
 #include <iostream>
+#include <charconv>
+#include <limits>
 #include <vector>
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -231,18 +234,146 @@ CanaryPayloadResponse HandleCanary(const CanaryPayloadRequest& req) {
     return resp;
 }
 
+bool ParseUnsigned(std::string_view text, uint64_t& value) {
+    if (text.empty()) return false;
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value, 10);
+    return parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size();
+}
+
+bool ParseDigest(std::string_view text, SourceDigest& digest) {
+    if (text.size() != digest.size() * 2) return false;
+    const auto nibble = [](char value) -> int {
+        if (value >= '0' && value <= '9') return value - '0';
+        if (value >= 'a' && value <= 'f') return value - 'a' + 10;
+        if (value >= 'A' && value <= 'F') return value - 'A' + 10;
+        return -1;
+    };
+    for (size_t i = 0; i < digest.size(); ++i) {
+        const int high = nibble(text[i * 2]);
+        const int low = nibble(text[i * 2 + 1]);
+        if (high < 0 || low < 0) return false;
+        digest[i] = static_cast<uint8_t>((high << 4) | low);
+    }
+    return true;
+}
+
+bool ProbeReadOnlySource(
+    HANDLE source,
+    uint64_t expected_size,
+    const SourceDigest& expected_digest) {
+    uint64_t actual_size = 0;
+    SourceDigest actual_digest{};
+    if (!HashReadOnlyHandle(
+            source,
+            1024ULL * 1024ULL * 1024ULL,
+            actual_size,
+            actual_digest) ||
+        actual_size != expected_size ||
+        actual_digest != expected_digest) {
+        return false;
+    }
+
+    LARGE_INTEGER beginning{};
+    if (!SetFilePointerEx(source, beginning, nullptr, FILE_BEGIN)) return false;
+    const uint8_t marker = 0xA5;
+    DWORD written = 0;
+    if (WriteFile(source, &marker, sizeof(marker), &written, nullptr)) return false;
+    return GetLastError() == ERROR_ACCESS_DENIED;
+}
+
+int RunV2StreamFixture(std::string_view mode) {
+    HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
+    HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
+    IpcHeader request_header{};
+    if (!ReadExact(input, &request_header, sizeof(request_header)) ||
+        !ValidateV2FrameHeader(request_header) ||
+        request_header.message_type != static_cast<uint16_t>(MessageType::V2ImportBegin)) {
+        return 50;
+    }
+    std::vector<uint8_t> request_packet(sizeof(IpcHeader) + request_header.payload_bytes);
+    std::memcpy(request_packet.data(), &request_header, sizeof(request_header));
+    if (request_header.payload_bytes &&
+        !ReadExact(input, request_packet.data() + sizeof(IpcHeader), request_header.payload_bytes)) {
+        return 51;
+    }
+    if (!DeserializeV2Frame(request_packet)) return 52;
+
+    const uint32_t first_sequence = request_header.sequence_id;
+    if (mode == "--test-v2-stream-oversize") {
+        IpcHeader oversized{};
+        oversized.wire_version = IPC_WIRE_VERSION_V2;
+        oversized.message_type = static_cast<uint16_t>(MessageType::V2ProposalChunk);
+        oversized.sequence_id = first_sequence;
+        oversized.payload_bytes = static_cast<uint32_t>(IPC_V2_MAX_FRAME_BYTES + 1);
+        return WriteExact(output, &oversized, sizeof(oversized)) ? 0 : 53;
+    }
+
+    const std::array<uint8_t, 3> chunk{0x11, 0x22, 0x33};
+    const auto chunk_packet = SerializeV2Frame(
+        MessageType::V2ProposalChunk, first_sequence, chunk);
+    if (!WriteExact(output, chunk_packet.data(), static_cast<DWORD>(chunk_packet.size()))) return 54;
+
+    if (mode == "--test-v2-stream-no-end") return 0;
+    const uint32_t end_sequence = mode == "--test-v2-stream-gap"
+        ? first_sequence + 2 : first_sequence + 1;
+    if (mode == "--test-v2-stream-quota") {
+        const std::array<uint8_t, 3> too_large{0x44, 0x55, 0x66};
+        const auto quota_packet = SerializeV2Frame(
+            MessageType::V2ProposalChunk, end_sequence, too_large);
+        return WriteExact(output, quota_packet.data(), static_cast<DWORD>(quota_packet.size())) ? 0 : 55;
+    }
+
+    const std::array<uint8_t, 2> end_payload{0x44, 0x55};
+    const auto end_packet = SerializeV2Frame(
+        MessageType::V2ImportEnd, end_sequence, end_payload);
+    return WriteExact(output, end_packet.data(), static_cast<DWORD>(end_packet.size())) ? 0 : 56;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     if (argc==2 && std::string_view(argv[1])=="--test-child-exit") return 0;
     // Deterministic repository-owned failure fixtures, never a source-format adapter.
     if (argc==2 && std::string_view(argv[1])=="--test-stall-before-read") { Sleep(10000); return 0; }
+    if (argc == 2 && std::string_view(argv[1]).starts_with("--test-v2-stream-")) {
+        return RunV2StreamFixture(argv[1]);
+    }
     if (argc==2 && std::string_view(argv[1])=="--test-truncated-response") {
         uint8_t byte=0; DWORD written=0;
         WriteFile(GetStdHandle(STD_OUTPUT_HANDLE),&byte,1,&written,nullptr);
         return 0;
     }
-    if (argc!=1) return 2;
+    HANDLE source_handle = INVALID_HANDLE_VALUE;
+    bool test_source_probe = false;
+    bool has_expected_size = false;
+    bool has_expected_digest = false;
+    uint64_t expected_size = 0;
+    SourceDigest expected_digest{};
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view argument(argv[i]);
+        if (argument == "--pikdraw-source-handle" && i + 1 < argc) {
+            uint64_t value = 0;
+            if (!ParseUnsigned(argv[++i], value) || value == 0 ||
+                value > std::numeric_limits<uintptr_t>::max()) return 2;
+            source_handle = reinterpret_cast<HANDLE>(static_cast<uintptr_t>(value));
+        } else if (argument == "--test-source-probe") {
+            test_source_probe = true;
+        } else if (argument == "--test-source-size" && i + 1 < argc) {
+            if (!ParseUnsigned(argv[++i], expected_size)) return 2;
+            has_expected_size = true;
+        } else if (argument == "--test-source-sha256" && i + 1 < argc) {
+            if (!ParseDigest(argv[++i], expected_digest)) return 2;
+            has_expected_digest = true;
+        } else {
+            return 2;
+        }
+    }
+    if (test_source_probe) {
+        return source_handle != INVALID_HANDLE_VALUE && has_expected_size &&
+            has_expected_digest && ProbeReadOnlySource(source_handle, expected_size, expected_digest)
+            ? 0 : 41;
+    }
+
     HANDLE stdin_h = GetStdHandle(STD_INPUT_HANDLE);
     HANDLE stdout_h = GetStdHandle(STD_OUTPUT_HANDLE);
 

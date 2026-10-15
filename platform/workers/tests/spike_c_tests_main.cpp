@@ -8,6 +8,9 @@
 #include "pikdraw/workers/appcontainer.hpp"
 #include "pikdraw/workers/process_launcher.hpp"
 #include "pikdraw/workers/canary_definitions.hpp"
+#include "pikdraw/workers/source_snapshot.hpp"
+#include <algorithm>
+#include <array>
 
 #include <iostream>
 #include <cassert>
@@ -19,12 +22,65 @@
 using namespace pikdraw::interop;
 using namespace pikdraw::workers;
 int RunLiveContainment();
+int RunLocalSourceCorpusProbe(const std::filesystem::path& corpus_root);
 
 namespace {
 
 int g_tests_passed = 0;
 int g_tests_failed = 0;
 
+struct TemporarySourceFile {
+    std::wstring path;
+    ~TemporarySourceFile() {
+        if (!path.empty()) DeleteFileW(path.c_str());
+    }
+};
+
+bool CreateDeterministicSource(TemporarySourceFile& file, uint64_t bytes) {
+    std::array<wchar_t, MAX_PATH + 1> directory{};
+    const DWORD length = GetTempPathW(static_cast<DWORD>(directory.size()), directory.data());
+    if (length == 0 || length >= directory.size()) return false;
+
+    std::array<wchar_t, MAX_PATH + 1> path{};
+    if (GetTempFileNameW(directory.data(), L"pds", 0, path.data()) == 0) return false;
+    file.path = path.data();
+
+    ScopedHandle output(CreateFileW(
+        file.path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+        FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_SEQUENTIAL_SCAN, nullptr));
+    if (!output.IsValid()) return false;
+
+    std::vector<uint8_t> buffer(256 * 1024);
+    uint64_t written_total = 0;
+    while (written_total < bytes) {
+        const size_t count = static_cast<size_t>(
+            std::min<uint64_t>(buffer.size(), bytes - written_total));
+        for (size_t i = 0; i < count; ++i) {
+            buffer[i] = static_cast<uint8_t>((written_total + i) * 31 + 7);
+        }
+        DWORD offset = 0;
+        while (offset < count) {
+            DWORD written = 0;
+            if (!WriteFile(output.Get(), buffer.data() + offset,
+                           static_cast<DWORD>(count - offset), &written, nullptr) ||
+                written == 0) return false;
+            offset += written;
+        }
+        written_total += count;
+    }
+    return FlushFileBuffers(output.Get()) != FALSE;
+}
+
+std::wstring DigestArgument(const SourceDigest& digest) {
+    constexpr wchar_t digits[] = L"0123456789abcdef";
+    std::wstring result;
+    result.reserve(digest.size() * 2);
+    for (const uint8_t byte : digest) {
+        result.push_back(digits[byte >> 4]);
+        result.push_back(digits[byte & 0x0f]);
+    }
+    return result;
+}
 #define TEST_ASSERT(cond, msg) \
     do { \
         if (!(cond)) { \
@@ -250,9 +306,134 @@ void TestCodecRejectsMalformedFrames() {
     response.objects.push_back(object);
     bool rejected=false; try { (void)SerializeImportResponse(response,8); } catch (const std::invalid_argument&) { rejected=true; }
     TEST_ASSERT(rejected, "Duplicate IDs reject before serialization");
+    const std::array<uint8_t, 3> v2_payload{0x10, 0x20, 0x30};
+    const auto v2_packet = SerializeV2Frame(MessageType::V2ProposalChunk, 44, v2_payload);
+    const auto v2_decoded = DeserializeV2Frame(v2_packet);
+    TEST_ASSERT(v2_decoded && v2_decoded->header.sequence_id == 44 &&
+                v2_decoded->payload == std::vector<uint8_t>(v2_payload.begin(), v2_payload.end()),
+                "V2 bounded frame roundtrip");
+    TEST_ASSERT(!PayloadValidator::ValidateHeader(v2_decoded->header).IsOk(),
+                "V1 validator rejects v2 frame without downgrade");
+    for (size_t size = 0; size < v2_packet.size(); ++size) {
+        TEST_ASSERT(!DeserializeV2Frame(std::span(v2_packet).first(size)),
+                    "Every truncated v2 frame rejects");
+    }
+    IpcHeader oversized_v2{};
+    oversized_v2.wire_version = IPC_WIRE_VERSION_V2;
+    oversized_v2.message_type = static_cast<uint16_t>(MessageType::V2ProposalChunk);
+    oversized_v2.payload_bytes = static_cast<uint32_t>(IPC_V2_MAX_FRAME_BYTES + 1);
+    TEST_ASSERT(!ValidateV2FrameHeader(oversized_v2), "V2 oversized frame rejected before allocation");
+    bool v2_oversize_threw = false;
+    try {
+        std::vector<uint8_t> too_large(IPC_V2_MAX_FRAME_BYTES + 1);
+        (void)SerializeV2Frame(MessageType::V2ProposalChunk, 45, too_large);
+    } catch (const std::invalid_argument&) {
+        v2_oversize_threw = true;
+    }
+    TEST_ASSERT(v2_oversize_threw, "V2 serializer refuses payload above frame limit");
     ++g_tests_passed; std::cout << "[PASS] TestCodecRejectsMalformedFrames\n";
 }
 
+void TestV2ProposalStreams() {
+    auto worker_path = std::filesystem::current_path() / "spike_worker.exe";
+    if (!std::filesystem::exists(worker_path)) {
+        worker_path = std::filesystem::current_path() / "build" / "win-dev" /
+            "platform" / "workers" / "spike_worker.exe";
+    }
+    WorkerLaunchConfig config;
+    config.worker_executable_path = worker_path.wstring();
+    config.use_appcontainer = false;
+    config.trusted_test_worker = true;
+    WorkerProcessHost host;
+    const std::array<uint8_t, 0> empty_payload{};
+    const auto request = SerializeV2Frame(
+        MessageType::V2ImportBegin, 50, empty_payload);
+
+    config.arguments = {L"--test-v2-stream-good"};
+    TEST_ASSERT(host.Launch(config), "Launch valid v2 stream worker");
+    uint32_t frames_seen = 0;
+    uint64_t bytes_seen = 0;
+    const bool complete = host.TransactV2ProposalStream(
+        request,
+        std::chrono::seconds(2),
+        5,
+        2,
+        [&](const IpcV2Frame& frame) {
+            ++frames_seen;
+            bytes_seen += frame.payload.size();
+            return frame.header.sequence_id == 49 + frames_seen;
+        });
+    TEST_ASSERT(complete && frames_seen == 2 && bytes_seen == 5,
+                "V2 stream accepts ordered chunks and terminal frame");
+    host.Terminate();
+
+    config.arguments = {L"--test-v2-stream-gap"};
+    TEST_ASSERT(host.Launch(config), "Launch out-of-order v2 fixture");
+    TEST_ASSERT(!host.TransactV2ProposalStream(
+                    request, std::chrono::seconds(2), 16, 4, {}),
+                "V2 stream rejects a sequence gap");
+    TEST_ASSERT(std::string_view(host.LastTransportFailure()) == "invalid v2 response header/order",
+                "Sequence failure is surfaced explicitly");
+
+    config.arguments = {L"--test-v2-stream-oversize"};
+    TEST_ASSERT(host.Launch(config), "Launch oversized v2 fixture");
+    TEST_ASSERT(!host.TransactV2ProposalStream(
+                    request, std::chrono::seconds(2), 16, 4, {}),
+                "V2 stream rejects oversized header before body allocation");
+
+    config.arguments = {L"--test-v2-stream-quota"};
+    TEST_ASSERT(host.Launch(config), "Launch v2 quota fixture");
+    TEST_ASSERT(!host.TransactV2ProposalStream(
+                    request, std::chrono::seconds(2), 2, 4, {}),
+                "V2 stream rejects response above total-byte quota");
+
+    config.arguments = {L"--test-v2-stream-no-end"};
+    TEST_ASSERT(host.Launch(config), "Launch incomplete v2 fixture");
+    TEST_ASSERT(!host.TransactV2ProposalStream(
+                    request, std::chrono::seconds(2), 16, 4, {}),
+                "V2 stream rejects EOF before terminal frame");
+    TEST_ASSERT(std::string_view(host.LastTransportFailure()) == "v2 response header failed/timeout",
+                "Incomplete stream failure is surfaced explicitly");
+
+    config.arguments = {L"--test-v2-stream-good"};
+    TEST_ASSERT(host.Launch(config), "Launch v2 consumer-failure fixture");
+    TEST_ASSERT(!host.TransactV2ProposalStream(
+                    request, std::chrono::seconds(2), 16, 4,
+                    [](const IpcV2Frame&) { return false; }),
+                "V2 stream stops when the bounded staging consumer rejects a frame");
+
+    ++g_tests_passed;
+    std::cout << "[PASS] TestV2ProposalStreams\n";
+}
+void TestSourceSnapshotBroker() {
+    TemporarySourceFile source;
+    constexpr uint64_t source_bytes = 3 * 1024 * 1024 + 37;
+    TEST_ASSERT(CreateDeterministicSource(source, source_bytes), "Create synthetic source file");
+
+    SourceSnapshotFailure failure = SourceSnapshotFailure::None;
+    DWORD system_error = ERROR_SUCCESS;
+    auto snapshot = SourceSnapshot::Create(source.path, source_bytes, &failure, &system_error);
+    TEST_ASSERT(snapshot && snapshot->IsValid(), "Create bounded source snapshot");
+    TEST_ASSERT(snapshot->SizeBytes() == source_bytes, "Snapshot exact byte count");
+    TEST_ASSERT(std::any_of(snapshot->Token().begin(), snapshot->Token().end(),
+                            [](uint8_t value) { return value != 0; }),
+                "Snapshot token is nonzero");
+
+    uint64_t bytes_read = 0;
+    SourceDigest digest{};
+    TEST_ASSERT(HashReadOnlyHandle(
+                    snapshot->ReadHandle(), source_bytes, bytes_read, digest, &system_error),
+                "Hash staged source handle");
+    TEST_ASSERT(bytes_read == source_bytes && digest == snapshot->Sha256(),
+                "Snapshot hash matches staged bytes");
+
+    auto oversized = SourceSnapshot::Create(source.path, source_bytes - 1, &failure, &system_error);
+    TEST_ASSERT(!oversized && failure == SourceSnapshotFailure::SourceTooLarge,
+                "Reject over-profile source before worker launch");
+
+    ++g_tests_passed;
+    std::cout << "[PASS] TestSourceSnapshotBroker\n";
+}
 void TestTrustedWorkerLifecycleAndDeadlines() {
     // Explicitly no AppContainer: this proves transport/lifecycle only.
     WorkerLaunchConfig config;
@@ -274,6 +455,30 @@ void TestTrustedWorkerLifecycleAndDeadlines() {
     TEST_ASSERT(result, "Actual child import diagnostic response");
     auto decoded=DeserializeImportResponse(*result);
     TEST_ASSERT(decoded && !decoded->success && decoded->objects.empty(), "Unsupported input cannot fabricate geometry");
+
+    TemporarySourceFile synthetic_source;
+    constexpr uint64_t synthetic_source_bytes = 3 * 1024 * 1024 + 37;
+    TEST_ASSERT(CreateDeterministicSource(synthetic_source, synthetic_source_bytes),
+                "Create inherited-handle probe source");
+    SourceSnapshotFailure snapshot_failure = SourceSnapshotFailure::None;
+    auto source_snapshot = SourceSnapshot::Create(
+        synthetic_source.path, synthetic_source_bytes, &snapshot_failure);
+    TEST_ASSERT(source_snapshot && source_snapshot->IsValid(), "Stage source for child process");
+    host.Terminate();
+    config.source_snapshot = &*source_snapshot;
+    config.arguments = {
+        L"--test-source-probe",
+        L"--test-source-size",
+        std::to_wstring(source_snapshot->SizeBytes()),
+        L"--test-source-sha256",
+        DigestArgument(source_snapshot->Sha256())
+    };
+    TEST_ASSERT(host.Launch(config), "Launch child with exact inherited source handle");
+    TEST_ASSERT(host.WaitForExit(std::chrono::seconds(3)), "Wait for bounded source probe exit");
+    TEST_ASSERT(host.LastWorkerExitCode() == 0, "Child read exact bytes and write was denied");
+    host.Terminate();
+    config.source_snapshot = nullptr;
+    config.arguments.clear();
     host.Terminate(); TEST_ASSERT(!host.IsAlive(), "Child terminated");
     config.arguments={L"--test-stall-before-read"};
     TEST_ASSERT(host.Launch(config), "Stalling worker launch");
@@ -292,6 +497,9 @@ void TestTrustedWorkerLifecycleAndDeadlines() {
 } // namespace
 
 int main(int argc, char** argv) {
+    if (argc == 3 && std::string_view(argv[1]) == "--probe-corpus") {
+        return RunLocalSourceCorpusProbe(std::filesystem::path(argv[2]));
+    }
     std::cout << "=== Starting Workers Tests ===\n" << std::flush;
     bool run_live = false;
     for (int i = 1; i < argc; ++i) {
@@ -309,6 +517,8 @@ int main(int argc, char** argv) {
     TestCommandLineQuoting();
     TestFormatMatrixAndFixtures();
     TestCodecRejectsMalformedFrames();
+    TestV2ProposalStreams();
+    TestSourceSnapshotBroker();
     TestTrustedWorkerLifecycleAndDeadlines();
 
     if (run_live) {

@@ -75,7 +75,9 @@ bool WorkerProcessHost::Launch(const WorkerLaunchConfig& config) {
     } cleanup{this,committed};
     if (config.worker_executable_path.empty() ||
         (!config.use_appcontainer && !config.trusted_test_worker) ||
-        (config.use_appcontainer && config.appcontainer_profile_name.empty())) return false;
+        (config.use_appcontainer && config.appcontainer_profile_name.empty()) ||
+        (config.source_snapshot != nullptr && !config.source_snapshot->IsValid()) ||
+        (config.source_snapshot != nullptr && !config.use_appcontainer && !config.trusted_test_worker)) return false;
 
     // Parent endpoints use overlapped I/O; both reads and writes have a deadline.
     ScopedHandle auto_stdin_read, auto_stdout_write;
@@ -123,6 +125,21 @@ bool WorkerProcessHost::Launch(const WorkerLaunchConfig& config) {
     }
 
     std::vector<HANDLE> inherit_handles = { auto_stdin_read.Get(), auto_stdout_write.Get(), child_stderr.Get() };
+    ScopedHandle inherited_source;
+    if (config.source_snapshot != nullptr) {
+        HANDLE duplicate = INVALID_HANDLE_VALUE;
+        if (!DuplicateHandle(GetCurrentProcess(), config.source_snapshot->ReadHandle(),
+                             GetCurrentProcess(), &duplicate, 0, TRUE, DUPLICATE_SAME_ACCESS)) {
+            DeleteProcThreadAttributeList(siex.lpAttributeList);
+            return false;
+        }
+        inherited_source = ScopedHandle(duplicate);
+        if (GetFileType(duplicate) != FILE_TYPE_DISK) {
+            DeleteProcThreadAttributeList(siex.lpAttributeList);
+            return false;
+        }
+        inherit_handles.push_back(duplicate);
+    }
     if (config.test_inherited_handle!=INVALID_HANDLE_VALUE) {
         if (!config.trusted_test_worker || config.use_appcontainer || !config.test_inherited_handle) {
             DeleteProcThreadAttributeList(siex.lpAttributeList); return false;
@@ -147,6 +164,10 @@ bool WorkerProcessHost::Launch(const WorkerLaunchConfig& config) {
 
     std::wstring cmd = QuoteCommandLineArgument(config.worker_executable_path);
     for (const auto& argument : config.arguments) cmd += L" " + QuoteCommandLineArgument(argument);
+    if (inherited_source.IsValid()) {
+        const auto value = reinterpret_cast<uintptr_t>(inherited_source.Get());
+        cmd += L" --pikdraw-source-handle " + QuoteCommandLineArgument(std::to_wstring(value));
+    }
     PROCESS_INFORMATION pi{};
     DWORD creation_flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_NO_WINDOW;
 
@@ -199,6 +220,13 @@ void WorkerProcessHost::Terminate() noexcept {
     process_id_ = 0;
 }
 
+bool WorkerProcessHost::WaitForExit(std::chrono::milliseconds timeout) noexcept {
+    if (!process_handle_.IsValid() || timeout.count() <= 0) return false;
+    const auto bounded = static_cast<DWORD>(std::min<int64_t>(timeout.count(), MAXDWORD - 1));
+    if (WaitForSingleObject(process_handle_.Get(), bounded) != WAIT_OBJECT_0) return false;
+    return GetExitCodeProcess(process_handle_.Get(), &last_worker_exit_code_) != FALSE;
+}
+
 bool WorkerProcessHost::IsAlive() const noexcept {
     if (!process_handle_.IsValid()) return false;
     DWORD exit_code = 0;
@@ -208,6 +236,105 @@ bool WorkerProcessHost::IsAlive() const noexcept {
     return false;
 }
 
+bool WorkerProcessHost::TransactV2ProposalStream(
+    std::span<const uint8_t> request_bytes,
+    std::chrono::milliseconds timeout,
+    uint64_t max_total_payload_bytes,
+    uint32_t max_response_frames,
+    const std::function<bool(const pikdraw::interop::IpcV2Frame&)>& consumer) {
+    using namespace pikdraw::interop;
+    const auto reject = [&](const char* reason) {
+        last_transport_failure_ = reason;
+        if (process_handle_.IsValid()) {
+            (void)GetExitCodeProcess(process_handle_.Get(), &last_worker_exit_code_);
+        }
+        Terminate();
+        return false;
+    };
+
+    last_transport_failure_ = "none";
+    last_worker_exit_code_ = STILL_ACTIVE;
+    const auto request = DeserializeV2Frame(request_bytes);
+    if (!IsAlive() || !stdin_write_handle_.IsValid() || !stdout_read_handle_.IsValid() ||
+        !request || request->header.message_type != static_cast<uint16_t>(MessageType::V2ImportBegin) ||
+        timeout.count() <= 0 || timeout > std::chrono::minutes(1) ||
+        max_total_payload_bytes == 0 || max_response_frames == 0) {
+        return reject("invalid v2 request/lifecycle");
+    }
+
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    if (!Transfer(
+            stdin_write_handle_.Get(),
+            process_handle_.Get(),
+            const_cast<uint8_t*>(request_bytes.data()),
+            request_bytes.size(),
+            true,
+            deadline)) {
+        return reject("v2 request write failed/timeout");
+    }
+
+    uint64_t total_payload_bytes = 0;
+    uint32_t expected_sequence = request->header.sequence_id;
+    for (uint32_t frame_index = 0; frame_index < max_response_frames; ++frame_index) {
+        IpcHeader header{};
+        if (!Transfer(
+                stdout_read_handle_.Get(),
+                process_handle_.Get(),
+                reinterpret_cast<uint8_t*>(&header),
+                sizeof(header),
+                false,
+                deadline)) {
+            return reject("v2 response header failed/timeout");
+        }
+        if (!ValidateV2FrameHeader(header) || header.sequence_id != expected_sequence ||
+            (header.message_type != static_cast<uint16_t>(MessageType::V2ProposalChunk) &&
+             header.message_type != static_cast<uint16_t>(MessageType::V2ImportEnd) &&
+             header.message_type != static_cast<uint16_t>(MessageType::V2ErrorResponse))) {
+            return reject("invalid v2 response header/order");
+        }
+        if (header.payload_bytes > max_total_payload_bytes - total_payload_bytes) {
+            return reject("v2 response stream exceeds host quota");
+        }
+
+        IpcV2Frame frame{};
+        frame.header = header;
+        try {
+            frame.payload.resize(header.payload_bytes);
+        } catch (const std::bad_alloc&) {
+            return reject("v2 response allocation failed");
+        }
+        if (!frame.payload.empty() &&
+            !Transfer(
+                stdout_read_handle_.Get(),
+                process_handle_.Get(),
+                frame.payload.data(),
+                frame.payload.size(),
+                false,
+                deadline)) {
+            return reject("v2 response body failed/timeout");
+        }
+        total_payload_bytes += header.payload_bytes;
+
+        if (consumer) {
+            bool accepted = false;
+            try {
+                accepted = consumer(frame);
+            } catch (...) {
+                accepted = false;
+            }
+            if (!accepted) return reject("v2 frame consumer rejected proposal");
+        }
+
+        const auto type = static_cast<MessageType>(header.message_type);
+        if (type == MessageType::V2ErrorResponse) {
+            return reject("worker returned v2 error");
+        }
+        if (type == MessageType::V2ImportEnd) return true;
+        if (expected_sequence == UINT32_MAX) return reject("v2 sequence exhausted");
+        ++expected_sequence;
+    }
+    return reject("v2 response frame count exceeded");
+}
 std::optional<std::vector<uint8_t>> WorkerProcessHost::TransactBinaryPayload(
     std::span<const uint8_t> request_bytes,
     std::chrono::milliseconds timeout)
