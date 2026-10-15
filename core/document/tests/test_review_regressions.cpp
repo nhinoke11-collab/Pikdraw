@@ -7,6 +7,7 @@
 #include <chrono>
 #include <map>
 #include <random>
+#include <thread>
 
 using namespace pikdraw::document;
 using namespace pikdraw::geometry;
@@ -199,3 +200,238 @@ PIK_TEST_CASE(manufacturing_zero_chord_and_overshoot_are_not_flattened_away) {
     PIK_CHECK_THROWS(discretize_for_manufacturing(loop,-1));
     loop.move_to({100,100}); PIK_CHECK_THROWS(discretize_for_manufacturing(loop,0.01));
 }
+
+PIK_TEST_CASE(fault_injection_lifecycle_matrix_and_cleanup) {
+    const auto test_dir = std::filesystem::current_path() /
+        ("test_fault_matrix-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directory(test_dir);
+    const auto target_file = test_dir / "target.pikdraw";
+
+    Document doc("doc-fault-matrix");
+    auto obj = std::make_shared<PathObject>();
+    obj->id = doc.allocate_id();
+    obj->name = "InitialShape";
+    obj->path.move_to({10, 10});
+    obj->path.line_to({100, 100});
+    doc.execute_command(std::make_unique<InsertObjectCommand>(obj));
+    auto snap1 = doc.create_snapshot();
+
+    // 1. Initial valid save
+    auto res1 = PersistenceManager::save_snapshot(snap1, target_file);
+    PIK_CHECK(res1.success);
+    PIK_CHECK(std::filesystem::exists(target_file));
+    const auto original_size = std::filesystem::file_size(target_file);
+
+    // 2. Modify document to rev 2
+    doc.execute_command(std::make_unique<TransformObjectCommand>(obj->id, Transform2D::translation(50, 0)));
+    auto snap2 = doc.create_snapshot();
+
+    // Fault: BeforeWrite
+    auto res_before_write = PersistenceManager::save_snapshot(snap2, target_file, FaultInjectionPoint::BeforeWrite);
+    PIK_CHECK(!res_before_write.success);
+    PIK_CHECK_EQUAL(std::filesystem::file_size(target_file), original_size);
+
+    // Fault: DuringWrite
+    auto res_during_write = PersistenceManager::save_snapshot(snap2, target_file, FaultInjectionPoint::DuringWrite);
+    PIK_CHECK(!res_during_write.success);
+    PIK_CHECK_EQUAL(std::filesystem::file_size(target_file), original_size);
+
+    // Fault: BeforeFlush
+    auto res_before_flush = PersistenceManager::save_snapshot(snap2, target_file, FaultInjectionPoint::BeforeFlush);
+    PIK_CHECK(!res_before_flush.success);
+    PIK_CHECK_EQUAL(std::filesystem::file_size(target_file), original_size);
+
+    // Fault: BeforeReplace
+    auto res_before_replace = PersistenceManager::save_snapshot(snap2, target_file, FaultInjectionPoint::BeforeReplace);
+    PIK_CHECK(!res_before_replace.success);
+    PIK_CHECK_EQUAL(std::filesystem::file_size(target_file), original_size);
+
+    // Verify original data intact
+    auto load_orig = PersistenceManager::load_document(target_file);
+    PIK_CHECK(load_orig.success);
+    PIK_CHECK_EQUAL(load_orig.document->revision(), snap1->revision());
+
+    // Fault: AfterReplace (file was already replaced, but save reports error)
+    auto res_after_replace = PersistenceManager::save_snapshot(snap2, target_file, FaultInjectionPoint::AfterReplace);
+    PIK_CHECK(!res_after_replace.success);
+    auto load_after = PersistenceManager::load_document(target_file);
+    PIK_CHECK(load_after.success);
+    PIK_CHECK_EQUAL(load_after.document->revision(), snap2->revision());
+
+    // Verify no temporary files left in test directory
+    size_t file_count = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(test_dir)) {
+        if (entry.is_regular_file()) ++file_count;
+    }
+    PIK_CHECK_EQUAL(file_count, 1); // Only target.pikdraw remains
+
+    std::error_code ec;
+    std::filesystem::remove_all(test_dir, ec);
+}
+
+PIK_TEST_CASE(concurrent_readers_with_writer_transaction_undo_redo) {
+    Document doc("doc-concurrent-stress");
+    constexpr int INITIAL_OBJECTS = 20;
+    for (int i = 0; i < INITIAL_OBJECTS; ++i) {
+        auto p = std::make_shared<PathObject>();
+        p->id = doc.allocate_id();
+        p->name = "Obj_" + std::to_string(p->id);
+        p->path.move_to({static_cast<double>(i * 10), 0.0});
+        p->path.line_to({static_cast<double>(i * 10 + 5), 10.0});
+        doc.execute_command(std::make_unique<InsertObjectCommand>(p));
+    }
+
+    std::atomic<bool> stop_readers{false};
+    std::atomic<uint64_t> total_reads{0};
+    std::atomic<bool> violation_detected{false};
+
+    constexpr int NUM_READERS = 4;
+    std::vector<std::thread> readers;
+    readers.reserve(NUM_READERS);
+
+    for (int r = 0; r < NUM_READERS; ++r) {
+        readers.emplace_back([&] {
+            Revision last_seen_rev = 0;
+            while (!stop_readers.load(std::memory_order_relaxed)) {
+                auto snap = doc.create_snapshot();
+                if (!snap) { violation_detected = true; break; }
+                if (snap->revision() < last_seen_rev) {
+                    violation_detected = true;
+                    break;
+                }
+                last_seen_rev = snap->revision();
+
+                // Validate spatial index & chunk consistency
+                for (const auto& [oid, bounds] : snap->spatial_index()) {
+                    auto obj = snap->get_object(oid);
+                    if (!obj || obj->id != oid) {
+                        violation_detected = true;
+                        break;
+                    }
+                    if (obj->bounds().min_x != bounds.min_x) {
+                        violation_detected = true;
+                        break;
+                    }
+                }
+                total_reads.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+    }
+
+    // Writer performs 400 mutations: inserts, transforms, removes, undo, redo
+    for (int step = 0; step < 400; ++step) {
+        if (step % 10 == 0) {
+            // Undo twice
+            doc.undo();
+            doc.undo();
+        } else if (step % 10 == 1) {
+            // Redo once
+            doc.redo();
+        } else if (step % 5 == 0) {
+            // Insert
+            auto p = std::make_shared<PathObject>();
+            p->id = doc.allocate_id();
+            p->path.move_to({static_cast<double>(step), 1.0});
+            p->path.line_to({static_cast<double>(step + 1), 2.0});
+            doc.execute_command(std::make_unique<InsertObjectCommand>(p));
+        } else {
+            // Transform object 1
+            doc.execute_command(std::make_unique<TransformObjectCommand>(1, Transform2D::translation(0.5, 0.2)));
+        }
+        if (step % 10 == 0) {
+            std::this_thread::yield();
+        }
+    }
+
+    // Allow readers to interleave on low-core host machines
+    for (int wait = 0; wait < 100 && total_reads.load() < 50; ++wait) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+
+    stop_readers.store(true, std::memory_order_relaxed);
+    for (auto& th : readers) {
+        if (th.joinable()) th.join();
+    }
+
+    PIK_CHECK(!violation_detected.load());
+    PIK_CHECK(total_reads.load() >= 20);
+}
+
+PIK_TEST_CASE(large_signboard_20m_precision_and_roundtrip) {
+    // Large signboard: 20,000 mm x 1,000 mm
+    // Testing precision at far coordinates (19,500 mm to 20,000 mm) with fine details (0.05 mm)
+    Document doc("doc-signboard-20m");
+
+    auto sign_border = std::make_shared<PathObject>();
+    sign_border->id = doc.allocate_id();
+    sign_border->name = "SignboardBorder_20000x1000";
+    sign_border->path.move_to({0.0, 0.0});
+    sign_border->path.line_to({20000.0, 0.0});
+    sign_border->path.line_to({20000.0, 1000.0});
+    sign_border->path.line_to({0.0, 1000.0});
+    sign_border->path.close();
+    doc.execute_command(std::make_unique<InsertObjectCommand>(sign_border));
+
+    // Far corner fine detail: circular notch of radius 0.025 mm at (19999.5, 999.5)
+    auto notch = std::make_shared<PathObject>();
+    notch->id = doc.allocate_id();
+    notch->name = "FarCornerNotch_0_05mm";
+    const double cx = 19999.5, cy = 999.5, r = 0.025;
+    notch->path.move_to({cx - r, cy});
+    notch->path.cubic_to({cx - r, cy + r * 0.55228}, {cx - r * 0.55228, cy + r}, {cx, cy + r});
+    notch->path.cubic_to({cx + r * 0.55228, cy + r}, {cx + r, cy + r * 0.55228}, {cx + r, cy});
+    notch->path.cubic_to({cx + r, cy - r * 0.55228}, {cx + r * 0.55228, cy - r}, {cx, cy - r});
+    notch->path.cubic_to({cx - r * 0.55228, cy - r}, {cx - r, cy - r * 0.55228}, {cx - r, cy});
+    notch->path.close();
+    doc.execute_command(std::make_unique<InsertObjectCommand>(notch));
+
+    // Text object: "PikDraw - Bien Hieu Anh Sang"
+    auto text = std::make_shared<TextObject>();
+    text->id = doc.allocate_id();
+    text->utf8_text = "PikDraw - Bi\u1ec3n hi\u1ec7u \u00c1nh S\u00e1ng";
+    text->font_family = "PikDraw-Display-Fixture";
+    text->font_size_pt = 72.0;
+    text->transform = Transform2D::translation(1000.0, 500.0);
+    doc.execute_command(std::make_unique<InsertObjectCommand>(text));
+
+    auto snap = doc.create_snapshot();
+
+    // Check bounds
+    auto notch_bounds = snap->get_object(notch->id)->bounds();
+    PIK_CHECK_NEAR(notch_bounds.min_x, 19999.475, 1e-6);
+    PIK_CHECK_NEAR(notch_bounds.max_x, 19999.525, 1e-6);
+
+    // Transform precision test: Nonuniform scale (1.25, 0.75) + rotation 30 deg + translation (-500, 250)
+    const auto t_scale = Transform2D::scale(1.25, 0.75);
+    const auto t_rot = Transform2D::rotation_radians(3.14159265358979323846 / 6.0);
+    const auto t_trans = Transform2D::translation(-500.0, 250.0);
+    const auto combined = Transform2D::compose(t_trans, Transform2D::compose(t_rot, t_scale));
+
+    const auto inv = combined.inverse();
+    PIK_CHECK(inv.has_value());
+
+    // Round-trip transform on far corner point
+    Point2D p_far{19999.5, 999.5};
+    Point2D p_transformed = combined.apply(p_far);
+    Point2D p_restored = inv->apply(p_transformed);
+    PIK_CHECK_NEAR(p_restored.x, p_far.x, 1e-8);
+    PIK_CHECK_NEAR(p_restored.y, p_far.y, 1e-8);
+
+    // Native persistence roundtrip
+    const auto buffer = PersistenceManager::serialize_to_buffer(*snap);
+    auto restored_snap = PersistenceManager::deserialize_from_buffer(buffer);
+    PIK_CHECK(restored_snap != nullptr);
+    PIK_CHECK_EQUAL(restored_snap->doc_id(), "doc-signboard-20m");
+    PIK_CHECK_EQUAL(restored_snap->revision(), snap->revision());
+
+    auto restored_notch = restored_snap->get_object(notch->id);
+    PIK_CHECK(restored_notch != nullptr);
+    auto restored_notch_bounds = restored_notch->bounds();
+    PIK_CHECK_NEAR(restored_notch_bounds.min_x, notch_bounds.min_x, 0.0);
+    PIK_CHECK_NEAR(restored_notch_bounds.max_x, notch_bounds.max_x, 0.0);
+
+    auto restored_text = std::dynamic_pointer_cast<const TextObject>(restored_snap->get_object(text->id));
+    PIK_CHECK(restored_text != nullptr);
+    PIK_CHECK_EQUAL(restored_text->utf8_text, text->utf8_text);
+}
+
