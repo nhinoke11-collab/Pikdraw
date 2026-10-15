@@ -1,0 +1,13 @@
+{
+  "panel": "statusbar",
+  "class": "StatusBarWidget",
+  "height": 26,
+  "widgets": [
+    { "id": "coordinates_label", "class": "QLabel", "text": "X: 0.00 mm   Y: 0.00 mm" },
+    { "id": "selection_label", "class": "QLabel", "text": "Không có đối tượng chọn" },
+    { "id": "revision_label", "class": "QLabel", "text": "Rev 0 (Đã lưu)" },
+    { "id": "color_profile_label", "class": "QLabel", "text": "sRGB IEC61966-2.1" },
+    { "id": "preflight_label", "class": "QLabel", "text": "Sẵn sàng" },
+    { "id": "zoom_label", "class": "QLabel", "text": "100%" }
+  ]
+}

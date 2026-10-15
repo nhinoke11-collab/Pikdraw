@@ -1,0 +1,11 @@
+{
+  "panel": "inspector",
+  "class": "InspectorDockWidget",
+  "width": 300,
+  "widgets": [
+    { "id": "tab_layers", "class": "QPushButton", "text": "Lớp" },
+    { "id": "tab_transform", "class": "QPushButton", "text": "Biến đổi" },
+    { "id": "tab_appearance", "class": "QPushButton", "text": "Kiểu dáng" },
+    { "id": "tab_export", "class": "QPushButton", "text": "Xuất tệp" }
+  ]
+}

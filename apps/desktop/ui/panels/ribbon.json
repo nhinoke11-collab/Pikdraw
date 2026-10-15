@@ -1,0 +1,16 @@
+{
+  "panel": "ribbon",
+  "class": "ContextRibbonWidget",
+  "height": 34,
+  "widgets": [
+    { "id": "target_label", "class": "QLabel", "text": "Khung vẽ" },
+    { "id": "input_x", "class": "QLineEdit", "unit": "mm" },
+    { "id": "input_y", "class": "QLineEdit", "unit": "mm" },
+    { "id": "lock_ratio", "class": "QPushButton", "icon": "lock" },
+    { "id": "input_w", "class": "QLineEdit", "unit": "mm" },
+    { "id": "input_h", "class": "QLineEdit", "unit": "mm" },
+    { "id": "btn_fill_color", "class": "QPushButton", "color": "#00f2c3" },
+    { "id": "btn_stroke_color", "class": "QPushButton", "color": "#ffffff" },
+    { "id": "input_stroke_width", "class": "QLineEdit", "unit": "mm" }
+  ]
+}

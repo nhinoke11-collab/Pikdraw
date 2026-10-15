@@ -1,0 +1,19 @@
+{
+  "panel": "topbar",
+  "class": "TopbarWidget",
+  "height": 38,
+  "widgets": [
+    { "id": "logo", "class": "QLabel", "text": "PK PRO 2026" },
+    { "id": "file_title", "class": "QLabel", "text": "Chưa đặt tên.pikdraw" },
+    { "id": "menu_file", "class": "QPushButton", "text": "Tệp" },
+    { "id": "menu_edit", "class": "QPushButton", "text": "Chỉnh sửa" },
+    { "id": "menu_object", "class": "QPushButton", "text": "Đối tượng" },
+    { "id": "menu_view", "class": "QPushButton", "text": "Hiển thị" },
+    { "id": "spotlight_search", "class": "QLineEdit", "placeholder": "Tìm lệnh... (Ctrl+K)" },
+    { "id": "workspace_vector", "class": "QPushButton", "text": "Vector" },
+    { "id": "workspace_inan", "class": "QPushButton", "text": "In ấn" },
+    { "id": "workspace_thicong", "class": "QPushButton", "text": "Thi công" },
+    { "id": "workspace_3d", "class": "QPushButton", "text": "3D" },
+    { "id": "theme_toggle", "class": "QPushButton", "icon": "moon" }
+  ]
+}

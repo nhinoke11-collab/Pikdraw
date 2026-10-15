@@ -1,0 +1,83 @@
+/* PikDraw Cyber Dark 2026 Canonical Design Tokens */
+QMainWindow {
+    background-color: #070b10;
+    color: #e2e8f0;
+    font-family: "Plus Jakarta Sans", "Segoe UI", sans-serif;
+    font-size: 13px;
+}
+
+/* Topbar 38px */
+#TopbarWidget {
+    background-color: #0c131d;
+    border-bottom: 1px solid #1d2636;
+    min-height: 38px;
+    max-height: 38px;
+}
+
+/* Context Tool Ribbon 34px */
+#ContextRibbonWidget {
+    background-color: #0e1622;
+    border-bottom: 1px solid #1d2636;
+    min-height: 34px;
+    max-height: 34px;
+}
+
+/* Tool Strip 48px to 56px */
+#ToolStripWidget {
+    background-color: #0c131d;
+    border-right: 1px solid #1d2636;
+    min-width: 48px;
+    max-width: 56px;
+}
+
+/* Inspector Dock 280px to 320px */
+#InspectorDockWidget {
+    background-color: #0c131d;
+    border-left: 1px solid #1d2636;
+    min-width: 280px;
+    max-width: 320px;
+}
+
+/* Status Bar 26px */
+#StatusBarWidget {
+    background-color: #0c131d;
+    border-top: 1px solid #1d2636;
+    min-height: 26px;
+    max-height: 26px;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 11px;
+}
+
+/* Cyber Teal Accent Buttons and Inputs */
+QPushButton {
+    background-color: transparent;
+    color: #e2e8f0;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 4px 8px;
+}
+
+QPushButton:hover {
+    background-color: rgba(0, 242, 195, 0.12);
+    color: #00f2c3;
+    border: 1px solid rgba(0, 242, 195, 0.3);
+}
+
+QPushButton:pressed {
+    background-color: rgba(0, 242, 195, 0.25);
+    color: #00f2c3;
+}
+
+QLineEdit {
+    background-color: #070b10;
+    color: #ffffff;
+    border: 1px solid #1d2636;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+}
+
+QLineEdit:focus {
+    border: 1px solid #00f2c3;
+}

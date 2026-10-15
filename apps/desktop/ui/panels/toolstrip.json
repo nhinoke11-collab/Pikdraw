@@ -1,0 +1,13 @@
+{
+  "panel": "toolstrip",
+  "class": "ToolStripWidget",
+  "width": 52,
+  "widgets": [
+    { "id": "tool_select", "class": "QPushButton", "shortcut": "V", "tooltip": "Chọn" },
+    { "id": "tool_rectangle", "class": "QPushButton", "shortcut": "R", "tooltip": "Hình chữ nhật" },
+    { "id": "tool_ellipse", "class": "QPushButton", "shortcut": "O", "tooltip": "Hình elip" },
+    { "id": "tool_text", "class": "QPushButton", "shortcut": "T", "tooltip": "Văn bản" },
+    { "id": "tool_pan", "class": "QPushButton", "shortcut": "H", "tooltip": "Di chuyển" },
+    { "id": "tool_zoom", "class": "QPushButton", "shortcut": "Z", "tooltip": "Thu phóng" }
+  ]
+}
