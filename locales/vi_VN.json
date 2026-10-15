@@ -36,6 +36,16 @@
     "status.zoom": "Thu phóng",
     "status.workspace": "Không gian",
     "status.ready": "Sẵn sàng",
-    "btn.export": "Xuất file"
+    "btn.export": "Xuất file",
+    "btn.settings": "Cài đặt",
+    "settings.title": "Cài đặt hệ thống (PikDraw Preferences)",
+    "settings.tab.theme": "Giao diện (Theme)",
+    "settings.tab.units": "Đơn vị & Lưới",
+    "settings.tab.color": "Quản lý màu & ICC",
+    "settings.tab.cnc": "Thi công & CNC",
+    "settings.tab.system": "Hiệu năng & Hệ thống",
+    "settings.btn.reset": "Khôi phục mặc định",
+    "settings.btn.close": "Đóng",
+    "settings.btn.apply": "Áp dụng"
   }
 }

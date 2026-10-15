@@ -98,11 +98,44 @@ void test_status_bar_metrics_and_vietnamese_labels() {
     std::cout << "[PASS] test_status_bar_metrics_and_vietnamese_labels\n";
 }
 
+#include "pikdraw/desktop/shell/native_window.hpp"
+
+void test_native_window_theme_and_settings_state() {
+    NativeWindow win(1440, 900);
+    assert(win.theme() == ThemeMode::CyberDark);
+    assert(!win.is_settings_modal_open());
+
+    win.set_theme(ThemeMode::Light);
+    assert(win.theme() == ThemeMode::Light);
+    assert(win.settings_theme_choice() == 1);
+
+    win.toggle_theme();
+    assert(win.theme() == ThemeMode::CyberDark);
+
+    win.open_settings_modal();
+    assert(win.is_settings_modal_open());
+
+    win.set_settings_tab(2);
+    assert(win.settings_active_tab() == 2);
+
+    win.set_settings_accent_choice(1);
+    assert(win.settings_accent_choice() == 1);
+
+    win.set_settings_unit_choice(2);
+    assert(win.settings_unit_choice() == 2);
+
+    win.close_settings_modal();
+    assert(!win.is_settings_modal_open());
+
+    std::cout << "[PASS] test_native_window_theme_and_settings_state\n";
+}
+
 int main() {
     std::cout << "=== Running Desktop Shell Tests ===\n";
     test_shell_geometry_resolutions_and_dpi();
     test_workspace_state_and_capabilities();
     test_status_bar_metrics_and_vietnamese_labels();
+    test_native_window_theme_and_settings_state();
     std::cout << "All Desktop Shell Tests PASSED.\n";
     return 0;
 }

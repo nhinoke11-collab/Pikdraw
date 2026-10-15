@@ -15,41 +15,38 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
     HGDIOBJ old_bmp = SelectObject(mem_dc, mem_bmp);
 
     // Primary font: Be Vietnam Pro; Secondary: Google Sans; Numeric: JetBrains Mono
-    HFONT font_be_vietnam = CreateFontW(14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Be Vietnam Pro");
-    HFONT font_be_vietnam_bold = CreateFontW(14, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Be Vietnam Pro");
-    HFONT font_title_bold = CreateFontW(22, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Be Vietnam Pro");
-    HFONT font_secondary = CreateFontW(13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Google Sans");
-    HFONT font_secondary_bold = CreateFontW(13, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Google Sans");
-    HFONT font_mono = CreateFontW(12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"JetBrains Mono");
+    auto make_font = [](int sz, int weight, const wchar_t* name) {
+        return CreateFontW(sz, 0, 0, 0, weight, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+            DEFAULT_PITCH | FF_DONTCARE, name);
+    };
+    HFONT font_be_vietnam = make_font(14, FW_NORMAL, L"Be Vietnam Pro");
+    HFONT font_be_vietnam_bold = make_font(14, FW_BOLD, L"Be Vietnam Pro");
+    HFONT font_title_bold = make_font(22, FW_BOLD, L"Be Vietnam Pro");
+    HFONT font_secondary = make_font(13, FW_NORMAL, L"Google Sans");
+    HFONT font_secondary_bold = make_font(13, FW_BOLD, L"Google Sans");
+    HFONT font_mono = make_font(12, FW_NORMAL, L"JetBrains Mono");
 
     HGDIOBJ old_font = SelectObject(mem_dc, font_be_vietnam);
 
-    // Cyber Dark 2026 Palette
-    COLORREF col_canvas = RGB(7, 12, 18);
-    COLORREF col_header = RGB(12, 19, 29);
-    COLORREF col_ribbon = RGB(14, 22, 34);
-    COLORREF col_statusbar = RGB(7, 11, 16);
-    COLORREF col_border = RGB(29, 38, 54);
-    COLORREF col_teal = RGB(0, 242, 195);
-    COLORREF col_blue = RGB(14, 165, 233);
-    COLORREF col_text_white = RGB(241, 245, 249);
-    COLORREF col_text_muted = RGB(148, 163, 184);
-    COLORREF col_input_bg = RGB(8, 13, 20);
-    COLORREF col_active_tab = RGB(22, 37, 54);
-
+    bool is_dark = (theme_ == ThemeMode::CyberDark);
     bool is_vi = (language_ == UILanguage::Vietnamese);
+
+    // 2026 Dual Theme Palette: Dark (Obsidian Teal) / Light (Silver Tech)
+    COLORREF col_canvas = is_dark ? RGB(7, 12, 18) : RGB(241, 245, 249);
+    COLORREF col_header = is_dark ? RGB(12, 19, 29) : RGB(255, 255, 255);
+    COLORREF col_ribbon = is_dark ? RGB(14, 22, 34) : RGB(248, 250, 252);
+    COLORREF col_statusbar = is_dark ? RGB(7, 11, 16) : RGB(226, 232, 240);
+    COLORREF col_border = is_dark ? RGB(29, 38, 54) : RGB(203, 213, 225);
+    COLORREF col_grid = is_dark ? RGB(24, 35, 52) : RGB(218, 225, 233);
+    COLORREF col_teal = is_dark ? RGB(0, 242, 195) : RGB(0, 135, 106);
+    COLORREF col_blue = is_dark ? RGB(14, 165, 233) : RGB(2, 132, 199);
+    COLORREF col_text_white = is_dark ? RGB(241, 245, 249) : RGB(15, 23, 42);
+    COLORREF col_text_muted = is_dark ? RGB(148, 163, 184) : RGB(100, 116, 139);
+    COLORREF col_input_bg = is_dark ? RGB(8, 13, 20) : RGB(255, 255, 255);
+    COLORREF col_active_tab = is_dark ? RGB(22, 37, 54) : RGB(236, 242, 248);
+    COLORREF col_btn_bg = is_dark ? RGB(18, 28, 42) : RGB(241, 245, 249);
+    COLORREF col_btn_bdr = is_dark ? RGB(29, 38, 54) : RGB(203, 213, 225);
 
     // 1. Canvas Background with dotted grid
     HBRUSH br_canvas = CreateSolidBrush(col_canvas);
@@ -59,34 +56,29 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
 
     for (int gx = 60; gx < w - 280; gx += 24) {
         for (int gy = 80; gy < h - 30; gy += 24) {
-            SetPixel(mem_dc, gx, gy, RGB(24, 35, 52));
+            SetPixel(mem_dc, gx, gy, col_grid);
         }
     }
 
     SetBkMode(mem_dc, TRANSPARENT);
 
-    int topbar_h = 38;
-    int ribbon_h = 34;
-    int status_h = 26;
-    int tool_w = 52;
-    int inspect_w = 280;
+    int topbar_h = 38, ribbon_h = 34, status_h = 26, tool_w = 52, inspect_w = 280;
 
     // 2. Central Signboard Artboard (Centered on canvas)
     int canvas_w = w - tool_w - inspect_w;
-    int art_w = 660;
-    int art_h = 440;
+    int art_w = 660, art_h = 440;
     int art_x = tool_w + (canvas_w - art_w) / 2;
     int art_y = topbar_h + ribbon_h + 35;
 
     // Drop shadow
-    HBRUSH br_shadow = CreateSolidBrush(RGB(2, 4, 8));
+    HBRUSH br_shadow = CreateSolidBrush(is_dark ? RGB(2, 4, 8) : RGB(210, 218, 226));
     RECT rc_shadow = { art_x + 8, art_y + 8, art_x + art_w + 8, art_y + art_h + 8 };
     FillRect(mem_dc, &rc_shadow, br_shadow);
     DeleteObject(br_shadow);
 
-    // Acrylic signboard base (Dark Slate Navy #0f172a)
-    HBRUSH br_sign_base = CreateSolidBrush(RGB(15, 23, 42));
-    HPEN pen_metal = CreatePen(PS_SOLID, 2, RGB(51, 65, 85));
+    // Acrylic signboard base
+    HBRUSH br_sign_base = CreateSolidBrush(is_dark ? RGB(15, 23, 42) : RGB(255, 255, 255));
+    HPEN pen_metal = CreatePen(PS_SOLID, 2, is_dark ? RGB(51, 65, 85) : RGB(203, 213, 225));
     SelectObject(mem_dc, pen_metal);
     SelectObject(mem_dc, br_sign_base);
     RoundRect(mem_dc, art_x, art_y, art_x + art_w, art_y + art_h, 12, 12);
@@ -96,11 +88,10 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
     // Interactive Vector Signboard Object (drag and move)
     int obj_x = art_x + 30 + static_cast<int>(shape_x_ * 0.15);
     int obj_y = art_y + 40 + static_cast<int>(shape_y_ * 0.15);
-    int obj_w = 460;
-    int obj_h = 160;
+    int obj_w = 460, obj_h = 160;
 
     // Neon plate fill & glowing border
-    HBRUSH br_neon_bg = CreateSolidBrush(RGB(12, 32, 44));
+    HBRUSH br_neon_bg = CreateSolidBrush(is_dark ? RGB(12, 32, 44) : RGB(240, 253, 250));
     HPEN pen_neon = CreatePen(PS_SOLID, 2, col_teal);
     SelectObject(mem_dc, pen_neon);
     SelectObject(mem_dc, br_neon_bg);
@@ -127,7 +118,6 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
     Rectangle(mem_dc, obj_x - 4, obj_y - 4, obj_x + obj_w + 4, obj_y + obj_h + 4);
     DeleteObject(pen_sel);
 
-    // 8 resize handles
     HBRUSH br_h = CreateSolidBrush(RGB(255, 255, 255));
     SelectObject(mem_dc, br_h);
     int handles[8][2] = {
@@ -142,7 +132,7 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
 
     // Dimension callout chip
     SelectObject(mem_dc, font_mono);
-    HBRUSH br_chip = CreateSolidBrush(RGB(18, 28, 42));
+    HBRUSH br_chip = CreateSolidBrush(is_dark ? RGB(18, 28, 42) : RGB(226, 232, 240));
     RECT rc_chip = { obj_x + obj_w / 2 - 70, obj_y + obj_h + 8, obj_x + obj_w / 2 + 70, obj_y + obj_h + 28 };
     FillRect(mem_dc, &rc_chip, br_chip);
     DeleteObject(br_chip);
@@ -155,16 +145,16 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
     FillRect(mem_dc, &rc_topbar, br_topbar);
     DeleteObject(br_topbar);
 
-    // Logo PK gradient badge
+    // Logo PK badge
     HBRUSH br_logo = CreateSolidBrush(col_teal);
     RECT rc_logo = { 10, 6, 36, 32 };
     FillRect(mem_dc, &rc_logo, br_logo);
     DeleteObject(br_logo);
     SelectObject(mem_dc, font_be_vietnam_bold);
-    SetTextColor(mem_dc, RGB(7, 11, 16));
+    SetTextColor(mem_dc, is_dark ? RGB(7, 11, 16) : RGB(255, 255, 255));
     DrawTextW(mem_dc, L"PK", -1, &rc_logo, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-    // App title & Document name with pulse dot
+    // App title & Document name
     SetTextColor(mem_dc, col_text_white);
     RECT rc_app_title = { 46, 6, 250, 32 };
     DrawTextW(mem_dc, L"PikDraw PRO 2026 / Bien_Hieu.pik ●", -1, &rc_app_title, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
@@ -198,27 +188,45 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
         cur_px += ws_widths[i] + 5;
     }
 
-    // Language Toggle [ VI | EN ]
-    int lang_x = w - 175;
-    HBRUSH br_lang = CreateSolidBrush(RGB(18, 28, 42));
-    RECT rc_lang = { lang_x, 6, lang_x + 65, 32 };
+    // Topbar Button 1: Quick Theme Toggle [ ☀ Sáng / 🌙 Tối ] (w - 355 to w - 272)
+    int theme_x = w - 355;
+    HBRUSH br_thm = CreateSolidBrush(col_btn_bg);
+    RECT rc_thm = { theme_x, 6, theme_x + 83, 32 };
+    FillRect(mem_dc, &rc_thm, br_thm);
+    DeleteObject(br_thm);
+    SelectObject(mem_dc, font_be_vietnam_bold);
+    SetTextColor(mem_dc, is_dark ? RGB(251, 191, 36) : RGB(79, 70, 229));
+    const wchar_t* thm_lbl = is_dark ? (is_vi ? L"☀ Sáng" : L"☀ Light") : (is_vi ? L"🌙 Tối" : L"🌙 Dark");
+    DrawTextW(mem_dc, thm_lbl, -1, &rc_thm, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+    // Topbar Button 2: Settings [ ⚙ Cài đặt / ⚙ Settings ] (w - 265 to w - 172)
+    int sett_x = w - 265;
+    HBRUSH br_sett = CreateSolidBrush(col_btn_bg);
+    RECT rc_sett = { sett_x, 6, sett_x + 93, 32 };
+    FillRect(mem_dc, &rc_sett, br_sett);
+    DeleteObject(br_sett);
+    SetTextColor(mem_dc, col_text_white);
+    DrawTextW(mem_dc, is_vi ? L"⚙ Cài đặt" : L"⚙ Settings", -1, &rc_sett, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+    // Topbar Button 3: Language Toggle [ VI | EN ] (w - 165 to w - 102)
+    int lang_x = w - 165;
+    HBRUSH br_lang = CreateSolidBrush(col_btn_bg);
+    RECT rc_lang = { lang_x, 6, lang_x + 63, 32 };
     FillRect(mem_dc, &rc_lang, br_lang);
     DeleteObject(br_lang);
-    RECT rc_vi = { lang_x, 6, lang_x + 32, 32 };
-    RECT rc_en = { lang_x + 33, 6, lang_x + 65, 32 };
-    SelectObject(mem_dc, font_be_vietnam_bold);
+    RECT rc_vi = { lang_x, 6, lang_x + 31, 32 };
+    RECT rc_en = { lang_x + 32, 6, lang_x + 63, 32 };
     SetTextColor(mem_dc, is_vi ? col_teal : col_text_muted);
     DrawTextW(mem_dc, L"VI", -1, &rc_vi, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     SetTextColor(mem_dc, !is_vi ? col_teal : col_text_muted);
     DrawTextW(mem_dc, L"EN", -1, &rc_en, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-    // Export Button
+    // Topbar Button 4: Export Button [ Xuất file ] (w - 95 to w - 12)
     HBRUSH br_export = CreateSolidBrush(col_teal);
     RECT rc_export = { w - 95, 6, w - 12, 32 };
     FillRect(mem_dc, &rc_export, br_export);
     DeleteObject(br_export);
-    SetTextColor(mem_dc, RGB(7, 11, 16));
-    SelectObject(mem_dc, font_be_vietnam_bold);
+    SetTextColor(mem_dc, is_dark ? RGB(7, 11, 16) : RGB(255, 255, 255));
     DrawTextW(mem_dc, is_vi ? L"Xuất file" : L"Export", -1, &rc_export, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
     // 4. Context Tool Ribbon
@@ -227,13 +235,11 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
     FillRect(mem_dc, &rc_ribbon, br_ribbon);
     DeleteObject(br_ribbon);
 
-    // Indicator chip
     RECT rc_rib_ind = { 16, topbar_h, 240, topbar_h + ribbon_h };
     SetTextColor(mem_dc, col_teal);
     SelectObject(mem_dc, font_be_vietnam_bold);
     DrawTextW(mem_dc, is_vi ? L"■ Nhóm chữ Neon Signboard (#402)" : L"■ Neon Signboard Group (#402)", -1, &rc_rib_ind, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-    // Geometry chips
     SelectObject(mem_dc, font_mono);
     SetTextColor(mem_dc, col_text_white);
     std::wostringstream wgeom;
@@ -275,18 +281,16 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
         DrawTextW(mem_dc, tool_labels[i], -1, &rc_tb, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
 
-    // Dual Color Box at bottom of Tool Strip
+    // Dual Color Box
     int sw_y = h - status_h - 60;
     HBRUSH br_sw_bg = CreateSolidBrush(col_input_bg);
     RECT rc_sw_box = { 8, sw_y, tool_w - 8, sw_y + 44 };
     FillRect(mem_dc, &rc_sw_box, br_sw_bg);
     DeleteObject(br_sw_bg);
-
     HBRUSH br_fill_sw = CreateSolidBrush(col_teal);
     RECT rc_fill_sq = { 12, sw_y + 4, 30, sw_y + 22 };
     FillRect(mem_dc, &rc_fill_sq, br_fill_sw);
     DeleteObject(br_fill_sw);
-
     HBRUSH br_strk_sw = CreateSolidBrush(col_blue);
     RECT rc_strk_sq = { 22, sw_y + 16, 40, sw_y + 34 };
     FillRect(mem_dc, &rc_strk_sq, br_strk_sw);
@@ -299,7 +303,6 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
     FillRect(mem_dc, &rc_dock, br_dock);
     DeleteObject(br_dock);
 
-    // Dock Tabs: Thuộc tính | Lớp (Layers) | Lịch sử
     int tab_w = inspect_w / 3;
     const wchar_t* tab_names_vi[] = { L"Thuộc tính", L"Lớp (Layers)", L"Lịch sử" };
     const wchar_t* tab_names_en[] = { L"Inspector", L"Layers", L"History" };
@@ -318,9 +321,8 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
         DrawTextW(mem_dc, is_vi ? tab_names_vi[i] : tab_names_en[i], -1, &rc_tab, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
 
-    // Content of Active Tab
     int content_y = topbar_h + ribbon_h + 36;
-    if (active_dock_tab_ == 0) { // Inspector
+    if (active_dock_tab_ == 0) {
         SelectObject(mem_dc, font_be_vietnam_bold);
         SetTextColor(mem_dc, col_teal);
         RECT rc_sec1 = { insp_x + 14, content_y, w - 14, content_y + 20 };
@@ -351,7 +353,7 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
             L"Màu tô: #00f2c3 (Cyber Teal)\nĐộ mờ đục: 100%\nViền viền: #0ea5e9 (Sky Blue)\nĐộ dày viền: 2.0 mm" :
             L"Fill: #00f2c3 (Cyber Teal)\nOpacity: 100%\nStroke: #0ea5e9 (Sky Blue)\nStroke Width: 2.0 mm";
         DrawTextW(mem_dc, app_text, -1, &rc_sec2_body, DT_LEFT | DT_NOPREFIX);
-    } else if (active_dock_tab_ == 1) { // Layers
+    } else if (active_dock_tab_ == 1) {
         SelectObject(mem_dc, font_be_vietnam_bold);
         SetTextColor(mem_dc, col_teal);
         RECT rc_l_head = { insp_x + 14, content_y, w - 14, content_y + 20 };
@@ -364,7 +366,7 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
             L"▼ Bảng hiệu chính (#402)\n   [T] AN PHÁT SIGNAGE 2026\n   [T] CÔNG TY TNHH QUẢNG CÁO...\n   [R] Khung Mica Neon #00f2c3\n\n▼ Lớp nền (Background)\n   [R] Tấm ốp Alumini ngoài trời" :
             L"▼ Main Signboard (#402)\n   [T] AN PHAT SIGNAGE 2026\n   [T] CTY TNHH QUANG CAO...\n   [R] Neon Mica Frame #00f2c3\n\n▼ Background Layer\n   [R] Outdoor Alumini Base";
         DrawTextW(mem_dc, layer_tree, -1, &rc_l_body, DT_LEFT | DT_NOPREFIX);
-    } else { // History
+    } else {
         SelectObject(mem_dc, font_be_vietnam_bold);
         SetTextColor(mem_dc, col_teal);
         RECT rc_h_head = { insp_x + 14, content_y, w - 14, content_y + 20 };
@@ -374,8 +376,8 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
         SetTextColor(mem_dc, col_text_white);
         RECT rc_h_body = { insp_x + 14, content_y + 25, w - 14, content_y + 200 };
         const wchar_t* hist_text = is_vi ?
-            L"● Rev 14: Di chuyển đối tượng chữ\n● Rev 13: Đổi màu tô sang #00f2c3\n● Rev 12: Thêm tiêu đề Be Vietnam Pro\n● Rev 11: Tạo khung mica bo góc\n● Rev 10: Khởi tạo tài liệu khổ A4" :
-            L"● Rev 14: Move text object\n● Rev 13: Change fill to #00f2c3\n● Rev 12: Add Be Vietnam Pro title\n● Rev 11: Create rounded frame\n● Rev 10: Initialize A4 document";
+            L"● Rev 15: Chuyển đổi Theme Sáng/Tối\n● Rev 14: Di chuyển đối tượng chữ\n● Rev 13: Đổi màu tô sang #00f2c3\n● Rev 12: Thêm tiêu đề Be Vietnam Pro\n● Rev 11: Tạo khung mica bo góc" :
+            L"● Rev 15: Toggle Light/Dark Theme\n● Rev 14: Move text object\n● Rev 13: Change fill to #00f2c3\n● Rev 12: Add Be Vietnam Pro title\n● Rev 11: Create rounded frame";
         DrawTextW(mem_dc, hist_text, -1, &rc_h_body, DT_LEFT | DT_NOPREFIX);
     }
 
@@ -392,14 +394,23 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
     wcoord << L"X: " << std::fixed << std::setprecision(1) << cursor_mm_x_ << L" mm   "
            << L"Y: " << std::fixed << std::setprecision(1) << cursor_mm_y_ << L" mm";
     std::wstring coord_str = wcoord.str();
-    RECT rc_st_coord = { 16, h - status_h, 240, h };
+    RECT rc_st_coord = { 16, h - status_h, 210, h };
     DrawTextW(mem_dc, coord_str.c_str(), -1, &rc_st_coord, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-    // Live interactive status message (Proper UTF-8 to Wide decoding)
+    // Theme Mode Badge Chip
     SelectObject(mem_dc, font_be_vietnam);
+    HBRUSH br_tbadge = CreateSolidBrush(col_btn_bg);
+    RECT rc_tbadge = { 215, h - status_h + 3, 400, h - 3 };
+    FillRect(mem_dc, &rc_tbadge, br_tbadge);
+    DeleteObject(br_tbadge);
     SetTextColor(mem_dc, col_teal);
+    const wchar_t* thm_badge = is_dark ? L"Theme: Dark Mode (Obsidian)" : L"Theme: Light Mode (Silver)";
+    DrawTextW(mem_dc, thm_badge, -1, &rc_tbadge, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+    // Live status message
+    SetTextColor(mem_dc, col_text_white);
     std::wstring wmsg = utf8_to_wide(status_msg_);
-    RECT rc_st_msg = { 250, h - status_h, w - 200, h };
+    RECT rc_st_msg = { 410, h - status_h, w - 170, h };
     DrawTextW(mem_dc, wmsg.c_str(), -1, &rc_st_msg, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
     // Zoom buttons [-] 100% [+]
@@ -410,7 +421,7 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
     RECT rc_zm_txt = { w - 90, h - status_h, w - 50, h };
     RECT rc_zm_btn_plus = { w - 45, h - status_h + 3, w - 20, h - 3 };
 
-    HBRUSH br_zm_btn = CreateSolidBrush(RGB(18, 28, 42));
+    HBRUSH br_zm_btn = CreateSolidBrush(col_btn_bg);
     FillRect(mem_dc, &rc_zm_btn_minus, br_zm_btn);
     FillRect(mem_dc, &rc_zm_btn_plus, br_zm_btn);
     DeleteObject(br_zm_btn);
@@ -423,43 +434,33 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
     HPEN pen_bdr = CreatePen(PS_SOLID, 1, col_border);
     HGDIOBJ old_bdr = SelectObject(mem_dc, pen_bdr);
 
-    MoveToEx(mem_dc, 0, topbar_h, NULL);
-    LineTo(mem_dc, w, topbar_h);
-
-    MoveToEx(mem_dc, 0, topbar_h + ribbon_h, NULL);
-    LineTo(mem_dc, w, topbar_h + ribbon_h);
-
-    MoveToEx(mem_dc, tool_w, topbar_h + ribbon_h, NULL);
-    LineTo(mem_dc, tool_w, h - status_h);
-
-    MoveToEx(mem_dc, insp_x, topbar_h + ribbon_h, NULL);
-    LineTo(mem_dc, insp_x, h - status_h);
-
-    MoveToEx(mem_dc, 0, h - status_h, NULL);
-    LineTo(mem_dc, w, h - status_h);
+    MoveToEx(mem_dc, 0, topbar_h, NULL); LineTo(mem_dc, w, topbar_h);
+    MoveToEx(mem_dc, 0, topbar_h + ribbon_h, NULL); LineTo(mem_dc, w, topbar_h + ribbon_h);
+    MoveToEx(mem_dc, tool_w, topbar_h + ribbon_h, NULL); LineTo(mem_dc, tool_w, h - status_h);
+    MoveToEx(mem_dc, insp_x, topbar_h + ribbon_h, NULL); LineTo(mem_dc, insp_x, h - status_h);
+    MoveToEx(mem_dc, 0, h - status_h, NULL); LineTo(mem_dc, w, h - status_h);
 
     SelectObject(mem_dc, old_bdr);
     DeleteObject(pen_bdr);
 
+    // 8. Paint Settings Modal Dialog if open
+    if (show_settings_modal_) {
+        paint_settings_modal(mem_dc, w, h);
+    }
+
     BitBlt(hdc, 0, 0, w, h, mem_dc, 0, 0, SRCCOPY);
 
     SelectObject(mem_dc, old_font);
-    DeleteObject(font_be_vietnam);
-    DeleteObject(font_be_vietnam_bold);
-    DeleteObject(font_title_bold);
-    DeleteObject(font_secondary);
-    DeleteObject(font_secondary_bold);
-    DeleteObject(font_mono);
-
+    for (auto* f : { font_be_vietnam, font_be_vietnam_bold, font_title_bold, font_secondary, font_secondary_bold, font_mono }) {
+        DeleteObject(f);
+    }
     SelectObject(mem_dc, old_bmp);
     DeleteObject(mem_bmp);
     DeleteDC(mem_dc);
 }
 
 void NativeWindow::capture_screenshot_bmp(const std::string& path) {
-    int w = width_;
-    int h = height_;
-
+    int w = width_, h = height_;
     HDC screen_dc = GetDC(NULL);
     HDC mem_dc = CreateCompatibleDC(screen_dc);
     HBITMAP mem_bmp = CreateCompatibleBitmap(screen_dc, w, h);
@@ -467,12 +468,7 @@ void NativeWindow::capture_screenshot_bmp(const std::string& path) {
 
     paint(mem_dc, w, h);
 
-    BITMAPINFOHEADER bi = { sizeof(BITMAPINFOHEADER) };
-    bi.biWidth = w;
-    bi.biHeight = h;
-    bi.biPlanes = 1;
-    bi.biBitCount = 24;
-    bi.biCompression = BI_RGB;
+    BITMAPINFOHEADER bi = { sizeof(BITMAPINFOHEADER), w, h, 1, 24, BI_RGB, 0, 0, 0, 0, 0 };
     int row_stride = ((w * 3 + 3) / 4) * 4;
     int data_size = row_stride * h;
     bi.biSizeImage = data_size;
@@ -480,10 +476,7 @@ void NativeWindow::capture_screenshot_bmp(const std::string& path) {
     std::vector<uint8_t> pixel_data(data_size);
     GetDIBits(mem_dc, mem_bmp, 0, h, pixel_data.data(), reinterpret_cast<BITMAPINFO*>(&bi), DIB_RGB_COLORS);
 
-    BITMAPFILEHEADER bfh = { 0 };
-    bfh.bfType = 0x4D42;
-    bfh.bfSize = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + data_size;
-    bfh.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+    BITMAPFILEHEADER bfh = { 0x4D42, static_cast<DWORD>(sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + data_size), 0, 0, sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) };
 
     std::ofstream out(path, std::ios::binary);
     if (out.is_open()) {

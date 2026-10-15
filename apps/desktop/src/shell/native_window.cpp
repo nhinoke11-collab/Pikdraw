@@ -53,6 +53,80 @@ void NativeWindow::toggle_language() noexcept {
     set_language(language_ == UILanguage::Vietnamese ? UILanguage::English : UILanguage::Vietnamese);
 }
 
+void NativeWindow::set_theme(ThemeMode mode) noexcept {
+    theme_ = mode;
+    settings_theme_choice_ = (mode == ThemeMode::CyberDark) ? 0 : 1;
+    status_msg_ = (language_ == UILanguage::Vietnamese) ?
+        (mode == ThemeMode::CyberDark ? "Đã chuyển sang Chế độ Tối (Dark Mode Obsidian)" : "Đã chuyển sang Chế độ Sáng (Light Mode Silver)") :
+        (mode == ThemeMode::CyberDark ? "Switched to Dark Mode (Obsidian Slate)" : "Switched to Light Mode (Silver Tech)");
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
+#endif
+}
+
+void NativeWindow::toggle_theme() noexcept {
+    set_theme(theme_ == ThemeMode::CyberDark ? ThemeMode::Light : ThemeMode::CyberDark);
+}
+
+void NativeWindow::open_settings_modal() noexcept {
+    show_settings_modal_ = true;
+    status_msg_ = (language_ == UILanguage::Vietnamese) ?
+        "Đã mở Cài đặt hệ thống (PikDraw Preferences)" : "Opened System Preferences (PikDraw Settings)";
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
+#endif
+}
+
+void NativeWindow::close_settings_modal() noexcept {
+    show_settings_modal_ = false;
+    status_msg_ = (language_ == UILanguage::Vietnamese) ?
+        "Đã lưu và đóng Cài đặt hệ thống" : "Saved and closed System Preferences";
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
+#endif
+}
+
+void NativeWindow::toggle_settings_modal() noexcept {
+    if (show_settings_modal_) close_settings_modal(); else open_settings_modal();
+}
+
+void NativeWindow::set_settings_tab(int tab) noexcept {
+    if (tab < 0 || tab > 4) return;
+    settings_active_tab_ = tab;
+    const char* vi_tabs[] = { "Giao diện (Theme)", "Đơn vị & Lưới (Units)", "Quản lý màu & ICC", "Thi công & CNC", "Hiệu năng & Hệ thống" };
+    const char* en_tabs[] = { "Theme & Appearance", "Units & Workspace", "Color & ICC", "Production & CNC", "Hardware & System" };
+    status_msg_ = (language_ == UILanguage::Vietnamese) ?
+        std::string("Cài đặt: ") + vi_tabs[tab] : std::string("Preferences: ") + en_tabs[tab];
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
+#endif
+}
+
+void NativeWindow::set_settings_theme_choice(int theme) noexcept {
+    settings_theme_choice_ = theme;
+    set_theme(theme == 1 ? ThemeMode::Light : ThemeMode::CyberDark);
+}
+
+void NativeWindow::set_settings_accent_choice(int accent) noexcept {
+    settings_accent_choice_ = accent;
+    const char* vi_accents[] = { "Cyber Mint (#00f2c3)", "Sky Blue (#0ea5e9)", "Purple Tech (#a855f7)", "Amber CAD (#f59e0b)" };
+    status_msg_ = (language_ == UILanguage::Vietnamese) ?
+        std::string("Màu điểm nhấn: ") + vi_accents[accent % 4] : std::string("Accent Color: ") + vi_accents[accent % 4];
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
+#endif
+}
+
+void NativeWindow::set_settings_unit_choice(int unit) noexcept {
+    settings_unit_choice_ = unit;
+    const char* units[] = { "mm (Milimét)", "cm (Xentimét)", "inch (Inches)", "pt (Điểm in)" };
+    status_msg_ = (language_ == UILanguage::Vietnamese) ?
+        std::string("Đơn vị mặc định: ") + units[unit % 4] : std::string("Default Units: ") + units[unit % 4];
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
+#endif
+}
+
 void NativeWindow::set_active_tool(int tool_index) noexcept {
     active_tool_ = tool_index;
     const char* vi_tools[] = { "Con trỏ chọn (V)", "Sửa điểm Node (A)", "Bút vẽ Pen (P)", "Hình chữ nhật (R)", "Hình Elip (E)", "Văn bản (T)", "Bàn tay Pan (H)", "Kính lúp Zoom (Z)" };
@@ -119,20 +193,112 @@ void NativeWindow::trigger_export() noexcept {
 void NativeWindow::handle_mouse_down(int x, int y) {
     int w = width_;
 
-    // 1. Language Toggle [VI | EN] (x: w - 175 to w - 110, y: 6 to 32)
-    int lang_x = w - 175;
-    if (x >= lang_x && x <= lang_x + 65 && y >= 6 && y <= 32) {
+    // Handle clicks inside or dismissing the Settings Modal
+    if (show_settings_modal_) {
+        int modal_w = 720;
+        int modal_h = 500;
+        int modal_x = (w - modal_w) / 2;
+        int modal_y = (height_ - modal_h) / 2;
+
+        if (x < modal_x || x > modal_x + modal_w || y < modal_y || y > modal_y + modal_h) {
+            close_settings_modal();
+            return;
+        }
+
+        // Close button [X]
+        if (x >= modal_x + modal_w - 38 && x <= modal_x + modal_w - 12 &&
+            y >= modal_y + 9 && y <= modal_y + 35) {
+            close_settings_modal();
+            return;
+        }
+
+        // Left sidebar tabs
+        if (x >= modal_x + 10 && x <= modal_x + 185) {
+            for (int i = 0; i < 5; ++i) {
+                int ty = modal_y + 58 + i * 42;
+                if (y >= ty && y <= ty + 36) {
+                    set_settings_tab(i);
+                    return;
+                }
+            }
+        }
+
+        // Tab 0 (Theme) cards and accents
+        if (settings_active_tab_ == 0) {
+            if (y >= modal_y + 95 && y <= modal_y + 175) {
+                int cx0 = modal_x + 205;
+                if (x >= cx0 && x <= cx0 + 155) { set_settings_theme_choice(0); return; }
+                if (x >= cx0 + 165 && x <= cx0 + 320) { set_settings_theme_choice(1); return; }
+                if (x >= cx0 + 330 && x <= cx0 + 485) { set_settings_theme_choice(2); return; }
+            }
+            if (y >= modal_y + 225 && y <= modal_y + 255) {
+                for (int i = 0; i < 4; ++i) {
+                    int ax = modal_x + 205 + i * 90;
+                    if (x >= ax && x <= ax + 85) { set_settings_accent_choice(i); return; }
+                }
+            }
+        }
+
+        // Tab 1 (Units) pills
+        if (settings_active_tab_ == 1 && y >= modal_y + 95 && y <= modal_y + 130) {
+            for (int i = 0; i < 4; ++i) {
+                int ux = modal_x + 205 + i * 115;
+                if (x >= ux && x <= ux + 105) { set_settings_unit_choice(i); return; }
+            }
+        }
+
+        // Footer buttons
+        if (y >= modal_y + modal_h - 44 && y <= modal_y + modal_h - 10) {
+            if (x >= modal_x + 16 && x <= modal_x + 160) {
+                set_theme(ThemeMode::CyberDark);
+                settings_accent_choice_ = 0;
+                settings_unit_choice_ = 0;
+                status_msg_ = (language_ == UILanguage::Vietnamese) ?
+                    "Đã khôi phục cấu hình mặc định (Dark Mode Obsidian)" :
+                    "Reset preferences to defaults (Dark Mode Obsidian)";
+                InvalidateRect(hwnd_, NULL, FALSE);
+                return;
+            }
+            if (x >= modal_x + modal_w - 170 && x <= modal_x + modal_w - 95) {
+                close_settings_modal();
+                return;
+            }
+            if (x >= modal_x + modal_w - 85 && x <= modal_x + modal_w - 15) {
+                close_settings_modal();
+                return;
+            }
+        }
+        return;
+    }
+
+    // Topbar Quick Theme Toggle [ ☀ Sáng / 🌙 Tối ] (x: w - 355 to w - 272, y: 6 to 32)
+    int theme_x = w - 355;
+    if (x >= theme_x && x <= theme_x + 83 && y >= 6 && y <= 32) {
+        toggle_theme();
+        return;
+    }
+
+    // Topbar Settings Button [ ⚙ Cài đặt ] (x: w - 265 to w - 172, y: 6 to 32)
+    int sett_x = w - 265;
+    if (x >= sett_x && x <= sett_x + 93 && y >= 6 && y <= 32) {
+        open_settings_modal();
+        return;
+    }
+
+    // Topbar Language Toggle [ VI | EN ] (x: w - 165 to w - 102, y: 6 to 32)
+    int lang_x = w - 165;
+    if (x >= lang_x && x <= lang_x + 63 && y >= 6 && y <= 32) {
         toggle_language();
         return;
     }
 
-    // 2. Export Button [Xuất file] (x: w - 95 to w - 12, y: 6 to 32)
+    // Topbar Export Button [ Xuất file ] (x: w - 95 to w - 12, y: 6 to 32)
     if (x >= w - 95 && x <= w - 12 && y >= 6 && y <= 32) {
         trigger_export();
         return;
     }
 
-    // 3. Workspace Pills (x: 520 to 790, y: 6 to 32)
+    // Workspace Pills (x: 520 to 790, y: 6 to 32)
     int pill_x = 520;
     if (y >= 6 && y <= 32) {
         if (x >= pill_x && x < pill_x + 65) { set_active_workspace(0); return; }
@@ -302,18 +468,25 @@ int NativeWindow::run() {
 }
 
 #else
-
 bool NativeWindow::initialize(const std::string&) { return true; }
 int NativeWindow::run() { return 0; }
 void NativeWindow::set_language(UILanguage) noexcept {}
 void NativeWindow::toggle_language() noexcept {}
+void NativeWindow::set_theme(ThemeMode) noexcept {}
+void NativeWindow::toggle_theme() noexcept {}
+void NativeWindow::open_settings_modal() noexcept {}
+void NativeWindow::close_settings_modal() noexcept {}
+void NativeWindow::toggle_settings_modal() noexcept {}
+void NativeWindow::set_settings_tab(int) noexcept {}
+void NativeWindow::set_settings_theme_choice(int) noexcept {}
+void NativeWindow::set_settings_accent_choice(int) noexcept {}
+void NativeWindow::set_settings_unit_choice(int) noexcept {}
 void NativeWindow::set_active_tool(int) noexcept {}
 void NativeWindow::set_active_workspace(int) noexcept {}
 void NativeWindow::set_active_dock_tab(int) noexcept {}
 void NativeWindow::zoom_in() noexcept {}
 void NativeWindow::zoom_out() noexcept {}
 void NativeWindow::trigger_export() noexcept {}
-
 #endif
 
 } // namespace pikdraw::desktop

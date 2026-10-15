@@ -36,6 +36,16 @@
     "status.zoom": "Zoom",
     "status.workspace": "Workspace",
     "status.ready": "Ready",
-    "btn.export": "Export"
+    "btn.export": "Export",
+    "btn.settings": "Settings",
+    "settings.title": "System Preferences (PikDraw Settings)",
+    "settings.tab.theme": "Theme & Appearance",
+    "settings.tab.units": "Units & Workspace",
+    "settings.tab.color": "Color & ICC Profiles",
+    "settings.tab.cnc": "Production & CNC",
+    "settings.tab.system": "Hardware & System",
+    "settings.btn.reset": "Reset Defaults",
+    "settings.btn.close": "Close",
+    "settings.btn.apply": "Apply"
   }
 }

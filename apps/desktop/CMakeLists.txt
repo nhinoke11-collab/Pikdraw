@@ -21,6 +21,7 @@ add_library(pikdraw_desktop STATIC
     src/workflows/document_workflow.cpp
     src/shell/native_window.cpp
     src/shell/native_window_paint.cpp
+    src/shell/native_window_paint_modal.cpp
 )
 
 target_include_directories(pikdraw_desktop PUBLIC
@@ -38,7 +39,7 @@ target_link_libraries(pikdraw_desktop PUBLIC
 )
 
 if(WIN32)
-    target_link_libraries(pikdraw_desktop PUBLIC user32 gdi32)
+    target_link_libraries(pikdraw_desktop PUBLIC user32 gdi32 msimg32)
 endif()
 
 # Native shell application entry point
