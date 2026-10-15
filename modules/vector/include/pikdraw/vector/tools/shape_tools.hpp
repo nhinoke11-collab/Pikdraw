@@ -1,20 +1,23 @@
 #pragma once
 
-#include "pikdraw/document/model/object.hpp"
 #include "pikdraw/document/commands/command.hpp"
+#include "pikdraw/document/model/object.hpp"
 #include "pikdraw/geometry/primitives/bounds.hpp"
+#include <cmath>
 #include <memory>
+#include <stdexcept>
 #include <string>
 
 namespace pikdraw::vector {
 
 class ShapeFactory {
-public:
+  public:
     [[nodiscard]] static document::PathObject create_rectangle(
-        const geometry::Rect2D& rect,
-        color::ColorValue fill = color::RGBColor{0.14, 0.47, 0.82, 1.0},
-        color::ColorValue stroke = color::RGBColor{0.0, 0.0, 0.0, 1.0},
-        double stroke_width_mm = 1.0) {
+        const geometry::Rect2D &rect, color::ColorValue fill = color::RGBColor{0.14, 0.47, 0.82, 1.0},
+        color::ColorValue stroke = color::RGBColor{0.0, 0.0, 0.0, 1.0}, double stroke_width_mm = 1.0) {
+        if (!rect.is_finite() || rect.width <= 0 || rect.height <= 0 || !fill.is_valid() ||
+            !stroke.is_valid() || !std::isfinite(stroke_width_mm) || stroke_width_mm < 0)
+            throw std::invalid_argument("Invalid rectangle source parameters");
         document::PathObject obj;
         obj.id = document::generate_object_id();
         obj.name = "Rectangle " + std::to_string(obj.id);
@@ -27,12 +30,15 @@ public:
         return obj;
     }
 
-    [[nodiscard]] static document::PathObject create_ellipse(
-        const geometry::Point2D& center,
-        double rx, double ry,
-        color::ColorValue fill = color::RGBColor{0.82, 0.24, 0.14, 1.0},
-        color::ColorValue stroke = color::RGBColor{0.0, 0.0, 0.0, 1.0},
-        double stroke_width_mm = 1.0) {
+    [[nodiscard]] static document::PathObject
+    create_ellipse(const geometry::Point2D &center, double rx, double ry,
+                   color::ColorValue fill = color::RGBColor{0.82, 0.24, 0.14, 1.0},
+                   color::ColorValue stroke = color::RGBColor{0.0, 0.0, 0.0, 1.0},
+                   double stroke_width_mm = 1.0) {
+        if (!std::isfinite(center.x) || !std::isfinite(center.y) || !std::isfinite(rx) ||
+            !std::isfinite(ry) || rx <= 0 || ry <= 0 || !fill.is_valid() || !stroke.is_valid() ||
+            !std::isfinite(stroke_width_mm) || stroke_width_mm < 0)
+            throw std::invalid_argument("Invalid ellipse source parameters");
         document::PathObject obj;
         obj.id = document::generate_object_id();
         obj.name = "Ellipse " + std::to_string(obj.id);

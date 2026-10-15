@@ -1,102 +1,63 @@
 #pragma once
-
-#include "pikdraw/vector/selection/selection_model.hpp"
-#include "pikdraw/vector/tools/shape_tools.hpp"
-#include "pikdraw/vector/gestures/transform_gesture.hpp"
 #include "pikdraw/vector/gestures/style_tool.hpp"
 #include "pikdraw/vector/gestures/text_tool.hpp"
-#include "pikdraw/document/document.hpp"
-
+#include "pikdraw/vector/gestures/transform_gesture.hpp"
+#include "pikdraw/vector/selection/selection_model.hpp"
+#include "pikdraw/vector/tools/shape_tools.hpp"
 namespace pikdraw::vector {
-
-enum class ToolMode {
-    Select,
-    Rectangle,
-    Ellipse,
-    Text
-};
-
-/// High-level Vector Tool Controller coordinating selection, shape tools, and gestures
+enum class ToolMode { Select, Rectangle, Ellipse, Text };
 class VectorController {
-public:
-    explicit VectorController(ToolMode initial_mode = ToolMode::Select)
-        : current_mode_(initial_mode) {}
-
-    [[nodiscard]] ToolMode mode() const noexcept { return current_mode_; }
+  public:
+    explicit VectorController(ToolMode mode = ToolMode::Select) : mode_(mode) {}
+    ToolMode mode() const noexcept {
+        return mode_;
+    }
     void set_mode(ToolMode mode) noexcept {
-        current_mode_ = mode;
-        gesture_.cancel();
+        on_escape();
+        mode_ = mode;
     }
-
-    [[nodiscard]] SelectionModel& selection() noexcept { return selection_; }
-    [[nodiscard]] const SelectionModel& selection() const noexcept { return selection_; }
-
-    [[nodiscard]] TransformGesture& gesture() noexcept { return gesture_; }
-    [[nodiscard]] const TransformGesture& gesture() const noexcept { return gesture_; }
-
-    /// Handles pointer down in world mm coordinates
-    void on_pointer_down(geometry::Point2D pt_mm, const document::DocumentSnapshot& snapshot) {
-        if (current_mode_ == ToolMode::Select) {
-            auto hit_id = SelectionModel::hit_test(pt_mm, snapshot);
-            if (hit_id) {
-                if (!selection_.is_selected(*hit_id)) {
-                    selection_.select(*hit_id, SelectionMode::Replace);
-                }
-                gesture_.begin(pt_mm, selection_.selected_ids());
-            } else {
-                selection_.clear();
-            }
-        }
+    void set_active_layer(size_t index) noexcept {
+        on_escape();
+        layer_ = index;
     }
-
-    /// Handles pointer move in world mm coordinates
-    [[nodiscard]] geometry::Transform2D on_pointer_move(geometry::Point2D pt_mm) {
-        if (gesture_.is_active()) {
-            return gesture_.update(pt_mm);
-        }
-        return geometry::Transform2D::identity();
+    SelectionModel &selection() noexcept {
+        return selection_;
     }
-
-    /// Handles pointer up in world mm coordinates, committing transactions
-    document::CommandResult on_pointer_up(geometry::Point2D pt_mm, document::Document& doc) {
-        if (gesture_.is_active()) {
-            return gesture_.commit(doc);
-        } else if (current_mode_ == ToolMode::Rectangle) {
-            auto rect = geometry::Rect2D{pt_mm.x, pt_mm.y, 100.0, 60.0};
-            auto obj = ShapeFactory::create_rectangle(rect);
-            auto cmd = std::make_unique<document::AddObjectCommand>(obj);
-            selection_.select(obj.id);
-            return doc.execute_command(std::move(cmd));
-        } else if (current_mode_ == ToolMode::Ellipse) {
-            auto obj = ShapeFactory::create_ellipse(pt_mm, 50.0, 30.0);
-            auto cmd = std::make_unique<document::AddObjectCommand>(obj);
-            selection_.select(obj.id);
-            return doc.execute_command(std::move(cmd));
-        }
-        return document::CommandResult::ok();
+    const SelectionModel &selection() const noexcept {
+        return selection_;
     }
-
-    /// Cancels active gesture on Escape key press
+    TransformGesture &gesture() noexcept {
+        return gesture_;
+    }
+    const TransformGesture &gesture() const noexcept {
+        return gesture_;
+    }
+    const HitDiagnostics &last_hit_diagnostics() const noexcept {
+        return hit_diagnostics_;
+    }
+    void on_pointer_down(geometry::Point2D point, const document::DocumentSnapshot &snapshot);
+    geometry::Transform2D on_pointer_move(geometry::Point2D point);
+    document::CommandResult on_pointer_up(geometry::Point2D point, document::Document &doc);
+    std::optional<geometry::Rect2D> shape_preview() const noexcept;
     void on_escape() noexcept {
         gesture_.cancel();
+        shape_active_ = false;
     }
+    document::CommandResult delete_selected(document::Document &doc);
+    document::CommandResult
+    insert_text(document::Document &doc, geometry::Point2D point, std::string text,
+                typography::FontIdentity font = typography::FontIdentity::make_default());
 
-    /// Deletes currently selected objects in a single atomic transaction
-    document::CommandResult delete_selected(document::Document& doc) {
-        if (selection_.empty()) return document::CommandResult::ok();
-
-        auto composite = std::make_unique<document::CompositeCommand>("Delete Selected");
-        for (auto id : selection_.selected_ids()) {
-            composite->add_command(std::make_unique<document::RemoveObjectCommand>(id));
-        }
-        selection_.clear();
-        return doc.execute_command(std::move(composite));
-    }
-
-private:
-    ToolMode current_mode_{ToolMode::Select};
+  private:
+    void bind_selection(const document::DocumentSnapshot &snapshot);
+    bool valid_layer(const document::DocumentSnapshot &snapshot) const;
+    ToolMode mode_;
+    size_t layer_{0};
     SelectionModel selection_;
+    HitDiagnostics hit_diagnostics_;
     TransformGesture gesture_;
+    GestureStamp selection_stamp_, shape_stamp_;
+    bool shape_active_{false};
+    geometry::Point2D start_, current_;
 };
-
 } // namespace pikdraw::vector

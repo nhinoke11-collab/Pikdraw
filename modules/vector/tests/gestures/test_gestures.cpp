@@ -1,106 +1,132 @@
+#include "../test_support.hpp"
 #include "pikdraw/vector/vector_controller.hpp"
-#include "pikdraw/color/preview/color_transform.hpp"
-#include <cassert>
-#include <iostream>
-
+#include <limits>
 using namespace pikdraw;
-using namespace pikdraw::vector;
-using namespace pikdraw::document;
-
-void test_transform_gesture_commit_and_undo() {
-    Document doc("doc-gesture-test");
-    auto rect = ShapeFactory::create_rectangle(geometry::Rect2D{0, 0, 100, 100});
-    auto id = rect.id;
-    doc.execute_command(std::make_unique<AddObjectCommand>(rect));
-    assert(doc.revision() == 1);
-
+using namespace vector;
+using namespace document;
+void gestures() {
+    Document doc("gestures");
+    auto p = ShapeFactory::create_rectangle({0, 0, 100, 100});
+    CHECK(doc.execute_command(std::make_unique<AddObjectCommand>(p)).success);
     TransformGesture gesture;
-    gesture.begin(geometry::Point2D{50, 50}, {id});
-    assert(gesture.is_active());
-
-    // Transient updates during drag
-    auto delta1 = gesture.update(geometry::Point2D{80, 70});
-    assert(delta1.tx == 30.0);
-    assert(delta1.ty == 20.0);
-    assert(doc.revision() == 1); // Dragging does NOT bump document revision!
-
-    // Commit on pointer up
-    auto res = gesture.commit(doc);
-    assert(res.success);
-    assert(doc.revision() == 2); // Exactly 1 revision bump on commit!
-
-    auto snap = doc.current_snapshot();
-    auto obj = snap->get_object(id);
-    assert(obj.has_value());
-    const auto& po = std::get<PathObject>(*obj);
-    assert(po.transform.tx == 30.0);
-    assert(po.transform.ty == 20.0);
-
-    // Single undo undos the entire drag gesture
-    doc.undo();
-    assert(doc.revision() == 3);
-    auto undone_obj = doc.current_snapshot()->get_object(id);
-    const auto& undone_po = std::get<PathObject>(*undone_obj);
-    assert(undone_po.transform.tx == 0.0);
-    assert(undone_po.transform.ty == 0.0);
-}
-
-void test_gesture_cancel_on_escape() {
-    Document doc("doc-cancel-test");
-    auto rect = ShapeFactory::create_rectangle(geometry::Rect2D{0, 0, 50, 50});
-    doc.execute_command(std::make_unique<AddObjectCommand>(rect));
-    assert(doc.revision() == 1);
-
-    TransformGesture gesture;
-    gesture.begin(geometry::Point2D{25, 25}, {rect.id});
-    (void)gesture.update(geometry::Point2D{100, 100});
-
-    // Press Escape
+    CHECK(gesture.begin({0, 0}, {p.id}, *doc.current_snapshot()));
+    const auto revision = doc.revision();
+    (void)gesture.update({20, 30});
+    CHECK(doc.revision() == revision);
+    CHECK(gesture.commit(doc).success && doc.revision() == revision + 1);
+    CHECK(doc.undo());
+    CHECK(std::get<PathObject>(*doc.current_snapshot()->get_object(p.id)).transform.tx == 0);
+    VectorController c;
+    c.on_pointer_down({10, 10}, *doc.current_snapshot());
+    CHECK(c.on_pointer_up({60, 70}, doc).success); // no move event
+    const auto moved = std::get<PathObject>(*doc.current_snapshot()->get_object(p.id));
+    CHECK(near(moved.transform.tx, 50) && near(moved.transform.ty, 60));
+    CHECK(gesture.begin({0, 0}, {p.id}, *doc.current_snapshot()));
+    CHECK(doc.undo());
+    (void)gesture.update({1, 1});
+    CHECK(!gesture.commit(doc).success);
+    CHECK(gesture.begin({0, 0}, {p.id}, *doc.current_snapshot()));
     gesture.cancel();
-    assert(!gesture.is_active());
-    assert(doc.revision() == 1); // Document remains untouched!
+    CHECK(!gesture.commit(doc).success);
+    CHECK(gesture.begin({0, 0}, {p.id}, *doc.current_snapshot()));
+    (void)gesture.update({std::numeric_limits<double>::infinity(), 0});
+    CHECK(!gesture.is_active());
+    CHECK(gesture.begin({0, 0}, {p.id}, *doc.current_snapshot()));
+    (void)gesture.update({1, 1});
+    Document reopened(*doc.current_snapshot());
+    const auto reopened_revision = reopened.revision();
+    CHECK(!gesture.commit(reopened).success && reopened.revision() == reopened_revision);
+    CHECK(gesture.begin({0, 0}, {p.id}, *doc.current_snapshot()));
+    (void)gesture.update({1, 1});
+    doc.close();
+    CHECK(!gesture.commit(doc).success);
 }
-
-void test_style_and_vietnamese_text_commands() {
-    Document doc("doc-style-text-test");
-
-    // Test text update with Vietnamese Unicode (NFC and combining marks)
-    TextObject to;
-    to.id = generate_object_id();
-    to.text = "Ban đầu";
-    to.position = {10, 10};
-    doc.execute_command(std::make_unique<AddObjectCommand>(to));
-    assert(doc.revision() == 1);
-
-    std::string vi_text = "Cộng hòa Xã hội Chủ nghĩa Việt Nam";
-    doc.execute_command(std::make_unique<UpdateTextCommand>(to.id, vi_text));
-    assert(doc.revision() == 2);
-
-    auto snap = doc.current_snapshot();
-    auto text_obj = std::get<TextObject>(*snap->get_object(to.id));
-    assert(text_obj.text == vi_text);
-
-    // Undo text update
-    doc.undo();
-    assert(doc.revision() == 3);
-    auto undone_text = std::get<TextObject>(*doc.current_snapshot()->get_object(to.id));
-    assert(undone_text.text == "Ban đầu");
-
-    // Test Style update
-    auto new_fill = color::RGBColor{0.9, 0.1, 0.1, 1.0};
-    doc.execute_command(std::make_unique<SetObjectStyleCommand>(
-        to.id, new_fill, std::nullopt, std::nullopt));
-    assert(doc.revision() == 4);
-    auto styled_text = std::get<TextObject>(*doc.current_snapshot()->get_object(to.id));
-    auto rgb = color::to_preview_rgba(styled_text.fill);
-    assert(std::abs(rgb.r - 0.9f) < 1e-3);
+void properties() {
+    Document doc("styles");
+    auto p = ShapeFactory::create_rectangle({0, 0, 10, 10});
+    p.has_fill = false;
+    p.has_stroke = false;
+    CHECK(doc.execute_command(std::make_unique<AddObjectCommand>(p)).success);
+    auto red = color::RGBColor{1, 0, 0, .4};
+    CHECK(doc.execute_command(std::make_unique<SetObjectStyleCommand>(p.id, red, red, 2.5)).success);
+    auto q = std::get<PathObject>(*doc.current_snapshot()->get_object(p.id));
+    CHECK(q.has_fill && q.has_stroke && near(q.stroke_width_mm, 2.5));
+    CHECK(doc.undo());
+    q = std::get<PathObject>(*doc.current_snapshot()->get_object(p.id));
+    CHECK(!q.has_fill && !q.has_stroke && near(q.stroke_width_mm, 1));
+    CHECK(doc.redo());
+    CHECK(doc.execute_command(std::make_unique<SetObjectStyleCommand>(p.id, std::nullopt, std::nullopt,
+                                                                      std::nullopt, false, false))
+              .success);
+    q = std::get<PathObject>(*doc.current_snapshot()->get_object(p.id));
+    CHECK(!q.has_fill && !q.has_stroke);
+    const auto revision = doc.revision();
+    CHECK(!doc.execute_command(std::make_unique<SetObjectStyleCommand>(p.id, std::nullopt, std::nullopt, -1))
+               .success);
+    CHECK(doc.revision() == revision);
+    TextObject t;
+    t.id = generate_object_id();
+    t.text = "Cũ";
+    CHECK(doc.execute_command(std::make_unique<AddObjectCommand>(t)).success);
+    auto font = t.font;
+    font.family_name = "Requested missing font";
+    font.postscript_name = "RequestedPS";
+    font.weight = 700;
+    font.italic = true;
+    font.size_pt = 24;
+    CHECK(doc.execute_command(std::make_unique<UpdateTextCommand>(
+                                  t.id, std::optional<std::string>{"Việt Nam a\u0301"}, font))
+              .success);
+    const auto updated = std::get<TextObject>(*doc.current_snapshot()->get_object(t.id));
+    CHECK(updated.text == "Việt Nam a\u0301" && updated.font.family_name == font.family_name);
+    CHECK(updated.font.postscript_name == "RequestedPS" && updated.font.italic &&
+          near(updated.font.size_pt, 24));
+    CHECK(doc.undo());
+    const auto old = std::get<TextObject>(*doc.current_snapshot()->get_object(t.id));
+    CHECK(old.text == "Cũ" && old.font.family_name == t.font.family_name);
+    CHECK(doc.redo());
+    const auto rev = doc.revision();
+    CHECK(!doc.execute_command(std::make_unique<SetObjectStyleCommand>(t.id, std::nullopt, red, std::nullopt))
+               .success);
+    CHECK(doc.revision() == rev);
+    font.size_pt = -1;
+    CHECK(!doc.execute_command(std::make_unique<SetTextFontCommand>(t.id, font)).success);
+    CHECK(doc.revision() == rev);
 }
-
+void atomic_property_composition() {
+    Document doc("atomic-properties");
+    auto p = ShapeFactory::create_rectangle({0, 0, 10, 10});
+    const auto red = color::RGBColor{1, 0, 0, 1};
+    const auto blue = color::RGBColor{0, 0, 1, 1};
+    auto transaction = std::make_unique<CompositeCommand>("Add and style atomically");
+    transaction->add_command(std::make_unique<AddObjectCommand>(p));
+    transaction->add_command(std::make_unique<SetObjectStyleCommand>(p.id, red, std::nullopt, std::nullopt));
+    transaction->add_command(std::make_unique<SetObjectStyleCommand>(p.id, std::nullopt, blue, 3));
+    CHECK(doc.execute_command(std::move(transaction)).success);
+    CHECK(doc.revision() == 1);
+    const auto result = std::get<PathObject>(*doc.current_snapshot()->get_object(p.id));
+    CHECK(std::get<color::RGBColor>(result.fill.payload()).r == 1);
+    CHECK(std::get<color::RGBColor>(result.stroke.payload()).b == 1);
+    CHECK(near(result.stroke_width_mm, 3));
+    CHECK(doc.undo() && doc.current_snapshot()->object_count() == 0);
+    CHECK(doc.redo() && doc.current_snapshot()->object_count() == 1);
+    TextObject text;
+    text.id = generate_object_id();
+    text.text = "before";
+    CHECK(doc.execute_command(std::make_unique<AddObjectCommand>(text)).success);
+    auto font = text.font;
+    font.size_pt = 36;
+    transaction = std::make_unique<CompositeCommand>("Text and font atomically");
+    transaction->add_command(std::make_unique<UpdateTextCommand>(text.id, "after"));
+    transaction->add_command(std::make_unique<SetTextFontCommand>(text.id, font));
+    CHECK(doc.execute_command(std::move(transaction)).success);
+    const auto updated = std::get<TextObject>(*doc.current_snapshot()->get_object(text.id));
+    CHECK(updated.text == "after" && near(updated.font.size_pt, 36));
+}
 int main() {
-    std::cout << "[test_gestures] Running vector gestures tests...\n";
-    test_transform_gesture_commit_and_undo();
-    test_gesture_cancel_on_escape();
-    test_style_and_vietnamese_text_commands();
-    std::cout << "[test_gestures] All tests passed!\n";
-    return 0;
+    return run([] {
+        gestures();
+        properties();
+        atomic_property_composition();
+    });
 }

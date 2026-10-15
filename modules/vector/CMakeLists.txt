@@ -7,6 +7,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(pikdraw_vector STATIC
     src/vector_controller.cpp
+    src/selection/hit_test.cpp
+    src/selection/hit_geometry.cpp
+    src/gestures/style_tool.cpp
+    src/gestures/text_tool.cpp
 )
 
 target_include_directories(pikdraw_vector PUBLIC
