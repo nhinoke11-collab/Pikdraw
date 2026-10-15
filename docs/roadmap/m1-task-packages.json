@@ -1,0 +1,801 @@
+{
+  "schema_version": 1,
+  "kind": "m1-checkpoint-plan",
+  "status": "specification-not-dispatched",
+  "updated_at": "2026-10-15",
+  "parent_catalog": "docs/roadmap/post-spike-tasks.json",
+  "implementation_plan": "docs/roadmap/m1-implementation.md",
+  "source_layout_policy": "docs/development/code-organization.md",
+  "entry_conditions": [
+    "ps00, ps01, ps02 independently accepted and integrated; foundation-accepted true.",
+    "Pin actual integrated SHA, contract versions, fixture/oracle/budget/dependency revisions before creating a runtime task."
+  ],
+  "lease_policy": "Parent task holds the module lease and executes its checkpoints serially. Checkpoint IDs are not runnable board tasks or additional leases. For intra-module parallelism, replace the parent lease with separately scoped disjoint tasks and a module integration owner.",
+  "file_map_policy": "Paths are proposed feature groups, not created files, public API locks or ownership grants. Follow the M0-approved API layout and the exact parent task scope. Do not read this entire catalog into each agent context.",
+  "handoff_required": [
+    "parent_id and checkpoint_ids",
+    "base/head and integrated_dependency_shas",
+    "contract/fixture/oracle/baseline revisions",
+    "actual file map and code-size/exception report",
+    "commands, exit_codes, test_counts, skips and negative cases",
+    "toolchain/dependencies/machine metadata",
+    "source/executable/artifact hashes with locations",
+    "limits, independent reviewer and next_action"
+  ],
+  "packages": [
+    {
+      "id": "m1-03a-primitives",
+      "parent_task": "ps03-geometry",
+      "module": "geometry",
+      "depends_on_checkpoints": [],
+      "contracts": [
+        "C1"
+      ],
+      "goal": "Tiếp nhận geometry B thành source primitives/curves có validation và API C1 nhỏ.",
+      "suggested_feature_paths": [
+        "core/geometry/include/pikdraw/geometry/primitives",
+        "core/geometry/src/primitives",
+        "core/geometry/tests/primitives",
+        "core/geometry/include/pikdraw/geometry/curves",
+        "core/geometry/src/curves",
+        "core/geometry/tests/curves"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "20 m/fine-detail/far-origin và transform/reflection/nonuniform vectors qua oracle.",
+        "Nonfinite/out-of-range có diagnostic; source curves không bị thay bởi LOD."
+      ],
+      "reviewer": "Reviewer geometry"
+    },
+    {
+      "id": "m1-03b-operations",
+      "parent_task": "ps03-geometry",
+      "module": "geometry",
+      "depends_on_checkpoints": [
+        "m1-03a-primitives"
+      ],
+      "contracts": [
+        "C1"
+      ],
+      "goal": "Tách flattening, Boolean/offset subset được M0 nhận và error budgets.",
+      "suggested_feature_paths": [
+        "core/geometry/include/pikdraw/geometry/flattening",
+        "core/geometry/src/flattening",
+        "core/geometry/tests/flattening",
+        "core/geometry/include/pikdraw/geometry/operations",
+        "core/geometry/src/operations",
+        "core/geometry/tests/operations"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "Topology/holes/near-contact/degenerate trong supported subset có oracle; unsupported từ chối rõ.",
+        "Budget approximation/quantization/algorithm được report riêng; failed job giữ output/source cũ."
+      ],
+      "reviewer": "Reviewer geometry"
+    },
+    {
+      "id": "m1-04a-source-color",
+      "parent_task": "ps04-color",
+      "module": "color",
+      "depends_on_checkpoints": [],
+      "contracts": [
+        "C4"
+      ],
+      "goal": "Giữ source RGB/CMYK/spot/ICC/overprint và profile resource identity.",
+      "suggested_feature_paths": [
+        "core/color/include/pikdraw/color/values",
+        "core/color/src/values",
+        "core/color/tests/values",
+        "core/color/include/pikdraw/color/profiles",
+        "core/color/src/profiles",
+        "core/color/tests/profiles"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "Copy/value validation giữ toàn metadata và provenance theo C4.",
+        "Profile/font fixtures có quyền/checksum; chưa claim proof/separations."
+      ],
+      "reviewer": "Reviewer color"
+    },
+    {
+      "id": "m1-04b-preview-color",
+      "parent_task": "ps04-color",
+      "module": "color",
+      "depends_on_checkpoints": [
+        "m1-04a-source-color"
+      ],
+      "contracts": [
+        "C4"
+      ],
+      "goal": "Preview transform/cache và diagnostic khi đổi/mất/hỏng profile.",
+      "suggested_feature_paths": [
+        "core/color/include/pikdraw/color/preview",
+        "core/color/src/preview",
+        "core/color/tests/preview"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "Reference swatches đúng policy M0; đổi profile invalidates cache.",
+        "Không mutate source hoặc silently substitute profile; lỗi có trạng thái dùng cho UI."
+      ],
+      "reviewer": "Reviewer color"
+    },
+    {
+      "id": "m1-05a-shell",
+      "parent_task": "ps05-native-preview",
+      "module": "desktop",
+      "depends_on_checkpoints": [],
+      "contracts": [
+        "C3",
+        "C7"
+      ],
+      "goal": "Shell native với action routing/docks/forms và presenters development.",
+      "suggested_feature_paths": [
+        "apps/desktop/src/shell",
+        "apps/desktop/tests/shell",
+        "apps/desktop/src/actions",
+        "apps/desktop/tests/actions",
+        "apps/desktop/src/presenters",
+        "apps/desktop/tests/presenters",
+        "apps/desktop/ui/panels",
+        "apps/desktop/themes",
+        "apps/desktop/icons"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "Menu/dock/workspace/status thực sự chạy; placeholder capability rõ.",
+        "1366x768/1080p, DPI 100/150/200%, keyboard/focus và chuỗi Việt dài có evidence."
+      ],
+      "reviewer": "Reviewer desktop/UX"
+    },
+    {
+      "id": "m1-05b-ui-reload",
+      "parent_task": "ps05-native-preview",
+      "module": "desktop",
+      "depends_on_checkpoints": [
+        "m1-05a-shell"
+      ],
+      "contracts": [
+        "C3",
+        "C7"
+      ],
+      "goal": "Reload panel/form/QSS trong dev qua widget allowlist và rollback.",
+      "suggested_feature_paths": [
+        "apps/desktop/src/development",
+        "apps/desktop/tests/development"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "50 reload không tích lũy handler/widget; malformed form giữ UI cũ.",
+        "Giữ viewport/service state; drag/IME policy và callback generation guard; release không load loose plugins."
+      ],
+      "reviewer": "Reviewer desktop/lifecycle"
+    },
+    {
+      "id": "m1-06a-shaping",
+      "parent_task": "ps06-typography",
+      "module": "typography",
+      "depends_on_checkpoints": [
+        "m1-03b-operations"
+      ],
+      "contracts": [
+        "C1",
+        "C4"
+      ],
+      "goal": "Trusted-font resolver/shaping và source font identity theo M0 backend.",
+      "suggested_feature_paths": [
+        "core/typography/include/pikdraw/typography/fonts",
+        "core/typography/src/fonts",
+        "core/typography/tests/fonts",
+        "core/typography/include/pikdraw/typography/shaping",
+        "core/typography/src/shaping",
+        "core/typography/tests/shaping"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "Unicode Việt NFC/NFD/combining-mark/cluster vectors so font fixture pin.",
+        "Missing font có diagnostic; font nhúng chưa có sandbox path không nạp trong host."
+      ],
+      "reviewer": "Reviewer typography"
+    },
+    {
+      "id": "m1-06b-layout",
+      "parent_task": "ps06-typography",
+      "module": "typography",
+      "depends_on_checkpoints": [
+        "m1-06a-shaping"
+      ],
+      "contracts": [
+        "C1",
+        "C4"
+      ],
+      "goal": "Layout, caret/selection mapping và outlines dẫn xuất khác source text.",
+      "suggested_feature_paths": [
+        "core/typography/include/pikdraw/typography/layout",
+        "core/typography/src/layout",
+        "core/typography/tests/layout",
+        "core/typography/include/pikdraw/typography/editing",
+        "core/typography/src/editing",
+        "core/typography/tests/editing",
+        "core/typography/include/pikdraw/typography/outlines",
+        "core/typography/src/outlines",
+        "core/typography/tests/outlines"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "Line breaks/advances/bounds/caret so oracle; Unicode source không normalize âm thầm.",
+        "Outlines/cache không làm mất khả năng edit hoặc font provenance."
+      ],
+      "reviewer": "Reviewer typography"
+    },
+    {
+      "id": "m1-07a-model-writer",
+      "parent_task": "ps07-document",
+      "module": "document",
+      "depends_on_checkpoints": [
+        "m1-03b-operations",
+        "m1-04b-preview-color",
+        "m1-06b-layout"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C4",
+        "C5"
+      ],
+      "goal": "Pages/layers/groups/path/text/image refs và writer transactions atomic.",
+      "suggested_feature_paths": [
+        "core/document/include/pikdraw/document/model",
+        "core/document/src/model",
+        "core/document/tests/model",
+        "core/document/include/pikdraw/document/commands",
+        "core/document/src/commands",
+        "core/document/tests/commands"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "Stable IDs/references và full source metadata giữ qua command.",
+        "Command lỗi/cancel không publish một phần; writer access guard và API consumer vectors qua."
+      ],
+      "reviewer": "Reviewer document"
+    },
+    {
+      "id": "m1-07b-snapshots-history",
+      "parent_task": "ps07-document",
+      "module": "document",
+      "depends_on_checkpoints": [
+        "m1-07a-model-writer"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C4",
+        "C5"
+      ],
+      "goal": "Immutable snapshots/index đồng revision, COW/history và bounded retention.",
+      "suggested_feature_paths": [
+        "core/document/include/pikdraw/document/snapshots",
+        "core/document/src/snapshots",
+        "core/document/tests/snapshots",
+        "core/document/include/pikdraw/document/index",
+        "core/document/src/index",
+        "core/document/tests/index",
+        "core/document/include/pikdraw/document/history",
+        "core/document/src/history",
+        "core/document/tests/history"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "Alias/multi-reader không mutate root; index/bounds cùng revision.",
+        "10k replay + undo/redo semantic oracle; revision đơn điệu, memory/commit/cleanup theo baseline."
+      ],
+      "reviewer": "Reviewer document/concurrency"
+    },
+    {
+      "id": "m1-07c-async-lifetime",
+      "parent_task": "ps07-document",
+      "module": "document",
+      "depends_on_checkpoints": [
+        "m1-07b-snapshots-history"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C4",
+        "C5"
+      ],
+      "goal": "Strict stale proposal gate, epoch/generation và view/source separation.",
+      "suggested_feature_paths": [
+        "core/document/include/pikdraw/document/async",
+        "core/document/src/async",
+        "core/document/tests/async"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "Schedules edit/delete/undo/redo/cancel/replacement/close-reopen từ chối 100% stale.",
+        "Recheck tại atomic commit; snapshot/assets lifetime đủ job; pan/zoom không tạo source revision."
+      ],
+      "reviewer": "Reviewer concurrency"
+    },
+    {
+      "id": "m1-08a-native-format",
+      "parent_task": "ps08-storage",
+      "module": "document",
+      "depends_on_checkpoints": [
+        "m1-07c-async-lifetime"
+      ],
+      "contracts": [
+        "C2",
+        "C4",
+        "C5"
+      ],
+      "goal": "Native codec/manifest/assets/migration và limits đúng C5, giữ source.",
+      "suggested_feature_paths": [
+        "core/document/include/pikdraw/document/storage/codec",
+        "core/document/src/storage/codec",
+        "core/document/tests/storage/codec",
+        "core/document/include/pikdraw/document/storage/migration",
+        "core/document/src/storage/migration",
+        "core/document/tests/storage/migration"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "IDs/curves/text/fonts/colors/assets round-trip theo golden fixtures.",
+        "Corrupt/truncated/count/depth/path/unknown version bị xử lý; không overwrite source khi load/migrate lỗi."
+      ],
+      "reviewer": "Reviewer storage"
+    },
+    {
+      "id": "m1-08b-save-recovery",
+      "parent_task": "ps08-storage",
+      "module": "document",
+      "depends_on_checkpoints": [
+        "m1-08a-native-format"
+      ],
+      "contracts": [
+        "C2",
+        "C4",
+        "C5"
+      ],
+      "goal": "Async save revision cố định, autosave/checkpoint và recovery bản riêng.",
+      "suggested_feature_paths": [
+        "core/document/include/pikdraw/document/storage/save",
+        "core/document/src/storage/save",
+        "core/document/tests/storage/save",
+        "core/document/include/pikdraw/document/storage/recovery",
+        "core/document/src/storage/recovery",
+        "core/document/tests/storage/recovery"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "Save r trong edit r+1 không clean r+1; không mixed chunks/assets revisions.",
+        "Fault serialize/write/flush/replace/checkpoint, disk-full/access-denied; durability đúng policy đã nhận."
+      ],
+      "reviewer": "Reviewer storage độc lập"
+    },
+    {
+      "id": "m1-09a-scene-backend",
+      "parent_task": "ps09-renderer",
+      "module": "rendering",
+      "depends_on_checkpoints": [
+        "m1-07c-async-lifetime"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C3",
+        "C4"
+      ],
+      "goal": "Render facade/snapshot input, precision conversion và backend owner.",
+      "suggested_feature_paths": [
+        "core/rendering/include/pikdraw/rendering/scene",
+        "core/rendering/src/scene",
+        "core/rendering/tests/scene",
+        "core/rendering/include/pikdraw/rendering/precision",
+        "core/rendering/src/precision",
+        "core/rendering/tests/precision",
+        "core/rendering/include/pikdraw/rendering/backends",
+        "core/rendering/src/backends",
+        "core/rendering/tests/backends"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "Transform/subtract double trước local float; geometry nguồn unchanged.",
+        "Mixed shapes/text/image/correctness vectors qua; renderer không expose native types ra storage/plugin."
+      ],
+      "reviewer": "Reviewer graphics"
+    },
+    {
+      "id": "m1-09b-cache-recovery",
+      "parent_task": "ps09-renderer",
+      "module": "rendering",
+      "depends_on_checkpoints": [
+        "m1-09a-scene-backend"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C3",
+        "C4"
+      ],
+      "goal": "Culling/chunking/cache/invalidation, software/recovery và raw metrics.",
+      "suggested_feature_paths": [
+        "core/rendering/include/pikdraw/rendering/culling",
+        "core/rendering/src/culling",
+        "core/rendering/tests/culling",
+        "core/rendering/include/pikdraw/rendering/cache",
+        "core/rendering/src/cache",
+        "core/rendering/tests/cache",
+        "core/rendering/include/pikdraw/rendering/recovery",
+        "core/rendering/src/recovery",
+        "core/rendering/tests/recovery",
+        "core/rendering/include/pikdraw/rendering/metrics",
+        "core/rendering/src/metrics",
+        "core/rendering/tests/metrics"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "Zoom-to-fit/large-path/new-tiles/edit/font/profile/DPI và compositing fixtures qua.",
+        "Present/input/memory trên reference machines, GPU init failure/recoverable device loss đạt baseline; không claim fatal driver survival."
+      ],
+      "reviewer": "Reviewer graphics/performance"
+    },
+    {
+      "id": "m1-10a-selection-shapes",
+      "parent_task": "ps10-vector-basics",
+      "module": "vector",
+      "depends_on_checkpoints": [
+        "m1-07c-async-lifetime"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C4",
+        "C7"
+      ],
+      "goal": "Selection/hit-test model-space, rectangle/ellipse/basic path commands.",
+      "suggested_feature_paths": [
+        "modules/vector/include/pikdraw/vector/selection",
+        "modules/vector/src/selection",
+        "modules/vector/tests/selection",
+        "modules/vector/include/pikdraw/vector/tools/shapes",
+        "modules/vector/src/tools/shapes",
+        "modules/vector/tests/tools/shapes",
+        "modules/vector/include/pikdraw/vector/commands",
+        "modules/vector/src/commands",
+        "modules/vector/tests/commands"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "Create-select-delete và unit/zoom/scale hit-test oracle qua.",
+        "Không Qt widget trong module; selection view state và command mutations phân biệt."
+      ],
+      "reviewer": "Reviewer vector/document"
+    },
+    {
+      "id": "m1-10b-edit-gestures",
+      "parent_task": "ps10-vector-basics",
+      "module": "vector",
+      "depends_on_checkpoints": [
+        "m1-10a-selection-shapes"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C4",
+        "C7"
+      ],
+      "goal": "Transform/text/style/delete gesture với transient preview và atomic undo.",
+      "suggested_feature_paths": [
+        "modules/vector/include/pikdraw/vector/tools/transform",
+        "modules/vector/src/tools/transform",
+        "modules/vector/tests/tools/transform",
+        "modules/vector/include/pikdraw/vector/tools/text",
+        "modules/vector/src/tools/text",
+        "modules/vector/tests/tools/text",
+        "modules/vector/include/pikdraw/vector/tools/style",
+        "modules/vector/src/tools/style",
+        "modules/vector/tests/tools/style",
+        "modules/vector/include/pikdraw/vector/interaction",
+        "modules/vector/src/interaction",
+        "modules/vector/tests/interaction"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "Một gesture một undo; Escape/focus loss/invalid input không half-commit.",
+        "Việt text/source fonts giữ; public input-independent API đủ để ps13 bridge IME/UI."
+      ],
+      "reviewer": "Reviewer vector/typography"
+    },
+    {
+      "id": "m1-11a-worker-import",
+      "parent_task": "ps11-interop-core",
+      "module": "interop",
+      "depends_on_checkpoints": [
+        "m1-07c-async-lifetime"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C4",
+        "C5",
+        "C6"
+      ],
+      "goal": "Format subset capabilities và worker-side format/image codecs.",
+      "suggested_feature_paths": [
+        "modules/interop/include/pikdraw/interop/capabilities",
+        "modules/interop/src/capabilities",
+        "modules/interop/tests/capabilities",
+        "modules/interop/include/pikdraw/interop/adapters",
+        "modules/interop/src/adapters",
+        "modules/interop/tests/adapters",
+        "modules/interop/include/pikdraw/interop/images",
+        "modules/interop/src/images",
+        "modules/interop/tests/images"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "Mỗi format/version/feature có fixture/checksum/license và explicit unsupported.",
+        "Third-party format/JPEG/PNG decoders chỉ thuộc worker targets; interop không spawn host hoặc depend workers/desktop."
+      ],
+      "reviewer": "Reviewer interop/license"
+    },
+    {
+      "id": "m1-11b-validation-output",
+      "parent_task": "ps11-interop-core",
+      "module": "interop",
+      "depends_on_checkpoints": [
+        "m1-11a-worker-import"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C4",
+        "C5",
+        "C6"
+      ],
+      "goal": "Host result validation/loss reports và output writer subset M0.",
+      "suggested_feature_paths": [
+        "modules/interop/include/pikdraw/interop/validation",
+        "modules/interop/src/validation",
+        "modules/interop/tests/validation",
+        "modules/interop/include/pikdraw/interop/reports",
+        "modules/interop/src/reports",
+        "modules/interop/tests/reports",
+        "modules/interop/include/pikdraw/interop/writers",
+        "modules/interop/src/writers",
+        "modules/interop/tests/writers"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "Import-edit-native-reopen-export so oracle độc lập, extents/units/source fidelity rõ.",
+        "Nonfinite/oversized/deep/invalid references và partial write không thành success; main host link graph không kéo parser."
+      ],
+      "reviewer": "Reviewer interop/fidelity"
+    },
+    {
+      "id": "m1-12a-process-containment",
+      "parent_task": "ps12-worker-host",
+      "module": "workers",
+      "depends_on_checkpoints": [
+        "m1-11b-validation-output"
+      ],
+      "contracts": [
+        "C2",
+        "C6"
+      ],
+      "goal": "Worker composition, process-tree limits/permissions và bounded IPC.",
+      "suggested_feature_paths": [
+        "platform/workers/include/pikdraw/workers/launcher",
+        "platform/workers/src/launcher",
+        "platform/workers/tests/launcher",
+        "platform/workers/include/pikdraw/workers/containment",
+        "platform/workers/src/containment",
+        "platform/workers/tests/containment",
+        "platform/workers/include/pikdraw/workers/ipc",
+        "platform/workers/src/ipc",
+        "platform/workers/tests/ipc"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "Five OS-denied canaries có positive controls; đúng sandbox identity và exact executable hash.",
+        "Enforce CPU/memory/time/process limits; malformed/truncated/stalled IPC và crash/hang cleanup thật."
+      ],
+      "reviewer": "Reviewer containment"
+    },
+    {
+      "id": "m1-12b-jobs-cancellation",
+      "parent_task": "ps12-worker-host",
+      "module": "workers",
+      "depends_on_checkpoints": [
+        "m1-12a-process-containment"
+      ],
+      "contracts": [
+        "C2",
+        "C6"
+      ],
+      "goal": "Bounded jobs/bytes queue, cancel/replacement/restart và sink DTO.",
+      "suggested_feature_paths": [
+        "platform/workers/include/pikdraw/workers/jobs",
+        "platform/workers/src/jobs",
+        "platform/workers/tests/jobs",
+        "platform/workers/include/pikdraw/workers/lifecycle",
+        "platform/workers/src/lifecycle",
+        "platform/workers/tests/lifecycle"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "Late/cancel/retry không double-deliver; cleanup process/handle, backpressure có trạng thái.",
+        "Không trực tiếp mutate document; delivery sink do host inject, writer rechecks C2 tại ps13."
+      ],
+      "reviewer": "Reviewer containment/concurrency"
+    },
+    {
+      "id": "m1-13a-composition",
+      "parent_task": "ps13-vertical-slice",
+      "module": "desktop",
+      "depends_on_checkpoints": [
+        "m1-05b-ui-reload",
+        "m1-08b-save-recovery",
+        "m1-09b-cache-recovery",
+        "m1-10b-edit-gestures",
+        "m1-11b-validation-output",
+        "m1-12b-jobs-cancellation"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C3",
+        "C4",
+        "C5",
+        "C6",
+        "C7"
+      ],
+      "goal": "Compose services/executors/render owner thật và bind shell theo C1–C7.",
+      "suggested_feature_paths": [
+        "apps/desktop/src/runtime",
+        "apps/desktop/tests/runtime",
+        "apps/desktop/src/bindings",
+        "apps/desktop/tests/bindings"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "Core nhận injected interfaces, không include desktop; chỉ link actual M1 services.",
+        "Close/shutdown ownership/callback guards và queues có lifecycle, không recreating services khi reload panel."
+      ],
+      "reviewer": "Reviewer architecture/integration"
+    },
+    {
+      "id": "m1-13b-workflows",
+      "parent_task": "ps13-vertical-slice",
+      "module": "desktop",
+      "depends_on_checkpoints": [
+        "m1-13a-composition"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C3",
+        "C4",
+        "C5",
+        "C6",
+        "C7"
+      ],
+      "goal": "New/import/edit/text/undo/native/recovery/output và UI progress/cancel/report.",
+      "suggested_feature_paths": [
+        "apps/desktop/src/workflows",
+        "apps/desktop/tests/workflows",
+        "apps/desktop/src/presenters",
+        "apps/desktop/tests/presenters"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "Action enablement/dirty state/loss/error UI khớp services thật; mock không tham gia acceptance.",
+        "Pan/zoom khi save/compute subset/import; IME/focus/reload không mất document/history/view state."
+      ],
+      "reviewer": "Reviewer integration/UX"
+    },
+    {
+      "id": "m1-13c-acceptance",
+      "parent_task": "ps13-vertical-slice",
+      "module": "desktop",
+      "depends_on_checkpoints": [
+        "m1-13b-workflows"
+      ],
+      "contracts": [
+        "C1",
+        "C2",
+        "C3",
+        "C4",
+        "C5",
+        "C6",
+        "C7"
+      ],
+      "goal": "Chạy matrix M1-E01–E13 trên merged candidate với semantic/hardware evidence.",
+      "suggested_feature_paths": [
+        "tests/integration/vertical-slice/workflows",
+        "tests/integration/vertical-slice/faults",
+        "tests/integration/vertical-slice/hardware",
+        "apps/desktop/tests/acceptance"
+      ],
+      "deliverables": [
+        "Behavior và public/private file map theo goal, reuse spike đã nhận; không tạo stub target hoặc empty files.",
+        "Tests/oracle consumers, local CMake/README feature index và build/run/limits trong owned scope."
+      ],
+      "acceptance": [
+        "Mọi scenario bắt buộc có actual exit/test count/artifact/machine, independent review và exact integrated SHA.",
+        "Full-app present/input/memory/recovery giữ baseline; all fixtures source-preserving; known limits và M2 handoff rõ."
+      ],
+      "reviewer": "Reviewer tích hợp độc lập"
+    }
+  ]
+}

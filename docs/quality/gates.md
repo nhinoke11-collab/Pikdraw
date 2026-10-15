@@ -23,12 +23,15 @@ Harness hiện kiểm tra registry khai báo, lease và committed diff ở hando
 | --- | --- |
 | Actual ownership | Diff ngoài owned paths, kể cả rename/config; kiểm tra symlink/submodule/path escape và base/head đúng |
 | Actual dependencies | Include/import/link/re-export vượt registry hoặc vòng thực tế; không chỉ scan registry JSON |
+| Source organization | File mới/sửa vượt cap trong code-organization.md mà thiếu exception được review; minify/artificial parts/generated marker giả hoặc feature diff sửa size policy/oracle |
 | Contract semantics | Producer/consumer không đạt cùng vectors units/axes/transform/fill/winding/tolerance/revision/cancel/error |
 | Document invariants | IDs/references/index revisions sai, half-commit, stale response được áp dụng, undo mất dữ liệu |
 | Independent correctness | Geometry vượt tolerance/sai topology; interop mất metadata/text/color không report; thiếu oracle |
 | Integrated revision | Build/consumer tests và benchmarks liên quan fail trên merged SHA hoặc artifact không thuộc revision đó |
 
 Shared gates/oracles/fixtures chuẩn được bảo vệ ngoài quyền sửa tùy ý của task feature. Thay gate phải là scope riêng có review, không hạ threshold/đổi expected result để che regression. Geometry/interop/storage và breaking contracts có reviewer độc lập đủ chuyên môn.
+
+Áp dụng [quy tắc tổ chức mã](../development/code-organization.md) khi review: file theo feature/trách nhiệm, public/private boundary nhỏ, file map và physical/nonblank-line report. ps02 phải triển khai file-size checker/policy/exception registry và negative fixtures; hiện đây là rule review và yêu cầu tooling, chưa là gate tự động của harness. Legacy unchanged không buộc refactor; code spike được tiếp nhận vào runtime phải được tách trong scope module. Cap LOC không thay oracle correctness hoặc performance.
 
 Sanitizers khả dụng và stress schedules kiểm tra memory/race/lifetime; fuzz parser/IPC có size/time/resource limits. Các tools bổ sung không thay semantic oracle. Contract shape/schema pass không chứng minh units, topology hoặc cancellation đúng. Thử negative case mm/inch, reflection, near-tangent, undo rồi nhận job cũ và output sau cancel.
 
