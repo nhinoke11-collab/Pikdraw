@@ -1,4 +1,12 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "native_window_file_menu.hpp"
+
+#include <algorithm>
+#include <cmath>
+
+#ifdef _WIN32
+#include <windowsx.h>
+#endif
 
 namespace pikdraw::desktop {
 
@@ -104,64 +112,48 @@ void NativeWindow::handle_mouse_down(int x, int y) {
         return;
     }
 
-    // 1. Handle clicks inside or dismissing File Menu Dropdown (Corel Reference)
+    // File menu exposes only actions wired to the current document workflow.
     if (show_file_menu_) {
-        int mx = 236, my = 38, mw = 270, mh = 590;
+        const int mx = 402, my = 38, mw = 270, mh = file_menu_height();
         if (x >= mx && x <= mx + mw && y >= my && y <= my + mh) {
-            bool is_vi = (language_ == UILanguage::Vietnamese);
-            int rel_y = y - my - 4;
-            if (rel_y < 23) {
-                status_msg_ = is_vi ? "Tạo bản vẽ vector mới (Ctrl+N)" : "Created new vector document (Ctrl+N)";
-            } else if (rel_y < 46) {
-                open_home_screen();
-                set_active_home_tab(2);
-            } else if (rel_y < 69) {
-                status_msg_ = is_vi ? "Mở tệp bản vẽ (.pikdraw, .cdr, .svg, .dxf)" : "Open document (Ctrl+O)";
-            } else if (rel_y < 92) {
-                status_msg_ = is_vi ? "Đang kết nối kho lưu trữ đám mây Cloud..." : "Connecting to Cloud storage...";
-            } else if (rel_y < 115) {
-                open_recent_document(0);
-            } else if (rel_y >= 122 && rel_y < 145) {
-                status_msg_ = is_vi ? "Đã đóng tài liệu hiện tại" : "Closed current document";
-            } else if (rel_y >= 145 && rel_y < 168) {
-                status_msg_ = is_vi ? "Đã đóng tất cả tài liệu" : "Closed all documents";
-            } else if (rel_y >= 175 && rel_y < 198) {
-                status_msg_ = is_vi ? "Đã lưu tài liệu thành công (CRC32 Checksum Verified)" : "Document saved successfully (Ctrl+S)";
-            } else if (rel_y >= 198 && rel_y < 221) {
-                status_msg_ = is_vi ? "Lưu bản sao tài liệu (Ctrl+Shift+S)" : "Saved document copy (Ctrl+Shift+S)";
-            } else if (rel_y >= 221 && rel_y < 244) {
-                status_msg_ = is_vi ? "Đang đồng bộ bản vẽ lên đám mây Cloud..." : "Syncing document to cloud...";
-            } else if (rel_y >= 244 && rel_y < 267) {
-                status_msg_ = is_vi ? "Đã lưu vào danh mục mẫu thi công chuẩn" : "Saved as manufacturing template";
-            } else if (rel_y >= 267 && rel_y < 290) {
-                status_msg_ = is_vi ? "Khôi phục trạng thái bản vẽ gốc lúc mở" : "Reverted to original document";
-            } else if (rel_y >= 297 && rel_y < 320) {
-                status_msg_ = is_vi ? "Đang kết nối máy quét / TWAIN Scanner..." : "Connecting scanner/camera...";
-            } else if (rel_y >= 320 && rel_y < 343) {
-                status_msg_ = is_vi ? "Đã nhập vector SVG/DXF thành công (Ctrl+I)" : "Imported vector SVG/DXF (Ctrl+I)";
-            } else if (rel_y >= 343 && rel_y < 366) {
-                trigger_export();
-            } else if (rel_y >= 366 && rel_y < 389) {
-                status_msg_ = is_vi ? "Xuất tối ưu cho máy in bạt & máy cắt laser CNC" : "Exported for print & CNC cutters";
-            } else if (rel_y >= 389 && rel_y < 412) {
-                status_msg_ = is_vi ? "Mở Docker quản lý xuất file đa định dạng" : "Opened Export Docker";
-            } else if (rel_y >= 412 && rel_y < 435) {
-                status_msg_ = is_vi ? "Gửi trực tiếp đến máy cắt Decal / CNC" : "Sent to Vinyl/CNC Cutter";
-            } else if (rel_y >= 435 && rel_y < 458) {
-                status_msg_ = is_vi ? "Đã xuất file PDF CMYK chất lượng cao cho xưởng in!" : "Published high-resolution CMYK PDF!";
-            } else if (rel_y >= 465 && rel_y < 488) {
-                status_msg_ = is_vi ? "Trộn dữ liệu in tem nhãn hàng loạt (Print Merge)" : "Print Merge batch generator";
-            } else if (rel_y >= 488 && rel_y < 511) {
-                status_msg_ = is_vi ? "Đã gửi bản vẽ tới máy in chuyên dụng (Ctrl+P)" : "Sent print job to printer (Ctrl+P)";
-            } else if (rel_y >= 511 && rel_y < 534) {
-                status_msg_ = is_vi ? "Xem trước trang in (Print Preview: 100%)" : "Print Preview active";
-            } else if (rel_y >= 541 && rel_y < 564) {
-                status_msg_ = is_vi ? "Thuộc tính: 1850x420 mm | Màu: sRGB/CMYK | Đối tượng: 4" : "Properties: 1850x420 mm | Color: sRGB/CMYK";
-            } else if (rel_y >= 571) {
-                PostQuitMessage(0);
-                return;
-            }
+            const auto action = file_menu_action_at(y - my);
             close_file_menu();
+            if (!action)
+                return;
+            switch (*action) {
+            case FileMenuAction::NewDocument:
+                create_new_document();
+                break;
+            case FileMenuAction::Open:
+                open_document_dialog();
+                break;
+            case FileMenuAction::Save:
+                save_document_dialog();
+                break;
+            case FileMenuAction::SaveAs:
+                save_document_dialog(true);
+                break;
+            case FileMenuAction::ExportSvg:
+                export_svg_dialog();
+                break;
+            case FileMenuAction::Undo:
+                workflow_.undo();
+                root_.vector_controller().selection().clear();
+                status_msg_ = language_ == UILanguage::Vietnamese ? "Đã hoàn tác" : "Undo complete";
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                break;
+            case FileMenuAction::Redo:
+                workflow_.redo();
+                root_.vector_controller().selection().clear();
+                status_msg_ = language_ == UILanguage::Vietnamese ? "Đã làm lại" : "Redo complete";
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                break;
+            case FileMenuAction::Exit:
+                DestroyWindow(hwnd_);
+                break;
+            case FileMenuAction::Separator:
+                break;
+            }
             return;
         }
         close_file_menu();
@@ -222,14 +214,27 @@ void NativeWindow::handle_mouse_down(int x, int y) {
         }
     }
 
-    // Topbar Home Button [ 🏠 Trang chủ / 🎨 Bản vẽ ] (x: 148 to 232, y: 6 to 32)
-    if (x >= 148 && x <= 232 && y >= 6 && y <= 32) {
-        toggle_home_screen();
+    // Direct document actions: New, Open, Save, Undo, Redo.
+    if (y >= 6 && y <= 32 && x >= 148 && x < 402) {
+        if (x < 198) create_new_document();
+        else if (x < 248) open_document_dialog();
+        else if (x < 298) save_document_dialog();
+        else if (x < 350) {
+            workflow_.undo();
+            root_.vector_controller().selection().clear();
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã hoàn tác" : "Undo complete";
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        } else {
+            workflow_.redo();
+            root_.vector_controller().selection().clear();
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã làm lại" : "Redo complete";
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
         return;
     }
 
-    // Topbar Menu [ Tệp ] (x: 236 to 282, y: 6 to 32)
-    if (x >= 236 && x <= 282 && y >= 6 && y <= 32) {
+    // Compact File menu with only implemented document commands.
+    if (x >= 402 && x <= 456 && y >= 6 && y <= 32) {
         toggle_file_menu();
         return;
     }
@@ -247,19 +252,25 @@ void NativeWindow::handle_mouse_down(int x, int y) {
         return;
     }
 
-    // Workspace Pills (x: 520 to 790, y: 6 to 32)
-    int pill_x = 520;
-    if (y >= 6 && y <= 32) {
-        if (x >= pill_x && x < pill_x + 65) { set_active_workspace(0); return; }
-        if (x >= pill_x + 70 && x < pill_x + 135) { set_active_workspace(1); return; }
-        if (x >= pill_x + 140 && x < pill_x + 215) { set_active_workspace(2); return; }
-        if (x >= pill_x + 220 && x < pill_x + 270) { set_active_workspace(3); return; }
+    // The Vector 2D workspace is the only implemented workspace.
+    if (x >= 520 && x < 620 && y >= 6 && y <= 32) {
+        set_active_workspace(0);
+        return;
     }
 
-    // 4. Tool Strip (x: 6 to 46, y: 80 to 420)
+    // Space + left drag temporarily pans without changing the active tool.
+    if (space_down_ && is_canvas_point(x, y)) {
+        is_panning_ = true;
+        last_pointer_x_ = x;
+        last_pointer_y_ = y;
+        SetCapture(hwnd_);
+        return;
+    }
+
+    // 4. Tool Strip (x: 6 to 46)
     if (x >= 6 && x <= 46 && y >= 80) {
-        int tool_idx = (y - 80) / 42;
-        if (tool_idx >= 0 && tool_idx < 8) {
+        int tool_idx = (y - 82) / 42;
+        if (tool_idx >= 0 && tool_idx < 4) {
             set_active_tool(tool_idx);
             return;
         }
@@ -275,77 +286,176 @@ void NativeWindow::handle_mouse_down(int x, int y) {
         }
     }
 
-    // 6. Zoom buttons on status bar (x: w - 120 to w - 20, y: height - 26 to height)
+    // 6. Page and zoom controls in the status bar.
     if (y >= height_ - 26) {
+        if (x >= w - 210 && x <= w - 145) { fit_page_to_canvas(); return; }
         if (x >= w - 120 && x <= w - 95) { zoom_out(); return; }
+        if (x >= w - 90 && x <= w - 50) {
+            auto& camera = root_.renderer().camera();
+            const auto area = canvas_rect(width_, height_);
+            camera.set_viewport_size(area.right - area.left, area.bottom - area.top);
+            camera.set_zoom(1.0);
+            zoom_level_ = 100;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
         if (x >= w - 45 && x <= w - 20) { zoom_in(); return; }
     }
 
-    // 7. Canvas interaction: clicking/dragging the vector signboard object
-    int tool_w = 52;
-    int inspect_w = 280;
-    int canvas_w = w - tool_w - inspect_w;
-    int art_w = 660;
-    int art_x = tool_w + (canvas_w - art_w) / 2;
-    int art_y = 38 + 34 + 35;
-
-    int canvas_obj_x = art_x + 30 + static_cast<int>(shape_x_ * 0.15);
-    int canvas_obj_y = art_y + 40 + static_cast<int>(shape_y_ * 0.15);
-    int canvas_obj_w = 460;
-    int canvas_obj_h = 160;
-
-    if (x >= canvas_obj_x - 10 && x <= canvas_obj_x + canvas_obj_w + 10 &&
-        y >= canvas_obj_y - 10 && y <= canvas_obj_y + canvas_obj_h + 10) {
-        is_dragging_ = true;
-        drag_start_x_ = x;
-        drag_start_y_ = y;
-        drag_init_shape_x_ = shape_x_;
-        drag_init_shape_y_ = shape_y_;
-        status_msg_ = (language_ == UILanguage::Vietnamese) ?
-            "Đang di chuyển: AN PHÁT SIGNAGE 2026" :
-            "Moving: AN PHAT SIGNAGE 2026";
-        InvalidateRect(hwnd_, NULL, FALSE);
-    }
+    handle_canvas_mouse_down(x, y);
 }
 
 void NativeWindow::handle_mouse_move(int x, int y) {
-    cursor_mm_x_ = static_cast<double>(x - 102) * 2.0;
-    cursor_mm_y_ = static_cast<double>(y - 102) * 2.0;
-    if (cursor_mm_x_ < 0.0) cursor_mm_x_ = 0.0;
-    if (cursor_mm_y_ < 0.0) cursor_mm_y_ = 0.0;
-
-    if (is_dragging_) {
-        double dx = static_cast<double>(x - drag_start_x_) * 4.0;
-        double dy = static_cast<double>(y - drag_start_y_) * 4.0;
-        shape_x_ = drag_init_shape_x_ + dx;
-        shape_y_ = drag_init_shape_y_ + dy;
-        InvalidateRect(hwnd_, NULL, FALSE);
-    }
+    handle_canvas_mouse_move(x, y);
 }
 
-void NativeWindow::handle_mouse_up(int /*x*/, int /*y*/) {
-    if (is_dragging_) {
-        is_dragging_ = false;
-        status_msg_ = (language_ == UILanguage::Vietnamese) ?
-            "Đã cập nhật vị trí đối tượng (" + std::to_string(static_cast<int>(shape_x_)) + " mm, " + std::to_string(static_cast<int>(shape_y_)) + " mm)" :
-            "Updated object position (" + std::to_string(static_cast<int>(shape_x_)) + " mm, " + std::to_string(static_cast<int>(shape_y_)) + " mm)";
-        InvalidateRect(hwnd_, NULL, FALSE);
+void NativeWindow::handle_mouse_up(int x, int y) {
+    if (is_panning_) {
+        is_panning_ = false;
+        if (GetCapture() == hwnd_)
+            ReleaseCapture();
+        return;
     }
+    handle_canvas_mouse_up(x, y);
+}
+
+bool NativeWindow::handle_key_down(WPARAM key) {
+    const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+    const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    if (control) {
+        if (key == 'N') { create_new_document(); return true; }
+        if (key == 'O') { open_document_dialog(); return true; }
+        if (key == 'S') { save_document_dialog(shift); return true; }
+        if (key == 'E') { export_svg_dialog(); return true; }
+        if (key == 'Z' || (key == 'Y' && shift)) {
+            workflow_.undo();
+            root_.vector_controller().selection().clear();
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã hoàn tác" : "Undo complete";
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
+        if (key == 'Y') {
+            workflow_.redo();
+            root_.vector_controller().selection().clear();
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã làm lại" : "Redo complete";
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
+    }
+    if (key == VK_ESCAPE) {
+        if (show_settings_modal_) close_settings_modal();
+        else if (show_file_menu_) close_file_menu();
+        else if (is_panning_) {
+            is_panning_ = false;
+            if (GetCapture() == hwnd_) ReleaseCapture();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        } else if (pointer_active_) {
+            root_.vector_controller().on_escape();
+            pointer_active_ = false;
+            is_dragging_ = false;
+            is_creating_shape_ = false;
+            drag_preview_bounds_.reset();
+            if (GetCapture() == hwnd_) ReleaseCapture();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        return true;
+    }
+    if (key == 'F') { fit_page_to_canvas(); return true; }
+    if (key == 'H') { set_active_tool(3); return true; }
+    if (key == '1') {
+        auto& camera = root_.renderer().camera();
+        camera.set_viewport_size(std::max(1, width_ - 352), std::max(1, height_ - 118));
+        camera.set_zoom(1.0);
+        zoom_level_ = 100;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return true;
+    }
+    if (key == 'V') { set_active_tool(0); return true; }
+    if (key == 'R') { set_active_tool(1); return true; }
+    if (key == 'E') { set_active_tool(2); return true; }
+    return false;
 }
 
 LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     auto* self = reinterpret_cast<NativeWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
 
     switch (uMsg) {
+    case WM_KEYDOWN:
+        if (self && wParam == VK_SPACE) {
+            self->space_down_ = true;
+            return 0;
+        }
+        if (self && self->handle_key_down(wParam))
+            return 0;
+        break;
+    case WM_KEYUP:
+        if (self && wParam == VK_SPACE) {
+            self->space_down_ = false;
+            return 0;
+        }
+        break;
+    case WM_KILLFOCUS:
+        if (self) {
+            self->space_down_ = false;
+            if (self->is_panning_) {
+                self->is_panning_ = false;
+                if (GetCapture() == hwnd) ReleaseCapture();
+            }
+        }
+        break;
     case WM_LBUTTONDOWN:
-        if (self) self->handle_mouse_down(LOWORD(lParam), HIWORD(lParam));
+        if (self) {
+            SetFocus(hwnd);
+            self->handle_mouse_down(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+        }
         return 0;
     case WM_MOUSEMOVE:
-        if (self) self->handle_mouse_move(LOWORD(lParam), HIWORD(lParam));
+        if (self) self->handle_mouse_move(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         return 0;
     case WM_LBUTTONUP:
-        if (self) self->handle_mouse_up(LOWORD(lParam), HIWORD(lParam));
+        if (self) self->handle_mouse_up(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
         return 0;
+    case WM_MBUTTONDOWN:
+        if (self && self->is_canvas_point(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) {
+            self->is_panning_ = true;
+            self->last_pointer_x_ = GET_X_LPARAM(lParam);
+            self->last_pointer_y_ = GET_Y_LPARAM(lParam);
+            SetCapture(hwnd);
+        }
+        return 0;
+    case WM_MBUTTONUP:
+        if (self && self->is_panning_) {
+            self->is_panning_ = false;
+            if (GetCapture() == hwnd) ReleaseCapture();
+        }
+        return 0;
+    case WM_MOUSEWHEEL:
+        if (self) {
+            POINT point{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+            ScreenToClient(hwnd, &point);
+            if (self->is_canvas_point(point.x, point.y)) {
+                const auto area = self->canvas_rect(self->width_, self->height_);
+                auto& camera = self->root_.renderer().camera();
+                const double factor = std::pow(1.1,
+                    static_cast<double>(GET_WHEEL_DELTA_WPARAM(wParam)) / WHEEL_DELTA);
+                const double target_zoom = std::clamp(camera.zoom() * factor, 0.01, 64.0);
+                camera.zoom_at(target_zoom / camera.zoom(),
+                    static_cast<float>(point.x - area.left),
+                    static_cast<float>(point.y - area.top));
+                self->zoom_level_ = std::clamp(
+                    static_cast<int>(std::lround(camera.zoom() * 100.0)), 1, 6400);
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+        }
+        return 0;
+    case WM_SETCURSOR:
+        if (self && LOWORD(lParam) == HTCLIENT) {
+            const WORD cursor_id = self->is_panning_ ? 32646
+                : self->active_tool_ == 3 ? 32649 : 32512;
+            SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(cursor_id)));
+            return TRUE;
+        }
+        break;
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
@@ -362,10 +472,26 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
             self->width_ = w;
             self->height_ = h;
             self->shell_.set_window_size(static_cast<double>(w), static_cast<double>(h));
+            const auto area = self->canvas_rect(w, h);
+            self->root_.renderer().camera().set_viewport_size(
+                area.right - area.left, area.bottom - area.top);
             InvalidateRect(hwnd, NULL, FALSE);
         }
         return 0;
     }
+    case WM_CAPTURECHANGED:
+        if (self) {
+            self->is_panning_ = false;
+            if (self->pointer_active_) {
+                self->root_.vector_controller().on_escape();
+                self->pointer_active_ = false;
+                self->is_dragging_ = false;
+                self->is_creating_shape_ = false;
+                self->drag_preview_bounds_.reset();
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+        }
+        return 0;
     case WM_DESTROY:
         PostQuitMessage(0);
         return 0;

@@ -3,6 +3,18 @@
 #include "pikdraw/document/commands/command.hpp"
 #include "pikdraw/color/values/color_value.hpp"
 
+#include <chrono>
+#include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <stdexcept>
+#include <system_error>
+#include <utility>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 namespace pikdraw::desktop {
 
 namespace {
@@ -111,6 +123,25 @@ bool DocumentWorkflow::redo() {
     return res;
 }
 
+void DocumentWorkflow::new_document(double page_width_mm, double page_height_mm) {
+    if (!std::isfinite(page_width_mm) || !std::isfinite(page_height_mm) ||
+        page_width_mm <= 0.0 || page_height_mm <= 0.0)
+        return;
+
+    auto& doc = root_.document();
+    auto page = document::Page::make_default();
+    page.width_mm = page_width_mm;
+    page.height_mm = page_height_mm;
+    auto snapshot = std::make_shared<const document::DocumentSnapshot>(
+        doc.epoch() + 1,
+        0,
+        std::move(page),
+        document::PersistentObjectMap{});
+    doc.reset_from_snapshot(std::move(snapshot));
+    root_.vector_controller().selection().clear();
+    sync_status_bar();
+}
+
 bool DocumentWorkflow::save_native(const std::string& file_path) {
     const auto snapshot = root_.document().current_snapshot();
     auto result = document::SaveRecoveryService::atomic_save(file_path, *snapshot);
@@ -133,6 +164,47 @@ bool DocumentWorkflow::open_native(const std::string& file_path) {
     root_.document().reset_from_snapshot(loaded_snapshot);
     sync_status_bar();
     return true;
+}
+
+bool DocumentWorkflow::save_svg(const std::string& file_path) {
+    if (file_path.empty())
+        return false;
+
+    std::filesystem::path target;
+    std::filesystem::path temporary;
+    try {
+        target = std::filesystem::u8path(file_path);
+        const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+        temporary = target;
+        temporary += ".tmp-" + std::to_string(nonce);
+
+        const auto contents = export_svg();
+        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        if (!output)
+            return false;
+        output.write(contents.data(), static_cast<std::streamsize>(contents.size()));
+        output.flush();
+        if (!output)
+            throw std::runtime_error("SVG write failed");
+        output.close();
+        if (!output)
+            throw std::runtime_error("SVG close failed");
+
+#ifdef _WIN32
+        if (!MoveFileExW(temporary.c_str(), target.c_str(),
+                         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+            throw std::runtime_error("SVG replace failed");
+#else
+        std::filesystem::rename(temporary, target);
+#endif
+        return true;
+    } catch (...) {
+        if (!temporary.empty()) {
+            std::error_code ignored;
+            std::filesystem::remove(temporary, ignored);
+        }
+        return false;
+    }
 }
 
 bool DocumentWorkflow::import_svg(const std::string& svg_xml) {

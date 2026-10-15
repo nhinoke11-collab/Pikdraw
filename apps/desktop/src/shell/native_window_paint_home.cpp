@@ -1,4 +1,4 @@
-﻿#include "pikdraw/desktop/shell/native_window.hpp"
+#include "pikdraw/desktop/shell/native_window.hpp"
 
 namespace pikdraw::desktop {
 
@@ -22,10 +22,10 @@ void NativeWindow::paint_home_screen(HDC mem_dc, int w, int h) {
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
             DEFAULT_PITCH | FF_DONTCARE, name);
     };
-    HFONT font_h1 = make_font(24, FW_BOLD, L"Be Vietnam Pro");
-    HFONT font_h2 = make_font(14, FW_BOLD, L"Be Vietnam Pro");
-    HFONT font_body = make_font(13, FW_NORMAL, L"Be Vietnam Pro");
-    HFONT font_sub = make_font(11, FW_NORMAL, L"Google Sans");
+    HFONT font_h1 = make_font(24, FW_BOLD, L"Segoe UI");
+    HFONT font_h2 = make_font(14, FW_BOLD, L"Segoe UI");
+    HFONT font_body = make_font(13, FW_NORMAL, L"Segoe UI");
+    HFONT font_sub = make_font(11, FW_NORMAL, L"Segoe UI");
     HFONT font_mono = make_font(11, FW_NORMAL, L"JetBrains Mono");
 
     // Background Canvas
@@ -40,7 +40,7 @@ void NativeWindow::paint_home_screen(HDC mem_dc, int w, int h) {
         }
     }
 
-    // Header Area: Logo PK badge (bo nháº¹ 8px)
+    // Header Area: Logo PK badge (bo nhẹ 8px)
     HPEN pen_bdr = CreatePen(PS_SOLID, 1, col_border);
     HBRUSH br_logo = CreateSolidBrush(col_teal);
     SelectObject(mem_dc, pen_bdr);
@@ -63,11 +63,11 @@ void NativeWindow::paint_home_screen(HDC mem_dc, int w, int h) {
     SetTextColor(mem_dc, col_text_muted);
     RECT rc_sub = { 235, 78, w - 260, 102 };
     const wchar_t* sub_txt = is_vi ?
-        L"KhÃ´ng gian thiáº¿t káº¿ vector & sáº£n xuáº¥t quáº£ng cÃ¡o chuyÃªn nghiá»‡p (Chuáº©n thi cÃ´ng xÆ°á»Ÿng Viá»‡t Nam)" :
+        L"Không gian thiết kế vector & sản xuất quảng cáo chuyên nghiệp (Chuẩn thi công xưởng Việt Nam)" :
         L"Professional Vector Design & Signage Manufacturing Suite (CorelDRAW Workflow Compatible)";
     DrawTextW(mem_dc, sub_txt, -1, &rc_sub, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
 
-    // Button [ ðŸŽ¨ VÃ o báº£n váº½ (Canvas) ] (bo nháº¹ 6px)
+    // Button [ 🎨 Vào bản vẽ (Canvas) ] (bo nhẹ 6px)
     HBRUSH br_btn_canvas = CreateSolidBrush(col_teal);
     SelectObject(mem_dc, br_btn_canvas);
     RoundRect(mem_dc, w - 240, 55, w - 40, 88, 6, 6);
@@ -76,11 +76,11 @@ void NativeWindow::paint_home_screen(HDC mem_dc, int w, int h) {
     SelectObject(mem_dc, font_h2);
     SetTextColor(mem_dc, is_dark ? RGB(7, 11, 16) : RGB(255, 255, 255));
     RECT rc_bc_txt = { w - 240, 55, w - 40, 88 };
-    DrawTextW(mem_dc, is_vi ? L"ðŸŽ¨ VÃ o báº£n váº½ (Canvas)" : L"ðŸŽ¨ Return to Canvas", -1, &rc_bc_txt, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    DrawTextW(mem_dc, is_vi ? L"🎨 Vào bản vẽ (Canvas)" : L"🎨 Return to Canvas", -1, &rc_bc_txt, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
     // Home Navigation Tabs (y: 110 to 142)
-    const wchar_t* tab_names_vi[] = { L"âœ¨ Báº¯t Ä‘áº§u nhanh", L"â± Tá»‡p gáº§n Ä‘Ã¢y (5)", L"ðŸ“ Máº«u thi cÃ´ng", L"âŒ¨ Lá»‘i táº¯t Corel" };
-    const wchar_t* tab_names_en[] = { L"âœ¨ Get Started", L"â± Recent Files (5)", L"ðŸ“ Templates", L"âŒ¨ Corel Shortcuts" };
+    const wchar_t* tab_names_vi[] = { L"✨ Bắt đầu nhanh", L"⏱ Tệp gần đây (5)", L"📐 Mẫu thi công", L"⌨ Phím tắt Corel" };
+    const wchar_t* tab_names_en[] = { L"✨ Get Started", L"⏱ Recent Files (5)", L"📐 Templates", L"⌨ Corel Shortcuts" };
     int tab_ws[] = { 140, 150, 180, 180 };
     int cur_tx = 180;
     for (int i = 0; i < 4; ++i) {
@@ -118,10 +118,10 @@ void NativeWindow::paint_home_screen(HDC mem_dc, int w, int h) {
             const wchar_t* desc;
         };
         const QuickCard qcards[] = {
-            { L"[ + ]", L"Táº¡o báº£n váº½ má»›i (Ctrl+N)", L"Khá»Ÿi táº¡o tÃ i liá»‡u vector kÃ­ch thÆ°á»›c tá»± do theo Ä‘Æ¡n vá»‹ mm chuáº©n thi cÃ´ng" },
-            { L"[ ðŸ“ ]", L"Táº¡o tá»« máº«u thi cÃ´ng", L"Kho máº«u chuáº©n: Biá»ƒn alu, há»™p Ä‘Ã¨n, standee cuá»‘n, báº¡t in hiflex 3M" },
-            { L"[ ðŸ“‚ ]", L"Má»Ÿ tá»‡p Ä‘Ã£ cÃ³ (Ctrl+O)", L"Há»— trá»£ náº¡p Ä‘áº§y Ä‘á»§ cÃ¡c Ä‘á»‹nh dáº¡ng .pikdraw, .cdr, .svg, .dxf" },
-            { L"[ â˜ ]", L"ThÆ° viá»‡n Ä‘Ã¡m mÃ¢y Cloud", L"Äá»“ng bá»™ thiáº¿t káº¿, báº£n váº½ duyá»‡t khÃ¡ch hÃ ng vÃ  file cáº¯t CNC tá»« xÆ°á»Ÿng" }
+            { L"[ + ]", L"Tạo bản vẽ mới (Ctrl+N)", L"Khởi tạo tài liệu vector kích thước tự do theo đơn vị mm chuẩn thi công" },
+            { L"[ 📐 ]", L"Tạo từ mẫu thi công", L"Kho mẫu chuẩn: Biển alu, hộp đèn, standee cuốn, bạt in hiflex 3M" },
+            { L"[ 📂 ]", L"Mở tệp đã có (Ctrl+O)", L"Hỗ trợ nạp đầy đủ các định dạng .pikdraw, .cdr, .svg, .dxf" },
+            { L"[ ☁ ]", L"Thư viện đám mây Cloud", L"Đồng bộ thiết kế, bản vẽ duyệt khách hàng và file cắt CNC từ xưởng" }
         };
         for (int i = 0; i < 4; ++i) {
             int cx = 180 + i * 260;
@@ -130,7 +130,7 @@ void NativeWindow::paint_home_screen(HDC mem_dc, int w, int h) {
             HPEN p_c = CreatePen(PS_SOLID, 1, col_border);
             SelectObject(mem_dc, p_c);
             SelectObject(mem_dc, br_c);
-            RoundRect(mem_dc, rc_c.left, rc_c.top, rc_c.right, rc_c.bottom, 8, 8); // bo nháº¹ 8px
+            RoundRect(mem_dc, rc_c.left, rc_c.top, rc_c.right, rc_c.bottom, 8, 8); // bo nhẹ 8px
             DeleteObject(p_c);
             DeleteObject(br_c);
 
@@ -157,10 +157,10 @@ void NativeWindow::paint_home_screen(HDC mem_dc, int w, int h) {
         SelectObject(mem_dc, font_h2);
         SetTextColor(mem_dc, col_teal);
         RECT rc_sec = { 180, 310, 600, 335 };
-        DrawTextW(mem_dc, is_vi ? L"CÃC Báº¢N Váº¼ Gáº¦N ÄÃ‚Y NHáº¤T" : L"RECENT VECTOR DRAWINGS", -1, &rc_sec, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+        DrawTextW(mem_dc, is_vi ? L"CÁC BẢN VẼ GẦN ĐÂY NHẤT" : L"RECENT VECTOR DRAWINGS", -1, &rc_sec, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
 
         const wchar_t* r_names[] = { L"Bien_Hieu_An_Phat.pik", L"Hop_Den_Hiflex_Techcom.pik", L"Chu_Noi_Inox_Vang_Guong.pik" };
-        const wchar_t* r_dims[] = { L"1,850.0 Ã— 420.0 mm (Biá»ƒn alu mica LED)", L"3,000.0 Ã— 1,200.0 mm (Báº¡t hiflex 3M)", L"800.0 Ã— 350.0 mm (Cáº¯t laser inox CNC)" };
+        const wchar_t* r_dims[] = { L"1,850.0 × 420.0 mm (Biển alu mica LED)", L"3,000.0 × 1,200.0 mm (Bạt hiflex 3M)", L"800.0 × 350.0 mm (Cắt laser inox CNC)" };
         for (int i = 0; i < 3; ++i) {
             int rx = 180 + i * 350;
             RECT rc_rc = { rx, 345, rx + 330, 430 };
@@ -183,7 +183,7 @@ void NativeWindow::paint_home_screen(HDC mem_dc, int w, int h) {
             DrawTextW(mem_dc, r_dims[i], -1, &rc_rd, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
         }
     } else if (active_home_tab_ == 1) {
-        // Tab 1: Tá»‡p gáº§n Ä‘Ã¢y (5 rows, bo nháº¹ 6px)
+        // Tab 1: Tá»‡p gáº§n Ä‘Ã¢y (5 rows, bo nhẹ 6px)
         const wchar_t* r_files[] = {
             L"Bien_Hieu_An_Phat.pik",
             L"Hop_Den_Hiflex_Techcom.pik",
@@ -192,25 +192,25 @@ void NativeWindow::paint_home_screen(HDC mem_dc, int w, int h) {
             L"Tem_Nhan_Decal_Cuon.pik"
         };
         const wchar_t* r_dims[] = {
-            L"1,850.0 Ã— 420.0 mm",
-            L"3,000.0 Ã— 1,200.0 mm",
-            L"800.0 Ã— 350.0 mm",
-            L"800.0 Ã— 2,000.0 mm",
-            L"500.0 Ã— 500.0 mm"
+            L"1,850.0 × 420.0 mm",
+            L"3,000.0 × 1,200.0 mm",
+            L"800.0 × 350.0 mm",
+            L"800.0 × 2,000.0 mm",
+            L"500.0 × 500.0 mm"
         };
         const wchar_t* r_types[] = {
-            L"Biá»ƒn alu chá»¯ ná»•i mica Ä‘Ã¨n LED",
-            L"Báº¡t xuyÃªn sÃ¡ng hiflex 3M in UV",
-            L"File cáº¯t laser CNC kim loáº¡i táº¥m",
-            L"Báº¡t PP cÃ¡n mÃ ng má» chÃ¢n cuá»‘n",
-            L"Decal báº¿ demi chá»‘ng nÆ°á»›c ngoÃ i trá»i"
+            L"Biển alu chữ nổi mica đèn LED",
+            L"Bạt xuyên sáng hiflex 3M in UV",
+            L"File cắt laser CNC kim loại tấm",
+            L"Bạt PP cán màng mờ chân cuốn",
+            L"Decal bế demi chống nước ngoài trời"
         };
         const wchar_t* r_times[] = {
-            L"5 phÃºt trÆ°á»›c",
-            L"2 giá» trÆ°á»›c",
-            L"HÃ´m qua",
-            L"3 ngÃ y trÆ°á»›c",
-            L"Tuáº§n trÆ°á»›c"
+            L"5 phút trước",
+            L"2 giờ trước",
+            L"Hôm qua",
+            L"3 ngày trước",
+            L"Tuần trước"
         };
         for (int i = 0; i < 5; ++i) {
             int ry = 160 + i * 55;
@@ -219,7 +219,7 @@ void NativeWindow::paint_home_screen(HDC mem_dc, int w, int h) {
             HPEN p_row = CreatePen(PS_SOLID, 1, col_border);
             SelectObject(mem_dc, p_row);
             SelectObject(mem_dc, br_row);
-            RoundRect(mem_dc, rc_row.left, rc_row.top, rc_row.right, rc_row.bottom, 6, 6); // bo nháº¹ 6px
+            RoundRect(mem_dc, rc_row.left, rc_row.top, rc_row.right, rc_row.bottom, 6, 6); // bo nhẹ 6px
             DeleteObject(p_row);
             DeleteObject(br_row);
 
@@ -262,12 +262,12 @@ void NativeWindow::paint_home_screen(HDC mem_dc, int w, int h) {
             const wchar_t* tag;
         };
         const TplCard tpls[] = {
-            { L"Biá»ƒn hiá»‡u ngoÃ i trá»i", L"6,000 Ã— 3,000 mm", L"Khung sáº¯t há»™p máº¡ káº½m, báº¡t Hiflex / Alu ngoÃ i trá»i", L"Khá»• lá»›n" },
-            { L"Táº¥m Alu chuáº©n thi cÃ´ng", L"1,220 Ã— 2,440 mm", L"Khá»• alu chuáº©n quy cÃ¡ch nhÃ  mÃ¡y cáº¯t phay CNC", L"Alu CNC" },
-            { L"Há»™p Ä‘Ã¨n mica hÃºt ná»•i", L"600 Ã— 600 mm", L"Máº·t mica Ä‘Ãºc ná»•i 3D, Ä‘Ã¨n LED module háº¯t sÃ¡ng", L"Há»™p Ä‘Ã¨n" },
-            { L"Standee cuá»‘n sá»± kiá»‡n", L"800 Ã— 2,000 mm", L"Báº¡t PP cÃ¡n mÃ ng má», chÃ¢n nhÃ´m cuá»‘n tiÃªu chuáº©n", L"Standee" },
-            { L"Card visit xÆ°á»Ÿng in", L"90 Ã— 54 mm", L"Khá»• ghÃ©p bÃ i in offset 4 mÃ u, cÃ¡n mÃ ng má» 2 máº·t", L"In offset" },
-            { L"Decal báº¿ tem nhÃ£n", L"1,000 Ã— 1,000 mm", L"Khá»• báº¿ tem decal nhá»±a ká»¹ thuáº­t sá»‘ chá»‘ng nÆ°á»›c", L"Báº¿ Decal" }
+            { L"Biển hiệu ngoài trời", L"6,000 × 3,000 mm", L"Khung sắt hộp mạ kẽm, bạt Hiflex / Alu ngoài trời", L"Khổ lớn" },
+            { L"Tấm Alu chuẩn thi công", L"1,220 × 2,440 mm", L"Khổ alu chuẩn quy cách nhà máy cắt phay CNC", L"Alu CNC" },
+            { L"Hộp đèn mica hút nổi", L"600 × 600 mm", L"Mặt mica đúc nổi 3D, đèn LED module hắt sáng", L"Hộp đèn" },
+            { L"Standee cuốn sự kiện", L"800 × 2,000 mm", L"Bạt PP cán màng mờ, chân nhôm cuốn tiêu chuẩn", L"Standee" },
+            { L"Card visit xưởng in", L"90 × 54 mm", L"Khổ ghép bài in offset 4 màu, cán màng mờ 2 mặt", L"In offset" },
+            { L"Decal bế tem nhãn", L"1,000 × 1,000 mm", L"Khổ bế tem decal nhựa kỹ thuật số chống nước", L"Bế Decal" }
         };
         for (int i = 0; i < 6; ++i) {
             int row = i / 3;
@@ -279,7 +279,7 @@ void NativeWindow::paint_home_screen(HDC mem_dc, int w, int h) {
             HPEN p_tc = CreatePen(PS_SOLID, 1, col_border);
             SelectObject(mem_dc, p_tc);
             SelectObject(mem_dc, br_tc);
-            RoundRect(mem_dc, rc_tc.left, rc_tc.top, rc_tc.right, rc_tc.bottom, 8, 8); // bo nháº¹ 8px
+            RoundRect(mem_dc, rc_tc.left, rc_tc.top, rc_tc.right, rc_tc.bottom, 8, 8); // bo nhẹ 8px
             DeleteObject(p_tc);
             DeleteObject(br_tc);
 
@@ -319,14 +319,14 @@ void NativeWindow::paint_home_screen(HDC mem_dc, int w, int h) {
             const wchar_t* note;
         };
         const ScDef scs[] = {
-            { L"F4",         L"Zoom toÃ n bá»™ báº£n váº½ (Fit All Objects)",         L"Hiá»ƒn thá»‹ táº¥t cáº£ Ä‘á»‘i tÆ°á»£ng trÃªn canvas" },
-            { L"P",          L"CÄƒn giá»¯a vÃ o tÃ¢m trang in (Center to Page)",    L"ÄÆ°a cÃ¡c Ä‘á»‘i tÆ°á»£ng Ä‘Æ°á»£c chá»n vÃ o trung tÃ¢m" },
-            { L"Ctrl + Q",   L"Chuyá»ƒn Ä‘á»•i thÃ nh Ä‘Æ°á»ng cong (Convert to Curves)",L"RÃ£ phÃ´ng chá»¯ vÃ  hÃ¬nh há»c thÃ nh BÃ©zier" },
-            { L"Ctrl + K",   L"RÃ£ khá»‘i Ä‘á»‘i tÆ°á»£ng (Break Apart)",               L"TÃ¡ch rá»i cÃ¡c Ä‘Æ°á»ng cong tá»• há»£p" },
-            { L"Shift + F2", L"PhÃ³ng to vÃ¹ng chá»n (Zoom to Selection)",        L"Láº¥y nÃ©t tá»‘i Ä‘a vÃ o chi tiáº¿t Ä‘ang chá»n" },
-            { L"F10",        L"Chá»‰nh sá»­a Ä‘iá»ƒm Node (Node Edit Tool)",          L"Thao tÃ¡c trá»±c tiáº¿p cÃ¡c tiáº¿p tuyáº¿n BÃ©zier" },
-            { L"Ctrl + G",   L"NhÃ³m Ä‘á»‘i tÆ°á»£ng (Group Objects)",                L"Gá»™p nhiá»u pháº§n tá»­ thÃ nh má»™t nhÃ³m" },
-            { L"Ctrl + D",   L"NhÃ¢n Ä‘Ã´i Ä‘á»‘i tÆ°á»£ng (Duplicate)",                L"Táº¡o báº£n sao dá»‹ch chuyá»ƒn theo bÆ°á»›c offset" }
+            { L"F4",         L"Zoom toàn bộ bản vẽ (Fit All Objects)",         L"Hiển thị tất cả đối tượng trên canvas" },
+            { L"P",          L"Căn giữa vào tâm trang in (Center to Page)",    L"Đưa các đối tượng được chọn vào trung tâm" },
+            { L"Ctrl + Q",   L"Chuyển đổi thành đường cong (Convert to Curves)",L"Rã phông chữ và hình học thành Bézier" },
+            { L"Ctrl + K",   L"Rã khối đối tượng (Break Apart)",               L"Tách rời các đường cong tổ hợp" },
+            { L"Shift + F2", L"Phóng to vùng chọn (Zoom to Selection)",        L"Lấy nét tối đa vào chi tiết đang chọn" },
+            { L"F10",        L"Chỉnh sửa điểm Node (Node Edit Tool)",          L"Thao tác trực tiếp các tiếp tuyến Bézier" },
+            { L"Ctrl + G",   L"Nhóm đối tượng (Group Objects)",                L"Gộp nhiều phần tử thành một nhóm" },
+            { L"Ctrl + D",   L"Nhân đôi đối tượng (Duplicate)",                L"Tạo bản sao dịch chuyển theo bước offset" }
         };
 
         int sy = 160;
@@ -335,7 +335,7 @@ void NativeWindow::paint_home_screen(HDC mem_dc, int w, int h) {
         HPEN p_c = CreatePen(PS_SOLID, 1, col_border);
         SelectObject(mem_dc, p_c);
         SelectObject(mem_dc, br_c);
-        RoundRect(mem_dc, rc_card.left, rc_card.top, rc_card.right, rc_card.bottom, 8, 8); // bo nháº¹ 8px
+        RoundRect(mem_dc, rc_card.left, rc_card.top, rc_card.right, rc_card.bottom, 8, 8); // bo nhẹ 8px
         DeleteObject(p_c);
         DeleteObject(br_c);
 
@@ -347,7 +347,7 @@ void NativeWindow::paint_home_screen(HDC mem_dc, int w, int h) {
             HPEN p_k = CreatePen(PS_SOLID, 1, col_teal);
             SelectObject(mem_dc, p_k);
             SelectObject(mem_dc, br_k);
-            RoundRect(mem_dc, rc_k.left, rc_k.top, rc_k.right, rc_k.bottom, 5, 5); // bo nháº¹ 5px
+            RoundRect(mem_dc, rc_k.left, rc_k.top, rc_k.right, rc_k.bottom, 5, 5); // bo nhẹ 5px
             DeleteObject(p_k);
             DeleteObject(br_k);
 

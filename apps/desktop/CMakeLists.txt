@@ -21,6 +21,8 @@ add_library(pikdraw_desktop STATIC
     src/workflows/document_workflow.cpp
     src/shell/native_window.cpp
     src/shell/native_window_events.cpp
+    src/shell/native_window_canvas.cpp
+    src/shell/native_window_files.cpp
     src/shell/native_window_paint.cpp
     src/shell/native_window_paint_menu.cpp
     src/shell/native_window_paint_home.cpp
@@ -42,7 +44,10 @@ target_link_libraries(pikdraw_desktop PUBLIC
 )
 
 if(WIN32)
-    target_link_libraries(pikdraw_desktop PUBLIC user32 gdi32 msimg32)
+    target_link_libraries(pikdraw_desktop PUBLIC user32 gdi32 msimg32 comdlg32)
+    if(MSVC)
+        target_compile_options(pikdraw_desktop PRIVATE /utf-8)
+    endif()
 endif()
 
 # Native shell application entry point
@@ -95,4 +100,12 @@ if(PIKDRAW_BUILD_TESTS)
         pikdraw_desktop
     )
     add_test(NAME test_pikdraw_vertical_slice_e2e COMMAND test_pikdraw_vertical_slice_e2e)
+
+    add_executable(test_pikdraw_canvas_view
+        tests/test_canvas_view.cpp
+    )
+    target_link_libraries(test_pikdraw_canvas_view PRIVATE
+        pikdraw_desktop
+    )
+    add_test(NAME test_pikdraw_canvas_view COMMAND test_pikdraw_canvas_view)
 endif()

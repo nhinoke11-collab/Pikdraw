@@ -4,6 +4,8 @@
 #include <vector>
 #include <iomanip>
 #include <sstream>
+#include <algorithm>
+#include <cmath>
 
 namespace pikdraw::desktop {
 
@@ -25,8 +27,8 @@ NativeWindow::NativeWindow(int width, int height)
       shell_(static_cast<double>(width), static_cast<double>(height), 1.0),
       workflow_(root_) {
     root_.initialize(static_cast<double>(width), static_cast<double>(height), 1.0);
-    workflow_.add_rectangle(50.0, 50.0, 400.0, 200.0, "#00f2c3");
-    workflow_.add_vietnamese_text(60.0, 100.0, "AN PHÁT SIGNAGE 2026", "Be Vietnam Pro", 28.0);
+    workflow_.new_document();
+    fit_page_to_canvas();
 }
 
 NativeWindow::~NativeWindow() {
@@ -128,24 +130,30 @@ void NativeWindow::set_settings_unit_choice(int unit) noexcept {
 }
 
 void NativeWindow::set_active_tool(int tool_index) noexcept {
+    if (tool_index < 0 || tool_index > 3)
+        return;
     active_tool_ = tool_index;
-    const char* vi_tools[] = { "Con trỏ chọn (V)", "Sửa điểm Node (A)", "Bút vẽ Pen (P)", "Hình chữ nhật (R)", "Hình Elip (E)", "Văn bản (T)", "Bàn tay Pan (H)", "Kính lúp Zoom (Z)" };
-    const char* en_tools[] = { "Select Tool (V)", "Direct Node Edit (A)", "Pen Tool (P)", "Rectangle Tool (R)", "Ellipse Tool (E)", "Text Tool (T)", "Hand Pan (H)", "Zoom Tool (Z)" };
-    status_msg_ = (language_ == UILanguage::Vietnamese) ?
-        std::string("Đã kích hoạt: ") + vi_tools[tool_index % 8] :
-        std::string("Activated: ") + en_tools[tool_index % 8];
+    const auto mode = tool_index == 1 ? vector::ToolMode::Rectangle
+                    : tool_index == 2 ? vector::ToolMode::Ellipse
+                                      : vector::ToolMode::Select;
+    root_.vector_controller().set_mode(mode);
+    const char* vi_tools[] = { "Chọn và di chuyển · V", "Vẽ hình chữ nhật · R",
+                               "Vẽ hình elip · E", "Di chuyển khung nhìn · Space/chuột giữa" };
+    const char* en_tools[] = { "Select and move · V", "Draw rectangle · R",
+                               "Draw ellipse · E", "Pan view · Space/middle mouse" };
+    status_msg_ = language_ == UILanguage::Vietnamese ? vi_tools[tool_index] : en_tools[tool_index];
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
 #endif
 }
 
 void NativeWindow::set_active_workspace(int ws_index) noexcept {
-    active_workspace_ = ws_index;
-    const char* vi_ws[] = { "Vector (M1 Native)", "In ấn chuyên nghiệp (M2)", "Thi công biển quảng cáo (M2)", "Phối cảnh 3D (M2)" };
-    const char* en_ws[] = { "Vector (M1 Native)", "Print Production (M2)", "Signage Manufacturing (M2)", "3D Perspective (M2)" };
-    status_msg_ = (language_ == UILanguage::Vietnamese) ?
-        std::string("Không gian làm việc: ") + vi_ws[ws_index % 4] :
-        std::string("Active Workspace: ") + en_ws[ws_index % 4];
+    if (ws_index != 0)
+        return;
+    active_workspace_ = 0;
+    status_msg_ = language_ == UILanguage::Vietnamese
+        ? "Không gian Vector 2D đang hoạt động"
+        : "Vector 2D workspace is active";
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
 #endif
@@ -159,7 +167,10 @@ void NativeWindow::set_active_dock_tab(int tab_index) noexcept {
 }
 
 void NativeWindow::zoom_in() noexcept {
-    if (zoom_level_ < 200) zoom_level_ += 25;
+    auto& camera = root_.renderer().camera();
+    camera.set_viewport_size(std::max(1, width_ - 352), std::max(1, height_ - 118));
+    camera.set_zoom(std::min(camera.zoom() * 1.25, 64.0));
+    zoom_level_ = static_cast<int>(std::lround(camera.zoom() * 100.0));
     status_msg_ = (language_ == UILanguage::Vietnamese) ?
         "Tỉ lệ hiển thị: " + std::to_string(zoom_level_) + "%" :
         "Zoom level: " + std::to_string(zoom_level_) + "%";
@@ -169,7 +180,10 @@ void NativeWindow::zoom_in() noexcept {
 }
 
 void NativeWindow::zoom_out() noexcept {
-    if (zoom_level_ > 25) zoom_level_ -= 25;
+    auto& camera = root_.renderer().camera();
+    camera.set_viewport_size(std::max(1, width_ - 352), std::max(1, height_ - 118));
+    camera.set_zoom(std::max(camera.zoom() / 1.25, 0.01));
+    zoom_level_ = static_cast<int>(std::lround(camera.zoom() * 100.0));
     status_msg_ = (language_ == UILanguage::Vietnamese) ?
         "Tỉ lệ hiển thị: " + std::to_string(zoom_level_) + "%" :
         "Zoom level: " + std::to_string(zoom_level_) + "%";
@@ -178,10 +192,28 @@ void NativeWindow::zoom_out() noexcept {
 #endif
 }
 
+void NativeWindow::fit_page_to_canvas() noexcept {
+    const auto& page = root_.document().current_snapshot()->page();
+    const int canvas_width = std::max(1, width_ - 352);
+    const int canvas_height = std::max(1, height_ - 118);
+    const double zoom = std::clamp(
+        std::min(static_cast<double>(canvas_width) / page.width_mm,
+                 static_cast<double>(canvas_height) / page.height_mm) * 0.9,
+        0.01, 64.0);
+    auto& camera = root_.renderer().camera();
+    camera.set_viewport_size(canvas_width, canvas_height);
+    camera.set_center({page.width_mm * 0.5, page.height_mm * 0.5});
+    camera.set_zoom(zoom);
+    zoom_level_ = static_cast<int>(std::lround(zoom * 100.0));
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
 void NativeWindow::open_file_menu() noexcept {
     show_file_menu_ = true;
     status_msg_ = (language_ == UILanguage::Vietnamese) ?
-        "Đã mở Nhóm Menu Tệp (Chuẩn CorelDRAW)" : "Opened File Menu (CorelDRAW Reference)";
+        "Đã mở menu Tệp" : "File menu opened";
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
 #endif
@@ -271,13 +303,46 @@ void NativeWindow::create_from_template(int template_index) noexcept {
 }
 
 void NativeWindow::trigger_export() noexcept {
-    [[maybe_unused]] auto svg_out = workflow_.export_svg();
-    status_msg_ = (language_ == UILanguage::Vietnamese) ?
-        "Đã xuất bản vẽ vector SVG thành công (100% chuẩn Contract C4)!" :
-        "Vector SVG document exported successfully!";
+#ifdef _WIN32
+    export_svg_dialog();
+#else
+    status_msg_ = "SVG export requires the Windows desktop file dialog";
+#endif
+}
+
+bool NativeWindow::export_svg_to(const std::string& file_path) {
+    const bool saved = workflow_.save_svg(file_path);
+    status_msg_ = saved
+        ? (language_ == UILanguage::Vietnamese ? "Đã xuất SVG ra tệp" : "SVG exported")
+        : (language_ == UILanguage::Vietnamese ? "Không thể ghi tệp SVG" : "Could not write SVG file");
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
 #endif
+    return saved;
+}
+
+void NativeWindow::create_new_document() {
+#ifdef _WIN32
+    if (root_.document().is_dirty() && root_.document().current_snapshot()->object_count() > 0) {
+        const auto prompt = utf8_to_wide(language_ == UILanguage::Vietnamese
+            ? "Bỏ các thay đổi chưa lưu và tạo bản vẽ mới?"
+            : "Discard the current drawing and create a new document?");
+        const auto title = utf8_to_wide(language_ == UILanguage::Vietnamese
+            ? "Tạo bản vẽ mới" : "New document");
+        if (MessageBoxW(hwnd_, prompt.c_str(), title.c_str(), MB_YESNO | MB_ICONWARNING) != IDYES)
+            return;
+    }
+#endif
+    workflow_.new_document();
+    document_path_.clear();
+    active_tool_ = 0;
+    root_.vector_controller().set_mode(vector::ToolMode::Select);
+    fit_page_to_canvas();
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
+#endif
+    status_msg_ = language_ == UILanguage::Vietnamese
+        ? "Đã tạo bản vẽ mới" : "New document created";
 }
 
 #ifdef _WIN32
@@ -361,32 +426,6 @@ void NativeWindow::capture_screenshot_bmp(const std::string& path) {
 bool NativeWindow::initialize(const std::string&) { return true; }
 int NativeWindow::run() { return 0; }
 void NativeWindow::capture_screenshot_bmp(const std::string&) {}
-void NativeWindow::set_language(UILanguage) noexcept {}
-void NativeWindow::toggle_language() noexcept {}
-void NativeWindow::set_theme(ThemeMode) noexcept {}
-void NativeWindow::toggle_theme() noexcept {}
-void NativeWindow::open_settings_modal() noexcept {}
-void NativeWindow::close_settings_modal() noexcept {}
-void NativeWindow::toggle_settings_modal() noexcept {}
-void NativeWindow::set_settings_tab(int) noexcept {}
-void NativeWindow::set_settings_theme_choice(int) noexcept {}
-void NativeWindow::set_settings_accent_choice(int) noexcept {}
-void NativeWindow::set_settings_unit_choice(int) noexcept {}
-void NativeWindow::set_active_tool(int) noexcept {}
-void NativeWindow::set_active_workspace(int) noexcept {}
-void NativeWindow::set_active_dock_tab(int) noexcept {}
-void NativeWindow::zoom_in() noexcept {}
-void NativeWindow::zoom_out() noexcept {}
-void NativeWindow::trigger_export() noexcept {}
-void NativeWindow::open_file_menu() noexcept {}
-void NativeWindow::close_file_menu() noexcept {}
-void NativeWindow::toggle_file_menu() noexcept {}
-void NativeWindow::open_home_screen() noexcept {}
-void NativeWindow::close_home_screen() noexcept {}
-void NativeWindow::toggle_home_screen() noexcept {}
-void NativeWindow::set_active_home_tab(int) noexcept {}
-void NativeWindow::open_recent_document(int) noexcept {}
-void NativeWindow::create_from_template(int) noexcept {}
 #endif
 
 } // namespace pikdraw::desktop

@@ -42,8 +42,8 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
         return CreateFontW(sz, 0, 0, 0, weight, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, name);
     };
-    HFONT font_vn_bold = make_font(14, FW_BOLD, L"Be Vietnam Pro"), font_vn_norm = make_font(13, FW_NORMAL, L"Be Vietnam Pro");
-    HFONT font_sec = make_font(12, FW_NORMAL, L"Google Sans"), font_sec_bold = make_font(12, FW_BOLD, L"Google Sans");
+    HFONT font_vn_bold = make_font(14, FW_BOLD, L"Segoe UI"), font_vn_norm = make_font(13, FW_NORMAL, L"Segoe UI");
+    HFONT font_sec = make_font(12, FW_NORMAL, L"Segoe UI"), font_sec_bold = make_font(12, FW_BOLD, L"Segoe UI");
     HFONT font_mono = make_font(11, FW_NORMAL, L"JetBrains Mono");
 
     HBRUSH br_shad = CreateSolidBrush(RGB(1, 3, 6));

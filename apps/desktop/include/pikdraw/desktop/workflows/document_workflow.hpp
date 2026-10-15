@@ -54,11 +54,17 @@ public:
     /// Redo last transaction
     bool redo();
 
+    /// Reset to an empty page and begin a new document epoch. New documents default to A4 landscape.
+    void new_document(double page_width_mm = 297.0, double page_height_mm = 210.0);
+
     /// Save native binary .pikdraw container
     bool save_native(const std::string& file_path);
 
     /// Reopen native binary .pikdraw container
     bool open_native(const std::string& file_path);
+
+    /// Atomically export the current snapshot as SVG.
+    bool save_svg(const std::string& file_path);
 
     /// Import SVG XML subset
     bool import_svg(const std::string& svg_xml);
