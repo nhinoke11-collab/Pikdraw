@@ -1,0 +1,226 @@
+#include "pikdraw/interop/ipc_dto.hpp"
+#include "pikdraw/interop/payload_validator.hpp"
+#include "pikdraw/workers/canary_definitions.hpp"
+#include "pikdraw/workers/win32_common.hpp"
+
+#include <iostream>
+#include <vector>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <io.h>
+#include <fcntl.h>
+
+using namespace pikdraw::interop;
+using namespace pikdraw::workers;
+
+namespace {
+
+bool ReadExact(HANDLE h, void* buf, DWORD bytes) {
+    DWORD total = 0;
+    while (total < bytes) {
+        DWORD read_now = 0;
+        if (!ReadFile(h, static_cast<char*>(buf) + total, bytes - total, &read_now, nullptr) || read_now == 0) {
+            return false;
+        }
+        total += read_now;
+    }
+    return true;
+}
+
+bool WriteExact(HANDLE h, const void* buf, DWORD bytes) {
+    DWORD total = 0;
+    while (total < bytes) {
+        DWORD written = 0;
+        if (!WriteFile(h, static_cast<const char*>(buf) + total, bytes - total, &written, nullptr) || written == 0) {
+            return false;
+        }
+        total += written;
+    }
+    return true;
+}
+
+CanaryPayloadResponse HandleCanary(const CanaryPayloadRequest& req) {
+    CanaryPayloadResponse resp{};
+    resp.canary_type = req.canary_type;
+    resp.action_attempted = true;
+
+    switch (static_cast<CanaryType>(req.canary_type)) {
+        case CanaryFileRead: {
+            std::wstring path = Utf8ToWide(req.target_path);
+            HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (h == INVALID_HANDLE_VALUE) {
+                resp.os_error_code = GetLastError();
+                resp.denied_by_os = (resp.os_error_code == ERROR_ACCESS_DENIED);
+                resp.diagnostic_message = "CreateFileW GENERIC_READ failed with OS error: " + std::to_string(resp.os_error_code);
+            } else {
+                CloseHandle(h);
+                resp.denied_by_os = false;
+                resp.os_error_code = 0;
+                resp.diagnostic_message = "FAIL: File was opened successfully (access was granted)";
+            }
+            break;
+        }
+        case CanaryFileWrite: {
+            std::wstring path = Utf8ToWide(req.target_path);
+            HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (h == INVALID_HANDLE_VALUE) {
+                resp.os_error_code = GetLastError();
+                resp.denied_by_os = (resp.os_error_code == ERROR_ACCESS_DENIED);
+                resp.diagnostic_message = "CreateFileW GENERIC_WRITE failed with OS error: " + std::to_string(resp.os_error_code);
+            } else {
+                CloseHandle(h);
+                DeleteFileW(path.c_str());
+                resp.denied_by_os = false;
+                resp.os_error_code = 0;
+                resp.diagnostic_message = "FAIL: File write succeeded (unauthorized write occurred)";
+            }
+            break;
+        }
+        case CanaryNetworkOutbound: {
+            WSADATA wsa;
+            int init_res = WSAStartup(MAKEWORD(2, 2), &wsa);
+            if (init_res != 0) {
+                resp.os_error_code = static_cast<uint32_t>(init_res);
+                resp.denied_by_os = (resp.os_error_code == WSAEACCES);
+                resp.diagnostic_message = "WSAStartup failed: " + std::to_string(init_res);
+                break;
+            }
+            SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+            if (s == INVALID_SOCKET) {
+                resp.os_error_code = static_cast<uint32_t>(WSAGetLastError());
+                resp.denied_by_os = (resp.os_error_code == WSAEACCES);
+                resp.diagnostic_message = "socket() failed with error: " + std::to_string(resp.os_error_code);
+            } else {
+                sockaddr_in addr{};
+                addr.sin_family = AF_INET;
+                addr.sin_port = htons(req.network_port);
+                inet_pton(AF_INET, req.network_address.c_str(), &addr.sin_addr);
+                int conn = connect(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+                if (conn == SOCKET_ERROR) {
+                    resp.os_error_code = static_cast<uint32_t>(WSAGetLastError());
+                    // WSAEACCES indicates AppContainer network capability denied
+                    resp.denied_by_os = (resp.os_error_code == WSAEACCES);
+                    resp.diagnostic_message = "connect() failed with error: " + std::to_string(resp.os_error_code);
+                } else {
+                    resp.denied_by_os = false;
+                    resp.os_error_code = 0;
+                    resp.diagnostic_message = "FAIL: Network connection succeeded without capability";
+                }
+                closesocket(s);
+            }
+            WSACleanup();
+            break;
+        }
+        case CanaryChildProcess: {
+            STARTUPINFOW si{};
+            si.cb = sizeof(si);
+            PROCESS_INFORMATION pi{};
+            std::wstring cmd = L"cmd.exe /c exit 0";
+            BOOL ok = CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi);
+            if (!ok) {
+                resp.os_error_code = GetLastError();
+                resp.denied_by_os = (resp.os_error_code == ERROR_ACCESS_DENIED || resp.os_error_code == ERROR_NOT_SUPPORTED);
+                resp.diagnostic_message = "CreateProcessW denied with error: " + std::to_string(resp.os_error_code);
+            } else {
+                CloseHandle(pi.hThread);
+                CloseHandle(pi.hProcess);
+                resp.denied_by_os = false;
+                resp.os_error_code = 0;
+                resp.diagnostic_message = "FAIL: Child process was spawned successfully";
+            }
+            break;
+        }
+        case CanaryUngrantedHandle: {
+            HANDLE h = reinterpret_cast<HANDLE>(req.test_handle_value);
+            DWORD flags = 0;
+            BOOL ok = GetHandleInformation(h, &flags);
+            if (!ok) {
+                resp.os_error_code = GetLastError();
+                resp.denied_by_os = (resp.os_error_code == ERROR_INVALID_HANDLE);
+                resp.diagnostic_message = "Ungranted handle is invalid (not inherited)";
+            } else {
+                resp.denied_by_os = false;
+                resp.os_error_code = 0;
+                resp.diagnostic_message = "FAIL: Ungranted handle was leaked to child process";
+            }
+            break;
+        }
+        default: {
+            resp.action_attempted = false;
+            resp.denied_by_os = false;
+            resp.diagnostic_message = "Unknown canary type";
+            break;
+        }
+    }
+    return resp;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    // Deterministic repository-owned failure fixtures, never a source-format adapter.
+    if (argc==2 && std::string_view(argv[1])=="--test-stall-before-read") { Sleep(10000); return 0; }
+    if (argc==2 && std::string_view(argv[1])=="--test-truncated-response") {
+        uint8_t byte=0; DWORD written=0;
+        WriteFile(GetStdHandle(STD_OUTPUT_HANDLE),&byte,1,&written,nullptr);
+        return 0;
+    }
+    if (argc!=1) return 2;
+    HANDLE stdin_h = GetStdHandle(STD_INPUT_HANDLE);
+    HANDLE stdout_h = GetStdHandle(STD_OUTPUT_HANDLE);
+
+    if (stdin_h == INVALID_HANDLE_VALUE || stdout_h == INVALID_HANDLE_VALUE) {
+        return 1;
+    }
+
+    while (true) {
+        IpcHeader hdr{};
+        if (!ReadExact(stdin_h, &hdr, sizeof(IpcHeader))) {
+            break; // EOF or pipe closed by host
+        }
+
+        auto diag = PayloadValidator::ValidateHeader(hdr);
+        if (!diag.IsOk()) {
+            return 2;
+        }
+
+        std::vector<uint8_t> payload(hdr.payload_bytes);
+        if (hdr.payload_bytes > 0) {
+            if (!ReadExact(stdin_h, payload.data(), hdr.payload_bytes)) {
+                break;
+            }
+        }
+
+        std::vector<uint8_t> full_packet(sizeof(IpcHeader) + hdr.payload_bytes);
+        std::memcpy(full_packet.data(), &hdr, sizeof(IpcHeader));
+        std::memcpy(full_packet.data() + sizeof(IpcHeader), payload.data(), hdr.payload_bytes);
+
+        if (hdr.message_type == static_cast<uint16_t>(MessageType::Ping)) {
+            IpcHeader pong_hdr = hdr;
+            pong_hdr.message_type = static_cast<uint16_t>(MessageType::Pong);
+            pong_hdr.payload_bytes = 0;
+            WriteExact(stdout_h, &pong_hdr, sizeof(IpcHeader));
+        } else if (hdr.message_type == static_cast<uint16_t>(MessageType::CanaryRequest)) {
+            auto req_opt = DeserializeCanaryRequest(full_packet);
+            if (req_opt) {
+                auto resp = HandleCanary(*req_opt);
+                auto resp_bytes = SerializeCanaryResponse(resp, hdr.sequence_id);
+                WriteExact(stdout_h, resp_bytes.data(), static_cast<DWORD>(resp_bytes.size()));
+            }
+        } else if (hdr.message_type == static_cast<uint16_t>(MessageType::ImportRequest)) {
+            auto req_opt = DeserializeImportRequest(full_packet);
+            if (req_opt) {
+                ImportPayloadResponse resp{};
+                resp.job = req_opt->job;
+                resp.success = false;
+                resp.error_message = "Unsupported source format: no parser adapter is implemented";
+                resp.loss_reports.push_back("Import rejected; no geometry generated or fidelity claimed");
+
+                auto resp_bytes = SerializeImportResponse(resp, hdr.sequence_id);
+                WriteExact(stdout_h, resp_bytes.data(), static_cast<DWORD>(resp_bytes.size()));
+            }
+        }
+    }
+
+    return 0;
+}
