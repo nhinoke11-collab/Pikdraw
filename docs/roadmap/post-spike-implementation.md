@@ -1,6 +1,6 @@
 # Kế hoạch triển khai PikDraw sau ba spike
 
-Ngày: 2026-10-15. Trạng thái: **đặc tả triển khai, chưa thực thi**. Hiện chưa có native editor, native build pipeline hoặc kết quả ba spike. Việc viết kế hoạch không khởi chạy agent, không tạo task implementation hàng loạt và không thay thế nghiệm thu.
+Ngày: 2026-10-15. Trạng thái: **đặc tả triển khai, chưa thực thi**. Native editor và native build pipeline chưa có. Ba spike đã có draft evidence; independent PS00 audit ghi A `partial`, B `partial`, C `fail`, nên foundation chưa được nhận và M1 vẫn đóng. Xem [báo cáo nghiệm thu](../reports/foundation/ps00-acceptance-20261015.md) và [baseline hiện tại](../quality/baseline.json). Việc viết kế hoạch không khởi chạy agent, không tạo task implementation hàng loạt và không thay thế nghiệm thu.
 
 Đọc cùng [ba spike foundation](foundation-spikes.md), [catalog 26 task](post-spike-tasks.json), [document/runtime](../architecture/document-runtime.md), [quality gates](../quality/gates.md) và [giao thức agent](../agents/PROTOCOL.md).
 

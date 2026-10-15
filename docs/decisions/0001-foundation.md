@@ -26,6 +26,10 @@ Rust + Vello/wgpu là ứng viên đối chiếu nếu evidence tốt hơn. Memo
 
 Vòng đời dài dựa trên public boundaries nhỏ, dependency pin, build tái tạo, fixtures và chi phí nâng cấp. Không cam kết mười năm từ tên thư viện/benchmark marketing. Present Skia vào Qt và input/layout phải qua prototype; không tạo widget/scene item riêng cho mỗi control point.
 
+## Bản ghi PS00 ngày 2026-10-15
+
+Audit ba lane tại các revision trong [báo cáo nghiệm thu](../reports/foundation/ps00-acceptance-20261015.md) chưa nhận runtime stack. A mới có CPU/offscreen evidence; B chứng minh một số invariants trên prototype; C fail containment và chưa có corpus format. Vì vậy Accepted chỉ giữ nguyên cho scaffold và ranh giới dữ liệu ở trên; Qt/Skia, geometry/document implementation, storage bytes, format coverage và worker sandbox tiếp tục Proposed. Không mở M1 từ branch evidence chưa tích hợp.
+
 Geometry nguồn đề xuất mm, IEEE-754 binary64 (`double`/`f64`) cho tọa độ và transform; kiểm chứng trước khi khóa schema. Clipper2 là ứng viên polygon clipping/offset với lượng tử hóa và coordinate-range checks; không gọi đó là Boolean Bézier exact hoặc full CAD kernel.
 
 Màu nguồn giữ RGB/CMYK/spot, ICC, overprint và transparency theo phạm vi model. Chữ giữ Unicode, font identity, shaping/layout và liên kết outline. Preview RGB hoặc PDF nhìn đúng không chứng minh separations, PDF/X hoặc text editability.

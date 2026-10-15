@@ -9,6 +9,8 @@ Máy xưởng RAM 8 GB/GPU tích hợp và workstation RTX đều là đối tư
 
 Bản đầu ghi Accepted trước benchmark. Bản này thay tầng theo nhãn GPU bằng capability probing, bỏ cam kết đúng bốn thread/cứu mọi lỗi driver, thay tiêu chí không merge conflict bằng integration gates. Runtime dưới đây chưa được triển khai.
 
+PS00 ngày 2026-10-15 chưa khóa backend, executor topology hoặc budget. Independent Qt/Skia run đo CPU phases trên Qt offscreen nhưng không đo present; document tests pass correctness subset nhưng chưa đóng đầy đủ stale schedules/durability; worker containment chỉ chặn rõ 4/5 canaries. Xem [ma trận evidence và raw artifact](../reports/foundation/ps00-acceptance-20261015.md). Các mode/budget bên dưới vẫn Proposed và mọi chỉ số thiếu được để trống trong [baseline](../quality/baseline.json).
+
 ## Nguyên tắc có hiệu lực
 
 - Render không sửa document; source/production không phụ thuộc chất lượng preview.
