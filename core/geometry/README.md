@@ -1,9 +1,9 @@
-# PikDraw geometry
+# Geometry — bản nháp spike B
 
-Status: planned application module; no graphics implementation yet.
+Source curves và transforms dùng mm/binary64. Manufacturing approximation tách khỏi source; không lấy tolerance viewport làm tolerance dao.
 
-Responsibility: Exact geometric primitives, Bézier operations, intersections, offsets and unit-aware tolerances.
-Dependency authority: `registry/modules.json` (no module dependencies).
+Đã có affine transforms, bounds bảo thủ theo control polygon, Boolean/offset hình chữ nhật analytic. General path Boolean trả diagnostic chưa hỗ trợ; chưa có Clipper2/CGAL, topology holes/self-intersections và error budget toàn pipeline được nghiệm thu.
 
-Public interfaces must be versioned where consumed across processes/plugins.
-Do not depend on desktop UI. See the scoped AGENTS.md before a change.
+Cubic subdivision kiểm khoảng cách control points tới đoạn chord hữu hạn, giữ được zero-chord loop và collinear overshoot; không âm thầm chấp nhận khi hết depth/point budget. Single-contour approximation giữ Close, từ chối nhiều contour trong một polyline và tolerance ngoài miền [1e-9, 1e6] mm. Giới hạn input ±10.000.000 mm. Không coi khoảng sai số khảo sát này là cam kết CNC.
+
+Native tests có vectors 20 m/reflection/nonuniform transform, source preservation, rectangle subset và oracle analytic cho loop. Còn thiếu corpus production cho tangent/near-contact/holes/slivers/degenerate và đơn vị/parser boundary. Các API vẫn là prototype private, chưa khóa storage/plugin contracts.
