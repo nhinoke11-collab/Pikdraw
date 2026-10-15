@@ -4,6 +4,7 @@
 #include "pikdraw/rendering/culling.hpp"
 #include "pikdraw/rendering/trace.hpp"
 #include "pikdraw/rendering/backend.hpp"
+#include <algorithm>
 #include <iostream>
 #include <cmath>
 #include <sstream>
@@ -99,8 +100,16 @@ void test_camera_nan_inf_protection() {
 
 void test_fixtures_100k_nodes() {
     const auto fixture_small = FixtureGenerator::generate_many_small_paths(25000);
-    TEST_CHECK(fixture_small.nodes.size() >= 25000, "many small paths node count");
+    TEST_CHECK(fixture_small.nodes.size() == 25000, "many small paths fixture contains exactly the requested path count");
+    TEST_CHECK(std::all_of(fixture_small.nodes.begin(), fixture_small.nodes.end(),
+        [](const SceneNode& node) { return node.type == NodeType::Path; }),
+        "many small paths fixture contains only renderable path nodes");
     TEST_CHECK(fixture_small.total_points_count() >= 100000, "many small paths total vertices >= 100k");
+
+    const auto fixture_large_extent = FixtureGenerator::generate_many_small_paths(1000, 100.0);
+    TEST_CHECK(fixture_large_extent.total_bounds_mm.width > 3000.0 &&
+        fixture_large_extent.total_bounds_mm.height > 3000.0,
+        "path fixture preserves explicit large-document spacing");
 
     const auto fixture_large = FixtureGenerator::generate_few_large_paths(5, 20500);
     TEST_CHECK(fixture_large.nodes.size() >= 5, "few large paths node count");

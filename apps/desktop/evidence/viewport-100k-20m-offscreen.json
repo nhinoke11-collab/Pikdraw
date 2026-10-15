@@ -1,0 +1,3578 @@
+{
+  "schema_version": 1,
+  "frames_recorded": 188,
+  "frames": [
+    {
+      "frame_index": 1,
+      "camera_x_mm": 0,
+      "camera_y_mm": 0,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2726.1,
+        "raster": 2523.5,
+        "paint_submission": 2106.3,
+        "total": 7364.5
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 2,
+      "camera_x_mm": 2,
+      "camera_y_mm": -3,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1837.1,
+        "raster": 1439.2,
+        "paint_submission": 857.2,
+        "total": 4139.7
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 3,
+      "camera_x_mm": -1,
+      "camera_y_mm": -1,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1713.4,
+        "raster": 1444,
+        "paint_submission": 806.6,
+        "total": 3971
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 4,
+      "camera_x_mm": 1,
+      "camera_y_mm": -4,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2156.4,
+        "raster": 1973.7,
+        "paint_submission": 874.5,
+        "total": 5013.5
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 5,
+      "camera_x_mm": -2,
+      "camera_y_mm": -2,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2263.1,
+        "raster": 1927.6,
+        "paint_submission": 926.1,
+        "total": 5124.7
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 6,
+      "camera_x_mm": 0,
+      "camera_y_mm": -5,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1874.8,
+        "raster": 1464,
+        "paint_submission": 771.1,
+        "total": 4116.3
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 7,
+      "camera_x_mm": -3,
+      "camera_y_mm": -3,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1744,
+        "raster": 1445.1,
+        "paint_submission": 771.6,
+        "total": 3967.2
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 8,
+      "camera_x_mm": -1,
+      "camera_y_mm": -6,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1729.3,
+        "raster": 1435.8,
+        "paint_submission": 783.4,
+        "total": 3955.8
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 9,
+      "camera_x_mm": -4,
+      "camera_y_mm": -4,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2066.9,
+        "raster": 1882.8,
+        "paint_submission": 821.3,
+        "total": 4779.5
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 10,
+      "camera_x_mm": -2,
+      "camera_y_mm": -7,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2168,
+        "raster": 1933.2,
+        "paint_submission": 851.4,
+        "total": 4961.1
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 11,
+      "camera_x_mm": -5,
+      "camera_y_mm": -5,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1958.5,
+        "raster": 1998.7,
+        "paint_submission": 875.7,
+        "total": 4841
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 12,
+      "camera_x_mm": -3,
+      "camera_y_mm": -8,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1990.9,
+        "raster": 1995.4,
+        "paint_submission": 1075.2,
+        "total": 5070.3
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 13,
+      "camera_x_mm": -6,
+      "camera_y_mm": -6,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1534,
+        "raster": 1535.3,
+        "paint_submission": 1001.1,
+        "total": 4077
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 14,
+      "camera_x_mm": -4,
+      "camera_y_mm": -9,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1577.9,
+        "raster": 1462.4,
+        "paint_submission": 784.4,
+        "total": 3832
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 15,
+      "camera_x_mm": -7,
+      "camera_y_mm": -7,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1600.3,
+        "raster": 1421.7,
+        "paint_submission": 760.4,
+        "total": 3788.4
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 16,
+      "camera_x_mm": -5,
+      "camera_y_mm": -10,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1618.4,
+        "raster": 1408.3,
+        "paint_submission": 754.3,
+        "total": 3787
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 17,
+      "camera_x_mm": -3,
+      "camera_y_mm": -13,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1560,
+        "raster": 1400.3,
+        "paint_submission": 789.3,
+        "total": 3756.7
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 18,
+      "camera_x_mm": -6,
+      "camera_y_mm": -11,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1555.5,
+        "raster": 1424.5,
+        "paint_submission": 760.7,
+        "total": 3747.5
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 19,
+      "camera_x_mm": -4,
+      "camera_y_mm": -14,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1566.9,
+        "raster": 1454.3,
+        "paint_submission": 762.1,
+        "total": 3790.2
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 20,
+      "camera_x_mm": -7,
+      "camera_y_mm": -12,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1562.8,
+        "raster": 1411.1,
+        "paint_submission": 808,
+        "total": 3788.3
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 21,
+      "camera_x_mm": -5,
+      "camera_y_mm": -15,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1786.5,
+        "raster": 1412.8,
+        "paint_submission": 780.4,
+        "total": 3986.1
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 22,
+      "camera_x_mm": -3,
+      "camera_y_mm": -18,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1819.5,
+        "raster": 1641.9,
+        "paint_submission": 890.4,
+        "total": 4360.6
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 23,
+      "camera_x_mm": -6,
+      "camera_y_mm": -16,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2105.1,
+        "raster": 1906.9,
+        "paint_submission": 909.2,
+        "total": 4929.9
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 24,
+      "camera_x_mm": -4,
+      "camera_y_mm": -19,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2073.2,
+        "raster": 1800.2,
+        "paint_submission": 879.6,
+        "total": 4762.7
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 25,
+      "camera_x_mm": -7,
+      "camera_y_mm": -17,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2103.1,
+        "raster": 1862.1,
+        "paint_submission": 965.3,
+        "total": 4944.8
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 26,
+      "camera_x_mm": -5,
+      "camera_y_mm": -20,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 77,
+      "culled_nodes": 99923,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1707.9,
+        "raster": 1307.4,
+        "paint_submission": 777.6,
+        "total": 3800.8
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 27,
+      "camera_x_mm": -8,
+      "camera_y_mm": -18,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 70,
+      "culled_nodes": 99930,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1562.4,
+        "raster": 1257.2,
+        "paint_submission": 779.7,
+        "total": 3606.9
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 28,
+      "camera_x_mm": -6,
+      "camera_y_mm": -21,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 66,
+      "culled_nodes": 99934,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2035.3,
+        "raster": 1671.2,
+        "paint_submission": 819,
+        "total": 4534.2
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 29,
+      "camera_x_mm": -9,
+      "camera_y_mm": -19,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 70,
+      "culled_nodes": 99930,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2345.9,
+        "raster": 1437.3,
+        "paint_submission": 760.3,
+        "total": 4552.6
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 30,
+      "camera_x_mm": -7,
+      "camera_y_mm": -22,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 66,
+      "culled_nodes": 99934,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1599.5,
+        "raster": 1252.4,
+        "paint_submission": 752.7,
+        "total": 3612.2
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 31,
+      "camera_x_mm": -10,
+      "camera_y_mm": -20,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 70,
+      "culled_nodes": 99930,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1669.2,
+        "raster": 1253.2,
+        "paint_submission": 762.5,
+        "total": 3692.3
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 32,
+      "camera_x_mm": -8,
+      "camera_y_mm": -23,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2486.7,
+        "raster": 1895.5,
+        "paint_submission": 877.6,
+        "total": 5270.8
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 33,
+      "camera_x_mm": -11,
+      "camera_y_mm": -21,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2461.5,
+        "raster": 1545.2,
+        "paint_submission": 1145.3,
+        "total": 5161.8
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 34,
+      "camera_x_mm": -9,
+      "camera_y_mm": -24,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2289.4,
+        "raster": 1772.5,
+        "paint_submission": 923.3,
+        "total": 4995.8
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 35,
+      "camera_x_mm": -12,
+      "camera_y_mm": -22,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1598.7,
+        "raster": 1686.1,
+        "paint_submission": 998.8,
+        "total": 4293.8
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 36,
+      "camera_x_mm": -10,
+      "camera_y_mm": -25,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2190.3,
+        "raster": 1950.9,
+        "paint_submission": 924.8,
+        "total": 5076.7
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 37,
+      "camera_x_mm": -13,
+      "camera_y_mm": -23,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1605.8,
+        "raster": 1528,
+        "paint_submission": 799.5,
+        "total": 3944.4
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 38,
+      "camera_x_mm": -11,
+      "camera_y_mm": -26,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1681.4,
+        "raster": 1299.5,
+        "paint_submission": 875.7,
+        "total": 3865.4
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 39,
+      "camera_x_mm": -14,
+      "camera_y_mm": -24,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2117.5,
+        "raster": 1655,
+        "paint_submission": 947.1,
+        "total": 4730.2
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 40,
+      "camera_x_mm": -12,
+      "camera_y_mm": -27,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1680.5,
+        "raster": 1402.1,
+        "paint_submission": 924.5,
+        "total": 4016.5
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 41,
+      "camera_x_mm": -15,
+      "camera_y_mm": -25,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1622.4,
+        "raster": 1469.2,
+        "paint_submission": 791.7,
+        "total": 3891.9
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 42,
+      "camera_x_mm": -13,
+      "camera_y_mm": -28,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1691.3,
+        "raster": 1350.4,
+        "paint_submission": 866.7,
+        "total": 3917.1
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 43,
+      "camera_x_mm": -16,
+      "camera_y_mm": -26,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1566.8,
+        "raster": 1309,
+        "paint_submission": 910.4,
+        "total": 3796.5
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 44,
+      "camera_x_mm": -14,
+      "camera_y_mm": -29,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1587.4,
+        "raster": 1485.8,
+        "paint_submission": 797.4,
+        "total": 3883.8
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 45,
+      "camera_x_mm": -17,
+      "camera_y_mm": -27,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2422,
+        "raster": 1616.7,
+        "paint_submission": 1183.5,
+        "total": 5233.3
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 46,
+      "camera_x_mm": -15,
+      "camera_y_mm": -30,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2429.4,
+        "raster": 1772.3,
+        "paint_submission": 829.8,
+        "total": 5042.3
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 47,
+      "camera_x_mm": -18,
+      "camera_y_mm": -28,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2036,
+        "raster": 1699.4,
+        "paint_submission": 981.7,
+        "total": 4733.6
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 48,
+      "camera_x_mm": -16,
+      "camera_y_mm": -31,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2121.2,
+        "raster": 1213.2,
+        "paint_submission": 866.1,
+        "total": 4209.8
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 49,
+      "camera_x_mm": -19,
+      "camera_y_mm": -29,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2470.3,
+        "raster": 1644.9,
+        "paint_submission": 913.2,
+        "total": 5039.7
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 50,
+      "camera_x_mm": -17,
+      "camera_y_mm": -32,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1918,
+        "raster": 1654.5,
+        "paint_submission": 1150.4,
+        "total": 4733.9
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 51,
+      "camera_x_mm": -20,
+      "camera_y_mm": -30,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1848.2,
+        "raster": 1696.1,
+        "paint_submission": 1345.6,
+        "total": 4900.4
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 52,
+      "camera_x_mm": -18,
+      "camera_y_mm": -33,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2151.7,
+        "raster": 1613.4,
+        "paint_submission": 1042.4,
+        "total": 4818.5
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 53,
+      "camera_x_mm": -21,
+      "camera_y_mm": -31,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2068.4,
+        "raster": 1544.8,
+        "paint_submission": 856.4,
+        "total": 4480.2
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 54,
+      "camera_x_mm": -19,
+      "camera_y_mm": -34,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2487.2,
+        "raster": 2221.7,
+        "paint_submission": 813.5,
+        "total": 5533
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 55,
+      "camera_x_mm": -22,
+      "camera_y_mm": -32,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1670.7,
+        "raster": 1285.3,
+        "paint_submission": 815,
+        "total": 3780
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 56,
+      "camera_x_mm": -20,
+      "camera_y_mm": -35,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1582.8,
+        "raster": 1300.5,
+        "paint_submission": 854.8,
+        "total": 3747.1
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 57,
+      "camera_x_mm": -23,
+      "camera_y_mm": -33,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1519.3,
+        "raster": 1270,
+        "paint_submission": 857.8,
+        "total": 3655.9
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 58,
+      "camera_x_mm": -21,
+      "camera_y_mm": -36,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1487.5,
+        "raster": 1096.5,
+        "paint_submission": 918.3,
+        "total": 3509.8
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 59,
+      "camera_x_mm": -24,
+      "camera_y_mm": -34,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1540.9,
+        "raster": 1115,
+        "paint_submission": 770.3,
+        "total": 3434.7
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 60,
+      "camera_x_mm": -22,
+      "camera_y_mm": -37,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1525.6,
+        "raster": 1153.2,
+        "paint_submission": 771.4,
+        "total": 3457.5
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 61,
+      "camera_x_mm": -25,
+      "camera_y_mm": -35,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1555.4,
+        "raster": 1164.1,
+        "paint_submission": 766.8,
+        "total": 3494.4
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 62,
+      "camera_x_mm": -23,
+      "camera_y_mm": -38,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1511.7,
+        "raster": 1139.1,
+        "paint_submission": 800,
+        "total": 3458.1
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 63,
+      "camera_x_mm": -26,
+      "camera_y_mm": -36,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1513.7,
+        "raster": 1102.2,
+        "paint_submission": 772.4,
+        "total": 3396.5
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 64,
+      "camera_x_mm": -24,
+      "camera_y_mm": -39,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3502.3,
+        "raster": 4192.5,
+        "paint_submission": 1884,
+        "total": 9611.7
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 65,
+      "camera_x_mm": -27,
+      "camera_y_mm": -37,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3585.3,
+        "raster": 4219.4,
+        "paint_submission": 2340,
+        "total": 10165.4
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 66,
+      "camera_x_mm": -25,
+      "camera_y_mm": -40,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3698.6,
+        "raster": 4006.9,
+        "paint_submission": 1982.3,
+        "total": 9705.3
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 67,
+      "camera_x_mm": -28,
+      "camera_y_mm": -38,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3200.9,
+        "raster": 2004.5,
+        "paint_submission": 957.5,
+        "total": 6175.1
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 68,
+      "camera_x_mm": -31,
+      "camera_y_mm": -36,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2000.7,
+        "raster": 1926.1,
+        "paint_submission": 965.2,
+        "total": 4902.9
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 69,
+      "camera_x_mm": -34,
+      "camera_y_mm": -34,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1527.2,
+        "raster": 1557.3,
+        "paint_submission": 863.7,
+        "total": 3958.5
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 70,
+      "camera_x_mm": -32,
+      "camera_y_mm": -37,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1529.6,
+        "raster": 1224.6,
+        "paint_submission": 771.2,
+        "total": 3533.3
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 71,
+      "camera_x_mm": -35,
+      "camera_y_mm": -35,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1785.9,
+        "raster": 1187.5,
+        "paint_submission": 818.3,
+        "total": 3800.4
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 72,
+      "camera_x_mm": -38,
+      "camera_y_mm": -33,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1686.8,
+        "raster": 1438.1,
+        "paint_submission": 799.2,
+        "total": 3932.8
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 73,
+      "camera_x_mm": -36,
+      "camera_y_mm": -36,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1591,
+        "raster": 1245.3,
+        "paint_submission": 783,
+        "total": 3627.8
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 74,
+      "camera_x_mm": -34,
+      "camera_y_mm": -39,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1562,
+        "raster": 1252.2,
+        "paint_submission": 778.5,
+        "total": 3601.2
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 75,
+      "camera_x_mm": -37,
+      "camera_y_mm": -37,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1662.4,
+        "raster": 1153.3,
+        "paint_submission": 780.7,
+        "total": 3604.4
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 76,
+      "camera_x_mm": -35,
+      "camera_y_mm": -40,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1880.5,
+        "raster": 1234.9,
+        "paint_submission": 772.7,
+        "total": 3896.3
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 77,
+      "camera_x_mm": -38,
+      "camera_y_mm": -38,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2183.2,
+        "raster": 1245.2,
+        "paint_submission": 806.9,
+        "total": 4243
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 78,
+      "camera_x_mm": -36,
+      "camera_y_mm": -41,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1709.2,
+        "raster": 1525.1,
+        "paint_submission": 1067.5,
+        "total": 4312.4
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 79,
+      "camera_x_mm": -39,
+      "camera_y_mm": -39,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2514.2,
+        "raster": 1649,
+        "paint_submission": 871.1,
+        "total": 5045.6
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 80,
+      "camera_x_mm": -37,
+      "camera_y_mm": -42,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1543.9,
+        "raster": 1357.2,
+        "paint_submission": 922.5,
+        "total": 3834.1
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 81,
+      "camera_x_mm": -40,
+      "camera_y_mm": -40,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1626.4,
+        "raster": 1211.5,
+        "paint_submission": 823.1,
+        "total": 3669.9
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 82,
+      "camera_x_mm": -38,
+      "camera_y_mm": -43,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1470.7,
+        "raster": 1123,
+        "paint_submission": 753.2,
+        "total": 3354.1
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 83,
+      "camera_x_mm": -41,
+      "camera_y_mm": -41,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1528,
+        "raster": 1139.7,
+        "paint_submission": 765.6,
+        "total": 3440.6
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 84,
+      "camera_x_mm": -39,
+      "camera_y_mm": -44,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1542.3,
+        "raster": 1124,
+        "paint_submission": 758.9,
+        "total": 3433.3
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 85,
+      "camera_x_mm": -42,
+      "camera_y_mm": -42,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1528.6,
+        "raster": 1150,
+        "paint_submission": 763.4,
+        "total": 3449.2
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 86,
+      "camera_x_mm": -45,
+      "camera_y_mm": -40,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1472.8,
+        "raster": 1089.9,
+        "paint_submission": 772.1,
+        "total": 3341.6
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 87,
+      "camera_x_mm": -48,
+      "camera_y_mm": -38,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1525.6,
+        "raster": 1139,
+        "paint_submission": 794.3,
+        "total": 3466.4
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 88,
+      "camera_x_mm": -46,
+      "camera_y_mm": -41,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3466.6,
+        "raster": 4013.2,
+        "paint_submission": 1906.5,
+        "total": 9405.1
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 89,
+      "camera_x_mm": -49,
+      "camera_y_mm": -39,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3437.6,
+        "raster": 3999.8,
+        "paint_submission": 1891.1,
+        "total": 9347.6
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 90,
+      "camera_x_mm": -47,
+      "camera_y_mm": -42,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2174.7,
+        "raster": 2228.7,
+        "paint_submission": 995.9,
+        "total": 5411.6
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 91,
+      "camera_x_mm": -50,
+      "camera_y_mm": -40,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2189.6,
+        "raster": 2168.7,
+        "paint_submission": 995.5,
+        "total": 5366.3
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 92,
+      "camera_x_mm": -48,
+      "camera_y_mm": -43,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1523.9,
+        "raster": 1136.7,
+        "paint_submission": 682.7,
+        "total": 3350.9
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 93,
+      "camera_x_mm": -46,
+      "camera_y_mm": -46,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1523.7,
+        "raster": 1149.8,
+        "paint_submission": 707.5,
+        "total": 3389.4
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 94,
+      "camera_x_mm": -44,
+      "camera_y_mm": -49,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1544,
+        "raster": 1175,
+        "paint_submission": 708.8,
+        "total": 3435.6
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 95,
+      "camera_x_mm": -47,
+      "camera_y_mm": -47,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1522.3,
+        "raster": 1088.4,
+        "paint_submission": 715.6,
+        "total": 3333.7
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 96,
+      "camera_x_mm": -45,
+      "camera_y_mm": -50,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1502.7,
+        "raster": 1145,
+        "paint_submission": 698.9,
+        "total": 3354.7
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 97,
+      "camera_x_mm": -48,
+      "camera_y_mm": -48,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1508.2,
+        "raster": 3265.9,
+        "paint_submission": 1774.8,
+        "total": 6567.4
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 98,
+      "camera_x_mm": -46,
+      "camera_y_mm": -51,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3483.6,
+        "raster": 4405.1,
+        "paint_submission": 1713.9,
+        "total": 9622.6
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 99,
+      "camera_x_mm": -49,
+      "camera_y_mm": -49,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3688.1,
+        "raster": 3993.6,
+        "paint_submission": 1710.8,
+        "total": 9411.6
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 100,
+      "camera_x_mm": -52,
+      "camera_y_mm": -47,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3792.6,
+        "raster": 3986.9,
+        "paint_submission": 1703.2,
+        "total": 9502.5
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 101,
+      "camera_x_mm": -50,
+      "camera_y_mm": -50,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3920.2,
+        "raster": 4097.9,
+        "paint_submission": 1729,
+        "total": 9766.6
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 102,
+      "camera_x_mm": -48,
+      "camera_y_mm": -53,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3886.6,
+        "raster": 4272,
+        "paint_submission": 1917,
+        "total": 10095.4
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 103,
+      "camera_x_mm": -51,
+      "camera_y_mm": -51,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 4641.7,
+        "raster": 5530.7,
+        "paint_submission": 1796.8,
+        "total": 11993.4
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 104,
+      "camera_x_mm": -49,
+      "camera_y_mm": -54,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 4114,
+        "raster": 4866.1,
+        "paint_submission": 1249.2,
+        "total": 10260.4
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 105,
+      "camera_x_mm": -52,
+      "camera_y_mm": -52,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2165.2,
+        "raster": 2399.4,
+        "paint_submission": 1064.1,
+        "total": 5641.2
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 106,
+      "camera_x_mm": -55,
+      "camera_y_mm": -50,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2154.9,
+        "raster": 2374.3,
+        "paint_submission": 1057.6,
+        "total": 5599.9
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 107,
+      "camera_x_mm": -58,
+      "camera_y_mm": -48,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2150.7,
+        "raster": 2177,
+        "paint_submission": 1002.9,
+        "total": 5343.2
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 108,
+      "camera_x_mm": -56,
+      "camera_y_mm": -51,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2160.6,
+        "raster": 2409,
+        "paint_submission": 1014,
+        "total": 5596.5
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 109,
+      "camera_x_mm": -59,
+      "camera_y_mm": -49,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2174.3,
+        "raster": 2266.9,
+        "paint_submission": 1005.9,
+        "total": 5458.9
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 110,
+      "camera_x_mm": -57,
+      "camera_y_mm": -52,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2431.5,
+        "raster": 2382.7,
+        "paint_submission": 1122.5,
+        "total": 5950.7
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 111,
+      "camera_x_mm": -60,
+      "camera_y_mm": -50,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3458.7,
+        "raster": 2172,
+        "paint_submission": 1001.8,
+        "total": 6645.6
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 112,
+      "camera_x_mm": -58,
+      "camera_y_mm": -53,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2278.3,
+        "raster": 1427,
+        "paint_submission": 912.7,
+        "total": 4632.5
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 113,
+      "camera_x_mm": -61,
+      "camera_y_mm": -51,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1522.2,
+        "raster": 1089.9,
+        "paint_submission": 722.8,
+        "total": 3343
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 114,
+      "camera_x_mm": -59,
+      "camera_y_mm": -54,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1590.5,
+        "raster": 1150.4,
+        "paint_submission": 701,
+        "total": 3449.9
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 115,
+      "camera_x_mm": -62,
+      "camera_y_mm": -52,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1525.7,
+        "raster": 1147.2,
+        "paint_submission": 696,
+        "total": 3377.2
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 116,
+      "camera_x_mm": -60,
+      "camera_y_mm": -55,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1512.2,
+        "raster": 1141.1,
+        "paint_submission": 697.5,
+        "total": 3358.2
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 117,
+      "camera_x_mm": -63,
+      "camera_y_mm": -53,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1485,
+        "raster": 1156.3,
+        "paint_submission": 706.4,
+        "total": 3356
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 118,
+      "camera_x_mm": -61,
+      "camera_y_mm": -56,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2859.5,
+        "raster": 3214.8,
+        "paint_submission": 1402.2,
+        "total": 7492.6
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 119,
+      "camera_x_mm": -64,
+      "camera_y_mm": -54,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2876.3,
+        "raster": 3195.5,
+        "paint_submission": 1382.3,
+        "total": 7468.6
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 120,
+      "camera_x_mm": -62,
+      "camera_y_mm": -57,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2063,
+        "raster": 2048.6,
+        "paint_submission": 962.1,
+        "total": 5085.7
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 121,
+      "camera_x_mm": -65,
+      "camera_y_mm": -55,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2015,
+        "raster": 2017.6,
+        "paint_submission": 938.3,
+        "total": 4982.6
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 122,
+      "camera_x_mm": -63,
+      "camera_y_mm": -58,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1676.7,
+        "raster": 1179,
+        "paint_submission": 729,
+        "total": 3593.9
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 123,
+      "camera_x_mm": -66,
+      "camera_y_mm": -56,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1753.9,
+        "raster": 1179.8,
+        "paint_submission": 686.2,
+        "total": 3627.7
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 124,
+      "camera_x_mm": -64,
+      "camera_y_mm": -59,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1763,
+        "raster": 1142.8,
+        "paint_submission": 693.5,
+        "total": 3608.3
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 125,
+      "camera_x_mm": -67,
+      "camera_y_mm": -57,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1523.8,
+        "raster": 1262.3,
+        "paint_submission": 757.4,
+        "total": 3551.3
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 126,
+      "camera_x_mm": -65,
+      "camera_y_mm": -60,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3946.2,
+        "raster": 3999.3,
+        "paint_submission": 1768.1,
+        "total": 9732.9
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 127,
+      "camera_x_mm": -68,
+      "camera_y_mm": -58,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3638.6,
+        "raster": 4168.4,
+        "paint_submission": 1694.1,
+        "total": 9520
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 128,
+      "camera_x_mm": -66,
+      "camera_y_mm": -61,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3414.1,
+        "raster": 4552,
+        "paint_submission": 2200.9,
+        "total": 10191.5
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 129,
+      "camera_x_mm": -69,
+      "camera_y_mm": -59,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3685.4,
+        "raster": 5325.4,
+        "paint_submission": 2175.9,
+        "total": 11210.7
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 130,
+      "camera_x_mm": -67,
+      "camera_y_mm": -62,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3485.7,
+        "raster": 4484.9,
+        "paint_submission": 1776.3,
+        "total": 9780.4
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 131,
+      "camera_x_mm": -70,
+      "camera_y_mm": -60,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 60,
+      "culled_nodes": 99940,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2076.7,
+        "raster": 1940.5,
+        "paint_submission": 932.7,
+        "total": 4961.7
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 132,
+      "camera_x_mm": -73,
+      "camera_y_mm": -58,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2522,
+        "raster": 2298.7,
+        "paint_submission": 1146.4,
+        "total": 5980
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 133,
+      "camera_x_mm": -71,
+      "camera_y_mm": -61,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1941.9,
+        "raster": 1804.5,
+        "paint_submission": 905,
+        "total": 4662.7
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 134,
+      "camera_x_mm": -74,
+      "camera_y_mm": -59,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1949.8,
+        "raster": 1816.2,
+        "paint_submission": 885.5,
+        "total": 4668.6
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 135,
+      "camera_x_mm": -72,
+      "camera_y_mm": -62,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1536.3,
+        "raster": 1124.4,
+        "paint_submission": 740.5,
+        "total": 3410.1
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 136,
+      "camera_x_mm": -75,
+      "camera_y_mm": -60,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1577.6,
+        "raster": 1114.7,
+        "paint_submission": 773.2,
+        "total": 3473.6
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 137,
+      "camera_x_mm": -73,
+      "camera_y_mm": -63,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1536.9,
+        "raster": 1145,
+        "paint_submission": 702.8,
+        "total": 3394.7
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 138,
+      "camera_x_mm": -76,
+      "camera_y_mm": -61,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1486,
+        "raster": 1094.5,
+        "paint_submission": 702.4,
+        "total": 3291.3
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 139,
+      "camera_x_mm": -79,
+      "camera_y_mm": -59,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1523.5,
+        "raster": 1102.6,
+        "paint_submission": 717.3,
+        "total": 3350.3
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 140,
+      "camera_x_mm": -77,
+      "camera_y_mm": -62,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1535.8,
+        "raster": 1084.2,
+        "paint_submission": 770.8,
+        "total": 3397.7
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 141,
+      "camera_x_mm": -80,
+      "camera_y_mm": -60,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1507.4,
+        "raster": 1033,
+        "paint_submission": 773.9,
+        "total": 3320.6
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 142,
+      "camera_x_mm": -78,
+      "camera_y_mm": -63,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1541.6,
+        "raster": 1100.5,
+        "paint_submission": 785.4,
+        "total": 3435
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 143,
+      "camera_x_mm": -81,
+      "camera_y_mm": -61,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1535.5,
+        "raster": 1083.8,
+        "paint_submission": 771.8,
+        "total": 3397.9
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 144,
+      "camera_x_mm": -79,
+      "camera_y_mm": -64,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1931.5,
+        "raster": 1167.2,
+        "paint_submission": 898,
+        "total": 4006.2
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 145,
+      "camera_x_mm": -77,
+      "camera_y_mm": -67,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2194.7,
+        "raster": 1287.7,
+        "paint_submission": 875.5,
+        "total": 4367
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 146,
+      "camera_x_mm": -75,
+      "camera_y_mm": -70,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1699,
+        "raster": 1161.3,
+        "paint_submission": 924.2,
+        "total": 3793.3
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 147,
+      "camera_x_mm": -78,
+      "camera_y_mm": -68,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1672.2,
+        "raster": 1433.1,
+        "paint_submission": 968.8,
+        "total": 4092.7
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 148,
+      "camera_x_mm": -76,
+      "camera_y_mm": -71,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1541.2,
+        "raster": 1206.3,
+        "paint_submission": 839.8,
+        "total": 3596.7
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 149,
+      "camera_x_mm": -79,
+      "camera_y_mm": -69,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1537,
+        "raster": 1071,
+        "paint_submission": 1033.8,
+        "total": 3649.5
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 150,
+      "camera_x_mm": -77,
+      "camera_y_mm": -72,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1507.2,
+        "raster": 1050.4,
+        "paint_submission": 756.3,
+        "total": 3321.9
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 151,
+      "camera_x_mm": -80,
+      "camera_y_mm": -70,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1544.4,
+        "raster": 1022.6,
+        "paint_submission": 778.8,
+        "total": 3353.1
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 152,
+      "camera_x_mm": -78,
+      "camera_y_mm": -73,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2950.2,
+        "raster": 3642.6,
+        "paint_submission": 1593.6,
+        "total": 8203.9
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 153,
+      "camera_x_mm": -81,
+      "camera_y_mm": -71,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2925.2,
+        "raster": 3324.5,
+        "paint_submission": 1570.2,
+        "total": 7835.7
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 154,
+      "camera_x_mm": -79,
+      "camera_y_mm": -74,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2937.3,
+        "raster": 3542.1,
+        "paint_submission": 1691.4,
+        "total": 8190.4
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 155,
+      "camera_x_mm": -82,
+      "camera_y_mm": -72,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3007.6,
+        "raster": 4058.9,
+        "paint_submission": 1878.6,
+        "total": 8967.5
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 156,
+      "camera_x_mm": -80,
+      "camera_y_mm": -75,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2880.6,
+        "raster": 3132.2,
+        "paint_submission": 1788.7,
+        "total": 7820.5
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 157,
+      "camera_x_mm": -83,
+      "camera_y_mm": -73,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3214.7,
+        "raster": 3027.2,
+        "paint_submission": 1675.4,
+        "total": 7932.7
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 158,
+      "camera_x_mm": -81,
+      "camera_y_mm": -76,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2923.2,
+        "raster": 3168.9,
+        "paint_submission": 1431.7,
+        "total": 7539.1
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 159,
+      "camera_x_mm": -84,
+      "camera_y_mm": -74,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3009.1,
+        "raster": 3032.2,
+        "paint_submission": 1599,
+        "total": 7656
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 160,
+      "camera_x_mm": -82,
+      "camera_y_mm": -77,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2986.2,
+        "raster": 3154.2,
+        "paint_submission": 1425.5,
+        "total": 7581.2
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 161,
+      "camera_x_mm": -85,
+      "camera_y_mm": -75,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3047.1,
+        "raster": 3034.6,
+        "paint_submission": 1447.6,
+        "total": 7544.4
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 162,
+      "camera_x_mm": -83,
+      "camera_y_mm": -78,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2895.1,
+        "raster": 3727.9,
+        "paint_submission": 1466,
+        "total": 8114.5
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 163,
+      "camera_x_mm": -86,
+      "camera_y_mm": -76,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3023.3,
+        "raster": 3049,
+        "paint_submission": 1437.7,
+        "total": 7526.4
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 164,
+      "camera_x_mm": -84,
+      "camera_y_mm": -79,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3053,
+        "raster": 3211.8,
+        "paint_submission": 1714.2,
+        "total": 7995.3
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 165,
+      "camera_x_mm": -87,
+      "camera_y_mm": -77,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2061.8,
+        "raster": 2442.1,
+        "paint_submission": 1399.5,
+        "total": 5917.6
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 166,
+      "camera_x_mm": -85,
+      "camera_y_mm": -80,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2191.8,
+        "raster": 1915.9,
+        "paint_submission": 1174.6,
+        "total": 5293.1
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 167,
+      "camera_x_mm": -88,
+      "camera_y_mm": -78,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2252.6,
+        "raster": 1951.3,
+        "paint_submission": 987.7,
+        "total": 5202.8
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 168,
+      "camera_x_mm": -86,
+      "camera_y_mm": -81,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2306.2,
+        "raster": 2010.5,
+        "paint_submission": 983.4,
+        "total": 5311.6
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 169,
+      "camera_x_mm": -89,
+      "camera_y_mm": -79,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2262,
+        "raster": 2122.8,
+        "paint_submission": 975.1,
+        "total": 5372.1
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 170,
+      "camera_x_mm": -87,
+      "camera_y_mm": -82,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2377.9,
+        "raster": 1975.6,
+        "paint_submission": 985.2,
+        "total": 5350.8
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 171,
+      "camera_x_mm": -90,
+      "camera_y_mm": -80,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2249.5,
+        "raster": 1970,
+        "paint_submission": 1044.4,
+        "total": 5275
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 172,
+      "camera_x_mm": -88,
+      "camera_y_mm": -83,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2192,
+        "raster": 2175,
+        "paint_submission": 1022.7,
+        "total": 5402.2
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 173,
+      "camera_x_mm": -91,
+      "camera_y_mm": -81,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2262.4,
+        "raster": 2019.3,
+        "paint_submission": 986.1,
+        "total": 5278.9
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 174,
+      "camera_x_mm": -89,
+      "camera_y_mm": -84,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 45,
+      "culled_nodes": 99955,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3479.8,
+        "raster": 3658.8,
+        "paint_submission": 1869.9,
+        "total": 9029.3
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 175,
+      "camera_x_mm": -92,
+      "camera_y_mm": -82,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 3426.7,
+        "raster": 4040.9,
+        "paint_submission": 1820.5,
+        "total": 9309.8
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 176,
+      "camera_x_mm": -90,
+      "camera_y_mm": -85,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 45,
+      "culled_nodes": 99955,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2412.7,
+        "raster": 2129.8,
+        "paint_submission": 1281.9,
+        "total": 5836.9
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 177,
+      "camera_x_mm": -93,
+      "camera_y_mm": -83,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 54,
+      "culled_nodes": 99946,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2443.3,
+        "raster": 2282,
+        "paint_submission": 1162.6,
+        "total": 5900.1
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 178,
+      "camera_x_mm": -91,
+      "camera_y_mm": -86,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 45,
+      "culled_nodes": 99955,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2754.8,
+        "raster": 2164.3,
+        "paint_submission": 1152.5,
+        "total": 6085.7
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 179,
+      "camera_x_mm": -94,
+      "camera_y_mm": -84,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 45,
+      "culled_nodes": 99955,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2586.1,
+        "raster": 2146.6,
+        "paint_submission": 1169.5,
+        "total": 5915.6
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 180,
+      "camera_x_mm": -92,
+      "camera_y_mm": -87,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 45,
+      "culled_nodes": 99955,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2414.6,
+        "raster": 2145.2,
+        "paint_submission": 1186.6,
+        "total": 5759.3
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 181,
+      "camera_x_mm": -95,
+      "camera_y_mm": -85,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 45,
+      "culled_nodes": 99955,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2443,
+        "raster": 2144.1,
+        "paint_submission": 1170.5,
+        "total": 5770.9
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 182,
+      "camera_x_mm": -93,
+      "camera_y_mm": -88,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 45,
+      "culled_nodes": 99955,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2428.4,
+        "raster": 3521.5,
+        "paint_submission": 1344.8,
+        "total": 7312.3
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 183,
+      "camera_x_mm": -96,
+      "camera_y_mm": -86,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 45,
+      "culled_nodes": 99955,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2425.3,
+        "raster": 2166.1,
+        "paint_submission": 1209.2,
+        "total": 5814.5
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 184,
+      "camera_x_mm": -94,
+      "camera_y_mm": -89,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 45,
+      "culled_nodes": 99955,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2461.6,
+        "raster": 2126.6,
+        "paint_submission": 1153.1,
+        "total": 5754.6
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 185,
+      "camera_x_mm": -97,
+      "camera_y_mm": -87,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 45,
+      "culled_nodes": 99955,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 2419.3,
+        "raster": 1746.7,
+        "paint_submission": 789.1,
+        "total": 4963.8
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 186,
+      "camera_x_mm": -95,
+      "camera_y_mm": -90,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 45,
+      "culled_nodes": 99955,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1569.6,
+        "raster": 961.8,
+        "paint_submission": 754.7,
+        "total": 3293.3
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 187,
+      "camera_x_mm": -98,
+      "camera_y_mm": -88,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 45,
+      "culled_nodes": 99955,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1528.8,
+        "raster": 994.4,
+        "paint_submission": 781.1,
+        "total": 3311.3
+      },
+      "actual_present_not_measured": true
+    },
+    {
+      "frame_index": 188,
+      "camera_x_mm": -96,
+      "camera_y_mm": -91,
+      "zoom": 1,
+      "total_nodes": 100000,
+      "visible_nodes": 45,
+      "culled_nodes": 99955,
+      "dirty_rect_area_mm2": 0,
+      "cpu_phases_us": {
+        "input": 0,
+        "transform": 0,
+        "cull": 1536.8,
+        "raster": 991.3,
+        "paint_submission": 768.3,
+        "total": 3303.7
+      },
+      "actual_present_not_measured": true
+    }
+  ]
+}

@@ -10,7 +10,7 @@ struct Point2D {
     double x{0.0};
     double y{0.0};
 
-    [[nodiscard]] constexpr bool is_finite() const noexcept {
+    [[nodiscard]] bool is_finite() const noexcept {
         return std::isfinite(x) && std::isfinite(y);
     }
 };
@@ -19,7 +19,7 @@ struct Point2F {
     float x{0.0f};
     float y{0.0f};
 
-    [[nodiscard]] constexpr bool is_finite() const noexcept {
+    [[nodiscard]] bool is_finite() const noexcept {
         return std::isfinite(x) && std::isfinite(y);
     }
 };
@@ -30,7 +30,7 @@ struct Rect2D {
     double width{0.0};
     double height{0.0};
 
-    [[nodiscard]] constexpr bool is_finite() const noexcept {
+    [[nodiscard]] bool is_finite() const noexcept {
         return std::isfinite(x) && std::isfinite(y) && std::isfinite(width) && std::isfinite(height);
     }
 
@@ -70,7 +70,7 @@ struct Transform2D {
         return Transform2D{cos_val, sin_val, -sin_val, cos_val, 0.0, 0.0};
     }
 
-    [[nodiscard]] constexpr bool is_finite() const noexcept {
+    [[nodiscard]] bool is_finite() const noexcept {
         return std::isfinite(a) && std::isfinite(b) && std::isfinite(c) &&
                std::isfinite(d) && std::isfinite(tx) && std::isfinite(ty);
     }

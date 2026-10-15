@@ -3,23 +3,22 @@
 
 namespace pikdraw::rendering {
 
-ExperimentalSceneSnapshot FixtureGenerator::generate_many_small_paths(size_t object_count) {
+ExperimentalSceneSnapshot FixtureGenerator::generate_many_small_paths(size_t object_count, double spacing_mm) {
     ExperimentalSceneSnapshot scene;
     scene.document_id = 1001;
     scene.epoch = 1;
     scene.revision = 1;
     scene.generation = 1;
-    scene.nodes.reserve(object_count + 1);
+    scene.nodes.reserve(object_count);
 
     const size_t grid_dim = static_cast<size_t>(std::ceil(std::sqrt(static_cast<double>(object_count))));
-    const double spacing = 4.0;
     const double size = 2.5;
 
     for (size_t i = 0; i < object_count; ++i) {
         const size_t row = i / grid_dim;
         const size_t col = i % grid_dim;
-        const double bx = col * spacing;
-        const double by = row * spacing;
+        const double bx = col * spacing_mm;
+        const double by = row * spacing_mm;
 
         SceneNode node;
         node.id = static_cast<uint64_t>(i + 1);
@@ -44,16 +43,6 @@ ExperimentalSceneSnapshot FixtureGenerator::generate_many_small_paths(size_t obj
 
         scene.nodes.push_back(std::move(node));
     }
-
-    SceneNode text_node;
-    text_node.id = static_cast<uint64_t>(object_count + 1);
-    text_node.type = NodeType::Text;
-    text_node.text_data.text_utf8 = "PikDraw: Do hoa vector chuyen nghiep (Kiem thu 100k nodes)";
-    text_node.text_data.position = Point2D{ 10.0, -10.0 };
-    text_node.text_data.font_size_mm = 6.0;
-    text_node.text_data.shaping_status = TextShapingStatus::UnsupportedWithoutTypeface;
-    text_node.world_bounds_mm = Rect2D{ 10.0, -15.0, 200.0, 10.0 };
-    scene.nodes.push_back(std::move(text_node));
 
     scene.compute_total_bounds();
     return scene;

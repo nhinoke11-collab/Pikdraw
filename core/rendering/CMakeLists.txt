@@ -56,6 +56,18 @@ if(PIKDRAW_ENABLE_SKIA)
             pikdraw_rendering_core
             ${SKIA_LIBRARY}
         )
+
+        if(BUILD_TESTING)
+            add_executable(pikdraw_rendering_skia_tests
+                tests/test_skia_backend.cpp
+            )
+            target_link_libraries(pikdraw_rendering_skia_tests PRIVATE
+                pikdraw_rendering_skia
+            )
+            add_test(NAME pikdraw_rendering_skia_integration_tests
+                COMMAND pikdraw_rendering_skia_tests
+            )
+        endif()
     else()
         message(FATAL_ERROR "PIKDRAW_ENABLE_SKIA is ON but Skia headers or library were not found.")
     endif()
