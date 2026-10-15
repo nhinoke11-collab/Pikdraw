@@ -28,6 +28,22 @@ inline void validate_path_source(const PathObject& object) {
             !std::isfinite(element.rotation_deg) || element.rx < 0 || element.ry < 0)
             throw std::invalid_argument("Invalid or out-of-range source path coordinate");
     }
+    if (object.authoring_source) {
+        if (const auto error = object.authoring_source->validation_error())
+            throw std::invalid_argument(*error);
+        if (!editable_path_matches_adapter(*object.authoring_source, object.path))
+            throw std::invalid_argument("Editable path and derived geometry adapter disagree");
+        for (const auto& subpath : object.authoring_source->subpaths) {
+            if (subpath.id.value() == object.id)
+                throw std::invalid_argument("Subpath ID collides with its object ID");
+            for (const auto& node : subpath.nodes)
+                if (node.id.value() == object.id)
+                    throw std::invalid_argument("Node ID collides with its object ID");
+            for (const auto& segment : subpath.segments)
+                if (segment.id.value() == object.id)
+                    throw std::invalid_argument("Segment ID collides with its object ID");
+        }
+    }
 }
 
 inline void validate_text_source(const TextObject& object) {

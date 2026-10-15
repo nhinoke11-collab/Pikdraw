@@ -1,4 +1,5 @@
 #pragma once
+#include "pikdraw/document/model/path_adapter.hpp"
 
 #include "pikdraw/document/model/object_id.hpp"
 #include "pikdraw/geometry/curves/path.hpp"
@@ -9,6 +10,7 @@
 #include <vector>
 #include <memory>
 #include <variant>
+#include <stdexcept>
 
 namespace pikdraw::document {
 
@@ -21,7 +23,10 @@ enum class ObjectType {
 struct PathObject {
     ObjectId id{kInvalidObjectId};
     std::string name;
+    // Renderer/interchange adapter. When authoring_source exists, edits must replace that source
+    // and regenerate this value; the immutable source is authoritative.
     geometry::Path2D path;
+    std::shared_ptr<const EditablePath> authoring_source;
     geometry::Transform2D transform{geometry::Transform2D::identity()};
     color::ColorValue fill{color::RGBColor{0.2, 0.4, 0.8, 1.0}};
     color::ColorValue stroke{color::RGBColor{0.0, 0.0, 0.0, 1.0}};
@@ -30,6 +35,18 @@ struct PathObject {
     bool has_stroke{true};
     bool visible{true};
     bool locked{false};
+
+    void set_authoring_source(EditablePath source) {
+        if (const auto error = source.validation_error())
+            throw std::invalid_argument(*error);
+        path = editable_path_to_path2d(source);
+        for (const auto& subpath : source.subpaths) {
+            reserve_path_element_id(subpath.id);
+            for (const auto& node : subpath.nodes) reserve_path_element_id(node.id);
+            for (const auto& segment : subpath.segments) reserve_path_element_id(segment.id);
+        }
+        authoring_source = std::make_shared<const EditablePath>(std::move(source));
+    }
 
     [[nodiscard]] geometry::Rect2D bounds() const {
         return path.transformed(transform).bounds();
