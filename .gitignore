@@ -87,3 +87,6 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# Local source corpus can contain private customer artwork; keep it out of Git.
+cdr/

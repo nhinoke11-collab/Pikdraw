@@ -4,8 +4,10 @@
 - Trạng thái: **Proposed — quyết định thiết kế để triển khai và kiểm chứng**.
 - Task: import-resilience-plan-20261016.
 - Baseline khảo sát: ed5bd9c4f0dcb9b8c8bef749863e052c3d299419.
-- Phạm vi tài liệu: interop, workers và các yêu cầu đối với document/storage/render/desktop.
-- Không thay semantics của C1–C7, schema lưu trữ hoặc capability runtime trong task này.
+- Phạm vi: interop, workers và các yêu cầu đối với document/storage/render/desktop.
+- Task implementation contracts `import-file-contracts-20261016` bổ sung C8 ở trạng thái Proposed
+  và sửa mô tả C6 để trùng với wire/runtime đang có. C6 wire v1 chưa được đổi trong task này.
+- Không có capability runtime mới được chấp nhận hoặc triển khai trong task contracts.
 
 ## Bối cảnh
 
@@ -77,6 +79,12 @@ Chỉ chuyển ADR sang Accepted cho phạm vi đã đạt evidence trong
 [kế hoạch triển khai](../roadmap/import-resilience-20261016.md), sau consumer review của
 document, storage, workers, renderer, geometry, typography và color. Phần chưa đạt vẫn Proposed.
 Không dùng kết quả harness thay containment/fidelity/performance trên app tích hợp.
+
+Task tiếp theo phải tích hợp/consumer-review semantics C6/C8, xây worker dùng chính file corpus
+user chọn, rồi mới bật adapter. Kho local hiện có 4 CDR, 1 AI, 3 PDF, 2 EPS, 1 DXF và 4 ảnh; chưa
+có SVG. Một file AI trong kho có PDF signature, vì vậy chỉ được probe ở nhánh PDF-compatible AI.
+Ba nguồn vượt giới hạn payload v1 16 MiB. Tên file, byte, nội dung và hash nguồn được giữ local,
+không sao vào tài liệu hoặc Git.
 
 ## Nguồn quyết định
 

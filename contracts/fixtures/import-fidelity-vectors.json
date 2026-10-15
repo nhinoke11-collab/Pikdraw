@@ -1,0 +1,194 @@
+{
+  "schema_version": 1,
+  "contract": "C8",
+  "status": "proposed_reference_vectors",
+  "vectors": [
+    {
+      "id": "signature_over_suffix",
+      "given": {
+        "suffix": ".ai",
+        "content_signature": "PDF"
+      },
+      "expect": {
+        "classification": "pdf_compatible_ai_representation",
+        "authoring_data_claim": false,
+        "host_controls_adapter_selection": true
+      }
+    },
+    {
+      "id": "unknown_coverage_empty_report",
+      "given": {
+        "parser_outcome": "complete",
+        "parser_issues": [],
+        "host_feature_coverage": "unknown"
+      },
+      "expect": {
+        "feature_coverage": "unknown",
+        "fully_supported_claim": false
+      }
+    },
+    {
+      "id": "known_subset_with_named_loss",
+      "given": {
+        "parser_outcome": "complete_with_diagnostics",
+        "host_feature_coverage": "partial",
+        "known_loss_codes": ["filter_unsupported"]
+      },
+      "expect": {
+        "document_outcome": "complete_with_diagnostics",
+        "unsupported_element": "reference_or_reject_per_user_policy",
+        "silent_flattening": false
+      }
+    },
+    {
+      "id": "preview_only_is_not_production_geometry",
+      "given": {
+        "element_editability": "reference_only",
+        "production_status": "not_assessed"
+      },
+      "expect": {
+        "cut_path_generated": false,
+        "production_ready": false
+      }
+    },
+    {
+      "id": "float_path_under_tolerance_unknown",
+      "given": {
+        "element_editability": "native_editable",
+        "input_precision_error_mm": null,
+        "profile": "cutting"
+      },
+      "expect": {
+        "production_status": "blocked",
+        "precision_claim": false
+      }
+    },
+    {
+      "id": "missing_font_with_fallback",
+      "given": {
+        "source_text_available": true,
+        "source_font_available": false,
+        "fallback_font_used": true
+      },
+      "expect": {
+        "source_text_preserved": true,
+        "font_substitution_reported": true,
+        "appearance": "partial"
+      }
+    },
+    {
+      "id": "spot_color_returned_as_rgb",
+      "given": {
+        "source_spot_name": "PANTONE sample",
+        "parser_color_output": "rgba"
+      },
+      "expect": {
+        "source_color_claim": false,
+        "spot_metadata_preserved": false,
+        "production_status": "blocked"
+      }
+    },
+    {
+      "id": "oversize_v1_source",
+      "given": {
+        "wire_version": 1,
+        "source_bytes": 16777217,
+        "max_payload_bytes": 16777216
+      },
+      "expect": {
+        "outcome": "resource_limit",
+        "worker_launched": false,
+        "document_changed": false
+      }
+    },
+    {
+      "id": "failure_after_partial_decode",
+      "given": {
+        "worker_status": "crashed",
+        "objects_decoded_before_crash": 19
+      },
+      "expect": {
+        "partial_objects_committed": false,
+        "base_revision_unchanged": true,
+        "staging_cleaned": true
+      }
+    },
+    {
+      "id": "cancel_then_late_response",
+      "given": {
+        "proposal_base_revision": 41,
+        "current_revision": 41,
+        "cancelled_generation": 8,
+        "response_generation": 8
+      },
+      "expect": {
+        "commit": false,
+        "proposal_reason": "cancelled_generation"
+      }
+    },
+    {
+      "id": "document_edit_during_import",
+      "given": {
+        "proposal_base_revision": 41,
+        "current_revision": 42,
+        "proposal_generation": 10,
+        "current_generation": 10
+      },
+      "expect": {
+        "commit": false,
+        "rebase": false,
+        "base_document_preserved": true
+      }
+    },
+    {
+      "id": "sandbox_creation_failure",
+      "given": {
+        "worker_requested": true,
+        "appcontainer_creation": "failed"
+      },
+      "expect": {
+        "adapter_fallback_in_host": false,
+        "result": "sandbox_unavailable",
+        "document_changed": false
+      }
+    },
+    {
+      "id": "svg_external_entity",
+      "given": {
+        "source_type": "svg_xml",
+        "external_entity": true
+      },
+      "expect": {
+        "external_resource_opened": false,
+        "outcome": "rejected_or_diagnostic_without_fetch"
+      }
+    },
+    {
+      "id": "dxf_unsupported_spline_for_cutting",
+      "given": {
+        "source_type": "dxf",
+        "entity": "spline",
+        "reader_coverage": "preview_only",
+        "appearance_oracle": "verified"
+      },
+      "expect": {
+        "appearance": "verified",
+        "editability": "reference_only",
+        "production_status": "blocked",
+        "flattening_without_report": false
+      }
+    },
+    {
+      "id": "roundtrip_is_independent_capability",
+      "given": {
+        "import_verified": true,
+        "native_exporter_present": false,
+        "source_exporter_present": false
+      },
+      "expect": {
+        "native_export_claim": false,
+        "source_roundtrip_claim": false
+      }
+    }
+  ]
+}

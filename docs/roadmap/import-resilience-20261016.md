@@ -33,7 +33,14 @@ local edits và dữ liệu riêng; task chỉ tạo hai tài liệu trong workt
 | [C6](../../contracts/c6-workers.md) ghi PKWP/64 MB/CRC32/512 MB; [DTO](../../modules/interop/include/pikdraw/interop/ipc_dto.hpp) dùng PIKC/v1/16 MiB, raw bytes và 100.000 objects/depth 64; [JobLimitsConfig](../../platform/workers/include/pikdraw/workers/job_object.hpp) mặc định 256 MiB | Phải hòa giải contract/runtime trong task được scope riêng trước nâng cấp protocol/quota |
 | [Job Object implementation](../../platform/workers/src/job_object.cpp) đặt memory/process/kill-on-close; không đặt CPU hard cap tại đây | Below-normal priority và CPU hard cap cần implementation/evidence riêng; chưa được claim từ tên cpu_rate_control trong C6 |
 
-Không mở corpus riêng trong thư mục cdr của main, không đưa file khách hàng vào Git/context.
+Corpus trong `cdr` là dữ liệu cục bộ người dùng đã chỉ định cho kiểm thử thực tế. Các parser chỉ được chạy qua worker đã được giới hạn; không đưa file khách hàng, tên file hay bytes vào Git/context. Phần khảo sát trước đó chỉ đọc metadata và chữ ký đầu file, chưa chạy parser.
+
+Người dùng đã chỉ định dùng corpus thật trong folder `cdr` cùng source. Static inventory trên
+checkout local ngày 2026-10-16 có 4 `.cdr`, 1 `.ai`, 3 `.pdf`, 2 `.eps`, 1 `.dxf`, 4 `.jpg` và
+chưa có `.svg`. Trong 11 file vector/document, 1 AI, 1 PDF và 1 EPS vượt giới hạn payload IPC v1
+16 MiB; một AI có PDF signature nên chỉ đại diện nhánh PDF-compatible. CDR signatures thuộc họ
+ZIP-based. Đây mới là inventory chữ ký/size, không phải parser run, fidelity evidence hoặc xác
+nhận mọi file hợp lệ. Tên, bytes, content và hash của mẫu customer không ghi vào Git/report chuẩn.
 
 ## 3. Chọn công nghệ theo định dạng
 
@@ -264,6 +271,15 @@ không dùng thời gian sprint làm bằng chứng feature hoàn tất.
 Các task có thể nối tiếp hoặc chạy với paths/contract vectors tách biệt sau dispatch; tài liệu
 này không tự gọi agent hoặc cho phép ghi ngoài lease. Contract/build registrations/shared gates
 có task riêng. Integrator cập nhật project state khi thực sự tích hợp và nghiệm thu.
+
+### Tiến độ triển khai sau khi user chấp thuận
+
+`import-file-contracts-20261016` đang chỉnh C6 cho đúng wire v1 thực có, soạn C8 Proposed, 15
+consumer vectors và local-only rule cho folder `cdr`. Đây là prerequisite tài liệu; chưa là runtime
+feature. Bước kế là consumer review rồi worker file broker/large-input transport. Sau đó SVG/PDF/
+AI subset, CDR, DXF và EPS lần lượt chạy bằng parser worker có evidence. Task hiện có về native v3
+đang giữ lease trên một số interop/document paths; phải chờ phạm vi đó review/integrate trước khi
+claim file/CMake/source paths giao nhau.
 
 ## 9. Nguồn tham chiếu và việc còn mở
 
