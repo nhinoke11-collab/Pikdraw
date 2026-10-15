@@ -119,7 +119,7 @@ Phím số chỉ được bắt khi canvas/ToolSession có focus. Text editor, n
 
 ### 3.3 Modifier và bắt điểm
 
-Phím mặc định đề xuất: `P` Pen, `N` Pencil, `L` Line, `Shift+L` Polyline, `F2` Node, `V` Pick. F8 Ortho, F10 Polar, F3 OSnap, F12 HUD khi không xung đột hệ thống. Mọi action có menu và được remap; giữ alias hiện có chỉ sau audit phím.
+Các phím `P` Pen, `N` Pencil, `L` Line, `Shift+L` Polyline, `F2` Node, `V` Pick và `F3` Snap chỉ là ứng viên, chưa được coi là binding mặc định cho tới khi D09 kiểm kê action registry và shortcut handler thực tế. Không gán F8/F10/Shift+F2 cho Ortho, Polar hoặc HUD: giao diện tham chiếu hiện quảng bá F8 Text, F10 Node và Shift+F2 Zoom to Selection. D09 phải kiểm chứng từng binding; nếu handler không hỗ trợ thì hoặc triển khai binding có kiểm thử, hoặc bỏ nhãn phím cũ khỏi UI trong cùng phạm vi. Ortho/Polar/HUD luôn có action có tên trong toolbar/menu và có thể remap; binding chưa kiểm chứng để trống.
 
 Trong hồ sơ mặc định PikDraw, Shift ràng góc khi không có θ nhập số. Alt khi thao tác handle Pen/Node tách hai tay nắm. Ctrl tạm chuyển Direct Selection trong Pen rồi quay lại phiên khi chưa kéo handle. Space/chuột giữa dành cho pan. Các hồ sơ và tổ hợp phím theo context được khóa ở mục 3.5. Chọn nhiều node dùng Shift+click trong Node; bảng trạng thái giải thích action theo context.
 
@@ -159,7 +159,7 @@ Sơ đồ minh họa trạng thái một cấu hình, không phải toàn bộ m
 | Chính sách đối tượng | Current layer/all visible layers, locked-as-reference, snap vào chính path đang vẽ, loại trừ handle/control point hoặc chỉ nhận khi sửa node |
 | Theo công cụ | Dùng cấu hình chung hoặc override cho Line/Polyline/Pen/Node/Shapes/Pencil; nút khôi phục riêng công cụ |
 
-`F3` điều khiển automatic snapping của đối tượng/quan hệ/trang/grid/construction. Ortho/Polar và khóa số là điều kiện dựng hình riêng; F3 tắt không bỏ các điều kiện này. UI phải hiển thị đồng thời, ví dụ `Snap OFF · Polar 45°`. Hướng dùng một enum Free/Ortho/Polar: bật F8 Ortho thay Polar và ngược lại, tắt mode hiện tại về Free; thông số của mode cũ vẫn được lưu. Smart guides có thể vẫn hiển thị khi snap tắt, nhưng không được kéo điểm ngầm.
+`F3` là binding ứng viên cho automatic snapping của đối tượng/quan hệ/trang/grid/construction và chỉ được đăng ký nếu D09 xác nhận không chiếm một lệnh hiện có. Ortho/Polar và khóa số là điều kiện dựng hình riêng; tắt snap không bỏ các điều kiện này. UI phải hiển thị đồng thời, ví dụ `Snap OFF · Polar 45°`. Hướng dùng một enum Free/Ortho/Polar: action có tên bật Ortho thay Polar và ngược lại; bật mode đang hoạt động lần nữa trở về Free. Binding phím cho các action hướng chưa mặc định cho tới khi hoàn tất audit. Smart guides có thể vẫn hiển thị khi snap tắt, nhưng không được kéo điểm ngầm.
 
 Mặc định đề xuất: Vector bật endpoint/node/straight-midpoint và guides đã có capability; grid, auto tangent/perpendicular và Polar tắt. Kỹ thuật bật cùng bộ đó và Polar 45°, bổ sung center/quadrant/intersection khi R3 đạt; relation nặng opt-in. Node ưu tiên node/handle của path đang sửa. Pencil chỉ snap điểm đầu/cuối khi bật, không hút mọi mẫu nét vẽ; auto-close là checkbox khác mặc định tắt và phải có preview.
 
