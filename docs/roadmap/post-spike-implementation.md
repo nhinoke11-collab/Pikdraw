@@ -4,6 +4,8 @@ Ngày: 2026-10-15. Trạng thái: **đặc tả triển khai, chưa thực thi**
 
 Đọc cùng [ba spike foundation](foundation-spikes.md), [catalog 26 task](post-spike-tasks.json), [document/runtime](../architecture/document-runtime.md), [quality gates](../quality/gates.md) và [giao thức agent](../agents/PROTOCOL.md).
 
+M1 được triển khai theo [kế hoạch chi tiết](m1-implementation.md) và [24 checkpoint](m1-task-packages.json) của ps03–ps13. Catalog cha vẫn là nguồn chuẩn dependencies/owned paths; checkpoints không cấp lease mới. [Quy tắc tổ chức file](../development/code-organization.md) áp dụng cho code mới/được tiếp nhận, checker là deliverable ps02.
+
 ## 1. Đích đến và điều kiện bắt đầu
 
 Ưu tiên một editor dùng được xuyên suốt: **tạo/nhập → sửa vector và chữ → undo/redo → lưu native → mở lại/phục hồi → xuất một format đã kiểm chứng**. Sau đó hoàn thiện Vector Alpha, rồi In ấn/Thi công theo một phạm vi production hẹp. Bốn workspace dùng chung document; tab xuất hiện không có nghĩa workspace đã triển khai.
@@ -33,6 +35,8 @@ Memory limits, regression tolerance, source coordinate range, storage durability
 | M4 — mở rộng có khảo sát riêng | Chưa dispatch trong catalog | 3D liên kết; sau đó mới plugin ngoài/CAM nếu có scope | Spike và kế hoạch riêng cho rủi ro mới |
 
 Mốc là kết quả kiểm chứng, không phải số tuần đã trôi qua. Chỉ ước lượng lịch sau ps00 khi biết code spike tái sử dụng được bao nhiêu, máy và công cụ nào sẵn có. Task lớn nên chia thành checkpoint/commit review được; nếu cần chia task thực tế, coordinator ghi mapping về ID catalog và giữ nguyên gate cuối.
+
+M0 hoàn tất nghĩa là ps00, ps01 và ps02 đều được nhận trên revision đã tích hợp. Agent báo ba spike xong hoặc ps00 có report chưa đủ mở M1. Gate `m0-accepted` trong catalog ghi rõ receipt này.
 
 Không viết lại prototype đã đạt chỉ để đổi bố cục. Mỗi task nhận phần code phù hợp từ spike, làm sạch boundary, bổ sung lỗi/lifecycle/tests còn thiếu. Prototype đo nhanh không tự được nâng thành production code.
 
@@ -284,6 +288,7 @@ ctest --preset win-dev --output-on-failure
 
 # Các suite phải fail rõ khi thiếu target/tests bắt buộc.
 .\tooling\native\check.ps1 -Suite architecture -Configuration Debug
+.\tooling\native\check.ps1 -Suite code-layout -Configuration Debug
 .\tooling\native\check.ps1 -Suite contract -Configuration Debug
 .\tooling\native\check.ps1 -Suite e2e -Configuration Release
 ```

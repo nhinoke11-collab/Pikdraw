@@ -14,7 +14,9 @@
     "required_gate": "foundation-accepted for ps01 onward; ps00 may collect incomplete reports but cannot open dependent implementation.",
     "review_policy": "Task done only after independent review and integration evidence on the merged SHA; integrator records project state separately.",
     "paths_policy": "Proposed scopes, not active leases. Resolve exact paths before creating a harness task; no glob, no implicit scope expansion. Module-local tests/CMake/README are inside each module root.",
-    "commands_policy": "Native commands are implementation targets for ps02; no such command or runtime suite is claimed to exist today."
+    "commands_policy": "Native commands are implementation targets for ps02; no such command or runtime suite is claimed to exist today.",
+    "source_layout_reference": "docs/development/code-organization.md",
+    "m1_entry_policy": "ps03–ps13 require m0-accepted plus every parent dependency accepted on an integrated SHA; checkpoint IDs are not extra leases."
   },
   "gates": [
     {
@@ -24,6 +26,10 @@
     {
       "id": "foundation-accepted",
       "evidence": "All mandatory A/B/C gates accepted by independent reviewers on integrated candidates, implementation choices and baseline budgets locked by ps00; partial/not_measured mandatory gates block."
+    },
+    {
+      "id": "m0-accepted",
+      "evidence": "ps00, ps01 and ps02 independently accepted and integrated: foundation-accepted, C1–C7 vectors/consumer reviews, real pinned build/check tooling including source-layout policy, baseline/fixtures/licenses/hardware/durability/format subset. Receipt records exact integrated SHA; missing/partial mandatory evidence blocks M1."
     },
     {
       "id": "vector-alpha-accepted",
@@ -103,7 +109,8 @@
         "Contracts nhỏ đủ cho lát cắt đầu, version/error/lifetime/cancellation semantics và consumer matrix; C++ API nằm ở module sở hữu, không tạo runtime core phụ thuộc ngược vào UI.",
         "Fixture manifest/oracle chuẩn, có checksum/quyền dùng; units/transforms/fill, revision/epoch/generation, color/text, storage migration và IPC vectors.",
         "ADR storage và UI development loop theo số ADR chưa dùng; rà lại localization đang dở, chốt tối thiểu catalog en/vi và host adapter, không tự thêm core/localization khi chưa cần.",
-        "Thống nhất naming, public include layout, module test layout, per-module CMake target; sửa registry nếu có thay đổi được review."
+        "Thống nhất naming, public include layout, module test layout, per-module CMake target; sửa registry nếu có thay đổi được review.",
+        "Đối chiếu file maps/checkpoints M1 và code-organization.md với public/private API đã khóa; cập nhật mapping trước dispatch nếu M0 đổi stack, không đổi ID cha."
       ],
       "checks": [
         "Mỗi contract có ít nhất producer/consumer cùng kết quả mong đợi và negative vectors; oracle không sinh từ implementation đang kiểm tra.",
@@ -135,7 +142,8 @@
         "docs/development/native-build.md",
         "docs/development/agent-gates.md",
         ".gitignore",
-        "THIRD_PARTY_NOTICES.md"
+        "THIRD_PARTY_NOTICES.md",
+        ".clang-format"
       ],
       "contracts": [
         "C1",
@@ -151,12 +159,14 @@
         "Đăng ký module CMake khi module thực sự có implementation; missing required target phải fail ở milestone tương ứng. Không dùng stub trả thành công để vượt gate.",
         "CI build/test Windows; scan include/link dependencies so registry, scoped diff/rename/path escape, protected fixtures/gates và artifact revision.",
         "CLI build/check/preview runner theo mục 8 của kế hoạch; runner trả lỗi khi thiếu executable/test suite hoặc test không chạy.",
-        "Thiết lập required checks/branch protection trên host khi có quyền; nếu chưa có remote hỗ trợ, ghi cơ chế integrator kiểm tra thủ công, không ghi enforced."
+        "Thiết lập required checks/branch protection trên host khi có quyền; nếu chưa có remote hỗ trợ, ghi cơ chế integrator kiểm tra thủ công, không ghi enforced.",
+        "Formatter được pin và source-layout gate theo docs/development/code-organization.md: file classification/nonblank+physical counts, new/touched caps, legacy baseline và exact-path exceptions có reviewer. Policy/exception manifest nằm dưới tooling/native/quality; feature agents không được sửa."
       ],
       "checks": [
         "Fresh configure/build nền tảng và incremental rebuild; đổi file module không rebuild toàn dependency khi không cần.",
         "Negative fixture chứng minh gate bắt được dependency UI trái phép, sửa oracle/gate ngoài scope, path escape và mismatch revision.",
-        "Chạy doctor và harness tests; ghi phần native chưa có để không biến CI xanh thành app đã đạt."
+        "Chạy doctor và harness tests; ghi phần native chưa có để không biến CI xanh thành app đã đạt.",
+        "Code-layout negative fixtures bắt cap/cap+1, blank/comment/CRLF/Unicode, rename/implementation headers, generated-marker giả, exception hết hạn và feature diff hạ threshold. Checker chưa tồn tại không được ghi enforced."
       ],
       "reviewers": [
         "Reviewer build/architecture"
@@ -170,7 +180,9 @@
       "depends_on": [
         "ps02-build-gates"
       ],
-      "entry_gates": [],
+      "entry_gates": [
+        "m0-accepted"
+      ],
       "owned_paths": [
         "core/geometry"
       ],
@@ -184,10 +196,16 @@
       ],
       "checks": [
         "Biển 20 m, xa gốc, reflection/nonuniform scale, holes/near-contact/degenerate inputs; oracle analytic/độc lập.",
-        "Dung sai và topology theo baseline đã khóa; failed computation không trả hình giả thành công."
+        "Dung sai và topology theo baseline đã khóa; failed computation không trả hình giả thành công.",
+        "File map theo feature và physical/nonblank-line/exception report tuân code-organization.md; checkpoints trong m1-task-packages.json được review, không sửa shared gate/oracle ngoài scope."
       ],
       "reviewers": [
         "Reviewer geometry"
+      ],
+      "implementation_plan": "docs/roadmap/m1-implementation.md#ps03-geometry",
+      "work_packages": [
+        "m1-03a-primitives",
+        "m1-03b-operations"
       ]
     },
     {
@@ -198,7 +216,9 @@
       "depends_on": [
         "ps02-build-gates"
       ],
-      "entry_gates": [],
+      "entry_gates": [
+        "m0-accepted"
+      ],
       "owned_paths": [
         "core/color"
       ],
@@ -211,10 +231,16 @@
       ],
       "checks": [
         "Reference swatches/profile fixtures có quyền dùng; preserve metadata so oracle.",
-        "Thay profile làm invalidate đúng; missing/invalid ICC có trạng thái rõ, không âm thầm đổi nguồn."
+        "Thay profile làm invalidate đúng; missing/invalid ICC có trạng thái rõ, không âm thầm đổi nguồn.",
+        "File map theo feature và physical/nonblank-line/exception report tuân code-organization.md; checkpoints trong m1-task-packages.json được review, không sửa shared gate/oracle ngoài scope."
       ],
       "reviewers": [
         "Reviewer color"
+      ],
+      "implementation_plan": "docs/roadmap/m1-implementation.md#ps04-color",
+      "work_packages": [
+        "m1-04a-source-color",
+        "m1-04b-preview-color"
       ]
     },
     {
@@ -225,7 +251,9 @@
       "depends_on": [
         "ps02-build-gates"
       ],
-      "entry_gates": [],
+      "entry_gates": [
+        "m0-accepted"
+      ],
       "owned_paths": [
         "apps/desktop"
       ],
@@ -242,10 +270,16 @@
       "checks": [
         "DPI 100/150/200%, 1366x768 và 1920x1080, keyboard/focus, chuỗi tiếng Việt dài; screenshot kèm thao tác.",
         "50 lần reload: action không nhân đôi handler, không tăng widget/connection count tích lũy; lỗi form giữ UI cũ.",
-        "Mock mode được gắn nhãn development; không ghi tool placeholder là đã implement."
+        "Mock mode được gắn nhãn development; không ghi tool placeholder là đã implement.",
+        "File map theo feature và physical/nonblank-line/exception report tuân code-organization.md; checkpoints trong m1-task-packages.json được review, không sửa shared gate/oracle ngoài scope."
       ],
       "reviewers": [
         "Reviewer desktop/UX"
+      ],
+      "implementation_plan": "docs/roadmap/m1-implementation.md#ps05-native-preview",
+      "work_packages": [
+        "m1-05a-shell",
+        "m1-05b-ui-reload"
       ]
     },
     {
@@ -256,7 +290,9 @@
       "depends_on": [
         "ps03-geometry"
       ],
-      "entry_gates": [],
+      "entry_gates": [
+        "m0-accepted"
+      ],
       "owned_paths": [
         "core/typography"
       ],
@@ -271,10 +307,16 @@
       ],
       "checks": [
         "Chuỗi NFC/NFD, tổ hợp dấu, nhiều font/size và line breaks; oracle glyph advances/bounds/caret theo font fixture pin.",
-        "Không mất Unicode khi chuyển outlines; không dùng độ rộng ký tự đơn giản để thay shaping."
+        "Không mất Unicode khi chuyển outlines; không dùng độ rộng ký tự đơn giản để thay shaping.",
+        "File map theo feature và physical/nonblank-line/exception report tuân code-organization.md; checkpoints trong m1-task-packages.json được review, không sửa shared gate/oracle ngoài scope."
       ],
       "reviewers": [
         "Reviewer typography"
+      ],
+      "implementation_plan": "docs/roadmap/m1-implementation.md#ps06-typography",
+      "work_packages": [
+        "m1-06a-shaping",
+        "m1-06b-layout"
       ]
     },
     {
@@ -287,7 +329,9 @@
         "ps04-color",
         "ps06-typography"
       ],
-      "entry_gates": [],
+      "entry_gates": [
+        "m0-accepted"
+      ],
       "owned_paths": [
         "core/document"
       ],
@@ -305,10 +349,17 @@
       "checks": [
         "Tái chạy schedules B gồm 10.000 commands; stale sau edit/delete/undo/cancel/close-reopen bị từ chối.",
         "Undo/redo khôi phục semantic state, revision vẫn tăng; error/cancel không half-commit.",
-        "Đo commit/invalidation/destruction và retained bytes, không copy toàn graph mỗi frame."
+        "Đo commit/invalidation/destruction và retained bytes, không copy toàn graph mỗi frame.",
+        "File map theo feature và physical/nonblank-line/exception report tuân code-organization.md; checkpoints trong m1-task-packages.json được review, không sửa shared gate/oracle ngoài scope."
       ],
       "reviewers": [
         "Reviewer document/concurrency"
+      ],
+      "implementation_plan": "docs/roadmap/m1-implementation.md#ps07-document",
+      "work_packages": [
+        "m1-07a-model-writer",
+        "m1-07b-snapshots-history",
+        "m1-07c-async-lifetime"
       ]
     },
     {
@@ -319,7 +370,9 @@
       "depends_on": [
         "ps07-document"
       ],
-      "entry_gates": [],
+      "entry_gates": [
+        "m0-accepted"
+      ],
       "owned_paths": [
         "core/document"
       ],
@@ -336,10 +389,16 @@
       "checks": [
         "Save r trong khi edit r+1; fault serialize/write/flush/replace/checkpoint; disk full/access denied/corrupt/truncated native.",
         "Round-trip giữ IDs/Bezier/text/font/color/units/assets; migration golden fixtures cũ và unknown version.",
-        "Durability report phân biệt atomic replace và mất điện; importer bên thứ ba không chạy trong host storage."
+        "Durability report phân biệt atomic replace và mất điện; importer bên thứ ba không chạy trong host storage.",
+        "File map theo feature và physical/nonblank-line/exception report tuân code-organization.md; checkpoints trong m1-task-packages.json được review, không sửa shared gate/oracle ngoài scope."
       ],
       "reviewers": [
         "Reviewer storage độc lập"
+      ],
+      "implementation_plan": "docs/roadmap/m1-implementation.md#ps08-storage",
+      "work_packages": [
+        "m1-08a-native-format",
+        "m1-08b-save-recovery"
       ]
     },
     {
@@ -350,7 +409,9 @@
       "depends_on": [
         "ps07-document"
       ],
-      "entry_gates": [],
+      "entry_gates": [
+        "m0-accepted"
+      ],
       "owned_paths": [
         "core/rendering"
       ],
@@ -368,10 +429,16 @@
       "checks": [
         "Tái chạy corpus A trên máy đã duyệt; zoom-to-fit, large path, node edits, DPI/font/profile changes.",
         "Golden/diff có tolerance đã duyệt và semantic checks; software không đổi geometry nguồn.",
-        "Không giả lập driver fatal crash thành recoverable loss; report limitations riêng."
+        "Không giả lập driver fatal crash thành recoverable loss; report limitations riêng.",
+        "File map theo feature và physical/nonblank-line/exception report tuân code-organization.md; checkpoints trong m1-task-packages.json được review, không sửa shared gate/oracle ngoài scope."
       ],
       "reviewers": [
         "Reviewer graphics/performance"
+      ],
+      "implementation_plan": "docs/roadmap/m1-implementation.md#ps09-renderer",
+      "work_packages": [
+        "m1-09a-scene-backend",
+        "m1-09b-cache-recovery"
       ]
     },
     {
@@ -382,7 +449,9 @@
       "depends_on": [
         "ps07-document"
       ],
-      "entry_gates": [],
+      "entry_gates": [
+        "m0-accepted"
+      ],
       "owned_paths": [
         "modules/vector"
       ],
@@ -399,10 +468,16 @@
       ],
       "checks": [
         "Replay create-select-transform-delete, undo/redo và cancel; bounds/hit-test ở zoom/scale lớn.",
-        "Edit text giữ Unicode/font; một gesture undo một bước; invalid input không commit."
+        "Edit text giữ Unicode/font; một gesture undo một bước; invalid input không commit.",
+        "File map theo feature và physical/nonblank-line/exception report tuân code-organization.md; checkpoints trong m1-task-packages.json được review, không sửa shared gate/oracle ngoài scope."
       ],
       "reviewers": [
         "Reviewer vector/document"
+      ],
+      "implementation_plan": "docs/roadmap/m1-implementation.md#ps10-vector-basics",
+      "work_packages": [
+        "m1-10a-selection-shapes",
+        "m1-10b-edit-gestures"
       ]
     },
     {
@@ -413,7 +488,9 @@
       "depends_on": [
         "ps07-document"
       ],
-      "entry_gates": [],
+      "entry_gates": [
+        "m0-accepted"
+      ],
       "owned_paths": [
         "modules/interop"
       ],
@@ -433,10 +510,16 @@
       "checks": [
         "Fixture matrix phân biệt supported/converted/unsupported/rejected; import-edit-native-save-export oracle.",
         "Nonfinite/oversized/deep/invalid references và unsupported features không thành silent success.",
-        "Native host link/runtime scan không kéo parser bên thứ ba vào process chính; output write dở dang không báo thành công."
+        "Native host link/runtime scan không kéo parser bên thứ ba vào process chính; output write dở dang không báo thành công.",
+        "File map theo feature và physical/nonblank-line/exception report tuân code-organization.md; checkpoints trong m1-task-packages.json được review, không sửa shared gate/oracle ngoài scope."
       ],
       "reviewers": [
         "Reviewer interop/license"
+      ],
+      "implementation_plan": "docs/roadmap/m1-implementation.md#ps11-interop-core",
+      "work_packages": [
+        "m1-11a-worker-import",
+        "m1-11b-validation-output"
       ]
     },
     {
@@ -447,7 +530,9 @@
       "depends_on": [
         "ps11-interop-core"
       ],
-      "entry_gates": [],
+      "entry_gates": [
+        "m0-accepted"
+      ],
       "owned_paths": [
         "platform/workers"
       ],
@@ -463,10 +548,16 @@
       "checks": [
         "Malformed IPC, crash/hang/cancel/race/replacement; timeout dọn process/handles.",
         "Canary file/network/child/handle ngoài quyền bị OS từ chối; test đúng sandbox identity của bản đóng gói.",
-        "Resource budget gồm toàn process tree; UI tiếp tục nhận input khi worker lỗi."
+        "Resource budget gồm toàn process tree; UI tiếp tục nhận input khi worker lỗi.",
+        "File map theo feature và physical/nonblank-line/exception report tuân code-organization.md; checkpoints trong m1-task-packages.json được review, không sửa shared gate/oracle ngoài scope."
       ],
       "reviewers": [
         "Reviewer containment/concurrency"
+      ],
+      "implementation_plan": "docs/roadmap/m1-implementation.md#ps12-worker-host",
+      "work_packages": [
+        "m1-12a-process-containment",
+        "m1-12b-jobs-cancellation"
       ]
     },
     {
@@ -483,7 +574,8 @@
         "ps12-worker-host"
       ],
       "entry_gates": [
-        "foundation-accepted"
+        "foundation-accepted",
+        "m0-accepted"
       ],
       "owned_paths": [
         "apps/desktop",
@@ -506,12 +598,19 @@
       ],
       "checks": [
         "Chạy E2E bằng UI thật và kiểm semantic file output; mock không được tính milestone.",
-        "Pan/zoom khi save/Boolean/import, lỗi font/profile/worker, close-reopen và GPU/software.",
+        "Pan/zoom khi save/compute subset đã nhận/import, lỗi font/profile/worker, close-reopen và GPU/software.",
         "Full-app overhead so A/B budget, không dùng benchmark empty preview để thay.",
-        "Đóng document/thoát app khi compute/save/import đang chạy: không stale callback, deadlock, mất committed save hoặc retention vượt budget."
+        "Đóng document/thoát app khi compute/save/import đang chạy: không stale callback, deadlock, mất committed save hoặc retention vượt budget.",
+        "File map theo feature và physical/nonblank-line/exception report tuân code-organization.md; checkpoints trong m1-task-packages.json được review, không sửa shared gate/oracle ngoài scope."
       ],
       "reviewers": [
         "Reviewer tích hợp độc lập"
+      ],
+      "implementation_plan": "docs/roadmap/m1-implementation.md#ps13-vertical-slice",
+      "work_packages": [
+        "m1-13a-composition",
+        "m1-13b-workflows",
+        "m1-13c-acceptance"
       ]
     },
     {
@@ -935,5 +1034,7 @@
         "Người vận hành xưởng"
       ]
     }
-  ]
+  ],
+  "m1_implementation_reference": "docs/roadmap/m1-implementation.md",
+  "m1_checkpoints_reference": "docs/roadmap/m1-task-packages.json"
 }

@@ -13,10 +13,14 @@ Windows: dùng `.\tooling\pikdraw.ps1` thay `python tooling/agent_harness.py` n�
 evidence, rồi contracts/build trước các module song song. Chỉ nhận task có prerequisites đã
 tích hợp, gate được nhận và lease không chồng lấn; không suy ra pass từ trạng thái chat hoặc hết hai tuần.
 
+M1 có [kế hoạch thực thi chi tiết](roadmap/m1-implementation.md) và [24 checkpoint của ps03–ps13](roadmap/m1-task-packages.json).
+Chỉ bắt đầu sau ps00/ps01/ps02 đã nghiệm thu và tích hợp. Trước sửa source đọc
+[quy tắc chia file theo tính năng và giới hạn dòng](development/code-organization.md); agent chỉ nạp entry/checkpoint được giao.
+
 Catalog là đặc tả, harness chưa tự đọc dependencies hoặc gọi agent. Task board là trạng thái thực tế.
 Prepared worktrees từ base cũ và phần localization chưa commit phải được kiểm kê/đồng bộ an toàn;
 không ghi đè để chạy theo catalog. UI dự kiến dùng shell Qt thật, runtime `.ui`/QSS trong dev;
-thay C++ vẫn cần build tăng dần. Hiện chưa có native preview hoặc các lệnh native trong kế hoạch.
+thay C++ vẫn cần build tăng dần. Native preview và runner native chưa được triển khai; các lệnh trong roadmap là interface ps02 cần cung cấp.
 
 ## Đọc tối thiểu
 1. `AGENTS.md` — invariants và cách bàn giao.

@@ -17,6 +17,7 @@ On Windows, `./tooling/pikdraw.ps1` can replace `python tooling/agent_harness.py
 - Import fidelity, editability and source-format export are separate capabilities. Report unsupported features; no silent flattening or format claims without fixtures.
 - Third-party parsers and plugins require process isolation at runtime; capabilities must be enforced by the host, not trusted declarations.
 - Work in the assigned task worktree and owned paths. Changes to shared contracts require a scoped task and dependent-module review.
+- Organize source by feature and responsibility using `docs/development/code-organization.md`. Record a file map before implementation. Keep public headers within 300 nonblank lines and ordinary implementations/tests within 500 unless an exact-path exception is reviewed; entry points, scripts and UI assets have separate limits in that policy. Do not minify or create artificial fragments to pass size checks.
 - Dynamic multi-agent execution: provider labels are session metadata. Parallel work requires disjoint task leases and semantic contract vectors, not only matching schemas. Worktrees and owned-path checks are not OS write sandboxes.
 - Hardware resilience follows ADR 0002: choose backends by tested capabilities, not GPU brand/tier. Software 2D has an explicit budget; recoverable device loss and fatal driver crashes have different policies. Runtime choices remain proposed until spikes pass.
 - C++20/Qt/Skia is the spike baseline, not a locked runtime stack. Geometry coordinates/transforms propose mm/binary64; render uses local float coordinates. Do not publish renderer types as storage/plugin contracts.
@@ -29,4 +30,5 @@ App gates also require actual dependency/ownership checks, consumer semantic tes
 Use the handoff protocol in `docs/agents/PROTOCOL.md`. Record evidence, unresolved limits and the next action.
 Update project state at integration; record architectural changes as ADRs. Never label planned features implemented.
 Human-facing documentation is Vietnamese; concise English contracts/instructions are acceptable to reduce cross-provider context.
+For M1 tasks, read only the assigned parent/checkpoints in `docs/roadmap/m1-implementation.md` and `docs/roadmap/m1-task-packages.json`. M0 must be accepted and integrated before dispatch. Include the code-size/exception report in handoff; automated enforcement is a ps02 deliverable, not a current harness capability.
 Before runtime implementation, read the bounded references relevant to the task in `docs/roadmap/foundation-spikes.md` and `docs/architecture/document-runtime.md`. These are specifications, not implemented features.
