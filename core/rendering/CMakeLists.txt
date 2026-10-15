@@ -8,6 +8,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_library(pikdraw_rendering STATIC
     src/software_rasterizer.cpp
     src/renderer.cpp
+    src/raster/path_flatten.cpp
+    src/raster/path_paint.cpp
+    src/raster/path_stroke.cpp
 )
 
 target_include_directories(pikdraw_rendering PUBLIC
@@ -38,6 +41,7 @@ if(PIKDRAW_BUILD_TESTS)
         add_test(NAME ${target_name} COMMAND ${target_name})
     endmacro()
 
+    add_rendering_test(test_pikdraw_rendering_pixels tests/rasterizer/test_pixel_semantics.cpp)
     add_rendering_test(test_pikdraw_rendering_camera tests/camera/test_camera.cpp)
     add_rendering_test(test_pikdraw_rendering_culling tests/culling/test_culling.cpp)
     add_rendering_test(test_pikdraw_rendering_rasterizer tests/rasterizer/test_rasterizer.cpp)
