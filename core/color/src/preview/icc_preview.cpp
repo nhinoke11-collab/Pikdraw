@@ -8,8 +8,10 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <icm.h>
 #include <windows.h>
+
+// The Windows SDK requires Win32 types before icm.h.
+#include <icm.h>
 #endif
 
 namespace pikdraw::color {
