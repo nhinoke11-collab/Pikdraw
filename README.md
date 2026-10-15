@@ -60,6 +60,6 @@ tests/                    kiểm thử harness; corpus đồ họa sẽ bổ sun
 
 Các adapter Claude/Gemini/Copilot chỉ dẫn về cùng một bộ quy tắc; chúng không tự kết nối hay chạy dịch vụ AI. Việc gọi nhà cung cấp và trao đổi giữa máy khác nhau cần tích hợp riêng.
 
-Giấy phép MIT áp dụng cho mã/tài liệu gốc của bộ khung. Giấy phép bản phân phối ứng dụng phải được chốt trong ADR khi chọn các dependency đồ họa và chuyển đổi file.
+Dự án giữ giấy phép [Apache-2.0](LICENSE) theo lựa chọn của chủ repository GitHub. Thông báo MIT của phần foundation có trước được giữ tại [LICENSES/MIT-foundation.txt](LICENSES/MIT-foundation.txt). Dependency, parser, font và tài sản bên thứ ba cần được kiểm kê giấy phép trước khi phân phối ứng dụng.
 
 Baseline khảo sát là C++20/Qt/Skia; ngôn ngữ/backend/schema và budgets ứng dụng còn chờ spike. Mục tiêu 60 FPS chỉ nghiệm thu trên corpus/máy đã xác định; software có budget riêng. Native CDR export, AI round-trip, CAM và mô phỏng quang học chưa thuộc lát cắt đầu.
