@@ -54,6 +54,9 @@ public:
     /// Internal method for commands to apply state mutations
     void apply_mutation(Page page, PersistentObjectMap objects);
 
+    /// Resets document state from a loaded snapshot, clears undo history, and publishes snapshot
+    void reset_from_snapshot(SnapshotPtr snapshot);
+
 private:
     void publish_snapshot();
 

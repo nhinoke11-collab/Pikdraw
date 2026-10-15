@@ -17,6 +17,8 @@ add_library(pikdraw_desktop STATIC
     src/presenters/inspector_presenter.cpp
     src/themes/theme_tokens.cpp
     src/development/ui_reload_controller.cpp
+    src/runtime/composition_root.cpp
+    src/workflows/document_workflow.cpp
 )
 
 target_include_directories(pikdraw_desktop PUBLIC
@@ -67,4 +69,20 @@ if(PIKDRAW_BUILD_TESTS)
         pikdraw_desktop
     )
     add_test(NAME test_pikdraw_desktop_reload COMMAND test_pikdraw_desktop_reload)
+
+    add_executable(test_pikdraw_desktop_composition
+        tests/test_desktop_composition.cpp
+    )
+    target_link_libraries(test_pikdraw_desktop_composition PRIVATE
+        pikdraw_desktop
+    )
+    add_test(NAME test_pikdraw_desktop_composition COMMAND test_pikdraw_desktop_composition)
+
+    add_executable(test_pikdraw_vertical_slice_e2e
+        tests/test_vertical_slice_e2e.cpp
+    )
+    target_link_libraries(test_pikdraw_vertical_slice_e2e PRIVATE
+        pikdraw_desktop
+    )
+    add_test(NAME test_pikdraw_vertical_slice_e2e COMMAND test_pikdraw_vertical_slice_e2e)
 endif()

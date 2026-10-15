@@ -87,6 +87,18 @@ void Document::apply_mutation(Page page, PersistentObjectMap objects) {
     current_objects_ = std::move(objects);
 }
 
+void Document::reset_from_snapshot(SnapshotPtr snapshot) {
+    if (!snapshot) return;
+    epoch_ = snapshot->epoch();
+    revision_ = snapshot->revision();
+    saved_epoch_ = epoch_;
+    saved_revision_ = revision_;
+    current_page_ = snapshot->page();
+    current_objects_ = snapshot->objects();
+    history_.clear();
+    publish_snapshot();
+}
+
 void Document::publish_snapshot() {
     current_snapshot_ = std::make_shared<const DocumentSnapshot>(
         epoch_, revision_, current_page_, current_objects_);
