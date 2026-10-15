@@ -326,79 +326,6 @@ void NativeWindow::handle_mouse_up(int x, int y, unsigned modifiers) {
     handle_canvas_mouse_up(x, y, modifiers);
 }
 
-bool NativeWindow::handle_key_down(WPARAM key) {
-    const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-    const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-    if (control) {
-        if (key == 'N') { create_new_document(); return true; }
-        if (key == 'O') { open_document_dialog(); return true; }
-        if (key == 'S') { save_document_dialog(shift); return true; }
-        if (key == 'E') { export_svg_dialog(); return true; }
-        if (key == 'J') { open_settings_modal(); return true; }
-        if (key == 'A') {
-            const auto snapshot = root_.document().current_snapshot();
-            std::vector<document::ObjectId> ids;
-            for (const auto &layer : snapshot->page().layers)
-                ids.insert(ids.end(), layer.object_ids.begin(), layer.object_ids.end());
-            root_.vector_controller().set_selection(ids, *snapshot);
-            InvalidateRect(hwnd_, nullptr, FALSE);
-            return true;
-        }
-        if (key == 'Z' && !shift) {
-            workflow_.undo();
-            root_.vector_controller().selection().clear();
-            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã hoàn tác" : "Undo complete";
-            InvalidateRect(hwnd_, nullptr, FALSE);
-            return true;
-        }
-        if (key == 'Y' || (key == 'Z' && shift)) {
-            workflow_.redo();
-            root_.vector_controller().selection().clear();
-            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã làm lại" : "Redo complete";
-            InvalidateRect(hwnd_, nullptr, FALSE);
-            return true;
-        }
-    }
-    if (key == VK_ESCAPE) {
-        if (show_settings_modal_) close_settings_modal();
-        else if (show_file_menu_) close_file_menu();
-        else if (is_panning_) {
-            cancel_canvas_interaction();
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        } else if (pointer_active_) {
-            cancel_canvas_interaction();
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        } else {
-            root_.vector_controller().selection().clear();
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        }
-        return true;
-    }
-    if (key == VK_DELETE) {
-        cancel_canvas_interaction();
-        const auto result = root_.vector_controller().delete_selected(root_.document());
-        status_msg_ = result.success ? (language_ == UILanguage::Vietnamese ? "Đã xóa đối tượng" : "Objects deleted")
-                                     : result.error_message;
-        workflow_.sync_status_bar();
-        InvalidateRect(hwnd_, nullptr, FALSE);
-        return true;
-    }
-    if (key == 'F') { fit_page_to_canvas(); return true; }
-    if (key == 'H') { set_active_tool(3); return true; }
-    if (key == '1') {
-        auto& camera = root_.renderer().camera();
-        camera.set_viewport_size(std::max(1, width_ - 352), std::max(1, height_ - 118));
-        camera.set_zoom(1.0);
-        zoom_level_ = 100;
-        InvalidateRect(hwnd_, nullptr, FALSE);
-        return true;
-    }
-    if (key == 'V') { set_active_tool(0); return true; }
-    if (key == 'R') { set_active_tool(1); return true; }
-    if (key == 'E') { set_active_tool(2); return true; }
-    return false;
-}
-
 LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     auto* self = reinterpret_cast<NativeWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
 
@@ -441,6 +368,7 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         return 0;
     case WM_MBUTTONDOWN:
         if (self && self->is_canvas_point(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) {
+            self->cancel_canvas_interaction();
             self->is_panning_ = true;
             self->last_pointer_x_ = GET_X_LPARAM(lParam);
             self->last_pointer_y_ = GET_Y_LPARAM(lParam);

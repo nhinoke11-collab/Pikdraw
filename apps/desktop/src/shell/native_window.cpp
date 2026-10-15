@@ -74,6 +74,9 @@ void NativeWindow::toggle_theme() noexcept {
 }
 
 void NativeWindow::open_settings_modal() noexcept {
+#ifdef _WIN32
+    cancel_canvas_interaction();
+#endif
     show_settings_modal_ = true;
     status_msg_ = (language_ == UILanguage::Vietnamese) ?
         "Đã mở Cài đặt hệ thống (PikDraw Preferences)" : "Opened System Preferences (PikDraw Settings)";
@@ -217,6 +220,9 @@ void NativeWindow::fit_page_to_canvas() noexcept {
 }
 
 void NativeWindow::open_file_menu() noexcept {
+#ifdef _WIN32
+    cancel_canvas_interaction();
+#endif
     show_file_menu_ = true;
     status_msg_ = (language_ == UILanguage::Vietnamese) ?
         "Đã mở menu Tệp" : "File menu opened";
@@ -239,6 +245,9 @@ void NativeWindow::toggle_file_menu() noexcept {
 }
 
 void NativeWindow::open_home_screen() noexcept {
+#ifdef _WIN32
+    cancel_canvas_interaction();
+#endif
     show_home_screen_ = true;
     close_file_menu();
     status_msg_ = (language_ == UILanguage::Vietnamese) ?

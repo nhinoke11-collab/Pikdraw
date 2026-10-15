@@ -145,6 +145,12 @@ void verify_editor(EditorFixture &f) {
     SendMessageW(window.hwnd(), WM_KEYDOWN, VK_ESCAPE, 0);
     f.mouse(WM_LBUTTONUP, move_end);
     REQUIRE(doc.current_snapshot() == before_cancel);
+    f.mouse(WM_LBUTTONDOWN, move_start, MK_LBUTTON);
+    f.mouse(WM_MOUSEMOVE, move_end, MK_LBUTTON);
+    window.open_settings_modal();
+    f.mouse(WM_LBUTTONUP, move_end);
+    REQUIRE(doc.current_snapshot() == before_cancel);
+    window.close_settings_modal();
 
     // Exercise actual painted palette hit regions, including right-click stroke.
     const int dock = f.width - 280;
@@ -217,6 +223,10 @@ void verify_editor(EditorFixture &f) {
     }
     const auto native = std::filesystem::temp_directory_path() /
                         ("pikdraw-editor-tools-" + std::to_string(GetCurrentProcessId()) + ".pikdraw");
+    const auto before_delete = doc.revision();
+    SendMessageW(window.hwnd(), WM_KEYDOWN, VK_DELETE, 0);
+    REQUIRE(doc.current_snapshot()->object_count() == 0 && doc.revision() == before_delete + 1);
+    REQUIRE(doc.undo() && doc.current_snapshot()->object_count() == 2);
     const auto old_epoch = doc.epoch();
     REQUIRE(window.workflow().save_native(native.string()));
     REQUIRE(!doc.is_dirty());

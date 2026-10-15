@@ -22,6 +22,7 @@ add_library(pikdraw_desktop STATIC
     src/workflows/document_workflow.cpp
     src/shell/native_window.cpp
     src/shell/native_window_events.cpp
+    src/shell/native_window_shortcuts.cpp
     src/shell/native_window_canvas.cpp
     src/shell/native_window_selection.cpp
     src/shell/native_window_selection_paint.cpp

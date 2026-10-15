@@ -92,6 +92,7 @@ void populate(HWND dialog, EditorState &state) {
     state.populating = false;
 }
 void initialize_editor(HWND dialog, EditorState &state) {
+    state.populating = true;
     SetWindowTextW(dialog, state.vi
                                ? (state.stroke ? L"Màu và độ dày viền" : L"Màu tô nguồn")
                                : (state.stroke ? L"Source stroke color and width" : L"Source fill color"));
