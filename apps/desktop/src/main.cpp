@@ -57,6 +57,11 @@ int main(int argc, char* argv[]) {
     }
 
 #ifdef _WIN32
+    HWND console_hwnd = GetConsoleWindow();
+    if (console_hwnd) {
+        ShowWindow(console_hwnd, SW_HIDE);
+    }
+
     if (timeout_ms > 0 && window.hwnd()) {
         SetTimer(window.hwnd(), 1001, timeout_ms, [](HWND hwnd, UINT, UINT_PTR, DWORD) {
             DestroyWindow(hwnd);
