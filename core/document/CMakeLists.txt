@@ -11,7 +11,11 @@ add_library(pikdraw_document STATIC
     src/commands/command.cpp
     src/commands/transaction_writer.cpp
     src/storage/native_format.cpp
+    src/storage/crc32.cpp
+    src/storage/color_codec.cpp
+    src/storage/object_codec.cpp
     src/storage/save_recovery.cpp
+    src/storage/file_io.cpp
     src/document.cpp
 )
 
@@ -47,4 +51,5 @@ if(PIKDRAW_BUILD_TESTS)
     add_doc_test(test_pikdraw_document_async tests/async/test_stale_proposals.cpp)
     add_doc_test(test_pikdraw_document_writer_safety tests/async/test_writer_safety.cpp)
     add_doc_test(test_pikdraw_document_storage tests/storage/test_storage.cpp)
+    add_doc_test(test_pikdraw_document_storage_fidelity tests/storage/test_storage_fidelity.cpp)
 endif()

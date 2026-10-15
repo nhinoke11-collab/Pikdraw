@@ -66,8 +66,8 @@ public:
     /// Internal method for commands to apply state mutations
     void apply_mutation(Page page, PersistentObjectMap objects);
 
-    /// Replaces document content with a loaded snapshot and starts a new lifecycle epoch.
-    void reset_from_snapshot(SnapshotPtr snapshot);
+    /// Replaces document state as a new lifecycle, clearing history and invalidating old jobs.
+    [[nodiscard]] bool reset_from_snapshot(SnapshotPtr snapshot);
 
 private:
     friend class TransactionWriter;

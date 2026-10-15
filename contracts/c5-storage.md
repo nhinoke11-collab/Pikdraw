@@ -5,6 +5,12 @@ Status: Locked (M0 Foundation)
 Producers: `modules/storage`
 Consumers: `core/document`, `modules/desktop`, `modules/interop`
 
+Implementation audit (2026-10-15): the original lossy v1 prototype did not implement this
+locked container specification. Development codec v2 is documented in
+`docs/decisions/0005-native-storage-repair.md`; it repairs source fidelity and bounded parsing,
+but is **not accepted C5 compliance**. Metadata/assets, migrations, recovery index/UI and
+power-loss evidence remain required. No producer may advertise C5/M1 acceptance from v2 unit tests alone.
+
 ---
 
 ## 1. Native File Format (`.pikdraw`)

@@ -6,6 +6,20 @@ namespace pikdraw::document {
 namespace {
 std::atomic<uint64_t> next_epoch{1};
 
+uint64_t allocate_epoch(uint64_t greater_than = 0) {
+    if (greater_than == std::numeric_limits<uint64_t>::max())
+        throw std::overflow_error("Document epoch exhausted");
+
+    auto observed = next_epoch.load(std::memory_order_relaxed);
+    for (;;) {
+        if (observed == 0) throw std::overflow_error("Document epoch exhausted");
+        const auto candidate = observed > greater_than ? observed : greater_than + 1;
+        const auto successor = candidate == std::numeric_limits<uint64_t>::max() ? 0 : candidate + 1;
+        if (next_epoch.compare_exchange_weak(observed, successor, std::memory_order_relaxed))
+            return candidate;
+    }
+}
+
 // History restores committed roots, never partially replays stateful user commands.
 class CommittedState final : public DocumentCommand {
 public:
@@ -35,8 +49,7 @@ struct BusyScope {
 
 Document::Document(std::string document_id, Page page)
     : document_id_(std::move(document_id)), current_page_(std::move(page)), writer_(*this) {
-    epoch_ = next_epoch.fetch_add(1, std::memory_order_relaxed);
-    if (epoch_ == 0) throw std::overflow_error("Document epoch exhausted");
+    epoch_ = allocate_epoch();
     if (document_id_.empty()) throw std::invalid_argument("Document ID cannot be empty");
     saved_epoch_ = epoch_;
     validate_page(current_page_);
@@ -50,6 +63,8 @@ void Document::require_writer() const {
 }
 
 Document::Document(const DocumentSnapshot& saved) : Document(saved.document_id()) {
+    epoch_ = allocate_epoch(saved.epoch());
+    saved_epoch_ = epoch_;
     current_page_ = saved.page();
     current_objects_ = saved.objects();
     revision_ = saved.revision();
@@ -142,28 +157,37 @@ void Document::apply_mutation(Page page, PersistentObjectMap objects) {
     if (!current_objects_.empty()) reserve_object_id((*current_objects_.all().rbegin()).first);
 }
 
-void Document::reset_from_snapshot(SnapshotPtr snapshot) {
-    if (!snapshot) return;
-    require_idle_writer();
+bool Document::reset_from_snapshot(SnapshotPtr snapshot) {
+    try { require_idle_writer(); }
+    catch (...) { return false; }
+    if (!snapshot) return false;
 
-    const auto new_epoch = next_epoch.fetch_add(1, std::memory_order_relaxed);
-    if (new_epoch == 0) throw std::overflow_error("Document epoch exhausted");
-    const auto loaded_id = snapshot->document_id().empty()
-        ? document_id_
-        : snapshot->document_id();
-    auto next = std::make_shared<const DocumentSnapshot>(
-        new_epoch, snapshot->revision(), snapshot->page(), snapshot->objects(), loaded_id);
+    BusyScope scope(busy_);
+    try {
+        // Prepare the replacement completely before changing the live document.
+        auto next_document_id = snapshot->document_id().empty()
+            ? document_id_ : snapshot->document_id();
+        auto next_page = snapshot->page();
+        auto next_objects = snapshot->objects();
+        const auto next_revision = snapshot->revision();
+        validate_page(next_page);
+        const auto next_epoch = allocate_epoch(epoch_);
+        auto next = std::make_shared<const DocumentSnapshot>(
+            next_epoch, next_revision, next_page, next_objects, next_document_id);
 
-    document_id_ = loaded_id;
-    epoch_ = new_epoch;
-    revision_ = snapshot->revision();
-    saved_epoch_ = new_epoch;
-    saved_revision_ = revision_;
-    current_page_ = snapshot->page();
-    current_objects_ = snapshot->objects();
-    if (!current_objects_.empty()) reserve_object_id((*current_objects_.all().rbegin()).first);
-    history_.clear();
-    publish_snapshot(std::move(next));
+        if (!next_objects.empty()) reserve_object_id((*next_objects.all().rbegin()).first);
+        document_id_ = std::move(next_document_id);
+        epoch_ = next_epoch;
+        current_page_ = std::move(next_page);
+        current_objects_ = std::move(next_objects);
+        history_.clear();
+        saved_epoch_ = next_epoch;
+        saved_revision_ = next_revision;
+        publish_snapshot(std::move(next));
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 void Document::publish_snapshot(SnapshotPtr next) noexcept {

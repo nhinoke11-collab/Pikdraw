@@ -13,17 +13,17 @@ namespace pikdraw::document {
 #pragma pack(push, 1)
 struct PikDrawHeader {
     uint8_t magic[4];       // {'P', 'K', 'D', 'R'}
-    uint32_t version;       // e.g. 1
+    uint32_t version;       // Development codec v2; not accepted C5 container compliance
     uint32_t flags;         // feature flags / compression
     uint64_t epoch;         // document epoch at save
     uint64_t revision;      // document revision at save
     uint32_t payload_bytes; // byte length of serialized snapshot payload
-    uint32_t crc32;         // CRC32 of payload bytes
+    uint32_t crc32;         // CRC32 of container with this field zeroed (explicit LE encoding)
 };
 #pragma pack(pop)
 
 inline constexpr uint8_t kPikDrawMagic[4] = {'P', 'K', 'D', 'R'};
-inline constexpr uint32_t kCurrentFormatVersion = 1;
+inline constexpr uint32_t kCurrentFormatVersion = 2;
 
 /// Native format serialization and deserialization
 class NativeFormat {
