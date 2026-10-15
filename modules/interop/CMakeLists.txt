@@ -8,6 +8,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_library(pikdraw_interop STATIC
     src/adapters/svg_importer.cpp
     src/writers/svg_exporter.cpp
+    src/ipc_dto.cpp
+    src/fixture_manifest.cpp
+    src/format_capability_matrix.cpp
+    src/interop_types.cpp
+    src/payload_validator.cpp
 )
 
 target_include_directories(pikdraw_interop PUBLIC
