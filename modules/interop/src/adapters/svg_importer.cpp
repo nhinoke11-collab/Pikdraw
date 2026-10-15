@@ -1,4 +1,6 @@
 #include "pikdraw/interop/adapters/svg_importer.hpp"
+#include "../path_adapter/svg_path_adapter.hpp"
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 #include <regex>
@@ -15,6 +17,23 @@ std::string get_attr(const std::string& tag, const std::string& attr_name) {
         return match.str(1);
     }
     return "";
+}
+
+std::string xml_unescape(std::string value) {
+    const auto replace_all = [&](const std::string& token,
+                                 const std::string& replacement) {
+        size_t position = 0;
+        while ((position = value.find(token, position)) != std::string::npos) {
+            value.replace(position, token.size(), replacement);
+            position += replacement.size();
+        }
+    };
+    replace_all("&lt;", "<");
+    replace_all("&gt;", ">");
+    replace_all("&quot;", "\"");
+    replace_all("&apos;", "'");
+    replace_all("&amp;", "&");
+    return value;
 }
 
 double parse_double(const std::string& s, double def = 0.0) {
@@ -42,41 +61,78 @@ color::ColorValue parse_color(const std::string& color_str, color::ColorValue de
     return def;
 }
 
-void parse_svg_path_data(const std::string& d, geometry::Path2D& path) {
-    std::stringstream ss(d);
+bool parse_svg_path_data(const std::string& d, geometry::Path2D& path,
+                         std::string* out_issue) {
+    std::string normalized = d;
+    std::replace(normalized.begin(), normalized.end(), ',', ' ');
+    std::stringstream ss(normalized);
     char cmd;
     double x, y, cx, cy, c1x, c1y, c2x, c2y;
+    double rx, ry, rotation, large_flag, sweep_flag;
     double cur_x = 0, cur_y = 0;
+    double subpath_x = 0, subpath_y = 0;
 
     while (ss >> cmd) {
         if (cmd == 'M' || cmd == 'm') {
-            if (ss >> x >> y) {
-                if (cmd == 'm') { x += cur_x; y += cur_y; }
-                path.move_to(x, y);
-                cur_x = x; cur_y = y;
-            }
+            if (!(ss >> x >> y)) goto malformed;
+            if (cmd == 'm') { x += cur_x; y += cur_y; }
+            path.move_to(x, y);
+            cur_x = x; cur_y = y;
+            subpath_x = x; subpath_y = y;
         } else if (cmd == 'L' || cmd == 'l') {
-            if (ss >> x >> y) {
-                if (cmd == 'l') { x += cur_x; y += cur_y; }
-                path.line_to(x, y);
-                cur_x = x; cur_y = y;
-            }
+            if (!(ss >> x >> y)) goto malformed;
+            if (cmd == 'l') { x += cur_x; y += cur_y; }
+            path.line_to(x, y);
+            cur_x = x; cur_y = y;
         } else if (cmd == 'Q' || cmd == 'q') {
-            if (ss >> cx >> cy >> x >> y) {
-                if (cmd == 'q') { cx += cur_x; cy += cur_y; x += cur_x; y += cur_y; }
-                path.quad_to(cx, cy, x, y);
-                cur_x = x; cur_y = y;
-            }
+            if (!(ss >> cx >> cy >> x >> y)) goto malformed;
+            if (cmd == 'q') { cx += cur_x; cy += cur_y; x += cur_x; y += cur_y; }
+            path.quad_to(cx, cy, x, y);
+            cur_x = x; cur_y = y;
         } else if (cmd == 'C' || cmd == 'c') {
-            if (ss >> c1x >> c1y >> c2x >> c2y >> x >> y) {
-                if (cmd == 'c') { c1x += cur_x; c1y += cur_y; c2x += cur_x; c2y += cur_y; x += cur_x; y += cur_y; }
-                path.cubic_to(c1x, c1y, c2x, c2y, x, y);
-                cur_x = x; cur_y = y;
-            }
+            if (!(ss >> c1x >> c1y >> c2x >> c2y >> x >> y)) goto malformed;
+            if (cmd == 'c') { c1x += cur_x; c1y += cur_y; c2x += cur_x; c2y += cur_y; x += cur_x; y += cur_y; }
+            path.cubic_to(c1x, c1y, c2x, c2y, x, y);
+            cur_x = x; cur_y = y;
+        } else if (cmd == 'A' || cmd == 'a') {
+            if (!(ss >> rx >> ry >> rotation >> large_flag >> sweep_flag >> x >> y))
+                goto malformed;
+            if ((large_flag != 0 && large_flag != 1) ||
+                (sweep_flag != 0 && sweep_flag != 1))
+                goto malformed;
+            if (cmd == 'a') { x += cur_x; y += cur_y; }
+            path.arc_to(rx, ry, rotation, large_flag != 0, sweep_flag != 0,
+                        x, y);
+            cur_x = x; cur_y = y;
         } else if (cmd == 'Z' || cmd == 'z') {
             path.close();
+            cur_x = subpath_x; cur_y = subpath_y;
+        } else {
+            if (out_issue) *out_issue = std::string("Unsupported SVG path command: ") + cmd;
+            return false;
         }
     }
+    if (path.empty()) {
+        if (out_issue) *out_issue = "SVG path contains no geometry";
+        return false;
+    }
+    return true;
+malformed:
+    if (out_issue) *out_issue = std::string("Malformed SVG path command: ") + cmd;
+    return false;
+}
+
+bool attach_authoring_source(document::PathObject& object,
+                             SvgImportResult& result) {
+    std::string issue;
+    auto source = adapters::SvgPathAdapter::from_path2d(object.path, &issue);
+    if (!source) {
+        result.report.add_issue(FidelitySeverity::Unsupported, object.name,
+                                "Editable path source", issue);
+        return false;
+    }
+    object.set_authoring_source(std::move(*source));
+    return true;
 }
 
 } // anonymous namespace
@@ -123,6 +179,7 @@ SvgImportResult SvgImporter::import_from_string(const std::string& svg_xml) {
         po.fill = parse_color(get_attr(attrs, "fill"), color::RGBColor{0.2, 0.4, 0.8, 1.0});
         po.stroke = parse_color(get_attr(attrs, "stroke"), color::RGBColor{0.0, 0.0, 0.0, 1.0});
         po.stroke_width_mm = parse_double(get_attr(attrs, "stroke-width"), 1.0);
+        if (!attach_authoring_source(po, res)) continue;
         res.objects.push_back(std::move(po));
     }
 
@@ -137,10 +194,16 @@ SvgImportResult SvgImporter::import_from_string(const std::string& svg_xml) {
             document::PathObject po;
             po.id = document::generate_object_id();
             po.name = "Imported Path";
-            parse_svg_path_data(d, po.path);
+            std::string parse_issue;
+            if (!parse_svg_path_data(d, po.path, &parse_issue)) {
+                res.report.add_issue(FidelitySeverity::Unsupported, po.name,
+                                    "SVG path syntax", parse_issue);
+                continue;
+            }
             po.fill = parse_color(get_attr(attrs, "fill"), color::RGBColor{0.2, 0.4, 0.8, 1.0});
             po.stroke = parse_color(get_attr(attrs, "stroke"), color::RGBColor{0.0, 0.0, 0.0, 1.0});
             po.stroke_width_mm = parse_double(get_attr(attrs, "stroke-width"), 1.0);
+            if (!attach_authoring_source(po, res)) continue;
             res.objects.push_back(std::move(po));
         }
     }
@@ -151,7 +214,7 @@ SvgImportResult SvgImporter::import_from_string(const std::string& svg_xml) {
     auto text_end = std::sregex_iterator();
     for (auto it = text_begin; it != text_end; ++it) {
         std::string attrs = it->str(1);
-        std::string content = it->str(2);
+        std::string content = xml_unescape(it->str(2));
 
         document::TextObject to;
         to.id = document::generate_object_id();
@@ -160,7 +223,7 @@ SvgImportResult SvgImporter::import_from_string(const std::string& svg_xml) {
         double x = parse_double(get_attr(attrs, "x"));
         double y = parse_double(get_attr(attrs, "y"));
         to.position = {x, y};
-        std::string family = get_attr(attrs, "font-family");
+        std::string family = xml_unescape(get_attr(attrs, "font-family"));
         if (!family.empty()) to.font.family_name = family;
         double fsize = parse_double(get_attr(attrs, "font-size"), 12.0);
         to.font.size_pt = fsize;

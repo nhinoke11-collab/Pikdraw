@@ -27,12 +27,31 @@ void test_svg_import_basic() {
     const auto& rect_obj = std::get<PathObject>(res.objects[0]);
     assert(rect_obj.id != kInvalidObjectId);
     assert(rect_obj.stroke_width_mm == 2.0);
+    assert(rect_obj.authoring_source);
+    assert(std::get<PathObject>(res.objects[1]).authoring_source);
 
     // Verify Vietnamese text
     const auto& text_obj = std::get<TextObject>(res.objects[2]);
     assert(text_obj.text == "Hà Nội - Thủ đô ngàn năm văn hiến");
     assert(text_obj.font.family_name == "PikDrawSans");
     assert(text_obj.font.size_pt == 24.0);
+}
+
+void test_svg_arc_source_and_unsupported_command_report() {
+    const auto arc_result = SvgImporter::import_from_string(
+        R"(<svg width="200mm" height="100mm"><path d="M 100 0 A 100 50 0 0 1 0 50" /></svg>)");
+    assert(arc_result.success && !arc_result.report.has_unsupported());
+    assert(arc_result.objects.size() == 1);
+    const auto& path = std::get<PathObject>(arc_result.objects.front());
+    assert(path.authoring_source);
+    assert(path.authoring_source->subpaths.front().segments.front().kind ==
+           PathSegmentKind::EllipticArc);
+
+    const auto unsupported = SvgImporter::import_from_string(
+        R"(<svg><path d="M 0 0 H 20" /></svg>)");
+    assert(unsupported.success && unsupported.objects.empty());
+    assert(unsupported.report.has_unsupported());
+    assert(unsupported.report.issues().front().feature == "SVG path syntax");
 }
 
 void test_svg_unsupported_filter_reported() {
@@ -93,6 +112,7 @@ int main() {
     std::cout << "[test_svg_adapter] Running SVG importer tests...\n";
     test_svg_import_basic();
     test_svg_unsupported_filter_reported();
+    test_svg_arc_source_and_unsupported_command_report();
     test_lossless_curve_path_adapter();
     std::cout << "[test_svg_adapter] All tests passed!\n";
     return 0;

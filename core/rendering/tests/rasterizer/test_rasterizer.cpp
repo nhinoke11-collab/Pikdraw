@@ -83,9 +83,52 @@ void test_backend_status_state_machine() {
   assert(rasterizer->device_status() == DeviceLossStatus::FatalDriverCrash);
 }
 
+void test_analytic_ellipse_renders_from_authoring_source() {
+  Document doc("analytic-ellipse-render");
+  PathObject object;
+  object.id = generate_object_id();
+  object.fill = color::RGBColor{1, 0, 0, 1};
+  object.has_stroke = false;
+  EditablePath source;
+  EditableSubpath subpath;
+  subpath.id = generate_path_element_id<SubpathId>();
+  subpath.closed = true;
+  constexpr double pi = 3.14159265358979323846;
+  const geometry::Point2D center{100, 100};
+  const geometry::Point2D axis_u{30, 0};
+  const geometry::Point2D axis_v{0, 20};
+  for (size_t i = 0; i < 4; ++i) {
+    const double angle = static_cast<double>(i) * pi * 0.5;
+    subpath.nodes.push_back(PathNode{
+        generate_path_element_id<NodeId>(),
+        center + axis_u * std::cos(angle) + axis_v * std::sin(angle)});
+    EditableSegment segment;
+    segment.id = generate_path_element_id<SegmentId>();
+    segment.kind = PathSegmentKind::EllipticArc;
+    segment.arc = {center, axis_u, axis_v, angle, pi * 0.5};
+    subpath.segments.push_back(segment);
+  }
+  source.subpaths.push_back(std::move(subpath));
+  object.set_authoring_source(std::move(source));
+  assert(doc.execute_command(std::make_unique<AddObjectCommand>(object)).success);
+
+  ViewportRenderer renderer;
+  renderer.camera().set_center(center);
+  renderer.camera().set_zoom(1.0);
+  constexpr int32_t width = 200;
+  constexpr int32_t height = 200;
+  std::vector<uint8_t> pixels(width * height * 4, 0);
+  PixelBufferTarget target{pixels.data(), width, height, width * 4};
+  assert(renderer.render_frame(*doc.current_snapshot(), target));
+  const size_t center_pixel = (100 * width + 100) * 4;
+  assert(pixels[center_pixel] == 255 && pixels[center_pixel + 1] == 0 &&
+         pixels[center_pixel + 2] == 0);
+}
+
 int main() {
   std::cout << "[test_rasterizer] Running software rasterizer tests...\n";
   test_software_rasterizer_frame();
+  test_analytic_ellipse_renders_from_authoring_source();
   test_backend_status_state_machine();
   std::cout << "[test_rasterizer] All tests passed!\n";
   return 0;

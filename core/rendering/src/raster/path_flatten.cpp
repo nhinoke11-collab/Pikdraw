@@ -1,4 +1,5 @@
 #include "path_raster.hpp"
+#include "../path_adapter/authoring_path_adapter.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -66,6 +67,8 @@ struct Flattener {
 
 bool flatten(const document::PathObject &object, const Camera2D &camera,
              std::vector<Contour> &contours) {
+  if (object.authoring_source)
+    return path_adapter::flatten_authoring_path(object, camera, contours);
   if (!object.transform.is_finite() || !std::isfinite(object.stroke_width_mm) ||
       object.stroke_width_mm < 0 || object.path.size() > kMaxPoints)
     return false;
