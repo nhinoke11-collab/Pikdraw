@@ -1,10 +1,36 @@
 {
   "schema_version": 1,
   "project": "PikDraw",
-  "mode": "prepared-worktree-lanes",
-  "external_provider_execution": false,
-  "integration_owner": "assigned-per-session",
+  "mode": "external-code-generation-leader-native-review",
+  "external_provider_execution": true,
+  "integration_owner": "codex-leader-20261015",
   "lanes": [
+    {
+      "provider": "gemini",
+      "model": "gemini-3.8-flash-high",
+      "task_id": "spike-a-viewport-20261015",
+      "module": "rendering",
+      "execution": "source-generation-completed; leader-review-draft",
+      "worktree": ".worktrees/gemini-spike-a-viewport-20261015"
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-3.8-flash-high",
+      "task_id": "spike-b-document-20261015",
+      "module": "document",
+      "execution": "source-generation-completed; leader-review-draft",
+      "worktree": ".worktrees/gemini-spike-b-document-20261015"
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-3.8-flash-high",
+      "task_id": "spike-c-interop-20261015",
+      "module": "interop",
+      "execution": "source-generation-completed; leader-review-draft",
+      "worktree": ".worktrees/gemini-spike-c-interop-20261015"
+    }
+  ],
+  "prepared_lanes": [
     {
       "provider": "codex",
       "task_id": "desktop-layout",
@@ -26,5 +52,11 @@
       "title": "Benchmark editable file interchange",
       "goal": "Evaluate PDF, PDF-compatible AI and CDR readers using synthetic or redistributable fixtures; report visual fidelity, editability, source-format export coverage and dependency licenses separately."
     }
+  ],
+  "active_provider_sessions": [],
+  "execution_notes": [
+    "Gemini 3.8 Flash High ran through Antigravity CLI 1.3.5; source generation completed.",
+    "Leader applied/reviewed drafts and ran native tests; no external agents currently running.",
+    "This registry is a session draft, not an implemented network scheduler or spike acceptance."
   ]
 }
