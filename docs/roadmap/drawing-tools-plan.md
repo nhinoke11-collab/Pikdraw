@@ -1,7 +1,7 @@
 # PikDraw — Kế hoạch công cụ vẽ, Pen, sửa node và hình học kỹ thuật 2D
 
 Ngày: 2026-10-15. Trạng thái: **đặc tả đề xuất, chưa triển khai**.
-Catalog thực hiện: [drawing-tools-tasks.json](drawing-tools-tasks.json).
+Catalog thực hiện: [drawing-tools-tasks.json](drawing-tools-tasks.json). Bổ sung nhóm điều khiển snap/modifier/shape trong mục 3.4–3.7; đây vẫn là kế hoạch chưa triển khai.
 
 ## 1. Phạm vi và bằng chứng hiện tại
 
@@ -121,15 +121,106 @@ Phím số chỉ được bắt khi canvas/ToolSession có focus. Text editor, n
 
 Phím mặc định đề xuất: `P` Pen, `N` Pencil, `L` Line, `Shift+L` Polyline, `F2` Node, `V` Pick. F8 Ortho, F10 Polar, F3 OSnap, F12 HUD khi không xung đột hệ thống. Mọi action có menu và được remap; giữ alias hiện có chỉ sau audit phím.
 
-Shift ràng góc khi không có θ nhập số. Alt khi thao tác handle Pen/Node tách hai tay nắm. Ctrl tạm chuyển Direct Selection trong Pen rồi quay lại phiên. Space/chuột giữa dành cho pan. Tắt snap tạm thời dùng chip/action riêng; không gán Alt vừa tách handle vừa tắt snap. Chọn nhiều node dùng Shift+click trong Node; bảng trạng thái giải thích action theo context.
+Trong hồ sơ mặc định PikDraw, Shift ràng góc khi không có θ nhập số. Alt khi thao tác handle Pen/Node tách hai tay nắm. Ctrl tạm chuyển Direct Selection trong Pen rồi quay lại phiên khi chưa kéo handle. Space/chuột giữa dành cho pan. Các hồ sơ và tổ hợp phím theo context được khóa ở mục 3.5. Chọn nhiều node dùng Shift+click trong Node; bảng trạng thái giải thích action theo context.
 
-Ctrl sửa node thuộc draft hiện tại vào cùng local history. Muốn sửa đối tượng committed khác phải finish/hủy draft trước; không âm thầm thay base revision rồi rebase draft. Một thay đổi document từ bên ngoài phiên làm proposal cũ mất hiệu lực và cho phép người dùng chạy lại thao tác trên revision mới.
+Direct Selection tạm sửa node thuộc draft hiện tại vào cùng local history. Muốn sửa đối tượng committed khác phải finish/hủy draft trước; không âm thầm thay base revision rồi rebase draft. Một thay đổi document từ bên ngoài phiên làm proposal cũ mất hiệu lực và cho phép người dùng chạy lại thao tác trên revision mới.
 
-Snap radius mặc định đề xuất 8 DIP; chuyển sang world theo camera/DPI, không dùng một tolerance mm cố định ở mọi zoom. Candidate chứa source ObjectId/NodeId/SegmentId, loại snap, tham số t, vị trí world và revision. Xếp hạng: lựa chọn snap override của người dùng → điều kiện tương thích numeric locks → loại ưu tiên → khoảng cách màn hình → thứ tự source ID ổn định. Có hysteresis để hint không nhảy liên tục; ngưỡng được khóa bằng fixture ở D01.
+Snap radius mặc định đề xuất 8 DIP; chuyển sang world theo camera/DPI, không dùng một tolerance mm cố định ở mọi zoom. Candidate chứa source ObjectId/NodeId/SegmentId, loại snap, tham số t, vị trí world và revision. Lọc theo numeric locks/ràng buộc chủ động trước; chỉ các nghiệm tương thích mới được xếp hạng theo snap override của người dùng → loại ưu tiên → khoảng cách màn hình → thứ tự source ID ổn định. Có hysteresis để hint không nhảy liên tục; ngưỡng được khóa bằng fixture ở D01.
 
 R1: Endpoint, midpoint đoạn thẳng, grid, trục ngang/dọc, polar increment. R3/R4: center, quadrant, analytic intersection, perpendicular, tangent, extension, parallel, nearest on curve và tracking từ các điểm tham chiếu đã nhận. Midpoint Bézier theo t=0,5 và điểm nửa chiều dài phải là hai khái niệm có tên riêng. Không bắt vào bbox thay hình học thật.
 
 Default chỉ xét hình nhìn thấy, dùng làm tham chiếu được; đối tượng/layer khóa có thể làm reference khi bật tùy chọn, nhưng không được sửa. Snap xuyên layer ẩn/tài liệu khác mặc định tắt. Near-tangent, nhiều nghiệm và trùng hình phải có preview lựa chọn, không đoán âm thầm.
+
+### 3.4 Bảng bật/tắt và cấu hình bắt điểm
+
+Có nút nam châm trên thanh trạng thái: click bật/tắt snap tổng, mũi tên mở popover các checkbox, action riêng mở bảng cấu hình có thể ghim bên cạnh canvas. Tắt tổng giữ nguyên mọi lựa chọn con để bật lại đúng cấu hình trước đó. Tắt một nhóm cũng giữ mask loại snap của nhóm; `Chọn tất cả/Bỏ chọn tất cả` là action riêng, không gộp vào nút bật nhóm.
+
+```text
+[x] Bắt điểm đối tượng / lưới / đường dóng                 F3
+  [x] Đối tượng    [x] Endpoint  [x] Midpoint  [ ] Nearest
+                  [x] Center    [ ] Quadrant  [ ] Intersection
+  [ ] Quan hệ     [ ] Tangent   [ ] Perpendicular  [ ] Parallel
+  [ ] Trang/Lưới  [ ] Grid      [ ] Page edge      [ ] Guide
+
+Hướng: ( ) Tự do  ( ) Ortho  (o) Polar   Bước [45° v]
+[x] Hiện gợi ý   [x] Hiện loại bắt điểm   Bán kính hút [8 DIP]
+Hồ sơ phím [PikDraw v]   Công cụ [Theo cấu hình chung v]
+```
+
+Sơ đồ minh họa trạng thái một cấu hình, không phải toàn bộ mặc định và không chứng minh UI hiện có. Các tùy chọn nâng cao chỉ được chọn khi runtime capability tương ứng đã nghiệm thu; phần chưa có hiển thị disabled kèm lý do và mốc R1/R3/R4.
+
+| Nhóm checkbox độc lập | Lựa chọn |
+| --- | --- |
+| Điểm trên đối tượng | Endpoint, node nguồn, midpoint đoạn thẳng, center analytic, quadrant, nearest; Bézier t-midpoint và half-length là lựa chọn có tên riêng |
+| Quan hệ hình học tự nhận | Intersection, perpendicular, tangent, parallel, extension, tracking từ reference points |
+| Trang và tham chiếu | Page edge/center, guides, construction geometry, grid; snap bbox edge/center nếu thêm phải là lựa chọn riêng có nhãn rõ và mặc định tắt |
+| Hướng | Free / Ortho / Polar; bước góc 15°/30°/45°/90° hoặc danh sách góc tùy chọn; hướng tham chiếu World/Local X hoặc đoạn trước |
+| Hiển thị | Marker, tooltip loại snap/đối tượng, đường dóng, kích thước marker, màu tương phản, radius DIP, snap acquisition/release hysteresis |
+| Chính sách đối tượng | Current layer/all visible layers, locked-as-reference, snap vào chính path đang vẽ, loại trừ handle/control point hoặc chỉ nhận khi sửa node |
+| Theo công cụ | Dùng cấu hình chung hoặc override cho Line/Polyline/Pen/Node/Shapes/Pencil; nút khôi phục riêng công cụ |
+
+`F3` điều khiển automatic snapping của đối tượng/quan hệ/trang/grid/construction. Ortho/Polar và khóa số là điều kiện dựng hình riêng; F3 tắt không bỏ các điều kiện này. UI phải hiển thị đồng thời, ví dụ `Snap OFF · Polar 45°`. Hướng dùng một enum Free/Ortho/Polar: bật F8 Ortho thay Polar và ngược lại, tắt mode hiện tại về Free; thông số của mode cũ vẫn được lưu. Smart guides có thể vẫn hiển thị khi snap tắt, nhưng không được kéo điểm ngầm.
+
+Mặc định đề xuất: Vector bật endpoint/node/straight-midpoint và guides đã có capability; grid, auto tangent/perpendicular và Polar tắt. Kỹ thuật bật cùng bộ đó và Polar 45°, bổ sung center/quadrant/intersection khi R3 đạt; relation nặng opt-in. Node ưu tiên node/handle của path đang sửa. Pencil chỉ snap điểm đầu/cuối khi bật, không hút mọi mẫu nét vẽ; auto-close là checkbox khác mặc định tắt và phải có preview.
+
+Nguồn cấu hình: hồ sơ người dùng/workspace → override theo công cụ → modifier tạm của gesture. `EffectiveSnapConfig` bất biến ghi config generation, tool context, capability generation và document revision. Job query cũ sau đổi mask/F3/profile không được công bố hint hay candidate. Không cần tạo document revision cho thay đổi checkbox/phím; preferences lưu riêng người dùng. Page guides/construction geometry và các tham số hình học đã commit vẫn là dữ liệu tài liệu có undo/persistence.
+
+Loại snap/nhóm đã tắt phải được lọc trước khi chạy query nặng. Intersection/tangent chỉ xét tập ứng viên cục bộ từ spatial index và reference đang dùng, không tính mọi cặp đối tượng mỗi frame. Có quota/time budget và preview pending rõ ràng; query chưa có nghiệm kiểm chứng không được hiện marker chắc chắn.
+
+### 3.5 Hồ sơ Ctrl/Shift/Alt và quy tắc tổ hợp
+
+Tài liệu chính thức thể hiện hai thói quen khác nhau: [CorelDRAW constrain objects](https://product.corel.com/help/CorelDRAW/Documentation-Windows/CorelDRAW-en/CorelDRAW-Constrain-objects.html) mô tả Ctrl cho constrain, Shift cho vẽ từ tâm; [Adobe keyboard shortcuts](https://helpx.adobe.com/illustrator/using/default-keyboard-shortcuts.html) mô tả Shift constrain và Alt kéo từ tâm cho các shape áp dụng. Vì vậy PikDraw cung cấp hồ sơ `PikDraw`, `Illustrator-inspired`, `Corel-inspired`, `Custom`; đây là các ánh xạ có phạm vi, không tuyên bố tương thích mọi phím của sản phẩm tham khảo.
+
+| Context/action | PikDraw / Illustrator-inspired | Corel-inspired |
+| --- | --- | --- |
+| Line/Polyline/Pen: khóa hướng tạm | Giữ Shift | Giữ Ctrl |
+| Rectangle/Ellipse: giữ tỷ lệ 1:1 | Giữ Shift | Giữ Ctrl |
+| Rectangle/Ellipse: vẽ từ tâm | Giữ Alt | Giữ Shift |
+| Từ tâm + tỷ lệ 1:1 | Shift+Alt | Ctrl+Shift |
+| Polygon/Star: khóa góc quay | Giữ Shift | Giữ Ctrl |
+| Kéo node: khóa hướng chuyển động | Giữ Shift | Giữ Ctrl |
+| Pick Move/Rotate: khóa hướng/góc | Giữ Shift | Giữ Ctrl |
+| Pick Scale: giữ tỷ lệ, scale từ tâm | Shift, Alt; kết hợp Shift+Alt | Ctrl, Shift; kết hợp Ctrl+Shift |
+| Kéo handle: khóa góc handle | Giữ Shift | Giữ Ctrl |
+| Kéo handle: tách hai tay nắm | Giữ Alt; Shift+Alt vừa khóa góc vừa tách | Giữ Alt; Ctrl+Alt vừa khóa góc vừa tách |
+| Pen: Direct Selection tạm khi chưa drag | Giữ Ctrl | Giữ F2 trong phiên Pen; thả để về Pen |
+| Node: thêm/bỏ chọn một node | Shift+click | Shift+click |
+| Tạm bỏ automatic snap trong gesture | Giữ S khi canvas có focus | Giữ S khi canvas có focus |
+| Pan tạm | Space+drag / chuột giữa | Space+drag / chuột giữa |
+
+F2 ngoài một phiên Pen đang mở là action chuyển sang Node như bảng công cụ chung. Trong Corel-inspired, giữ F2 khi Pen đang mở là chế độ Node tạm trên cùng draft; key repeat không tạo nhiều session. Mọi action có nút/menu tương đương và được remap. `S` không bị bắt trong ô text/số hoặc IME. Nếu custom profile muốn dùng modifier khác để bỏ snap, validator phải kiểm tra context và AltGr trước khi nhận.
+
+Không dùng Alt toàn cục cho cả bỏ snap và tách handle. Trong handle drag của hồ sơ mặc định, Ctrl không khởi động Direct Selection giữa gesture. Khi đã vào Node tạm, Shift phục vụ multi-selection hoặc hướng node theo pointer phase, không đồng thời tạo anchor Pen. Chord hợp lệ thực hiện một action hoặc composite action đã định nghĩa; profile xung đột bị báo và không được áp.
+
+InputRouter resolve theo `focus scope → tool → pointer phase → exact chord → named action`. Text/numeric/IME scope ưu tiên trước canvas; nhận diện AltGr, các shortcut hệ thống và key repeat. Ctrl+Z/Ctrl+A và các lệnh discrete đã nhận phải được xử lý trước action modifier kéo, không vô tình đặt điểm hoặc kích hoạt công cụ khác. Press/release modifier trong lúc drag phải tính preview từ anchor/reference gốc và raw pointer, không dùng kết quả đã snap của frame trước làm nguồn. Mất focus/capture, Esc hoặc release ngoài cửa sổ phải xóa trạng thái modifier để tránh kẹt phím. Đổi profile lúc đang drag được xếp pending, có nhãn rõ; gesture hiện tại dùng binding cũ, profile mới kích hoạt ở gesture kế tiếp sau khi xóa trạng thái phím tạm. UI luôn hiển thị các tổ hợp đang có hiệu lực.
+
+### 3.6 Hướng cố định và xử lý xung đột
+
+Khóa hướng tạm chọn góc gần nhất trong bộ đã cấu hình, ví dụ bước 45° tạo 0/45/90/135/180/225/270/315°. Người dùng được chọn bộ 15°, 30°, 45°, 90° hoặc danh sách như 0/22,5/90/135°, đặt offset trục và chọn tham chiếu theo đoạn trước. 360° chuẩn hóa về 0°. Bộ trống, góc không hữu hạn hoặc bước không hợp lệ phải từ chối.
+
+Polar tự nhận hướng khi con trỏ vào vùng hút; khóa hướng bằng modifier giữ hướng trong toàn gesture theo bộ góc. D01 phải chốt ngưỡng acquisition/release có hysteresis và giới hạn rất gần gốc để không nhảy góc khi đoạn gần zero. Xem trước đường chiếu, marker và nhãn góc thực tế, không chỉ vẽ một đường dóng đẹp.
+
+Số θ do người dùng nhập là khóa chủ động ưu tiên cao; modifier không sửa θ đó. Snap target ngoài đường đã khóa không được hút endpoint khỏi hướng; chỉ chọn nghiệm tương thích trong tolerance số học đã khóa. Khi khóa circle/square và người dùng nhập W/H khác nhau, UI báo xung đột, cho phép bỏ khóa hoặc sửa số, không âm thầm đổi kích thước. Giữ S chỉ bỏ auto-acquisition; numeric, circle/square và hướng khóa bằng modifier vẫn còn tác dụng.
+
+Ví dụ: Line Shift kéo 45°, gõ L=100mm rồi Enter tạo đoạn dài 100mm theo góc 45°; Alt kéo Ellipse từ một center đã bắt điểm, thêm Shift thành Circle; release Shift quay lại ellipse từ cùng center. Việc nhấn/thả phím không tạo thêm node hoặc undo unit.
+
+### 3.7 Hình từ tâm, đồng tâm và đa giác đều
+
+| Năng lực | Thao tác/tham số |
+| --- | --- |
+| Hình từ tâm | Rectangle/Ellipse hỗ trợ corner hoặc center; modifier tạm và nút khóa mode From center. Circle theo center-radius và Polygon theo center-vertex vốn đã từ tâm; center modifier không được di chuyển lại tâm |
+| Giữ tỷ lệ | Rectangle → square; Ellipse → circle. Shape đã có bản chất circle/regular polygon vẫn giữ định nghĩa nguồn, không bị kéo thành hình tự do |
+| Đồng tâm | Bắt center analytic của circle/ellipse/polygon hoặc nhập center XY; action `Dùng tâm đối tượng này`, tùy chọn `Giữ tâm cho hình tiếp theo` có chỉ báo và Esc kết thúc chế độ |
+| Đa giác đều | N cạnh, center, radius ngoại tiếp R hoặc bán kính nội tiếp r hoặc chiều dài cạnh a, rotation; vertices tính từ cùng center và một radius |
+| Chỉnh khi đang kéo | Up/Down tăng/giảm N khi canvas có focus; ô N cho nhập chính xác. Mục tiêu giới hạn N=3..512 trước khi D01 đo/review; không nhận N lẻ kiểu 5,5 hoặc N<3 |
+| Định hướng đa giác | Vertex-up hoặc edge-up, khóa rotation theo bộ góc; circumscribed/inscribed có nhãn đúng radius đang điều khiển |
+| Sau khi tạo | Sửa N/R/r/a/rotation/center qua property bar; giữ nguồn parametric cho tới action Convert to path có chủ ý |
+
+Công thức oracle: `a = 2R sin(π/N)`, `r = R cos(π/N)`. Đổi R/r/a giữ N/center/rotation; sai số và trường hợp giới hạn theo D01. Không gọi star là đa giác đều lồi; star có số đỉnh và hai bán kính riêng.
+
+Center snap là trùng vị trí tại lúc tạo. Hai hình đã bắt cùng tâm vẫn độc lập sau khi di chuyển một hình. Quan hệ concentric tồn tại lâu dài thuộc solver R6 hoặc feature graph riêng đã review, có biểu tượng phân biệt. `Giữ tâm` chỉ là session reference tới source ID/revision; source di chuyển/xóa/đổi tài liệu thì invalidate và yêu cầu chọn lại, không tiếp tục dùng tâm stale. Bbox center không được trình bày như center analytic.
+
+Shape cùng hệ dựng hình dùng đơn vị thật và affine semantics đúng: một circle bị nonuniform scale khi đánh giá trở thành ellipse; UI phải phản ánh đúng loại/kích thước hiện tại. Mirror/rotate/frame change không đổi tâm world ngoài ý muốn. Toggle snapping/đổi profile không sửa hình đã commit.
 
 ## 4. Pen và Node: danh mục nghiệm thu
 
@@ -274,6 +365,11 @@ Mỗi task phải nhận: integrated base SHA, contract version, bounded context
 | Cung/ellipse | Center/radius/sweep/endpoint, bounds và length theo oracle analytic; affine/reflection/nonuniform scale không thành dây cung |
 | Chính xác số | `1in` = 25,4mm; world/local axes, signed angle, decimal locale, 20m origin + chi tiết nhỏ, overflow/invalid input |
 | Snap | Các điểm không bám bbox; cùng thao tác ở DPI 100/150/200 và nhiều zoom cho cùng source target; nhiều nghiệm deterministic |
+| Checkbox/master | Tắt/bật F3 và group giữ child masks; config generation cũ không công bố candidate; checkbox chưa có capability disabled |
+| Modifier theo profile | Cùng semantic trace ở hai profile cho cùng geometry; Alt tách handle không tắt snap; Ctrl constrain trong Corel không khởi động Node tạm |
+| Modifier trong drag | Nhấn/thả constraint/center/S/pan ở các thứ tự, release ngoài cửa sổ/focus loss; anchor nguồn không drift, không kẹt mode hoặc thêm undo |
+| Hướng và numeric | Khóa 0/45/90° kết hợp L chính xác; θ nhập số thắng modifier; snap ngoài hướng bị bỏ; conflict giữ hình và báo đúng |
+| Hình đồng tâm/regular | Center analytic + N=3/4/5/6/512, R/r/a theo oracle; Ctrl+Shift hoặc Shift+Alt cho cùng centered-square/circle theo profile |
 | Đổi tài liệu | Undo/cancel/close-reopen/switch tab trong khi fit/offset trả muộn → reject 100% schedules fixture |
 | Persistence | Save/reopen/undo/redo giữ Node/Segment/Subpath IDs, curves/arcs, styles/source CMYK/spot/ICC/overprint và font data không liên quan |
 | Geometry chuyên sâu | Holes, touching, self-intersection, reversed winding, tiny sliver; output đúng topology hoặc diagnostic, không bbox fallback |
