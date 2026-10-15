@@ -144,6 +144,7 @@ int RunLiveContainment() {
         const auto suffix=std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64());
         const auto scratch=fs::current_path()/(L"live-canary-"+suffix);
         require(fs::create_directory(scratch),"Canary scratch must be newly created");
+        ScratchDirectoryGuard scratch_guard{scratch};
         const auto bin=scratch/L"bin";
         require(fs::create_directory(bin),"Cannot create owned worker directory");
         const auto profile=L"PikDraw.SpikeC."+std::to_wstring(GetCurrentProcessId())+L"."+std::to_wstring(GetTickCount64());
