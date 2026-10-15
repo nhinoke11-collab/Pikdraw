@@ -6,7 +6,11 @@
   "implemented": [
     "Provider-neutral repository structure and project instructions",
     "Module registry and versioned contract specifications",
-    "Python standard-library harness for tasks, context packets and Git worktrees"
+    "Python standard-library harness for tasks, context packets and Git worktrees",
+    "Remediation and formal acceptance of foundation spikes (AppContainer network canary 5/5 explicit OS denials WSAEACCES 10013 and MSVC C++20 compatibility)",
+    "Locked shared contracts C1-C7, semantic reference fixtures, and quality oracles (PS01)",
+    "CMakePresets, C++20 options, architecture dependency gates, and native runners dev.ps1/check.ps1 (PS02)",
+    "Milestone M0 (Foundation Lock) completed and verified"
   ],
   "specifications": [
     "Native desktop architecture with four workspaces sharing one document model",
@@ -38,11 +42,9 @@
     "runtime": "Proposed single writer, immutable snapshots, bounded executors and isolated workers; no fixed thread count"
   },
   "next_priorities": [
-    "Prepare reference hardware, licensed fixtures and reviewed semantic contracts for the ten-working-day spike plan",
-    "Spike A: measure Qt/Skia viewport, invalidation, GPU/software budgets and recoverable device loss",
-    "Spike B: prove geometry precision, stale-result rejection, undo/redo and revision-consistent recovery",
-    "Spike C: measure interop loss/editability/export and enforce worker permissions/resources",
-    "After spike reports: ps00-accept-spikes reviews mandatory evidence; only after acceptance dispatch contracts/build and the post-spike catalog"
+    "Milestone M0 locked: Spikes remediated and accepted, contracts C1-C7 locked, CMake presets and architecture gates active.",
+    "Milestone M1 is open: dispatch parallel implementation tasks ps03-geometry (core/geometry), ps04-color (core/color), and ps05-native-preview (apps/desktop).",
+    "Proceed through document, rendering, vector tools, storage, and worker host to complete the vertical slice (ps13)."
   ],
   "canonical": [
     "AGENTS.md",

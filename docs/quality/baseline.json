@@ -2,13 +2,15 @@
   "schema_version": 1,
   "assessment_id": "ps00-accept-spikes-20261015",
   "updated_at": "2026-10-15",
-  "status": "not_accepted",
-  "integrated_sha": "8f792202f63f44c3797a845b31986a126b7eed5b",
+  "status": "accepted",
+  "integrated_sha": "9586d4ea1c3569771e014826f6c194f9ade47512",
   "report": "docs/reports/foundation/ps00-acceptance-20261015.md",
   "milestones": {
     "foundation_accepted": true,
-    "m1_open": false,
-    "ps01_ready": true
+    "m0_locked": true,
+    "m1_open": true,
+    "ps01_ready": true,
+    "ps02_ready": true
   },
   "reviewed_revisions": {
     "spike_a_gemini": "c27f993e9c91dc0dd40f1eb8e7e5df76fdfd28b9",
