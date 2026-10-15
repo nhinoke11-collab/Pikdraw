@@ -13,6 +13,10 @@ add_library(pikdraw_vector STATIC
     src/gestures/style_tool.cpp
     src/gestures/selection_resize.cpp
     src/gestures/text_tool.cpp
+    src/interaction/tool_session.cpp
+    src/interaction/draft_history.cpp
+    src/interaction/draft_recovery.cpp
+    src/interaction/input_router.cpp
 )
 
 target_include_directories(pikdraw_vector PUBLIC
@@ -47,4 +51,6 @@ if(PIKDRAW_BUILD_TESTS)
     add_vector_test(test_pikdraw_vector_shapes tests/tools/test_shape_tools.cpp)
     add_vector_test(test_pikdraw_vector_gestures tests/gestures/test_gestures.cpp)
     add_vector_test(test_pikdraw_editor_selection tests/selection/test_editor_selection.cpp)
+    add_vector_test(test_pikdraw_vector_tool_session tests/interaction/test_tool_session.cpp)
+    add_vector_test(test_pikdraw_vector_input_router tests/interaction/test_input_router.cpp)
 endif()

@@ -1,7 +1,7 @@
 # PikDraw vector tools
 
-Trạng thái: API/library đã có consumer Win32 được kiểm bằng input native, hộp thuộc tính,
-Undo/Redo và save/reopen trên nhánh editor-pick-style-delivery-20261015.
+Trạng thái: pick/style/shape cơ bản có consumer Win32 trên nhánh editor-pick-style-delivery-20261015.
+ToolSession/input routing dưới đây là core API; chưa nối vào cửa sổ desktop cho đến task D09.
 
 ## Bổ sung pick/style — 2026-10-15
 
@@ -24,6 +24,7 @@ chưa có spatial index. Chưa chứng nhận 100.000 object riêng lẻ.
 | Selection/painter order | `selection/selection_model.hpp` | `src/selection/hit_test.cpp`, `hit_geometry.*` | `tests/selection/` |
 | Drag move/lifecycle | `gestures/transform_gesture.hpp`, `edit_target.hpp` | Header nhỏ | `tests/gestures/` |
 | Shapes/pointer lifecycle | `tools/shape_tools.hpp`, `vector_controller.hpp` | `src/vector_controller.cpp` | `tests/tools/` |
+| ToolSession/draft lifecycle | `interaction/tool_session.hpp`, `interaction/input_router.hpp` | `src/interaction/` | `tests/interaction/` |
 | Fill/stroke/flags | `gestures/style_tool.hpp` | `src/gestures/style_tool.cpp` | `tests/gestures/` |
 | Editable text/font | `gestures/text_tool.hpp` | `src/gestures/text_tool.cpp` | `tests/gestures/` |
 
@@ -38,6 +39,8 @@ Text hiện chỉ có logical bounds xấp xỉ (chưa phải glyph outline/hit 
 Selection thay sau create/delete/text command thành công; failed delete giữ selection. Delete kiểm tra document lifecycle, target/lock/layer và commit cả nhóm trong một transaction. Controller có active layer rõ ràng; layer hidden/locked hoặc index sai bị từ chối. Text insertion phải truyền nội dung/font qua `insert_text`; pointer-up Text không bịa nội dung.
 
 `SetObjectStyleCommand(id, fill, stroke, width, has_fill?, has_stroke?)` cập nhật source màu/alpha và enable flags, undo giữ cả flags lẫn giá trị cũ. Không có giá trị truyền vào bị báo lỗi; text stroke/flag, group style không giả success. `UpdateTextCommand` cập nhật Unicode và/hoặc FontIdentity; `SetTextFontCommand` chỉnh family/PostScript/weight/italic/point size mà không substitute font nguồn. Source validation UTF-8, finite/color/font do document publication thực hiện atomically. Commands đọc staged `doc.objects()/page()` để phối hợp Add+Style hoặc Text+Font trong một transaction; không đọc snapshot cũ rồi đè mất thay đổi trước.
+
+`interaction::ToolSession` giữ snapshot base, draft byte-patches, undo/redo cục bộ và preview tạm; pointer move không tạo document revision. Finish chỉ trả proposal kèm document ID/epoch/revision, còn consumer phải revalidate và commit qua writer. Capture/focus loss rollback gesture, profile generation chỉ đổi ở ranh giới gesture, stale base bị hủy. Recovery checkpoint dùng record riêng bounded, buộc trùng document/revision/CRC và chỉ nạp sau xác nhận; nó không tự thêm hình vào document. `InputRouter` ưu tiên text/numeric/IME/AltGr, giới hạn phím tạm vào canvas và có API nhả Space/S khi mất focus. Win32 shell chưa gọi các API này; đây chưa phải tính năng UI nghiệm thu.
 
 Thay đổi API cần consumer review: mọi gọi TransformGesture::begin phải thêm snapshot; tạo shape phải dùng down/move/up; `on_pointer_up` không còn tự tạo hình 100x60 ở vị trí click. Selection manual qua `selection()` không tự xác nhận document identity; controller chỉ cho delete sau bind lifecycle qua pointer interaction hoặc create/insert thành công.
 
