@@ -4,6 +4,7 @@
 #include "pikdraw/geometry/primitives/bounds.hpp"
 #include "pikdraw/geometry/primitives/transform.hpp"
 #include "pikdraw/geometry/curves/curve.hpp"
+#include <cstddef>
 #include <vector>
 
 namespace pikdraw::geometry {
@@ -37,6 +38,9 @@ struct PathElement {
     bool large_arc{false};
     bool sweep{false};
 };
+
+struct PathBoundsResult;
+struct PathTransformResult;
 
 /// Composite 2D vector path
 class Path2D {
@@ -107,7 +111,9 @@ public:
     }
 
     [[nodiscard]] Rect2D bounds() const;
+    [[nodiscard]] PathBoundsResult bounds_checked() const;
     [[nodiscard]] Path2D transformed(const Transform2D& t) const;
+    [[nodiscard]] PathTransformResult transformed_checked(const Transform2D& t) const;
 
     static Path2D make_rect(double x, double y, double w, double h);
     static Path2D make_ellipse(double cx, double cy, double rx, double ry);
@@ -115,6 +121,18 @@ public:
 private:
     std::vector<PathElement> elements_;
     WindingRule winding_rule_{WindingRule::NonZero};
+};
+
+struct PathBoundsResult {
+    GeometryOperationStatus status{GeometryOperationStatus::InvalidInput};
+    Rect2D bounds{};
+    size_t element_index{0};
+};
+
+struct PathTransformResult {
+    GeometryOperationStatus status{GeometryOperationStatus::InvalidInput};
+    Path2D path{};
+    size_t element_index{0};
 };
 
 } // namespace pikdraw::geometry
