@@ -7,6 +7,11 @@ using namespace pikdraw::desktop::actions;
 
 void test_action_id_validation() {
     assert(ActionId::is_valid_action_id(ActionId::kFileNew));
+    assert(ActionId::is_valid_action_id(ActionId::kFileNewFromTemplate));
+    assert(ActionId::is_valid_action_id(ActionId::kFileOpenRecent));
+    assert(ActionId::is_valid_action_id(ActionId::kFilePublishPdf));
+    assert(ActionId::is_valid_action_id(ActionId::kFileProperties));
+    assert(ActionId::is_valid_action_id(ActionId::kViewHome));
     assert(ActionId::is_valid_action_id(ActionId::kEditUndo));
     assert(ActionId::is_valid_action_id(ActionId::kViewReloadUi));
     assert(!ActionId::is_valid_action_id("invalid.id"));

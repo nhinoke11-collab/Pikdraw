@@ -48,36 +48,129 @@ QMainWindow {
     font-size: 11px;
 }
 
-/* Cyber Teal Accent Buttons and Inputs */
+/* Refined Soft-Rounded Buttons (Bo nhẹ 6px công nghệ 2026) */
 QPushButton {
-    background-color: transparent;
+    background-color: #121c2a;
     color: #e2e8f0;
-    border: 1px solid transparent;
-    border-radius: 4px;
-    padding: 4px 8px;
+    border: 1px solid #1d2636;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 11.5px;
+    font-weight: 500;
 }
 
 QPushButton:hover {
     background-color: rgba(0, 242, 195, 0.12);
     color: #00f2c3;
-    border: 1px solid rgba(0, 242, 195, 0.3);
+    border: 1px solid rgba(0, 242, 195, 0.35);
 }
 
 QPushButton:pressed {
-    background-color: rgba(0, 242, 195, 0.25);
+    background-color: rgba(0, 242, 195, 0.22);
     color: #00f2c3;
+    border: 1px solid #00f2c3;
 }
 
+QPushButton:checked {
+    background-color: rgba(0, 242, 195, 0.16);
+    color: #00f2c3;
+    border: 1px solid rgba(0, 242, 195, 0.45);
+}
+
+/* Primary Action Accent Button (Xuất file / Áp dụng) */
+QPushButton#btn_export,
+QPushButton.btn-primary {
+    background-color: #00f2c3;
+    color: #070b10;
+    border: 1px solid #00f2c3;
+    border-radius: 6px;
+    font-weight: 700;
+    padding: 4px 12px;
+}
+
+QPushButton#btn_export:hover,
+QPushButton.btn-primary:hover {
+    background-color: #00d2aa;
+    border-color: #00d2aa;
+}
+
+/* Home Screen & Navigation Buttons */
+QPushButton#btn_home {
+    background-color: #162536;
+    color: #00f2c3;
+    border: 1px solid rgba(0, 242, 195, 0.3);
+    border-radius: 6px;
+    font-weight: 600;
+}
+
+QPushButton#btn_home:hover {
+    background-color: rgba(0, 242, 195, 0.2);
+    border-color: #00f2c3;
+}
+
+/* Workspace Pill Buttons */
+QPushButton#workspace_vector,
+QPushButton#workspace_inan,
+QPushButton#workspace_thicong,
+QPushButton#workspace_3d {
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 3px 8px;
+    color: rgba(255, 255, 255, 0.65);
+}
+
+QPushButton#workspace_vector:hover,
+QPushButton#workspace_inan:hover,
+QPushButton#workspace_thicong:hover,
+QPushButton#workspace_3d:hover {
+    background-color: rgba(255, 255, 255, 0.06);
+    color: #ffffff;
+}
+
+/* Refined Inputs with Soft Rounding (Bo nhẹ 6px) */
 QLineEdit {
     background-color: #070b10;
     color: #ffffff;
     border: 1px solid #1d2636;
-    border-radius: 4px;
-    padding: 2px 6px;
+    border-radius: 6px;
+    padding: 3px 8px;
     font-family: "JetBrains Mono", monospace;
     font-size: 12px;
 }
 
 QLineEdit:focus {
     border: 1px solid #00f2c3;
+    background-color: #0c1420;
+}
+
+/* Corel-Style File Dropdown Menu Popup (Bo tròn mềm 8px) */
+QMenu {
+    background-color: #0c131d;
+    border: 1px solid #1d2636;
+    border-radius: 8px;
+    padding: 4px;
+}
+
+QMenu::item {
+    background-color: transparent;
+    color: #e2e8f0;
+    border-radius: 5px;
+    padding: 5px 24px 5px 28px;
+    font-size: 11.5px;
+}
+
+QMenu::item:selected {
+    background-color: rgba(0, 242, 195, 0.14);
+    color: #00f2c3;
+}
+
+QMenu::item:disabled {
+    color: rgba(255, 255, 255, 0.25);
+}
+
+QMenu::separator {
+    height: 1px;
+    background-color: #1d2636;
+    margin: 4px 6px;
 }

@@ -16,13 +16,30 @@ action.<domain>.<verb>[.<qualifier>]
 ```
 
 ### Core Action Catalog
-- **File Domain**:
-  - `action.file.new`
-  - `action.file.open`
-  - `action.file.save`
-  - `action.file.save_as`
-  - `action.file.export`
-  - `action.file.close`
+- **File Domain (CorelDRAW Workflow Reference)**:
+  - `action.file.new` (Ctrl+N)
+  - `action.file.new_from_template`
+  - `action.file.open` (Ctrl+O)
+  - `action.file.open_cloud`
+  - `action.file.open_recent`
+  - `action.file.close` (Ctrl+W)
+  - `action.file.close_all`
+  - `action.file.save` (Ctrl+S)
+  - `action.file.save_as` (Ctrl+Shift+S)
+  - `action.file.save_cloud`
+  - `action.file.save_template`
+  - `action.file.revert`
+  - `action.file.acquire_image`
+  - `action.file.import` (Ctrl+I)
+  - `action.file.export` (Ctrl+E)
+  - `action.file.export_for`
+  - `action.file.publish_pdf`
+  - `action.file.print` (Ctrl+P)
+  - `action.file.print_preview`
+  - `action.file.properties`
+  - `action.file.exit` (Alt+F4)
+- **Home & Navigation Domain**:
+  - `action.view.home` (Trang chủ / Home Screen) (Alt+H)
 - **Edit Domain**:
   - `action.edit.undo`
   - `action.edit.redo`

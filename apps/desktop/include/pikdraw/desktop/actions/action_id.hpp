@@ -5,13 +5,28 @@
 namespace pikdraw::desktop::actions {
 
 struct ActionId {
-    // File domain
+    // File domain (CorelDRAW Reference)
     static constexpr std::string_view kFileNew = "action.file.new";
+    static constexpr std::string_view kFileNewFromTemplate = "action.file.new_from_template";
     static constexpr std::string_view kFileOpen = "action.file.open";
+    static constexpr std::string_view kFileOpenCloud = "action.file.open_cloud";
+    static constexpr std::string_view kFileOpenRecent = "action.file.open_recent";
+    static constexpr std::string_view kFileClose = "action.file.close";
+    static constexpr std::string_view kFileCloseAll = "action.file.close_all";
     static constexpr std::string_view kFileSave = "action.file.save";
     static constexpr std::string_view kFileSaveAs = "action.file.save_as";
+    static constexpr std::string_view kFileSaveCloud = "action.file.save_cloud";
+    static constexpr std::string_view kFileSaveTemplate = "action.file.save_template";
+    static constexpr std::string_view kFileRevert = "action.file.revert";
+    static constexpr std::string_view kFileAcquireImage = "action.file.acquire_image";
+    static constexpr std::string_view kFileImport = "action.file.import";
     static constexpr std::string_view kFileExport = "action.file.export";
-    static constexpr std::string_view kFileClose = "action.file.close";
+    static constexpr std::string_view kFileExportFor = "action.file.export_for";
+    static constexpr std::string_view kFilePublishPdf = "action.file.publish_pdf";
+    static constexpr std::string_view kFilePrint = "action.file.print";
+    static constexpr std::string_view kFilePrintPreview = "action.file.print_preview";
+    static constexpr std::string_view kFileProperties = "action.file.properties";
+    static constexpr std::string_view kFileExit = "action.file.exit";
 
     // Edit domain
     static constexpr std::string_view kEditUndo = "action.edit.undo";
@@ -22,7 +37,8 @@ struct ActionId {
     static constexpr std::string_view kEditDelete = "action.edit.delete";
     static constexpr std::string_view kEditSelectAll = "action.edit.select_all";
 
-    // View domain
+    // View & Home domain
+    static constexpr std::string_view kViewHome = "action.view.home";
     static constexpr std::string_view kViewZoomIn = "action.view.zoom_in";
     static constexpr std::string_view kViewZoomOut = "action.view.zoom_out";
     static constexpr std::string_view kViewZoom100 = "action.view.zoom_100";

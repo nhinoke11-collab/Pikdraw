@@ -53,6 +53,22 @@ public:
     void zoom_out() noexcept;
     void trigger_export() noexcept;
 
+    // File Menu (CorelDRAW Reference)
+    [[nodiscard]] bool is_file_menu_open() const noexcept { return show_file_menu_; }
+    void open_file_menu() noexcept;
+    void close_file_menu() noexcept;
+    void toggle_file_menu() noexcept;
+
+    // Home Screen (Trang chủ)
+    [[nodiscard]] bool is_home_screen_open() const noexcept { return show_home_screen_; }
+    void open_home_screen() noexcept;
+    void close_home_screen() noexcept;
+    void toggle_home_screen() noexcept;
+    [[nodiscard]] int active_home_tab() const noexcept { return active_home_tab_; }
+    void set_active_home_tab(int tab) noexcept;
+    void open_recent_document(int doc_index) noexcept;
+    void create_from_template(int template_index) noexcept;
+
     [[nodiscard]] bool is_settings_modal_open() const noexcept { return show_settings_modal_; }
     void open_settings_modal() noexcept;
     void close_settings_modal() noexcept;
@@ -88,6 +104,8 @@ private:
     static LRESULT CALLBACK window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
     void paint(HDC hdc, int width, int height);
     void paint_settings_modal(HDC mem_dc, int width, int height);
+    void paint_file_menu(HDC mem_dc, int x, int y, int w, int h);
+    void paint_home_screen(HDC mem_dc, int w, int h);
     void handle_mouse_down(int x, int y);
     void handle_mouse_move(int x, int y);
     void handle_mouse_up(int x, int y);
@@ -105,6 +123,14 @@ private:
     int active_workspace_{0}; // 0: Vector, 1: Print, 2: Production, 3: 3D
     int active_dock_tab_{0}; // 0: Inspector, 1: Layers, 2: History
     int zoom_level_{100}; // 50, 75, 100, 125, 150, 200
+
+    // File Menu Dropdown State (Corel Reference)
+    bool show_file_menu_{false};
+    int hovered_file_item_{-1};
+
+    // Home Screen State (Trang Home)
+    bool show_home_screen_{false};
+    int active_home_tab_{0}; // 0: Bắt đầu, 1: Tệp gần đây, 2: Mẫu thi công, 3: Phím tắt Corel
 
     // Settings Modal State
     bool show_settings_modal_{false};

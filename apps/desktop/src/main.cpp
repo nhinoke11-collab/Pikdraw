@@ -13,6 +13,9 @@ int main(int argc, char* argv[]) {
     pikdraw::desktop::ThemeMode initial_theme = pikdraw::desktop::ThemeMode::CyberDark;
     bool open_settings = false;
     int settings_tab = 0;
+    bool open_home = false;
+    int home_tab = 0;
+    bool open_file_menu = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -38,6 +41,13 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--settings-tab" && i + 1 < argc) {
             open_settings = true;
             settings_tab = std::stoi(argv[++i]);
+        } else if (arg == "--home" || arg == "--welcome") {
+            open_home = true;
+        } else if (arg == "--home-tab" && i + 1 < argc) {
+            open_home = true;
+            home_tab = std::stoi(argv[++i]);
+        } else if (arg == "--file-menu") {
+            open_file_menu = true;
         }
     }
 
@@ -47,6 +57,13 @@ int main(int argc, char* argv[]) {
     if (open_settings) {
         window.open_settings_modal();
         window.set_settings_tab(settings_tab);
+    }
+    if (open_home) {
+        window.open_home_screen();
+        window.set_active_home_tab(home_tab);
+    }
+    if (open_file_menu) {
+        window.open_file_menu();
     }
 
     const auto area = window.shell().canvas_area();

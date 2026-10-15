@@ -91,12 +91,12 @@ void NativeWindow::toggle_settings_modal() noexcept {
 }
 
 void NativeWindow::set_settings_tab(int tab) noexcept {
-    if (tab < 0 || tab > 4) return;
+    if (tab < 0 || tab > 5) return;
     settings_active_tab_ = tab;
-    const char* vi_tabs[] = { "Giao diện (Theme)", "Đơn vị & Lưới (Units)", "Quản lý màu & ICC", "Thi công & CNC", "Hiệu năng & Hệ thống" };
-    const char* en_tabs[] = { "Theme & Appearance", "Units & Workspace", "Color & ICC", "Production & CNC", "Hardware & System" };
+    const char* vi_tabs[] = { "Chung & Ngôn ngữ", "Giao diện (Theme)", "Đơn vị & Bắt điểm", "Quản lý màu & ICC", "Thi công & CNC", "Hiệu năng & Hệ thống" };
+    const char* en_tabs[] = { "General & Language", "Display & Theme", "Units & Snapping", "Color & ICC", "Production & CAM", "Hardware & System" };
     status_msg_ = (language_ == UILanguage::Vietnamese) ?
-        std::string("Cài đặt: ") + vi_tabs[tab] : std::string("Preferences: ") + en_tabs[tab];
+        std::string("Tùy chọn: ") + vi_tabs[tab] : std::string("Options: ") + en_tabs[tab];
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
 #endif
@@ -169,10 +169,102 @@ void NativeWindow::zoom_in() noexcept {
 }
 
 void NativeWindow::zoom_out() noexcept {
-    if (zoom_level_ > 50) zoom_level_ -= 25;
+    if (zoom_level_ > 25) zoom_level_ -= 25;
     status_msg_ = (language_ == UILanguage::Vietnamese) ?
         "Tỉ lệ hiển thị: " + std::to_string(zoom_level_) + "%" :
         "Zoom level: " + std::to_string(zoom_level_) + "%";
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
+#endif
+}
+
+void NativeWindow::open_file_menu() noexcept {
+    show_file_menu_ = true;
+    status_msg_ = (language_ == UILanguage::Vietnamese) ?
+        "Đã mở Nhóm Menu Tệp (Chuẩn CorelDRAW)" : "Opened File Menu (CorelDRAW Reference)";
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
+#endif
+}
+
+void NativeWindow::close_file_menu() noexcept {
+    if (show_file_menu_) {
+        show_file_menu_ = false;
+#ifdef _WIN32
+        if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
+#endif
+    }
+}
+
+void NativeWindow::toggle_file_menu() noexcept {
+    if (show_file_menu_) close_file_menu(); else open_file_menu();
+}
+
+void NativeWindow::open_home_screen() noexcept {
+    show_home_screen_ = true;
+    close_file_menu();
+    status_msg_ = (language_ == UILanguage::Vietnamese) ?
+        "Đã chuyển sang Trang chủ (PikDraw Home Screen & Templates)" : "Switched to Home Screen (PikDraw Welcome & Templates)";
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
+#endif
+}
+
+void NativeWindow::close_home_screen() noexcept {
+    show_home_screen_ = false;
+    status_msg_ = (language_ == UILanguage::Vietnamese) ?
+        "Đã quay lại Không gian vẽ Vector (Canvas)" : "Returned to Vector Workspace Canvas";
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
+#endif
+}
+
+void NativeWindow::toggle_home_screen() noexcept {
+    if (show_home_screen_) close_home_screen(); else open_home_screen();
+}
+
+void NativeWindow::set_active_home_tab(int tab) noexcept {
+    if (tab < 0 || tab > 3) return;
+    active_home_tab_ = tab;
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
+#endif
+}
+
+void NativeWindow::open_recent_document(int doc_index) noexcept {
+    const char* vi_files[] = {
+        "Bien_Hieu_An_Phat.pik (1850 × 420 mm - Biển alu đèn LED)",
+        "Hop_Den_Hiflex_Techcom.pik (3000 × 1200 mm - Bạt xuyên sáng hiflex 3M)",
+        "Chu_Noi_Inox_Vang_Guong.pik (800 × 350 mm - File cắt laser CNC kim loại)",
+        "Standee_Cuon_Su_Kien_2026.pik (800 × 2000 mm - Bạt PP cán màng mờ)",
+        "Tem_Nhan_Decal_Cuon.pik (500 × 500 mm - Decal bế demi chống nước)"
+    };
+    int idx = doc_index % 5;
+    close_home_screen();
+    close_file_menu();
+    status_msg_ = (language_ == UILanguage::Vietnamese) ?
+        std::string("Đã nạp tệp gần đây: ") + vi_files[idx] :
+        std::string("Loaded recent file: ") + vi_files[idx];
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
+#endif
+}
+
+void NativeWindow::create_from_template(int template_index) noexcept {
+    const char* vi_tpls[] = {
+        "Biển hiệu ngoài trời (6000 × 3000 mm)",
+        "Tấm Alu chuẩn thi công (1220 × 2440 mm)",
+        "Hộp đèn mica tròn hút nổi (600 × 600 mm)",
+        "Standee cuốn sự kiện (800 × 2000 mm)",
+        "Card visit chuẩn xưởng in (90 × 54 mm)",
+        "Decal bế tem nhãn khổ cuộn (1000 × 1000 mm)"
+    };
+    int idx = template_index % 6;
+    close_home_screen();
+    close_file_menu();
+    status_msg_ = (language_ == UILanguage::Vietnamese) ?
+        std::string("Đã tạo bản vẽ từ mẫu chuẩn: ") + vi_tpls[idx] :
+        std::string("Created new drawing from template: ") + vi_tpls[idx];
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
 #endif
@@ -190,241 +282,7 @@ void NativeWindow::trigger_export() noexcept {
 
 #ifdef _WIN32
 
-void NativeWindow::handle_mouse_down(int x, int y) {
-    int w = width_;
 
-    // Handle clicks inside or dismissing the Settings Modal
-    if (show_settings_modal_) {
-        int modal_w = 720;
-        int modal_h = 500;
-        int modal_x = (w - modal_w) / 2;
-        int modal_y = (height_ - modal_h) / 2;
-
-        if (x < modal_x || x > modal_x + modal_w || y < modal_y || y > modal_y + modal_h) {
-            close_settings_modal();
-            return;
-        }
-
-        // Close button [X]
-        if (x >= modal_x + modal_w - 38 && x <= modal_x + modal_w - 12 &&
-            y >= modal_y + 9 && y <= modal_y + 35) {
-            close_settings_modal();
-            return;
-        }
-
-        // Left sidebar tabs
-        if (x >= modal_x + 10 && x <= modal_x + 185) {
-            for (int i = 0; i < 5; ++i) {
-                int ty = modal_y + 58 + i * 42;
-                if (y >= ty && y <= ty + 36) {
-                    set_settings_tab(i);
-                    return;
-                }
-            }
-        }
-
-        // Tab 0 (Theme) cards and accents
-        if (settings_active_tab_ == 0) {
-            if (y >= modal_y + 95 && y <= modal_y + 175) {
-                int cx0 = modal_x + 205;
-                if (x >= cx0 && x <= cx0 + 155) { set_settings_theme_choice(0); return; }
-                if (x >= cx0 + 165 && x <= cx0 + 320) { set_settings_theme_choice(1); return; }
-                if (x >= cx0 + 330 && x <= cx0 + 485) { set_settings_theme_choice(2); return; }
-            }
-            if (y >= modal_y + 225 && y <= modal_y + 255) {
-                for (int i = 0; i < 4; ++i) {
-                    int ax = modal_x + 205 + i * 90;
-                    if (x >= ax && x <= ax + 85) { set_settings_accent_choice(i); return; }
-                }
-            }
-        }
-
-        // Tab 1 (Units) pills
-        if (settings_active_tab_ == 1 && y >= modal_y + 95 && y <= modal_y + 130) {
-            for (int i = 0; i < 4; ++i) {
-                int ux = modal_x + 205 + i * 115;
-                if (x >= ux && x <= ux + 105) { set_settings_unit_choice(i); return; }
-            }
-        }
-
-        // Footer buttons
-        if (y >= modal_y + modal_h - 44 && y <= modal_y + modal_h - 10) {
-            if (x >= modal_x + 16 && x <= modal_x + 160) {
-                set_theme(ThemeMode::CyberDark);
-                settings_accent_choice_ = 0;
-                settings_unit_choice_ = 0;
-                status_msg_ = (language_ == UILanguage::Vietnamese) ?
-                    "Đã khôi phục cấu hình mặc định (Dark Mode Obsidian)" :
-                    "Reset preferences to defaults (Dark Mode Obsidian)";
-                InvalidateRect(hwnd_, NULL, FALSE);
-                return;
-            }
-            if (x >= modal_x + modal_w - 170 && x <= modal_x + modal_w - 95) {
-                close_settings_modal();
-                return;
-            }
-            if (x >= modal_x + modal_w - 85 && x <= modal_x + modal_w - 15) {
-                close_settings_modal();
-                return;
-            }
-        }
-        return;
-    }
-
-    // Topbar Quick Theme Toggle [ ☀ Sáng / 🌙 Tối ] (x: w - 355 to w - 272, y: 6 to 32)
-    int theme_x = w - 355;
-    if (x >= theme_x && x <= theme_x + 83 && y >= 6 && y <= 32) {
-        toggle_theme();
-        return;
-    }
-
-    // Topbar Settings Button [ ⚙ Cài đặt ] (x: w - 265 to w - 172, y: 6 to 32)
-    int sett_x = w - 265;
-    if (x >= sett_x && x <= sett_x + 93 && y >= 6 && y <= 32) {
-        open_settings_modal();
-        return;
-    }
-
-    // Topbar Language Toggle [ VI | EN ] (x: w - 165 to w - 102, y: 6 to 32)
-    int lang_x = w - 165;
-    if (x >= lang_x && x <= lang_x + 63 && y >= 6 && y <= 32) {
-        toggle_language();
-        return;
-    }
-
-    // Topbar Export Button [ Xuất file ] (x: w - 95 to w - 12, y: 6 to 32)
-    if (x >= w - 95 && x <= w - 12 && y >= 6 && y <= 32) {
-        trigger_export();
-        return;
-    }
-
-    // Workspace Pills (x: 520 to 790, y: 6 to 32)
-    int pill_x = 520;
-    if (y >= 6 && y <= 32) {
-        if (x >= pill_x && x < pill_x + 65) { set_active_workspace(0); return; }
-        if (x >= pill_x + 70 && x < pill_x + 135) { set_active_workspace(1); return; }
-        if (x >= pill_x + 140 && x < pill_x + 215) { set_active_workspace(2); return; }
-        if (x >= pill_x + 220 && x < pill_x + 270) { set_active_workspace(3); return; }
-    }
-
-    // 4. Tool Strip (x: 6 to 46, y: 80 to 420)
-    if (x >= 6 && x <= 46 && y >= 80) {
-        int tool_idx = (y - 80) / 42;
-        if (tool_idx >= 0 && tool_idx < 8) {
-            set_active_tool(tool_idx);
-            return;
-        }
-    }
-
-    // 5. Right Dock Tabs (x: w - 280 to w, y: 72 to 102)
-    if (x >= w - 280 && x <= w && y >= 72 && y <= 102) {
-        int tab_w = 280 / 3;
-        int tab_idx = (x - (w - 280)) / tab_w;
-        if (tab_idx >= 0 && tab_idx < 3) {
-            set_active_dock_tab(tab_idx);
-            return;
-        }
-    }
-
-    // 6. Zoom buttons on status bar (x: w - 120 to w - 60, y: height - 26 to height)
-    if (y >= height_ - 26) {
-        if (x >= w - 120 && x <= w - 95) { zoom_out(); return; }
-        if (x >= w - 45 && x <= w - 20) { zoom_in(); return; }
-    }
-
-    // 7. Canvas interaction: clicking/dragging the vector signboard object
-    int tool_w = 52;
-    int inspect_w = 280;
-    int canvas_w = w - tool_w - inspect_w;
-    int art_w = 660;
-    int art_x = tool_w + (canvas_w - art_w) / 2;
-    int art_y = 38 + 34 + 35;
-
-    int canvas_obj_x = art_x + 30 + static_cast<int>(shape_x_ * 0.15);
-    int canvas_obj_y = art_y + 40 + static_cast<int>(shape_y_ * 0.15);
-    int canvas_obj_w = 460;
-    int canvas_obj_h = 160;
-
-    if (x >= canvas_obj_x - 10 && x <= canvas_obj_x + canvas_obj_w + 10 &&
-        y >= canvas_obj_y - 10 && y <= canvas_obj_y + canvas_obj_h + 10) {
-        is_dragging_ = true;
-        drag_start_x_ = x;
-        drag_start_y_ = y;
-        drag_init_shape_x_ = shape_x_;
-        drag_init_shape_y_ = shape_y_;
-        status_msg_ = (language_ == UILanguage::Vietnamese) ?
-            "Đang di chuyển: AN PHÁT SIGNAGE 2026" :
-            "Moving: AN PHAT SIGNAGE 2026";
-        InvalidateRect(hwnd_, NULL, FALSE);
-    }
-}
-
-void NativeWindow::handle_mouse_move(int x, int y) {
-    cursor_mm_x_ = static_cast<double>(x - 102) * 2.0;
-    cursor_mm_y_ = static_cast<double>(y - 102) * 2.0;
-    if (cursor_mm_x_ < 0.0) cursor_mm_x_ = 0.0;
-    if (cursor_mm_y_ < 0.0) cursor_mm_y_ = 0.0;
-
-    if (is_dragging_) {
-        double dx = static_cast<double>(x - drag_start_x_) * 4.0;
-        double dy = static_cast<double>(y - drag_start_y_) * 4.0;
-        shape_x_ = drag_init_shape_x_ + dx;
-        shape_y_ = drag_init_shape_y_ + dy;
-        InvalidateRect(hwnd_, NULL, FALSE);
-    }
-}
-
-void NativeWindow::handle_mouse_up(int /*x*/, int /*y*/) {
-    if (is_dragging_) {
-        is_dragging_ = false;
-        status_msg_ = (language_ == UILanguage::Vietnamese) ?
-            "Đã cập nhật vị trí đối tượng (" + std::to_string(static_cast<int>(shape_x_)) + " mm, " + std::to_string(static_cast<int>(shape_y_)) + " mm)" :
-            "Updated object position (" + std::to_string(static_cast<int>(shape_x_)) + " mm, " + std::to_string(static_cast<int>(shape_y_)) + " mm)";
-        InvalidateRect(hwnd_, NULL, FALSE);
-    }
-}
-
-LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-    auto* self = reinterpret_cast<NativeWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-
-    switch (uMsg) {
-    case WM_LBUTTONDOWN:
-        if (self) self->handle_mouse_down(LOWORD(lParam), HIWORD(lParam));
-        return 0;
-    case WM_MOUSEMOVE:
-        if (self) self->handle_mouse_move(LOWORD(lParam), HIWORD(lParam));
-        return 0;
-    case WM_LBUTTONUP:
-        if (self) self->handle_mouse_up(LOWORD(lParam), HIWORD(lParam));
-        return 0;
-    case WM_PAINT: {
-        PAINTSTRUCT ps;
-        HDC hdc = BeginPaint(hwnd, &ps);
-        RECT rc;
-        GetClientRect(hwnd, &rc);
-        if (self) self->paint(hdc, rc.right - rc.left, rc.bottom - rc.top);
-        EndPaint(hwnd, &ps);
-        return 0;
-    }
-    case WM_SIZE: {
-        int w = LOWORD(lParam);
-        int h = HIWORD(lParam);
-        if (self && w > 0 && h > 0) {
-            self->width_ = w;
-            self->height_ = h;
-            self->shell_.set_window_size(static_cast<double>(w), static_cast<double>(h));
-            InvalidateRect(hwnd, NULL, FALSE);
-        }
-        return 0;
-    }
-    case WM_DESTROY:
-        PostQuitMessage(0);
-        return 0;
-    default:
-        break;
-    }
-    return DefWindowProcW(hwnd, uMsg, wParam, lParam);
-}
 
 bool NativeWindow::initialize(const std::string& title) {
     hinstance_ = GetModuleHandleW(NULL);
@@ -467,9 +325,42 @@ int NativeWindow::run() {
     return static_cast<int>(msg.wParam);
 }
 
+void NativeWindow::capture_screenshot_bmp(const std::string& path) {
+    int w = width_, h = height_;
+    HDC screen_dc = GetDC(NULL);
+    HDC mem_dc = CreateCompatibleDC(screen_dc);
+    HBITMAP mem_bmp = CreateCompatibleBitmap(screen_dc, w, h);
+    HGDIOBJ old_bmp = SelectObject(mem_dc, mem_bmp);
+
+    paint(mem_dc, w, h);
+
+    BITMAPINFOHEADER bi = { sizeof(BITMAPINFOHEADER), w, h, 1, 24, BI_RGB, 0, 0, 0, 0, 0 };
+    int row_stride = ((w * 3 + 3) / 4) * 4;
+    int data_size = row_stride * h;
+    bi.biSizeImage = data_size;
+
+    std::vector<uint8_t> pixel_data(data_size);
+    GetDIBits(mem_dc, mem_bmp, 0, h, pixel_data.data(), reinterpret_cast<BITMAPINFO*>(&bi), DIB_RGB_COLORS);
+
+    BITMAPFILEHEADER bfh = { 0x4D42, static_cast<DWORD>(sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + data_size), 0, 0, sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) };
+
+    std::ofstream out(path, std::ios::binary);
+    if (out.is_open()) {
+        out.write(reinterpret_cast<const char*>(&bfh), sizeof(bfh));
+        out.write(reinterpret_cast<const char*>(&bi), sizeof(bi));
+        out.write(reinterpret_cast<const char*>(pixel_data.data()), data_size);
+    }
+
+    SelectObject(mem_dc, old_bmp);
+    DeleteObject(mem_bmp);
+    DeleteDC(mem_dc);
+    ReleaseDC(NULL, screen_dc);
+}
+
 #else
 bool NativeWindow::initialize(const std::string&) { return true; }
 int NativeWindow::run() { return 0; }
+void NativeWindow::capture_screenshot_bmp(const std::string&) {}
 void NativeWindow::set_language(UILanguage) noexcept {}
 void NativeWindow::toggle_language() noexcept {}
 void NativeWindow::set_theme(ThemeMode) noexcept {}
@@ -487,6 +378,15 @@ void NativeWindow::set_active_dock_tab(int) noexcept {}
 void NativeWindow::zoom_in() noexcept {}
 void NativeWindow::zoom_out() noexcept {}
 void NativeWindow::trigger_export() noexcept {}
+void NativeWindow::open_file_menu() noexcept {}
+void NativeWindow::close_file_menu() noexcept {}
+void NativeWindow::toggle_file_menu() noexcept {}
+void NativeWindow::open_home_screen() noexcept {}
+void NativeWindow::close_home_screen() noexcept {}
+void NativeWindow::toggle_home_screen() noexcept {}
+void NativeWindow::set_active_home_tab(int) noexcept {}
+void NativeWindow::open_recent_document(int) noexcept {}
+void NativeWindow::create_from_template(int) noexcept {}
 #endif
 
 } // namespace pikdraw::desktop

@@ -20,7 +20,10 @@ add_library(pikdraw_desktop STATIC
     src/runtime/composition_root.cpp
     src/workflows/document_workflow.cpp
     src/shell/native_window.cpp
+    src/shell/native_window_events.cpp
     src/shell/native_window_paint.cpp
+    src/shell/native_window_paint_menu.cpp
+    src/shell/native_window_paint_home.cpp
     src/shell/native_window_paint_modal.cpp
 )
 

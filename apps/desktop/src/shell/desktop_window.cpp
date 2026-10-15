@@ -31,13 +31,33 @@ ShellGeometry::CanvasArea DesktopWindow::canvas_area() const noexcept {
 void DesktopWindow::setup_default_actions() {
     using namespace actions;
 
-    // File Actions
+    // File Actions (CorelDRAW Reference)
     dispatcher_.register_action({
-        std::string(ActionId::kFileNew), "Tạo mới", "New", "Ctrl+N",
+        std::string(ActionId::kFileNew), "Tạo mới...", "New...", "Ctrl+N",
+        []() {}, nullptr
+    });
+    dispatcher_.register_action({
+        std::string(ActionId::kFileNewFromTemplate), "Tạo từ mẫu...", "New from Template...", "",
         []() {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kFileOpen), "Mở tệp...", "Open...", "Ctrl+O",
+        []() {}, nullptr
+    });
+    dispatcher_.register_action({
+        std::string(ActionId::kFileOpenCloud), "Mở từ đám mây...", "Open from Cloud...", "",
+        []() {}, nullptr
+    });
+    dispatcher_.register_action({
+        std::string(ActionId::kFileOpenRecent), "Tệp gần đây", "Open Recent", "",
+        []() {}, nullptr
+    });
+    dispatcher_.register_action({
+        std::string(ActionId::kFileClose), "Đóng", "Close", "Ctrl+W",
+        []() {}, nullptr
+    });
+    dispatcher_.register_action({
+        std::string(ActionId::kFileCloseAll), "Đóng tất cả", "Close All", "",
         []() {}, nullptr
     });
     dispatcher_.register_action({
@@ -49,11 +69,57 @@ void DesktopWindow::setup_default_actions() {
         []() {}, nullptr
     });
     dispatcher_.register_action({
+        std::string(ActionId::kFileSaveCloud), "Lưu lên đám mây...", "Save to Cloud...", "",
+        []() {}, nullptr
+    });
+    dispatcher_.register_action({
+        std::string(ActionId::kFileSaveTemplate), "Lưu dưới dạng mẫu...", "Save as Template...", "",
+        []() {}, nullptr
+    });
+    dispatcher_.register_action({
+        std::string(ActionId::kFileRevert), "Khôi phục gốc", "Revert", "",
+        []() {}, nullptr
+    });
+    dispatcher_.register_action({
+        std::string(ActionId::kFileAcquireImage), "Thu nạp hình ảnh", "Acquire Image", "",
+        []() {}, nullptr
+    });
+    dispatcher_.register_action({
+        std::string(ActionId::kFileImport), "Nhập tệp...", "Import...", "Ctrl+I",
+        []() {}, nullptr
+    });
+    dispatcher_.register_action({
         std::string(ActionId::kFileExport), "Xuất tệp...", "Export...", "Ctrl+E",
         []() {}, nullptr
     });
     dispatcher_.register_action({
-        std::string(ActionId::kFileClose), "Đóng", "Close", "Ctrl+W",
+        std::string(ActionId::kFileExportFor), "Xuất cho", "Export For", "",
+        []() {}, nullptr
+    });
+    dispatcher_.register_action({
+        std::string(ActionId::kFilePublishPdf), "Xuất bản PDF...", "Publish to PDF...", "",
+        []() {}, nullptr
+    });
+    dispatcher_.register_action({
+        std::string(ActionId::kFilePrint), "In ấn...", "Print...", "Ctrl+P",
+        []() {}, nullptr
+    });
+    dispatcher_.register_action({
+        std::string(ActionId::kFilePrintPreview), "Xem trước bản in...", "Print Preview...", "",
+        []() {}, nullptr
+    });
+    dispatcher_.register_action({
+        std::string(ActionId::kFileProperties), "Thuộc tính tài liệu...", "Document Properties...", "",
+        []() {}, nullptr
+    });
+    dispatcher_.register_action({
+        std::string(ActionId::kFileExit), "Thoát", "Exit", "Alt+F4",
+        []() {}, nullptr
+    });
+
+    // Home Action
+    dispatcher_.register_action({
+        std::string(ActionId::kViewHome), "Trang chủ", "Home", "Alt+H",
         []() {}, nullptr
     });
 

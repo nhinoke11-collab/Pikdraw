@@ -10,7 +10,7 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
     bool is_vi = (language_ == UILanguage::Vietnamese);
     bool is_dark = (theme_ == ThemeMode::CyberDark);
 
-    // 1. Modal backdrop dimming (semi-transparent feel)
+    // 1. Modal backdrop dimming (semi-transparent)
     HDC dim_dc = CreateCompatibleDC(mem_dc);
     HBITMAP dim_bmp = CreateCompatibleBitmap(mem_dc, w, h);
     HGDIOBJ old_dim_bmp = SelectObject(dim_dc, dim_bmp);
@@ -25,11 +25,9 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
     DeleteObject(dim_bmp);
     DeleteDC(dim_dc);
 
-    // 2. Modal Card Geometry
-    int modal_w = 720;
-    int modal_h = 500;
-    int modal_x = (w - modal_w) / 2;
-    int modal_y = (h - modal_h) / 2;
+    // 2. Modal Card Geometry (CorelDRAW Options Style)
+    int modal_w = 720, modal_h = 500;
+    int modal_x = (w - modal_w) / 2, modal_y = (h - modal_h) / 2;
 
     COLORREF m_card_bg = is_dark ? RGB(15, 23, 34) : RGB(255, 255, 255);
     COLORREF m_header_bg = is_dark ? RGB(19, 29, 43) : RGB(248, 250, 252);
@@ -40,37 +38,23 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
     COLORREF m_text_mut = is_dark ? RGB(148, 163, 184) : RGB(100, 116, 139);
     COLORREF m_tab_act = is_dark ? RGB(22, 37, 54) : RGB(255, 255, 255);
 
-    // Fonts
-    HFONT font_vn_bold = CreateFontW(14, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Be Vietnam Pro");
-    HFONT font_vn_norm = CreateFontW(13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Be Vietnam Pro");
-    HFONT font_sec = CreateFontW(12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Google Sans");
-    HFONT font_sec_bold = CreateFontW(12, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Google Sans");
-    HFONT font_mono = CreateFontW(11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"JetBrains Mono");
+    auto make_font = [](int sz, int weight, const wchar_t* name) {
+        return CreateFontW(sz, 0, 0, 0, weight, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, name);
+    };
+    HFONT font_vn_bold = make_font(14, FW_BOLD, L"Be Vietnam Pro"), font_vn_norm = make_font(13, FW_NORMAL, L"Be Vietnam Pro");
+    HFONT font_sec = make_font(12, FW_NORMAL, L"Google Sans"), font_sec_bold = make_font(12, FW_BOLD, L"Google Sans");
+    HFONT font_mono = make_font(11, FW_NORMAL, L"JetBrains Mono");
 
-    // Drop shadow
     HBRUSH br_shad = CreateSolidBrush(RGB(1, 3, 6));
     RECT rc_shad = { modal_x + 6, modal_y + 6, modal_x + modal_w + 6, modal_y + modal_h + 6 };
-    FillRect(mem_dc, &rc_shad, br_shad);
-    DeleteObject(br_shad);
+    FillRect(mem_dc, &rc_shad, br_shad); DeleteObject(br_shad);
 
-    // Main Card background & border
     HBRUSH br_card = CreateSolidBrush(m_card_bg);
     HPEN pen_bdr = CreatePen(PS_SOLID, 1, m_border);
-    SelectObject(mem_dc, pen_bdr);
-    SelectObject(mem_dc, br_card);
+    SelectObject(mem_dc, pen_bdr); SelectObject(mem_dc, br_card);
     RoundRect(mem_dc, modal_x, modal_y, modal_x + modal_w, modal_y + modal_h, 14, 14);
-    DeleteObject(pen_bdr);
-    DeleteObject(br_card);
+    DeleteObject(pen_bdr); DeleteObject(br_card);
 
     // 3. Modal Header (h = 46px)
     HBRUSH br_head = CreateSolidBrush(m_header_bg);
@@ -78,7 +62,6 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
     FillRect(mem_dc, &rc_head, br_head);
     DeleteObject(br_head);
 
-    // Icon pill
     HBRUSH br_icon = CreateSolidBrush(is_dark ? RGB(14, 38, 48) : RGB(220, 252, 231));
     RECT rc_icon = { modal_x + 16, modal_y + 11, modal_x + 40, modal_y + 35 };
     FillRect(mem_dc, &rc_icon, br_icon);
@@ -87,24 +70,21 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
     SetTextColor(mem_dc, m_teal);
     DrawTextW(mem_dc, L"⚙", -1, &rc_icon, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-    // Title
     SetTextColor(mem_dc, m_text_pri);
-    RECT rc_htitle = { modal_x + 48, modal_y + 11, modal_x + 480, modal_y + 35 };
-    const wchar_t* title_str = is_vi ? L"Cài đặt hệ thống (PikDraw Preferences 2026)" : L"System Preferences (PikDraw Settings 2026)";
+    RECT rc_htitle = { modal_x + 48, modal_y + 11, modal_x + 550, modal_y + 35 };
+    const wchar_t* title_str = is_vi ? L"Cài đặt & Tùy chọn hệ thống (PikDraw Options & Preferences)" : L"Options & Preferences (CorelDRAW / CAD Standard)";
     DrawTextW(mem_dc, title_str, -1, &rc_htitle, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-    // Close button [X]
     RECT rc_close = { modal_x + modal_w - 38, modal_y + 9, modal_x + modal_w - 12, modal_y + 35 };
     SetTextColor(mem_dc, m_text_mut);
     DrawTextW(mem_dc, L"✕", -1, &rc_close, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-    // Divider line below header
     HPEN pen_div = CreatePen(PS_SOLID, 1, m_border);
     HGDIOBJ old_pen = SelectObject(mem_dc, pen_div);
     MoveToEx(mem_dc, modal_x, modal_y + 46, NULL);
     LineTo(mem_dc, modal_x + modal_w, modal_y + 46);
 
-    // 4. Left Sidebar Navigation (w = 190px)
+    // 4. Left Sidebar Navigation (6 CorelDRAW style categories)
     HBRUSH br_side = CreateSolidBrush(m_sidebar_bg);
     RECT rc_side = { modal_x, modal_y + 47, modal_x + 190, modal_y + modal_h - 46 };
     FillRect(mem_dc, &rc_side, br_side);
@@ -114,17 +94,17 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
     LineTo(mem_dc, modal_x + 190, modal_y + modal_h - 46);
 
     const wchar_t* vi_tab_names[] = {
-        L"  Giao diện (Theme)", L"  Đơn vị & Lưới", L"  Quản lý màu & ICC",
-        L"  Thi công & CNC", L"  Hiệu năng & Hệ thống"
+        L"  Chung & Ngôn ngữ", L"  Giao diện (Theme)", L"  Đơn vị & Bắt điểm",
+        L"  Quản lý màu & ICC", L"  Thi công & CNC", L"  Hiệu năng & Hệ thống"
     };
     const wchar_t* en_tab_names[] = {
-        L"  Theme & Appearance", L"  Units & Workspace", L"  Color & ICC Profiles",
-        L"  Production & CNC", L"  Hardware & System"
+        L"  General & Language", L"  Display & Theme", L"  Units & Snapping",
+        L"  Color & ICC Profiles", L"  Production & CAM", L"  Hardware & System"
     };
 
-    for (int i = 0; i < 5; ++i) {
-        int ty = modal_y + 56 + i * 42;
-        RECT rc_tab = { modal_x + 10, ty, modal_x + 180, ty + 36 };
+    for (int i = 0; i < 6; ++i) {
+        int ty = modal_y + 54 + i * 36;
+        RECT rc_tab = { modal_x + 10, ty, modal_x + 180, ty + 32 };
         if (settings_active_tab_ == i) {
             HBRUSH br_tab_bg = CreateSolidBrush(m_tab_act);
             FillRect(mem_dc, &rc_tab, br_tab_bg);
@@ -144,36 +124,113 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
         DrawTextW(mem_dc, is_vi ? vi_tab_names[i] : en_tab_names[i], -1, &rc_tab, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
 
-    // 5. Right Content Area (w = 530px, from modal_x + 205 to modal_x + 705)
-    int cx = modal_x + 205;
-    int cy = modal_y + 60;
+    int cx = modal_x + 205, cy = modal_y + 58;
 
     if (settings_active_tab_ == 0) {
-        // Tab 0: Giao diện (Theme & Appearance)
+        SelectObject(mem_dc, font_vn_bold);
+        SetTextColor(mem_dc, m_text_pri);
+        RECT rc_g1_t = { cx, cy, cx + 490, cy + 20 };
+        DrawTextW(mem_dc, is_vi ? L"Ngôn ngữ hiển thị (UI Language) ────────────────────────" : L"UI Language ──────────────────────────────────────────", -1, &rc_g1_t, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+
+        for (int i = 0; i < 2; ++i) {
+            int lx = cx + i * 150;
+            RECT rc_l = { lx, cy + 26, lx + 140, cy + 56 };
+            bool is_cur = (i == 0 && language_ == UILanguage::Vietnamese) || (i == 1 && language_ == UILanguage::English);
+            HBRUSH br_l = CreateSolidBrush(is_cur ? (is_dark ? RGB(18, 38, 48) : RGB(236, 253, 245)) : (is_dark ? RGB(10, 16, 24) : RGB(248, 250, 252)));
+            FillRect(mem_dc, &rc_l, br_l);
+            DeleteObject(br_l);
+            HPEN pen_l = CreatePen(PS_SOLID, 1, is_cur ? m_teal : m_border);
+            HGDIOBJ op_l = SelectObject(mem_dc, pen_l);
+            SelectObject(mem_dc, GetStockObject(NULL_BRUSH));
+            RoundRect(mem_dc, rc_l.left, rc_l.top, rc_l.right, rc_l.bottom, 6, 6);
+            SelectObject(mem_dc, op_l);
+            DeleteObject(pen_l);
+            SelectObject(mem_dc, is_cur ? font_vn_bold : font_vn_norm);
+            SetTextColor(mem_dc, is_cur ? m_teal : m_text_mut);
+            const wchar_t* l_names[] = { L"● Tiếng Việt (VN)", L"● English (US)" };
+            DrawTextW(mem_dc, l_names[i], -1, &rc_l, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        }
+
+        // Section 2: Chế độ hiển thị (Theme Mode)
+        int g2_y = cy + 70;
+        SelectObject(mem_dc, font_vn_bold);
+        SetTextColor(mem_dc, m_text_pri);
+        RECT rc_g2_t = { cx, g2_y, cx + 490, g2_y + 20 };
+        DrawTextW(mem_dc, is_vi ? L"Chế độ hiển thị (Theme Mode) ─────────────────────────" : L"Theme Appearance ────────────────────────────────────", -1, &rc_g2_t, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+
+        for (int i = 0; i < 2; ++i) {
+            int tx = cx + i * 150;
+            RECT rc_t = { tx, g2_y + 26, tx + 140, g2_y + 56 };
+            bool is_cur = (i == 0 && theme_ == ThemeMode::CyberDark) || (i == 1 && theme_ == ThemeMode::Light);
+            HBRUSH br_t = CreateSolidBrush(is_cur ? (is_dark ? RGB(18, 38, 48) : RGB(236, 253, 245)) : (is_dark ? RGB(10, 16, 24) : RGB(248, 250, 252)));
+            FillRect(mem_dc, &rc_t, br_t);
+            DeleteObject(br_t);
+            HPEN pen_t = CreatePen(PS_SOLID, 1, is_cur ? m_teal : m_border);
+            HGDIOBJ op_t = SelectObject(mem_dc, pen_t);
+            SelectObject(mem_dc, GetStockObject(NULL_BRUSH));
+            RoundRect(mem_dc, rc_t.left, rc_t.top, rc_t.right, rc_t.bottom, 6, 6);
+            SelectObject(mem_dc, op_t);
+            DeleteObject(pen_t);
+            SelectObject(mem_dc, is_cur ? font_vn_bold : font_vn_norm);
+            SetTextColor(mem_dc, is_cur ? m_teal : m_text_mut);
+            const wchar_t* thm_opts_vi[] = { L"🌙 Chế độ Tối", L"☀ Chế độ Sáng" };
+            const wchar_t* thm_opts_en[] = { L"🌙 Dark Mode", L"☀ Light Mode" };
+            DrawTextW(mem_dc, is_vi ? thm_opts_vi[i] : thm_opts_en[i], -1, &rc_t, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        }
+
+        // Section 3: Getting Started (CorelDRAW Style)
+        int g3_y = g2_y + 70;
+        SelectObject(mem_dc, font_vn_bold);
+        SetTextColor(mem_dc, m_text_pri);
+        RECT rc_g3_t = { cx, g3_y, cx + 490, g3_y + 20 };
+        DrawTextW(mem_dc, is_vi ? L"Khởi động ứng dụng (Getting started) ─────────────────" : L"Getting started ─────────────────────────────────────", -1, &rc_g3_t, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+
+        SelectObject(mem_dc, font_sec);
+        SetTextColor(mem_dc, m_text_pri);
+        RECT rc_g3_b = { cx, g3_y + 26, cx + 490, g3_y + 80 };
+        const wchar_t* start_txt = is_vi ?
+            L"☑ Hiện hộp thoại tạo mới tài liệu khi khởi động (Show New Document dialog)\n"
+            L"☑ Mở màn hình chào mừng (Welcome Screen & Recent Projects)\n"
+            L"Khổ giấy mặc định khởi tạo: Biển hiệu chuẩn (1850 x 420 mm)" :
+            L"☑ Show New Document dialog box on startup\n"
+            L"☑ Open Welcome Screen & Recent Projects on launch\n"
+            L"Default canvas format: Standard Signage (1850 x 420 mm)";
+        DrawTextW(mem_dc, start_txt, -1, &rc_g3_b, DT_LEFT | DT_NOPREFIX);
+
+        // Section 4: Undo Levels (CorelDRAW Style)
+        int g4_y = g3_y + 85;
+        SelectObject(mem_dc, font_vn_bold);
+        SetTextColor(mem_dc, m_text_pri);
+        RECT rc_g4_t = { cx, g4_y, cx + 490, g4_y + 20 };
+        DrawTextW(mem_dc, is_vi ? L"Lịch sử hoàn tác & Sao lưu (Undo levels & Save) ──────" : L"Undo levels & Autosave ──────────────────────────────", -1, &rc_g4_t, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+
+        SelectObject(mem_dc, font_sec);
+        SetTextColor(mem_dc, m_text_pri);
+        RECT rc_g4_b = { cx, g4_y + 26, cx + 490, g4_y + 80 };
+        const wchar_t* undo_txt = is_vi ?
+            L"Số bước hoàn tác tiêu chuẩn (Regular Undo levels): 50 bước\n"
+            L"☑ Tự động lưu bản nháp dự phòng (Autosave): Mỗi 5 phút\n"
+            L"☑ Tự động giải phóng RAM Cache khi tài liệu không hoạt động" :
+            L"Regular Undo levels: 50 atomic revisions\n"
+            L"☑ Autosave backup copies every 5 minutes\n"
+            L"☑ Automatic memory garbage collection on idle";
+        DrawTextW(mem_dc, undo_txt, -1, &rc_g4_b, DT_LEFT | DT_NOPREFIX);
+
+    } else if (settings_active_tab_ == 1) {
+        // Tab 1: Giao diện & Hiển thị (Display & Theme)
         SelectObject(mem_dc, font_vn_bold);
         SetTextColor(mem_dc, m_text_pri);
         RECT rc_s1_t = { cx, cy, cx + 490, cy + 20 };
         DrawTextW(mem_dc, is_vi ? L"Chế độ hiển thị giao diện (Theme Mode)" : L"UI Theme Mode (Light / Dark)", -1, &rc_s1_t, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
 
-        SelectObject(mem_dc, font_sec);
-        SetTextColor(mem_dc, m_text_mut);
-        RECT rc_s1_sub = { cx, cy + 22, cx + 490, cy + 38 };
-        DrawTextW(mem_dc, is_vi ? L"Tối ưu độ tập trung và hiển thị màu sắc theo môi trường làm việc." : L"Optimized for visual precision and workstation lighting.", -1, &rc_s1_sub, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
-
-        // 3 Theme Visual Cards (Dark, Light, System)
-        int card_w = 155;
-        int card_h = 76;
-        int card_y = cy + 44;
-
+        int card_w = 155, card_h = 76, card_y = cy + 30;
         for (int i = 0; i < 3; ++i) {
             int cur_cx = cx + i * 165;
             RECT rc_c = { cur_cx, card_y, cur_cx + card_w, card_y + card_h };
             bool is_active_card = (settings_theme_choice_ == i);
-
             HBRUSH br_c = CreateSolidBrush(is_active_card ? (is_dark ? RGB(18, 38, 48) : RGB(236, 253, 245)) : (is_dark ? RGB(10, 16, 24) : RGB(248, 250, 252)));
             FillRect(mem_dc, &rc_c, br_c);
             DeleteObject(br_c);
-
             HPEN pen_c = CreatePen(PS_SOLID, is_active_card ? 2 : 1, is_active_card ? m_teal : m_border);
             HGDIOBJ op_c = SelectObject(mem_dc, pen_c);
             SelectObject(mem_dc, GetStockObject(NULL_BRUSH));
@@ -181,16 +238,12 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
             SelectObject(mem_dc, op_c);
             DeleteObject(pen_c);
 
-            // Mini UI preview box
             HBRUSH br_mini = CreateSolidBrush(i == 0 ? RGB(7, 12, 18) : (i == 1 ? RGB(241, 245, 249) : RGB(20, 28, 40)));
             RECT rc_mini = { cur_cx + 8, card_y + 8, cur_cx + card_w - 8, card_y + 36 };
             FillRect(mem_dc, &rc_mini, br_mini);
             DeleteObject(br_mini);
-
-            // Dot on mini preview
             SetPixel(mem_dc, cur_cx + 14, card_y + 14, i == 1 ? RGB(0, 135, 106) : RGB(0, 242, 195));
 
-            // Card text
             SelectObject(mem_dc, font_vn_bold);
             SetTextColor(mem_dc, is_active_card ? m_teal : m_text_pri);
             RECT rc_c_title = { cur_cx + 8, card_y + 40, cur_cx + card_w - 8, card_y + 56 };
@@ -205,10 +258,8 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
             DrawTextW(mem_dc, c_subs[i], -1, &rc_c_sub, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
 
-        // Section 2: Accent color
         int sec2_y = card_y + card_h + 16;
-        MoveToEx(mem_dc, cx, sec2_y, NULL);
-        LineTo(mem_dc, cx + 490, sec2_y);
+        MoveToEx(mem_dc, cx, sec2_y, NULL); LineTo(mem_dc, cx + 490, sec2_y);
 
         SelectObject(mem_dc, font_vn_bold);
         SetTextColor(mem_dc, m_text_pri);
@@ -218,15 +269,12 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
         COLORREF acc_colors[] = { RGB(0, 242, 195), RGB(14, 165, 233), RGB(168, 85, 247), RGB(245, 158, 11) };
         const wchar_t* acc_names[] = { L"Cyber Mint", L"Sky Blue", L"Purple Tech", L"Amber CAD" };
         for (int i = 0; i < 4; ++i) {
-            int ax = cx + i * 115;
-            int ay = sec2_y + 36;
+            int ax = cx + i * 115, ay = sec2_y + 36;
             bool is_acc_act = (settings_accent_choice_ == i);
-
             HBRUSH br_a = CreateSolidBrush(acc_colors[i]);
             RECT rc_a_c = { ax, ay, ax + 18, ay + 18 };
             FillRect(mem_dc, &rc_a_c, br_a);
             DeleteObject(br_a);
-
             if (is_acc_act) {
                 HPEN pen_ring = CreatePen(PS_SOLID, 2, m_teal);
                 HGDIOBJ op_r = SelectObject(mem_dc, pen_ring);
@@ -235,18 +283,14 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
                 SelectObject(mem_dc, op_r);
                 DeleteObject(pen_ring);
             }
-
             SelectObject(mem_dc, is_acc_act ? font_sec_bold : font_sec);
             SetTextColor(mem_dc, is_acc_act ? m_text_pri : m_text_mut);
             RECT rc_a_t = { ax + 24, ay, ax + 105, ay + 18 };
             DrawTextW(mem_dc, acc_names[i], -1, &rc_a_t, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
 
-        // Section 3: Style 2026 tags
         int sec3_y = sec2_y + 68;
-        MoveToEx(mem_dc, cx, sec3_y, NULL);
-        LineTo(mem_dc, cx + 490, sec3_y);
-
+        MoveToEx(mem_dc, cx, sec3_y, NULL); LineTo(mem_dc, cx + 490, sec3_y);
         SelectObject(mem_dc, font_vn_bold);
         SetTextColor(mem_dc, m_text_pri);
         RECT rc_s3_t = { cx, sec3_y + 10, cx + 490, sec3_y + 30 };
@@ -254,7 +298,7 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
 
         SelectObject(mem_dc, font_sec);
         SetTextColor(mem_dc, m_text_mut);
-        RECT rc_s3_body = { cx, sec3_y + 34, cx + 490, sec3_y + 110 };
+        RECT rc_s3_b = { cx, sec3_y + 34, cx + 490, sec3_y + 110 };
         const wchar_t* tags_text = is_vi ?
             L"✓ Bo nhẹ công nghệ (Micro-Radius 6px) trên toàn bộ dock và nút bấm\n"
             L"✓ Bảo toàn màu sắc Artwork khi đổi theme: Khóa chuẩn ICC FOGRA39\n"
@@ -262,10 +306,10 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
             L"✓ Micro-Radius (6px) rounded styling across all docks and toolbars\n"
             L"✓ Artwork Color Integrity on theme change: Locked to ICC FOGRA39\n"
             L"✓ Automatic workspace persistence across application sessions";
-        DrawTextW(mem_dc, tags_text, -1, &rc_s3_body, DT_LEFT | DT_NOPREFIX);
+        DrawTextW(mem_dc, tags_text, -1, &rc_s3_b, DT_LEFT | DT_NOPREFIX);
 
-    } else if (settings_active_tab_ == 1) {
-        // Tab 1: Đơn vị & Lưới
+    } else if (settings_active_tab_ == 2) {
+        // Tab 2: Đơn vị & Bắt điểm (Units & Snapping)
         SelectObject(mem_dc, font_vn_bold);
         SetTextColor(mem_dc, m_text_pri);
         RECT rc_t1_t = { cx, cy, cx + 490, cy + 20 };
@@ -273,22 +317,18 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
 
         const wchar_t* units[] = { L"mm (Milimét)", L"cm (Xentimét)", L"inch (Inches)", L"pt (Points)" };
         for (int i = 0; i < 4; ++i) {
-            int ux = cx + i * 115;
-            int uy = cy + 28;
+            int ux = cx + i * 115, uy = cy + 28;
             bool is_u_act = (settings_unit_choice_ == i);
             RECT rc_u = { ux, uy, ux + 105, uy + 28 };
-
             HBRUSH br_u = CreateSolidBrush(is_u_act ? (is_dark ? RGB(18, 38, 48) : RGB(236, 253, 245)) : (is_dark ? RGB(10, 16, 24) : RGB(248, 250, 252)));
             FillRect(mem_dc, &rc_u, br_u);
             DeleteObject(br_u);
-
             HPEN pen_u = CreatePen(PS_SOLID, 1, is_u_act ? m_teal : m_border);
             HGDIOBJ op_u = SelectObject(mem_dc, pen_u);
             SelectObject(mem_dc, GetStockObject(NULL_BRUSH));
             RoundRect(mem_dc, rc_u.left, rc_u.top, rc_u.right, rc_u.bottom, 6, 6);
             SelectObject(mem_dc, op_u);
             DeleteObject(pen_u);
-
             SelectObject(mem_dc, is_u_act ? font_vn_bold : font_vn_norm);
             SetTextColor(mem_dc, is_u_act ? m_teal : m_text_mut);
             DrawTextW(mem_dc, units[i], -1, &rc_u, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
@@ -310,7 +350,7 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
         SelectObject(mem_dc, font_vn_bold);
         SetTextColor(mem_dc, m_teal);
         RECT rc_t1_s3 = { cx, cy + 160, cx + 490, cy + 180 };
-        DrawTextW(mem_dc, is_vi ? L"Lưới thiết kế & Bắt điểm (Grid & Snapping)" : L"Grid & Magnetic Snapping", -1, &rc_t1_s3, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+        DrawTextW(mem_dc, is_vi ? L"Lưới thiết kế & Bắt điểm (Snapping & Grid)" : L"Snapping & Guides", -1, &rc_t1_s3, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
 
         SelectObject(mem_dc, font_sec);
         SetTextColor(mem_dc, m_text_pri);
@@ -326,8 +366,8 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
             L"☑ Show mm rulers along top and left canvas edges";
         DrawTextW(mem_dc, snap_text, -1, &rc_t1_s3_b, DT_LEFT | DT_NOPREFIX);
 
-    } else if (settings_active_tab_ == 2) {
-        // Tab 2: Quản lý màu & ICC
+    } else if (settings_active_tab_ == 3) {
+        // Tab 3: Quản lý màu & ICC
         SelectObject(mem_dc, font_vn_bold);
         SetTextColor(mem_dc, m_text_pri);
         RECT rc_c_t = { cx, cy, cx + 490, cy + 20 };
@@ -364,8 +404,8 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
             L"☑ Black Point Compensation (BPC) enabled by default";
         DrawTextW(mem_dc, pol_text, -1, &rc_c_s2_b, DT_LEFT | DT_NOPREFIX);
 
-    } else if (settings_active_tab_ == 3) {
-        // Tab 3: Thi công & CNC
+    } else if (settings_active_tab_ == 4) {
+        // Tab 4: Thi công & CNC
         SelectObject(mem_dc, font_vn_bold);
         SetTextColor(mem_dc, m_text_pri);
         RECT rc_cnc_t = { cx, cy, cx + 490, cy + 20 };
@@ -388,7 +428,7 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
         DrawTextW(mem_dc, cnc_text, -1, &rc_cnc_b, DT_LEFT | DT_NOPREFIX);
 
     } else {
-        // Tab 4: Hiệu năng & Hệ thống
+        // Tab 5: Hiệu năng & Hệ thống
         SelectObject(mem_dc, font_vn_bold);
         SetTextColor(mem_dc, m_text_pri);
         RECT rc_sys_t = { cx, cy, cx + 490, cy + 20 };
@@ -411,47 +451,59 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
         DrawTextW(mem_dc, sys_text, -1, &rc_sys_b, DT_LEFT | DT_NOPREFIX);
     }
 
-    // 6. Modal Footer (h = 46px)
+    // 6. Modal Footer (Matching CorelDRAW [ ? ] Help and [ OK ] [ Cancel ])
     int fy = modal_y + modal_h - 46;
     HBRUSH br_foot = CreateSolidBrush(m_header_bg);
     RECT rc_foot = { modal_x, fy, modal_x + modal_w, modal_y + modal_h };
     FillRect(mem_dc, &rc_foot, br_foot);
     DeleteObject(br_foot);
 
-    MoveToEx(mem_dc, modal_x, fy, NULL);
-    LineTo(mem_dc, modal_x + modal_w, fy);
+    MoveToEx(mem_dc, modal_x, fy, NULL); LineTo(mem_dc, modal_x + modal_w, fy);
 
-    // Left: Reset defaults
+    // Left: [ ? ] Help & Reset defaults
+    HPEN pen_b_def = CreatePen(PS_SOLID, 1, m_border);
+    HGDIOBJ old_pen_modal = SelectObject(mem_dc, pen_b_def);
+    HBRUSH br_q = CreateSolidBrush(is_dark ? RGB(29, 38, 54) : RGB(226, 232, 240));
+    SelectObject(mem_dc, br_q);
+    RoundRect(mem_dc, modal_x + 16, fy + 8, modal_x + 44, fy + 38, 6, 6);
+    DeleteObject(br_q);
+    RECT rc_q = { modal_x + 16, fy + 8, modal_x + 44, fy + 38 };
+    SelectObject(mem_dc, font_vn_bold);
+    SetTextColor(mem_dc, m_text_pri);
+    DrawTextW(mem_dc, L"?", -1, &rc_q, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
     SelectObject(mem_dc, font_sec);
     SetTextColor(mem_dc, m_text_mut);
-    RECT rc_f_rst = { modal_x + 18, fy + 12, modal_x + 160, fy + 36 };
+    RECT rc_f_rst = { modal_x + 54, fy + 12, modal_x + 180, fy + 36 };
     DrawTextW(mem_dc, is_vi ? L"Khôi phục mặc định" : L"Reset Defaults", -1, &rc_f_rst, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-    // Right: Close button
+    // Right: Cancel button
     RECT rc_btn_cls = { modal_x + modal_w - 170, fy + 8, modal_x + modal_w - 95, fy + 38 };
     HBRUSH br_b_cls = CreateSolidBrush(is_dark ? RGB(29, 38, 54) : RGB(226, 232, 240));
-    FillRect(mem_dc, &rc_btn_cls, br_b_cls);
+    SelectObject(mem_dc, br_b_cls);
+    RoundRect(mem_dc, rc_btn_cls.left, rc_btn_cls.top, rc_btn_cls.right, rc_btn_cls.bottom, 6, 6);
     DeleteObject(br_b_cls);
     SelectObject(mem_dc, font_vn_bold);
     SetTextColor(mem_dc, m_text_pri);
-    DrawTextW(mem_dc, is_vi ? L"Đóng" : L"Close", -1, &rc_btn_cls, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    DrawTextW(mem_dc, is_vi ? L"Hủy (Cancel)" : L"Cancel", -1, &rc_btn_cls, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-    // Right: Apply button
+    // Right: OK button
     RECT rc_btn_app = { modal_x + modal_w - 85, fy + 8, modal_x + modal_w - 15, fy + 38 };
+    HPEN pen_ok = CreatePen(PS_SOLID, 1, m_teal);
+    SelectObject(mem_dc, pen_ok);
     HBRUSH br_b_app = CreateSolidBrush(m_teal);
-    FillRect(mem_dc, &rc_btn_app, br_b_app);
+    SelectObject(mem_dc, br_b_app);
+    RoundRect(mem_dc, rc_btn_app.left, rc_btn_app.top, rc_btn_app.right, rc_btn_app.bottom, 6, 6);
     DeleteObject(br_b_app);
+    SelectObject(mem_dc, old_pen_modal);
+    DeleteObject(pen_ok);
+    DeleteObject(pen_b_def);
     SetTextColor(mem_dc, is_dark ? RGB(7, 11, 16) : RGB(255, 255, 255));
-    DrawTextW(mem_dc, is_vi ? L"Áp dụng" : L"Apply", -1, &rc_btn_app, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    DrawTextW(mem_dc, is_vi ? L"OK" : L"OK", -1, &rc_btn_app, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
     SelectObject(mem_dc, old_pen);
     DeleteObject(pen_div);
-
-    DeleteObject(font_vn_bold);
-    DeleteObject(font_vn_norm);
-    DeleteObject(font_sec);
-    DeleteObject(font_sec_bold);
-    DeleteObject(font_mono);
+    for (auto* f : { font_vn_bold, font_vn_norm, font_sec, font_sec_bold, font_mono }) DeleteObject(f);
 }
 
 #endif
