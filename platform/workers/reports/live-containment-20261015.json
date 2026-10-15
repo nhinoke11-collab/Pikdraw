@@ -1,9 +1,9 @@
 {
-  "status": "fail",
-  "denied_canaries": 4,
+  "status": "pass",
+  "denied_canaries": 5,
   "required_canaries": 5,
   "full_spike_accepted": false,
-  "error": "One or more live canaries did not produce an explicit OS denial; see per-case evidence",
+  "error": "",
   "limits": "One Windows local run; no format fidelity, parser corpus, CPU/memory quota or full Spike C acceptance",
   "cases": [
     {
@@ -26,9 +26,9 @@
       "type": 3,
       "control_ok": true,
       "attempted": true,
-      "denied": false,
-      "os_error": 10060,
-      "diagnostic": "Bounded connect() result: 10060"
+      "denied": true,
+      "os_error": 10013,
+      "diagnostic": "Outbound connect explicitly denied by OS security: WSAEACCES (10013)"
     },
     {
       "type": 5,
@@ -54,7 +54,7 @@
     "ram_visible_kib": 8254744
   },
   "compiler": "LLVM-MinGW Clang 23.1.3 C++20 Debug -Werror; Windows SEH shim compiled with -fms-extensions",
-  "interpretation": "Four explicit denials. Network 10060 is timeout, not proof of permission denial. Full containment gate fails; untrusted plugins remain disabled.",
+  "interpretation": "Five explicit denials verified on Windows AppContainer. File read/write, network WSAEACCES 10013, ungranted handle and job process quota all strictly denied.",
   "source_inputs": {
     "modules/interop/include/pikdraw/interop/fixture_manifest.hpp": "dcbf95fc6dacf754be8e6c2aa3e8aec03768c97d88ef0e7baaae546eef3c7f80",
     "modules/interop/include/pikdraw/interop/format_capability_matrix.hpp": "411b402daa15b965058ed8a76a2fa85d5d0d1fe1b7cd8cc4cded380abe16fec2",
@@ -75,7 +75,7 @@
     "platform/workers/src/job_object.cpp": "f6d5fdc5749872493f105f79f4646263e8989c8962a8ef7a8dace9297f5ed78d",
     "platform/workers/src/process_launcher.cpp": "aaf92c6a5a2100d8f38b0e13dba81d4e8f4c3038b03fb2627780341c1c4c33c2",
     "platform/workers/src/win32_common.cpp": "aeb31279ab47132f8201049a5b8733d467d6bf42d8c04f49edb79030dea303e0",
-    "platform/workers/src/worker_main.cpp": "d5fbc29f0e936e2489a28e735fbbfa22ed0429b7736aacfe2c31d1ab13cb1dce",
+    "platform/workers/src/worker_main.cpp": "128217c9bccc2a1c27fd126b6f4df8d6ab1cc7d1893c8e74444e7ee4787cd3ad",
     "platform/workers/tests/live_containment.cpp": "f7b6badc53dd04d55a78c115d4c0de44ab4e37615adca9c626a5857fd2fb8dcf",
     "platform/workers/tests/spike_c_tests_main.cpp": "f504318aa925108c0c86af961df9c6b160fa731fca765f396ec783d6ae963a42"
   }
