@@ -1,0 +1,71 @@
+Test project <worktree>/build/win-msvc-debug
+      Start  1: architecture_gates
+ 1/33 Test  #1: architecture_gates .......................   Passed    0.73 sec
+      Start  2: contract_and_oracle_gates
+ 2/33 Test  #2: contract_and_oracle_gates ................   Passed    0.24 sec
+      Start  3: harness_gates
+ 3/33 Test  #3: harness_gates ............................   Passed   46.56 sec
+      Start  4: pikdraw_geometry_tests
+ 4/33 Test  #4: pikdraw_geometry_tests ...................   Passed    0.03 sec
+      Start  5: pikdraw_color_tests
+ 5/33 Test  #5: pikdraw_color_tests ......................   Passed    0.03 sec
+      Start  6: test_pikdraw_icc_preview
+ 6/33 Test  #6: test_pikdraw_icc_preview .................   Passed    0.04 sec
+      Start  7: pikdraw_typography_tests
+ 7/33 Test  #7: pikdraw_typography_tests .................   Passed    0.02 sec
+      Start  8: test_pikdraw_document_commands
+ 8/33 Test  #8: test_pikdraw_document_commands ...........   Passed    0.03 sec
+      Start  9: test_pikdraw_document_snapshots
+ 9/33 Test  #9: test_pikdraw_document_snapshots ..........   Passed    0.03 sec
+      Start 10: test_pikdraw_document_persistent_map
+10/33 Test #10: test_pikdraw_document_persistent_map .....   Passed    0.60 sec
+      Start 11: test_pikdraw_document_async
+11/33 Test #11: test_pikdraw_document_async ..............   Passed    0.03 sec
+      Start 12: test_pikdraw_document_writer_safety
+12/33 Test #12: test_pikdraw_document_writer_safety ......   Passed    0.10 sec
+      Start 13: test_pikdraw_document_storage
+13/33 Test #13: test_pikdraw_document_storage ............   Passed    0.05 sec
+      Start 14: test_pikdraw_document_storage_fidelity
+14/33 Test #14: test_pikdraw_document_storage_fidelity ...   Passed    0.10 sec
+      Start 15: test_pikdraw_rendering_pixels
+15/33 Test #15: test_pikdraw_rendering_pixels ............   Passed    0.12 sec
+      Start 16: test_pikdraw_rendering_camera
+16/33 Test #16: test_pikdraw_rendering_camera ............   Passed    0.06 sec
+      Start 17: test_pikdraw_rendering_culling
+17/33 Test #17: test_pikdraw_rendering_culling ...........   Passed    0.05 sec
+      Start 18: test_pikdraw_rendering_rasterizer
+18/33 Test #18: test_pikdraw_rendering_rasterizer ........   Passed    0.10 sec
+      Start 19: test_pikdraw_vector_selection
+19/33 Test #19: test_pikdraw_vector_selection ............   Passed    0.23 sec
+      Start 20: test_pikdraw_vector_shapes
+20/33 Test #20: test_pikdraw_vector_shapes ...............   Passed    0.04 sec
+      Start 21: test_pikdraw_vector_gestures
+21/33 Test #21: test_pikdraw_vector_gestures .............   Passed    0.05 sec
+      Start 22: test_pikdraw_editor_selection
+22/33 Test #22: test_pikdraw_editor_selection ............   Passed    0.04 sec
+      Start 23: test_pikdraw_interop_capabilities
+23/33 Test #23: test_pikdraw_interop_capabilities ........   Passed    0.04 sec
+      Start 24: test_pikdraw_interop_svg_adapter
+24/33 Test #24: test_pikdraw_interop_svg_adapter .........   Passed    0.05 sec
+      Start 25: test_pikdraw_interop_svg_exporter
+25/33 Test #25: test_pikdraw_interop_svg_exporter ........   Passed    0.05 sec
+      Start 26: test_pikdraw_workers
+26/33 Test #26: test_pikdraw_workers .....................   Passed    0.26 sec
+      Start 27: test_pikdraw_desktop_shell
+27/33 Test #27: test_pikdraw_desktop_shell ...............   Passed    0.05 sec
+      Start 28: test_pikdraw_desktop_actions
+28/33 Test #28: test_pikdraw_desktop_actions .............   Passed    0.03 sec
+      Start 29: test_pikdraw_desktop_reload
+29/33 Test #29: test_pikdraw_desktop_reload ..............   Passed    0.03 sec
+      Start 30: test_pikdraw_desktop_composition
+30/33 Test #30: test_pikdraw_desktop_composition .........   Passed    0.05 sec
+      Start 31: test_pikdraw_vertical_slice_e2e
+31/33 Test #31: test_pikdraw_vertical_slice_e2e ..........   Passed    0.11 sec
+      Start 32: test_pikdraw_canvas_view
+32/33 Test #32: test_pikdraw_canvas_view .................   Passed    0.27 sec
+      Start 33: test_pikdraw_editor_tools
+33/33 Test #33: test_pikdraw_editor_tools ................   Passed    0.68 sec
+
+100% tests passed out of 33
+
+Total Test time (real) =  51.01 sec

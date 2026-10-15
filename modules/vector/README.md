@@ -1,6 +1,23 @@
 # PikDraw vector tools
 
-Trạng thái: đã có API/library và regression ở source, chưa nghiệm thu desktop E2E. Không coi controller hoặc unit tests là công cụ UI hoàn chỉnh.
+Trạng thái: API/library đã có consumer Win32 được kiểm bằng input native, hộp thuộc tính,
+Undo/Redo và save/reopen trên nhánh editor-pick-style-delivery-20261015.
+
+## Bổ sung pick/style — 2026-10-15
+
+`SelectionModel::query_region` phân biệt Window (chứa cả bounds và viền) với Crossing
+(giao source polyline/fill winding/stroke). `set_selection` gắn selection với lifecycle
+document. Point picking dùng tolerance từ số pixel của desktop; stroke biến đổi không đều
+được kiểm trong source và world, tránh chọn nhầm xa đường viền.
+
+`selection_resize_transform` trả delta binary64 cho tám tay nắm, giữ anchor đối diện;
+Shift giữ tỉ lệ ở góc. `TransformGesture::update_transform` chỉ giữ preview, commit kiểm
+document/epoch/revision và tạo một undo unit. `apply_object_styles` áp patch cho nhiều
+đối tượng nguyên tử, giữ overprint riêng của từng đối tượng.
+
+Test mới: `test_pikdraw_editor_selection`; consumer ở `apps/desktop/tests/test_editor_tools.cpp`.
+Group hierarchy chưa đầy đủ; text hit bounds gần đúng. Region query vẫn quét các root,
+chưa có spatial index. Chưa chứng nhận 100.000 object riêng lẻ.
 
 | Nhóm | Public API | Implementation | Tests |
 |---|---|---|---|

@@ -1,26 +1,20 @@
 {
   "schema_version": 1,
   "project": "PikDraw",
-  "stage": "m1_complete",
+  "stage": "m1_editor_validation",
   "updated_at": "2026-10-15",
   "implemented": [
-    "Provider-neutral repository structure and project instructions",
-    "Module registry and versioned contract specifications",
-    "Python standard-library harness for tasks, context packets and Git worktrees",
-    "Remediation and formal acceptance of foundation spikes (AppContainer network canary 5/5 explicit OS denials WSAEACCES 10013 and MSVC C++20 compatibility)",
-    "Locked shared contracts C1-C7, semantic reference fixtures, and quality oracles (PS01)",
-    "CMakePresets, C++20 options, architecture dependency gates, and native runners dev.ps1/check.ps1 (PS02)",
-    "Milestone M0 (Foundation Lock) completed and verified",
-    "ps03-geometry: 2D primitives (mm/binary64), Bézier curves, Boolean ops, offset, 20m billboard precision",
-    "ps04-color: Source RGB/CMYK/spot/overprint, ICC profile registry, preview RGBA caching",
-    "ps06-typography: Vietnamese Unicode shaper (NFC/NFD + diacritics), font resolver, multiline layout, caret navigation, glyph outlines",
-    "ps07-document & ps08-storage: Single logical writer, atomic commands, COW snapshots, undo/redo, .pikdraw container with CRC32 checksums, atomic save and recovery",
-    "ps09-renderer: Camera2D origin-subtraction float projection, spatial culling, SoftwareRasterizer fallback (#12141a), ViewportRenderer facade",
-    "ps10-vector-basics: Model-space SelectionModel, ShapeFactory, pointer drag gestures, VectorController",
-    "ps11-interop-core: FormatCapabilities with unsupported format reporting, FidelityLossReport, SvgImporter, SvgExporter",
-    "ps12-workers: Host launcher, AppContainer / JobObject sandbox containment, IPC framing, stale proposal rejection, worker lifecycle and deadlines",
-    "ps05-native-preview: Cyber Dark Design System 2026 shell, ShellGeometry (responsive 1366x768/1080p, DPI 100/150/200%), WorkspaceStateManager, StatusBarModel, ActionDispatcher (18 Contract C7 actions), UIReloadController (50 F5 reloads tested), cyber_dark.qss",
-    "ps13-vertical-slice: CompositionRoot, DocumentWorkflow, end-to-end integration verified against all 13 closing matrix gates (M1-E01 to M1-E13)"
+    "Provider-neutral module registry, task/worktree harness and contract/reference gates",
+    "Native Win32/GDI desktop shell with C++20 document/vector/rendering services; Qt remains an architecture blueprint",
+    "mm/binary64 source primitives and editable paths; production geometry coverage is not certified by this delivery",
+    "Single-writer atomic document commands, immutable persistent-map snapshots, monotonic edits/undo/redo, job lifecycle guards",
+    "Native v2 codec preserving RGB/CMYK/spot/gray, alpha/overprint, source paths, Unicode/font metadata and document identity; bounded readers and atomic save faults tested",
+    "Bounded software raster baseline for fills, winding, alpha, source stroke widths, layer order, clipping and diagnostics",
+    "Native pick/hover, CAD Window/Crossing, Shift-add/Ctrl-toggle, eight resize handles, movement, delete and cancellation",
+    "Atomic multi-object fill/stroke/width controls, numeric RGB/CMYK/opacity dialogs, source palettes and typed creation defaults",
+    "Windows ICC source RGB/CMYK to sRGB session preview, channel-model validation and bounded conversion cache; source color channels remain intact",
+    "Canvas frame cache keyed by immutable root/camera/size/profile/theme; overlay interactions reuse the source frame",
+    "SVG subset workflows and isolated worker protocol/lifecycle services; coverage and OS containment require their own acceptance evidence"
   ],
   "specifications": [
     "Native desktop architecture with four workspaces sharing one document model",
@@ -45,14 +39,15 @@
   ],
   "stack": {
     "harness": "Python 3.10+ standard library",
-    "application": "C++20 native desktop core and Qt preview shell",
-    "graphics": "ViewportRenderer facade with SoftwareRasterizer fallback and capability-probed hardware path",
+    "application": "C++20 core and current Win32/GDI desktop adapter; Qt shell remains planned",
+    "graphics": "SoftwareRasterizer baseline; this delivery does not implement or qualify a GPU backend",
     "geometry": "mm/binary64 source coordinates and transforms; robust production approximations with explicit error budgets",
     "runtime": "Single writer, immutable snapshots, bounded executors and isolated workers"
   },
   "next_priorities": [
-    "Milestone M1 successfully completed and locked: 11 parent tasks ps03-ps13 integrated, all 24 checkpoints verified, 20 native test suites and 13 E2E matrix gates passing.",
-    "Open Milestone M2: Advanced node editing, pen tool, bezier path manipulation, snapping engine, raster tool integration, and packaging."
+    "Review and integrate the tested editor delivery branch with uncommitted UI work currently present on main; do not overwrite that work",
+    "Improve full source redraw: this software trace exceeds both 16.7 ms and 33.3 ms p95 budgets; measure real present/input latency separately",
+    "Complete actual text outlines/group semantics, document ICC embedding/proof/export, spatial index and remaining M1 acceptance coverage before declaring M1 complete"
   ],
   "canonical": [
     "AGENTS.md",
@@ -67,12 +62,29 @@
     "docs/quality/gates.md"
   ],
   "limitations": [
-    "No runnable graphics editor or converters yet",
-    "No external AI provider execution or network message gateway yet",
-    "Performance, format coverage and recovery/containment are unmeasured runtime targets",
-    "Harness lease/diff checks are not OS write isolation or implemented application semantic/performance gates",
-    "Software 2D has a proposed separate budget; full-quality CPU 60 FPS and survival of fatal in-process GPU driver crashes are not verified",
-    "Backend, memory budgets, schema/API and dependency distribution obligations await spike evidence and review",
-    "Post-spike task dependencies/gates require coordinator dispatch; no native preview/build runner or automatic dependency scheduler exists yet"
-  ]
+    "This feature branch has a runnable native vector editor; its changes are not yet merged into the dirty main checkout",
+    "Debug CTest 33/33 and five selected Release consumer suites pass; these bounded tests do not certify every historic M1 claim",
+    "CPU benchmark uses 1000 paths/101000 path elements on an i7-3537U with nominal 8 GB RAM; no GPU/present/input-latency qualification",
+    "Source redraw p95 is 36.8944-41.6398 ms in three measured software runs; full-quality 60 FPS is not achieved in this trace",
+    "Cached hidden native CPU paint p95 is 12.1564-14.3293 ms; it is not a measured present interval",
+    "Group editing and genuine text rendering remain incomplete; text hit bounds are approximate",
+    "ICC settings are per-machine preview only; no document ICC binding/embedding, paper/ink soft proof, gamut warning, BPC or PDF/X",
+    "Native v1 lossy containers are rejected; no silent source-color flattening or legacy native round-trip claim",
+    "Source AI/CDR authoring round-trip, CAD constraints, CAM, 3D and external AI-provider scheduling are not implemented by this delivery",
+    "Harness leases and Git worktrees are coordination checks, not OS write isolation"
+  ],
+  "editor_delivery": {
+    "branch": "agent/codex/editor-pick-style-delivery-20261015",
+    "code_revision": "e977cc2",
+    "debug_ctest": {
+      "passed": 33,
+      "total": 33
+    },
+    "release_consumer_ctest": {
+      "passed": 5,
+      "total": 5
+    },
+    "evidence": "apps/desktop/tests/evidence/editor-tools-20261015/review.md",
+    "integration_status": "feature_branch_tested_main_has_uncommitted_ui_changes"
+  }
 }
