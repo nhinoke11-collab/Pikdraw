@@ -1,4 +1,5 @@
 #include "pikdraw/workers/process_launcher.hpp"
+#include "v2_proposal_validator.hpp"
 #include <array>
 #include <atomic>
 #include <algorithm>
@@ -199,6 +200,12 @@ bool WorkerProcessHost::Launch(const WorkerLaunchConfig& config) {
         Terminate(); return false;
     }
 
+    if (config.source_snapshot != nullptr) {
+        has_source_capability_ = true;
+        source_size_ = config.source_snapshot->SizeBytes();
+        source_token_ = config.source_snapshot->Token();
+        source_sha256_ = config.source_snapshot->Sha256();
+    }
     committed=true;
     return true;
 }
@@ -218,6 +225,12 @@ void WorkerProcessHost::Terminate() noexcept {
     job_object_.Reset();
     app_container_.Cleanup();
     process_id_ = 0;
+    has_source_capability_ = false;
+    source_size_ = 0;
+    source_token_.fill(0);
+    source_sha256_.fill(0);
+    v2_negotiated_ = false;
+    v2_features_ = 0;
 }
 
 bool WorkerProcessHost::WaitForExit(std::chrono::milliseconds timeout) noexcept {
@@ -236,104 +249,61 @@ bool WorkerProcessHost::IsAlive() const noexcept {
     return false;
 }
 
+bool WorkerProcessHost::NegotiateV2(
+    uint32_t required_features,
+    std::chrono::milliseconds timeout) {
+    last_transport_failure_ = "none";
+    last_worker_exit_code_ = STILL_ACTIVE;
+    if (v2_negotiated_) {
+        last_transport_failure_ = "v2 negotiation already completed";
+        Terminate();
+        return false;
+    }
+    uint32_t accepted = 0;
+    std::string_view failure;
+    const bool ok = NegotiateV2WorkerProcess(
+        stdin_write_handle_.Get(), stdout_read_handle_.Get(), process_handle_.Get(),
+        required_features, has_source_capability_, timeout, accepted, failure);
+    if (!ok) {
+        if (process_handle_.IsValid()) (void)GetExitCodeProcess(process_handle_.Get(), &last_worker_exit_code_);
+        Terminate();
+        last_transport_failure_ = failure.data();
+        return false;
+    }
+    v2_negotiated_ = true;
+    v2_features_ = accepted;
+    return true;
+}
+
 bool WorkerProcessHost::TransactV2ProposalStream(
     std::span<const uint8_t> request_bytes,
     std::chrono::milliseconds timeout,
-    uint64_t max_total_payload_bytes,
-    uint32_t max_response_frames,
+    const pikdraw::interop::V2ProposalStreamLimits& limits,
     const std::function<bool(const pikdraw::interop::IpcV2Frame&)>& consumer) {
     using namespace pikdraw::interop;
-    const auto reject = [&](const char* reason) {
-        last_transport_failure_ = reason;
-        if (process_handle_.IsValid()) {
-            (void)GetExitCodeProcess(process_handle_.Get(), &last_worker_exit_code_);
-        }
-        Terminate();
-        return false;
-    };
-
     last_transport_failure_ = "none";
     last_worker_exit_code_ = STILL_ACTIVE;
-    const auto request = DeserializeV2Frame(request_bytes);
-    if (!IsAlive() || !stdin_write_handle_.IsValid() || !stdout_read_handle_.IsValid() ||
-        !request || request->header.message_type != static_cast<uint16_t>(MessageType::V2ImportBegin) ||
-        timeout.count() <= 0 || timeout > std::chrono::minutes(1) ||
-        max_total_payload_bytes == 0 || max_response_frames == 0) {
-        return reject("invalid v2 request/lifecycle");
+    const auto request = DeserializeV2ImportBegin(request_bytes);
+    constexpr uint32_t required = IPC_V2_FEATURE_SOURCE_HANDLE | IPC_V2_FEATURE_CHECKED_PROPOSAL_STREAM;
+    if (!IsAlive() || !v2_negotiated_ || (v2_features_ & required) != required ||
+        !has_source_capability_ || !request || request->source_bytes != source_size_ ||
+        request->job.source_token != source_token_ || request->source_sha256 != source_sha256_) {
+        last_transport_failure_ = "v2 import requires negotiated source capability and matching snapshot";
+        if (process_handle_.IsValid()) (void)GetExitCodeProcess(process_handle_.Get(), &last_worker_exit_code_);
+        Terminate();
+        return false;
     }
 
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
-    if (!Transfer(
-            stdin_write_handle_.Get(),
-            process_handle_.Get(),
-            const_cast<uint8_t*>(request_bytes.data()),
-            request_bytes.size(),
-            true,
-            deadline)) {
-        return reject("v2 request write failed/timeout");
+    std::string_view failure;
+    if (!TransactV2ProposalStreamProcess(
+            stdin_write_handle_.Get(), stdout_read_handle_.Get(), process_handle_.Get(),
+            *request, request_bytes, timeout, limits, consumer, failure)) {
+        if (process_handle_.IsValid()) (void)GetExitCodeProcess(process_handle_.Get(), &last_worker_exit_code_);
+        Terminate();
+        last_transport_failure_ = failure.data();
+        return false;
     }
-
-    uint64_t total_payload_bytes = 0;
-    uint32_t expected_sequence = request->header.sequence_id;
-    for (uint32_t frame_index = 0; frame_index < max_response_frames; ++frame_index) {
-        IpcHeader header{};
-        if (!Transfer(
-                stdout_read_handle_.Get(),
-                process_handle_.Get(),
-                reinterpret_cast<uint8_t*>(&header),
-                sizeof(header),
-                false,
-                deadline)) {
-            return reject("v2 response header failed/timeout");
-        }
-        if (!ValidateV2FrameHeader(header) || header.sequence_id != expected_sequence ||
-            (header.message_type != static_cast<uint16_t>(MessageType::V2ProposalChunk) &&
-             header.message_type != static_cast<uint16_t>(MessageType::V2ImportEnd) &&
-             header.message_type != static_cast<uint16_t>(MessageType::V2ErrorResponse))) {
-            return reject("invalid v2 response header/order");
-        }
-        if (header.payload_bytes > max_total_payload_bytes - total_payload_bytes) {
-            return reject("v2 response stream exceeds host quota");
-        }
-
-        IpcV2Frame frame{};
-        frame.header = header;
-        try {
-            frame.payload.resize(header.payload_bytes);
-        } catch (const std::bad_alloc&) {
-            return reject("v2 response allocation failed");
-        }
-        if (!frame.payload.empty() &&
-            !Transfer(
-                stdout_read_handle_.Get(),
-                process_handle_.Get(),
-                frame.payload.data(),
-                frame.payload.size(),
-                false,
-                deadline)) {
-            return reject("v2 response body failed/timeout");
-        }
-        total_payload_bytes += header.payload_bytes;
-
-        if (consumer) {
-            bool accepted = false;
-            try {
-                accepted = consumer(frame);
-            } catch (...) {
-                accepted = false;
-            }
-            if (!accepted) return reject("v2 frame consumer rejected proposal");
-        }
-
-        const auto type = static_cast<MessageType>(header.message_type);
-        if (type == MessageType::V2ErrorResponse) {
-            return reject("worker returned v2 error");
-        }
-        if (type == MessageType::V2ImportEnd) return true;
-        if (expected_sequence == UINT32_MAX) return reject("v2 sequence exhausted");
-        ++expected_sequence;
-    }
-    return reject("v2 response frame count exceeded");
+    return true;
 }
 std::optional<std::vector<uint8_t>> WorkerProcessHost::TransactBinaryPayload(
     std::span<const uint8_t> request_bytes,

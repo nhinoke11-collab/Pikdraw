@@ -121,10 +121,12 @@ unsupported_protocol, không gọi parser trong host.
    minh size. Staging có quota, ACL tối thiểu, cleanup khi mọi kết thúc, và không chứa linked
    assets ngoài capability được cấp riêng.
 3. Launcher truyền đúng một handle read-only tới snapshot bằng explicit inherited-handle list
-   cùng IPC pipes. Command line chỉ được mang giá trị handle do host tạo; tuyệt đối không mang
-   đường dẫn nguồn. Handle được bind vào process/job ID, source token ngẫu nhiên 128-bit, size,
-   hash, document epoch/revision và generation. Worker không thể xin handle/path khác. Không đưa
-   handle qua payload có thể chọn tùy ý từ worker.
+   cùng ba handle I/O cố định: stdin pipe đọc, stdout pipe ghi và stderr sink tới `NUL`. Vì vậy
+   allowlist có đúng bốn handle trong profile có source; không có source thì đúng ba. Command line
+   chỉ được mang giá trị handle do host tạo; tuyệt đối không mang đường dẫn nguồn. Handle được bind
+   vào process/job ID, source token ngẫu nhiên 128-bit, size, hash, document epoch/revision và
+   generation. Worker không thể xin handle/path khác. Không đưa handle qua payload có thể chọn tùy ý
+   từ worker.
 4. Host/worker phải có live AppContainer positive/negative canaries chứng minh worker đọc được
    handle nguồn, không ghi được, không mở file khác, không dùng handle/pipe của process khác và
    bị chặn network/child. Nếu handle inheritance không hoạt động trong profile OS, job fail
@@ -132,15 +134,21 @@ unsupported_protocol, không gọi parser trong host.
 
 ### 6.2 Framing, proposal stream và limits
 
-- Header vẫn phải validate magic, negotiated major, message type, sequence, byte length và job
-  identity trước allocation. Proposal frames có payload tối đa 1 MiB; một producer chỉ có tối đa
-  hai frame đang chờ để tạo backpressure. Consumer chỉ nhận sequence tăng liên tiếp, offset chính
-  xác, request token đúng và frame thuộc một job còn sống.
-- ImportBegin xác nhận token/hash/size/profile; worker đọc nguồn từ capability handle. ProposalChunk
-  mang bounded records, ordinal liên tiếp và checksum frame. ImportEnd mang tổng bytes/records,
-  loss-report completeness và SHA-256 của canonical proposal stream. Message sai thứ tự, thừa,
-  thiếu, trùng, trailing bytes, checksum/hash/count không khớp, record vượt range hoặc EOF giữa
-  frame làm hủy toàn proposal. Final hash không thay thế validation record host-side.
+- Header PIKC 16-byte phải validate magic, negotiated major, message type, sequence và byte length.
+  Payload v2 bắt đầu bằng identity prefix cố định 24-byte: source token 128-bit và generation
+  64-bit. Host kiểm prefix này trước khi cấp buffer phần payload còn lại; negotiation dùng prefix
+  zero. Payload có thêm document ID, epoch, base revision, token và generation đầy đủ để host so
+  khớp identity sau khi đọc phần bounded còn lại. Proposal frames có payload tối đa 1 MiB; producer
+  chỉ có tối đa hai frame đang chờ để tạo backpressure.
+- ImportBegin xác nhận token/hash/size/format profile; worker hash lại chính handle nguồn trước khi
+  gọi adapter. ProposalChunk chứa chunk ordinal, first-record ordinal và các record có header
+  canonical `type:u16, flags:u16=0, length:u32, bytes`; mọi record có type khác zero, length tối đa
+  512 KiB và tổng chunk tối đa 1 MiB. CRC32/IEEE tính trên chuỗi canonical records. ImportEnd mang
+  tổng chunks/records/canonical bytes, cờ fidelity report đầy đủ và SHA-256 của phép nối canonical
+  records theo thứ tự. Host kiểm record framing, CRC, ordinal, tổng count/byte và SHA trước khi chấp
+  nhận terminal frame. Sequence/message sai, token hoặc job identity khác, trailing bytes,
+  checksum/hash/count không khớp, record vượt range hoặc EOF giữa frame làm hủy toàn proposal.
+  Final hash không thay thế semantic validation từng record host-side.
 - Host ghi chunks vào job staging riêng thay vì giữ toàn scene trong RAM, nhưng validate record
   ngay khi đọc. Chỉ một reader/writer có quyền consume stream; queue count/bytes và disk usage có
   trần. Hết quota, thiếu quyền hoặc staging I/O lỗi kết thúc job; không bỏ chunk hoặc giảm chất
@@ -173,6 +181,8 @@ Theo từng worker/OS/build ghi exact hash, flags, toolchain/dependencies, limit
 Kiểm tra containment bằng path/file/network/handle/child positive+negative canaries; protocol
 bằng truncated, oversized, duplicate/out-of-order, nonfinite, deep, stale, fuzz và stdout flood;
 lifecycle bằng cancel/crash/timeout/close/restart; soak leak temp/files/handles/commit bytes.
+Các wire-level vectors đã version hóa tại
+[`worker-ipc-v2-vectors.json`](../docs/quality/reference-fixtures/worker-ipc-v2-vectors.json).
 Kiểm thử trên source user được chạy cục bộ; chỉ lưu corpus IDs/hash trong report có phân quyền,
 không commit sample, tên khách hàng hoặc nội dung file.
 

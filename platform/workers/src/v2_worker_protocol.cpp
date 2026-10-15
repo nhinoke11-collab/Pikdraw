@@ -1,0 +1,258 @@
+#include "v2_worker_protocol.hpp"
+
+#include "pikdraw/workers/source_snapshot.hpp"
+
+#include <bcrypt.h>
+#include <algorithm>
+#include <array>
+#include <cstring>
+#include <limits>
+#include <vector>
+
+namespace pikdraw::workers {
+namespace {
+
+using namespace pikdraw::interop;
+
+bool ReadExact(HANDLE handle, void* data, DWORD count) {
+    auto* bytes = static_cast<uint8_t*>(data);
+    DWORD total = 0;
+    while (total < count) {
+        DWORD received = 0;
+        if (!ReadFile(handle, bytes + total, count - total, &received, nullptr) || received == 0) return false;
+        total += received;
+    }
+    return true;
+}
+
+bool WriteExact(HANDLE handle, const void* data, DWORD count) {
+    const auto* bytes = static_cast<const uint8_t*>(data);
+    DWORD total = 0;
+    while (total < count) {
+        DWORD sent = 0;
+        if (!WriteFile(handle, bytes + total, count - total, &sent, nullptr) || sent == 0) return false;
+        total += sent;
+    }
+    return true;
+}
+
+bool ReadPacketAfterHeader(
+    HANDLE input,
+    const IpcHeader& header,
+    std::vector<uint8_t>& packet,
+    bool require_zero_identity,
+    const V2FrameIdentity* expected_identity = nullptr) {
+    if (!ValidateV2FrameHeader(header) || header.payload_bytes < IPC_V2_IDENTITY_PREFIX_BYTES) return false;
+    std::array<uint8_t, IPC_V2_IDENTITY_PREFIX_BYTES> prefix_bytes{};
+    if (!ReadExact(input, prefix_bytes.data(), static_cast<DWORD>(prefix_bytes.size()))) return false;
+    const auto prefix = DeserializeV2FrameIdentityPrefix(prefix_bytes);
+    if (!prefix || (require_zero_identity && !prefix->IsZero()) ||
+        (expected_identity && (prefix->source_token != expected_identity->source_token ||
+                               prefix->generation != expected_identity->generation)) ||
+        (!require_zero_identity && !expected_identity &&
+         (prefix->IsZero() || prefix->generation == 0))) return false;
+    try {
+        packet.resize(sizeof(IpcHeader) + header.payload_bytes);
+    } catch (...) {
+        return false;
+    }
+    std::memcpy(packet.data(), &header, sizeof(header));
+    std::copy(prefix_bytes.begin(), prefix_bytes.end(), packet.begin() + sizeof(IpcHeader));
+    const DWORD remaining = header.payload_bytes - static_cast<DWORD>(prefix_bytes.size());
+    return remaining == 0 || ReadExact(
+        input, packet.data() + sizeof(IpcHeader) + prefix_bytes.size(), remaining);
+}
+
+bool ReadPacket(HANDLE input, IpcHeader& header, std::vector<uint8_t>& packet, bool zero_identity) {
+    return ReadExact(input, &header, sizeof(header)) &&
+           ReadPacketAfterHeader(input, header, packet, zero_identity);
+}
+
+bool WritePacket(HANDLE output, const std::vector<uint8_t>& packet) {
+    return packet.size() <= MAXDWORD && WriteExact(output, packet.data(), static_cast<DWORD>(packet.size()));
+}
+
+bool HashBytes(std::span<const uint8_t> bytes, IpcV2Digest& digest) {
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+    BCRYPT_HASH_HANDLE hash = nullptr;
+    std::vector<uint8_t> object;
+    const auto close = [&] {
+        if (hash) BCryptDestroyHash(hash);
+        if (algorithm) BCryptCloseAlgorithmProvider(algorithm, 0);
+    };
+    if (!BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0))) return false;
+    DWORD object_bytes = 0;
+    DWORD written = 0;
+    if (!BCRYPT_SUCCESS(BCryptGetProperty(
+            algorithm, BCRYPT_OBJECT_LENGTH, reinterpret_cast<PUCHAR>(&object_bytes), sizeof(object_bytes),
+            &written, 0)) || object_bytes == 0 || written != sizeof(object_bytes)) {
+        close();
+        return false;
+    }
+    try {
+        object.resize(object_bytes);
+    } catch (...) {
+        close();
+        return false;
+    }
+    if (!BCRYPT_SUCCESS(BCryptCreateHash(
+            algorithm, &hash, object.data(), static_cast<ULONG>(object.size()), nullptr, 0, 0))) {
+        close();
+        return false;
+    }
+    size_t offset = 0;
+    while (offset < bytes.size()) {
+        const ULONG count = static_cast<ULONG>(std::min<size_t>(
+            bytes.size() - offset, std::numeric_limits<ULONG>::max()));
+        if (!BCRYPT_SUCCESS(BCryptHashData(
+                hash, const_cast<PUCHAR>(bytes.data() + offset), count, 0))) {
+            close();
+            return false;
+        }
+        offset += count;
+    }
+    const bool ok = BCRYPT_SUCCESS(BCryptFinishHash(
+        hash, digest.data(), static_cast<ULONG>(digest.size()), 0));
+    close();
+    return ok;
+}
+
+bool VerifySource(HANDLE source, const V2ImportBegin& request) {
+    if (source == INVALID_HANDLE_VALUE) return false;
+    uint64_t bytes = 0;
+    SourceDigest digest{};
+    if (!HashReadOnlyHandle(source, request.source_bytes, bytes, digest) ||
+        bytes != request.source_bytes || digest != request.source_sha256) return false;
+    LARGE_INTEGER beginning{};
+    return SetFilePointerEx(source, beginning, nullptr, FILE_BEGIN) != FALSE;
+}
+
+bool SendError(HANDLE output, uint32_t sequence, uint32_t code, const char* diagnostic) {
+    return WritePacket(output, SerializeV2ErrorResponse({code, diagnostic}, sequence));
+}
+
+bool Negotiate(HANDLE output, const IpcHeader& header, std::span<const uint8_t> packet,
+               bool& negotiated, uint32_t& accepted_features) {
+    if (negotiated || header.sequence_id != 0) return false;
+    const auto request = DeserializeV2NegotiationRequest(packet);
+    if (!request || (request->required_features & ~IPC_V2_SUPPORTED_FEATURES) != 0) return false;
+    V2NegotiationResponse response;
+    response.major = IPC_WIRE_VERSION_V2;
+    response.minor = 0;
+    response.accepted_features = request->required_features;
+    response.accepted = true;
+    const auto encoded = SerializeV2NegotiationResponse(response, header.sequence_id);
+    if (encoded.empty() || !WritePacket(output, encoded)) return false;
+    accepted_features = response.accepted_features;
+    negotiated = true;
+    return true;
+}
+
+bool VerifyAndRejectUnsupportedAdapter(
+    HANDLE output,
+    HANDLE source,
+    const IpcHeader& header,
+    std::span<const uint8_t> packet,
+    uint32_t accepted_features) {
+    constexpr uint32_t required = IPC_V2_FEATURE_SOURCE_HANDLE | IPC_V2_FEATURE_CHECKED_PROPOSAL_STREAM;
+    const auto request = DeserializeV2ImportBegin(packet);
+    if (!request || header.sequence_id != 1 || (accepted_features & required) != required) return false;
+    if (!VerifySource(source, *request)) return SendError(output, header.sequence_id, 2, "source capability hash mismatch");
+    // No parser is registered in this transport checkpoint. This is an explicit error, never a fake success.
+    return SendError(output, header.sequence_id, 1, "no format adapter registered");
+}
+
+bool SendFixtureStream(HANDLE output, const V2ImportBegin& request, uint32_t sequence, std::string_view mode) {
+    if (mode == "--test-v2-stream-oversize") {
+        IpcHeader oversized{};
+        oversized.wire_version = IPC_WIRE_VERSION_V2;
+        oversized.message_type = static_cast<uint16_t>(MessageType::V2ProposalChunk);
+        oversized.sequence_id = sequence;
+        oversized.payload_bytes = static_cast<uint32_t>(IPC_V2_MAX_FRAME_BYTES + 1);
+        return WriteExact(output, &oversized, sizeof(oversized));
+    }
+
+    const std::array<uint8_t, 3> sample_payload{0x11, 0x22, 0x33};
+    V2ProposalChunk chunk;
+    chunk.job = request.job;
+    chunk.chunk_ordinal = mode == "--test-v2-stream-bad-ordinal" ? 1 : 0;
+    chunk.first_record_ordinal = 0;
+    chunk.record_count = 1;
+    if (!AppendV2ProposalRecord(chunk.canonical_record_bytes, 1, sample_payload)) return false;
+    chunk.checksum_crc32 = V2ProposalRecordsCrc32(chunk.canonical_record_bytes);
+    if (mode == "--test-v2-stream-wrong-job") chunk.job.document_id = "wrong-document";
+    auto chunk_packet = SerializeV2ProposalChunk(chunk, sequence);
+    if (chunk_packet.empty()) return false;
+    if (mode == "--test-v2-stream-wrong-token") chunk_packet[sizeof(IpcHeader)] ^= 0x80;
+    if (mode == "--test-v2-stream-bad-crc") chunk_packet.back() ^= 0x01;
+    if (mode == "--test-v2-stream-gap") {
+        IpcHeader header{};
+        std::memcpy(&header, chunk_packet.data(), sizeof(header));
+        ++header.sequence_id;
+        std::memcpy(chunk_packet.data(), &header, sizeof(header));
+    }
+    if (!WritePacket(output, chunk_packet)) return false;
+    if (mode == "--test-v2-stream-no-end") return true;
+
+    V2ImportEnd end;
+    end.job = request.job;
+    end.chunk_count = 1;
+    end.record_count = mode == "--test-v2-stream-bad-count" ? 2 : 1;
+    end.canonical_bytes = chunk.canonical_record_bytes.size();
+    end.fidelity_report_complete = mode != "--test-v2-stream-bad-report";
+    if (!HashBytes(chunk.canonical_record_bytes, end.canonical_sha256)) return false;
+    if (mode == "--test-v2-stream-bad-hash") end.canonical_sha256[0] ^= 0x80;
+    const uint32_t end_sequence = mode == "--test-v2-stream-gap" ? sequence + 3 : sequence + 1;
+    return WritePacket(output, SerializeV2ImportEnd(end, end_sequence));
+}
+
+} // namespace
+
+bool HandleV2WorkerFrame(
+    HANDLE input,
+    HANDLE output,
+    HANDLE source_handle,
+    const IpcHeader& header,
+    bool& negotiated,
+    uint32_t& accepted_features) {
+    std::vector<uint8_t> packet;
+    if (!ValidateV2FrameHeader(header)) return false;
+    const bool negotiation = header.message_type == static_cast<uint16_t>(MessageType::V2NegotiateRequest);
+    if (!ReadPacketAfterHeader(input, header, packet, negotiation)) return false;
+    if (negotiation) return Negotiate(output, header, packet, negotiated, accepted_features);
+    if (!negotiated || header.message_type != static_cast<uint16_t>(MessageType::V2ImportBegin)) return false;
+    return VerifyAndRejectUnsupportedAdapter(output, source_handle, header, packet, accepted_features);
+}
+
+int RunV2StreamFixture(std::string_view mode, HANDLE source_handle) {
+    HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
+    HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
+    IpcHeader header{};
+    std::vector<uint8_t> packet;
+    bool negotiated = false;
+    uint32_t accepted_features = 0;
+    if (!ReadPacket(input, header, packet, true) ||
+        header.message_type != static_cast<uint16_t>(MessageType::V2NegotiateRequest)) return 50;
+    if (mode == "--test-v2-stream-negotiation-reject") {
+        V2NegotiationResponse rejected;
+        rejected.major = IPC_WIRE_VERSION_V2;
+        rejected.error_code = 1001;
+        const auto response = SerializeV2NegotiationResponse(rejected, header.sequence_id);
+        return WritePacket(output, response) ? 0 : 51;
+    }
+    if (mode == "--test-v2-stream-v1-downgrade") {
+        IpcHeader legacy{};
+        legacy.message_type = static_cast<uint16_t>(MessageType::Pong);
+        legacy.sequence_id = header.sequence_id;
+        return WriteExact(output, &legacy, sizeof(legacy)) ? 0 : 52;
+    }
+    if (!Negotiate(output, header, packet, negotiated, accepted_features)) return 53;
+
+    if (!ReadPacket(input, header, packet, false) ||
+        header.message_type != static_cast<uint16_t>(MessageType::V2ImportBegin)) return 54;
+    const auto request = DeserializeV2ImportBegin(packet);
+    if (!request || header.sequence_id != 1 || !VerifySource(source_handle, *request)) return 55;
+    return SendFixtureStream(output, *request, header.sequence_id, mode) ? 0 : 56;
+}
+
+} // namespace pikdraw::workers

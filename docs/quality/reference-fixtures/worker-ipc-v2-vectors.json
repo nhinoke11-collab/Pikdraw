@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "fixture_type": "worker_ipc_v2_semantics",
+  "status": "proposed",
+  "magic": "PIKC",
+  "wire_version": 2,
+  "header_bytes": 16,
+  "identity_prefix_bytes": 24,
+  "identity_prefix": {
+    "source_token_bytes": 16,
+    "generation_bytes": 8,
+    "byte_order": "little_endian",
+    "negotiation_value": "all_zero"
+  },
+  "max_frame_payload_bytes": 1048576,
+  "max_record_bytes": 524288,
+  "max_records_per_chunk": 4096,
+  "crc32": "IEEE",
+  "canonical_sha256": "concatenated canonical record encodings in ordinal order",
+  "source_handle_allowlist": {
+    "with_source": [
+      "stdin_pipe_read",
+      "stdout_pipe_write",
+      "stderr_nul_sink",
+      "source_snapshot_read_only"
+    ],
+    "without_source": [
+      "stdin_pipe_read",
+      "stdout_pipe_write",
+      "stderr_nul_sink"
+    ]
+  },
+  "positive_vectors": [
+    {
+      "name": "v2_negotiation_exact_features",
+      "major": 2,
+      "features": ["source_handle", "checked_proposal_stream"],
+      "expected_valid": true
+    },
+    {
+      "name": "checked_single_record_stream",
+      "chunk_ordinal": 0,
+      "first_record_ordinal": 0,
+      "crc_matches": true,
+      "terminal_counts_match": true,
+      "canonical_sha256_matches": true,
+      "fidelity_report_complete": true,
+      "expected_valid": true
+    }
+  ],
+  "negative_vectors": [
+    {
+      "name": "v1_reply_to_v2_negotiation",
+      "stage": "negotiation",
+      "expected_error": "unsupported_protocol_no_downgrade"
+    },
+    {
+      "name": "wrong_identity_prefix_token",
+      "stage": "before_payload_allocation",
+      "expected_error": "source_token_mismatch"
+    },
+    {
+      "name": "truncated_identity_prefix",
+      "stage": "header",
+      "expected_error": "truncated_identity_prefix"
+    },
+    {
+      "name": "sequence_gap",
+      "stage": "frame_order",
+      "expected_error": "sequence_mismatch"
+    },
+    {
+      "name": "chunk_crc_mismatch",
+      "stage": "proposal_chunk",
+      "expected_error": "crc32_mismatch"
+    },
+    {
+      "name": "record_flags_nonzero",
+      "stage": "proposal_chunk",
+      "expected_error": "unsupported_record_flags"
+    },
+    {
+      "name": "record_length_over_limit",
+      "stage": "proposal_chunk",
+      "expected_error": "record_limit_exceeded"
+    },
+    {
+      "name": "chunk_or_record_ordinal_gap",
+      "stage": "proposal_chunk",
+      "expected_error": "ordinal_mismatch"
+    },
+    {
+      "name": "terminal_count_mismatch",
+      "stage": "import_end",
+      "expected_error": "count_mismatch"
+    },
+    {
+      "name": "terminal_canonical_hash_mismatch",
+      "stage": "import_end",
+      "expected_error": "sha256_mismatch"
+    },
+    {
+      "name": "incomplete_fidelity_report",
+      "stage": "import_end",
+      "expected_error": "incomplete_report"
+    },
+    {
+      "name": "eof_before_import_end",
+      "stage": "stream",
+      "expected_error": "incomplete_proposal"
+    },
+    {
+      "name": "unlisted_inherited_handle",
+      "stage": "process_launch",
+      "expected_error": "handle_not_in_allowlist"
+    }
+  ]
+}

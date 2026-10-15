@@ -9,6 +9,7 @@ add_library(pikdraw_interop STATIC
     src/adapters/svg_importer.cpp
     src/writers/svg_exporter.cpp
     src/ipc_dto.cpp
+    src/ipc_v2_dto.cpp
     src/fixture_manifest.cpp
     src/format_capability_matrix.cpp
     src/interop_types.cpp

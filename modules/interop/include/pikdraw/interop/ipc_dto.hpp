@@ -1,6 +1,7 @@
 #pragma once
 
 #include "interop_types.hpp"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -16,9 +17,20 @@ inline constexpr uint16_t IPC_WIRE_VERSION_V2 = 2;
 
 inline constexpr size_t IPC_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024; // 16 MiB
 inline constexpr size_t IPC_V2_MAX_FRAME_BYTES = 1024 * 1024; // 1 MiB
+inline constexpr size_t IPC_V2_IDENTITY_PREFIX_BYTES = 24;
 inline constexpr size_t IPC_V2_MAX_QUEUED_FRAMES = 2;
+inline constexpr size_t IPC_V2_MAX_DOCUMENT_ID_BYTES = 128;
+inline constexpr size_t IPC_V2_MAX_FORMAT_ID_BYTES = 32;
+inline constexpr size_t IPC_V2_MAX_PROFILE_ID_BYTES = 64;
+inline constexpr size_t IPC_V2_MAX_RECORDS_PER_CHUNK = 4096;
+inline constexpr size_t IPC_V2_MAX_RECORD_BYTES = 512 * 1024;
 inline constexpr size_t IPC_MAX_OBJECTS = 100000;
 inline constexpr uint32_t IPC_MAX_DEPTH = 64;
+
+inline constexpr uint32_t IPC_V2_FEATURE_SOURCE_HANDLE = 1u << 0;
+inline constexpr uint32_t IPC_V2_FEATURE_CHECKED_PROPOSAL_STREAM = 1u << 1;
+inline constexpr uint32_t IPC_V2_SUPPORTED_FEATURES =
+    IPC_V2_FEATURE_SOURCE_HANDLE | IPC_V2_FEATURE_CHECKED_PROPOSAL_STREAM;
 
 enum class MessageType : uint16_t {
     Ping = 1,
@@ -49,6 +61,87 @@ struct IpcHeader {
 struct IpcV2Frame {
     IpcHeader header{};
     std::vector<uint8_t> payload;
+};
+
+using IpcV2Token = std::array<uint8_t, 16>;
+using IpcV2Digest = std::array<uint8_t, 32>;
+
+struct V2FrameIdentity {
+    IpcV2Token source_token{};
+    uint64_t generation{0};
+
+    [[nodiscard]] bool IsZero() const noexcept {
+        return generation == 0 &&
+               std::all_of(source_token.begin(), source_token.end(), [](uint8_t b) { return b == 0; });
+    }
+};
+
+struct V2JobIdentity {
+    std::string document_id;
+    uint64_t epoch{0};
+    uint64_t base_revision{0};
+    uint64_t generation{0};
+    IpcV2Token source_token{};
+
+    [[nodiscard]] bool IsMatching(const V2JobIdentity& other) const noexcept {
+        return document_id == other.document_id && epoch == other.epoch &&
+               base_revision == other.base_revision && generation == other.generation &&
+               source_token == other.source_token;
+    }
+};
+
+struct V2NegotiationRequest {
+    uint16_t major{IPC_WIRE_VERSION_V2};
+    uint16_t minor{0};
+    uint32_t required_features{IPC_V2_SUPPORTED_FEATURES};
+};
+
+struct V2NegotiationResponse {
+    uint16_t major{0};
+    uint16_t minor{0};
+    uint32_t accepted_features{0};
+    uint32_t error_code{0};
+    bool accepted{false};
+};
+
+struct V2ImportBegin {
+    V2JobIdentity job;
+    uint64_t source_bytes{0};
+    IpcV2Digest source_sha256{};
+    std::string format_id;
+    std::string profile_id;
+};
+
+struct V2ProposalChunk {
+    V2JobIdentity job;
+    uint32_t chunk_ordinal{0};
+    uint64_t first_record_ordinal{0};
+    uint32_t record_count{0};
+    uint32_t checksum_crc32{0};
+    std::vector<uint16_t> record_types;
+    std::vector<uint8_t> canonical_record_bytes;
+};
+
+struct V2ImportEnd {
+    V2JobIdentity job;
+    uint32_t chunk_count{0};
+    uint64_t record_count{0};
+    uint64_t canonical_bytes{0};
+    IpcV2Digest canonical_sha256{};
+    bool fidelity_report_complete{false};
+};
+
+struct V2ErrorResponse {
+    uint32_t error_code{0};
+    std::string diagnostic;
+};
+
+struct V2ProposalStreamLimits {
+    uint64_t max_total_response_bytes{0};
+    uint64_t max_canonical_bytes{0};
+    uint64_t max_records{0};
+    uint32_t max_chunks{0};
+    uint32_t max_response_frames{0};
 };
 
 struct JobEnvelope {
@@ -104,6 +197,39 @@ struct CanaryPayloadResponse {
     std::span<const uint8_t> payload);
 [[nodiscard]] std::optional<IpcV2Frame> DeserializeV2Frame(
     std::span<const uint8_t> packet);
+[[nodiscard]] std::vector<uint8_t> SerializeV2NegotiationRequest(
+    const V2NegotiationRequest& request, uint32_t sequence_id);
+[[nodiscard]] std::optional<V2NegotiationRequest> DeserializeV2NegotiationRequest(
+    std::span<const uint8_t> packet);
+[[nodiscard]] std::vector<uint8_t> SerializeV2NegotiationResponse(
+    const V2NegotiationResponse& response, uint32_t sequence_id);
+[[nodiscard]] std::optional<V2NegotiationResponse> DeserializeV2NegotiationResponse(
+    std::span<const uint8_t> packet);
+[[nodiscard]] std::vector<uint8_t> SerializeV2ImportBegin(
+    const V2ImportBegin& request, uint32_t sequence_id);
+[[nodiscard]] std::optional<V2ImportBegin> DeserializeV2ImportBegin(
+    std::span<const uint8_t> packet);
+[[nodiscard]] std::vector<uint8_t> SerializeV2ProposalChunk(
+    const V2ProposalChunk& chunk, uint32_t sequence_id);
+[[nodiscard]] std::optional<V2ProposalChunk> DeserializeV2ProposalChunk(
+    std::span<const uint8_t> packet);
+[[nodiscard]] std::vector<uint8_t> SerializeV2ImportEnd(
+    const V2ImportEnd& end, uint32_t sequence_id);
+[[nodiscard]] std::optional<V2ImportEnd> DeserializeV2ImportEnd(
+    std::span<const uint8_t> packet);
+[[nodiscard]] std::vector<uint8_t> SerializeV2ErrorResponse(
+    const V2ErrorResponse& error, uint32_t sequence_id);
+[[nodiscard]] std::optional<V2ErrorResponse> DeserializeV2ErrorResponse(
+    std::span<const uint8_t> packet);
+[[nodiscard]] uint32_t V2ProposalRecordsCrc32(std::span<const uint8_t> bytes) noexcept;
+[[nodiscard]] bool AppendV2ProposalRecord(
+    std::vector<uint8_t>& canonical_records,
+    uint16_t record_type,
+    std::span<const uint8_t> payload);
+[[nodiscard]] std::array<uint8_t, IPC_V2_IDENTITY_PREFIX_BYTES> SerializeV2FrameIdentityPrefix(
+    const V2FrameIdentity& identity) noexcept;
+[[nodiscard]] std::optional<V2FrameIdentity> DeserializeV2FrameIdentityPrefix(
+    std::span<const uint8_t> bytes) noexcept;
 
 // Binary serialization helpers for wire v1.
 std::vector<uint8_t> SerializeImportRequest(const ImportPayloadRequest& req, uint32_t sequence_id);

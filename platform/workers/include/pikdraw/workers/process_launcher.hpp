@@ -40,12 +40,16 @@ public:
     [[nodiscard]] bool Launch(const WorkerLaunchConfig& config);
     void Terminate() noexcept;
 
+    // A v2 request is never downgraded to the legacy raw-byte protocol.
+    [[nodiscard]] bool NegotiateV2(
+        uint32_t required_features,
+        std::chrono::milliseconds timeout);
+
     // Streams bounded v2 proposal frames to one consumer with backpressure.
     [[nodiscard]] bool TransactV2ProposalStream(
         std::span<const uint8_t> request_bytes,
         std::chrono::milliseconds timeout,
-        uint64_t max_total_payload_bytes,
-        uint32_t max_response_frames,
+        const pikdraw::interop::V2ProposalStreamLimits& limits,
         const std::function<bool(const pikdraw::interop::IpcV2Frame&)>& consumer);
 
     // Sends framed packet and waits for response up to timeout
@@ -67,6 +71,12 @@ private:
     JobObjectGuard job_object_;
     AppContainerProfileGuard app_container_;
     uint32_t process_id_{0};
+    bool has_source_capability_{false};
+    uint64_t source_size_{0};
+    SourceToken source_token_{};
+    SourceDigest source_sha256_{};
+    bool v2_negotiated_{false};
+    uint32_t v2_features_{0};
     const char* last_transport_failure_{"none"};
     DWORD last_worker_exit_code_{STILL_ACTIVE};
 };

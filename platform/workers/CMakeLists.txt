@@ -11,6 +11,7 @@ add_library(pikdraw_worker_common STATIC
     src/appcontainer.cpp
     src/process_launcher.cpp
     src/source_snapshot.cpp
+    src/v2_proposal_validator.cpp
 )
 
 target_include_directories(pikdraw_worker_common PUBLIC
@@ -28,6 +29,7 @@ target_link_libraries(pikdraw_worker_common PUBLIC
 # Worker standalone executable (must be compiled so host process can launch it)
 add_executable(spike_worker
     src/worker_main.cpp
+    src/v2_worker_protocol.cpp
 )
 target_link_libraries(spike_worker PRIVATE
     pikdraw_worker_common
@@ -45,4 +47,13 @@ if(PIKDRAW_BUILD_TESTS)
         pikdraw_worker_common
     )
     add_test(NAME test_pikdraw_workers COMMAND test_pikdraw_workers --protocol-only)
+
+    add_executable(test_pikdraw_worker_v2_integrity
+        tests/v2_integrity_tests.cpp
+    )
+    target_link_libraries(test_pikdraw_worker_v2_integrity PRIVATE
+        pikdraw_worker_common
+    )
+    add_dependencies(test_pikdraw_worker_v2_integrity spike_worker)
+    add_test(NAME test_pikdraw_worker_v2_integrity COMMAND test_pikdraw_worker_v2_integrity)
 endif()

@@ -335,75 +335,48 @@ void TestCodecRejectsMalformedFrames() {
 }
 
 void TestV2ProposalStreams() {
-    auto worker_path = std::filesystem::current_path() / "spike_worker.exe";
-    if (!std::filesystem::exists(worker_path)) {
-        worker_path = std::filesystem::current_path() / "build" / "win-dev" /
-            "platform" / "workers" / "spike_worker.exe";
-    }
-    WorkerLaunchConfig config;
-    config.worker_executable_path = worker_path.wstring();
-    config.use_appcontainer = false;
-    config.trusted_test_worker = true;
-    WorkerProcessHost host;
-    const std::array<uint8_t, 0> empty_payload{};
-    const auto request = SerializeV2Frame(
-        MessageType::V2ImportBegin, 50, empty_payload);
+    V2JobIdentity job;
+    job.document_id = "v2-test-document";
+    job.epoch = 3;
+    job.base_revision = 7;
+    job.generation = 9;
+    job.source_token[0] = 0x42;
 
-    config.arguments = {L"--test-v2-stream-good"};
-    TEST_ASSERT(host.Launch(config), "Launch valid v2 stream worker");
-    uint32_t frames_seen = 0;
-    uint64_t bytes_seen = 0;
-    const bool complete = host.TransactV2ProposalStream(
-        request,
-        std::chrono::seconds(2),
-        5,
-        2,
-        [&](const IpcV2Frame& frame) {
-            ++frames_seen;
-            bytes_seen += frame.payload.size();
-            return frame.header.sequence_id == 49 + frames_seen;
-        });
-    TEST_ASSERT(complete && frames_seen == 2 && bytes_seen == 5,
-                "V2 stream accepts ordered chunks and terminal frame");
-    host.Terminate();
+    const V2NegotiationRequest negotiation{};
+    const auto negotiation_packet = SerializeV2NegotiationRequest(negotiation, 0);
+    const auto parsed_negotiation = DeserializeV2NegotiationRequest(negotiation_packet);
+    TEST_ASSERT(parsed_negotiation && parsed_negotiation->required_features == IPC_V2_SUPPORTED_FEATURES,
+                "V2 negotiation codecs preserve the required feature mask");
 
-    config.arguments = {L"--test-v2-stream-gap"};
-    TEST_ASSERT(host.Launch(config), "Launch out-of-order v2 fixture");
-    TEST_ASSERT(!host.TransactV2ProposalStream(
-                    request, std::chrono::seconds(2), 16, 4, {}),
-                "V2 stream rejects a sequence gap");
-    TEST_ASSERT(std::string_view(host.LastTransportFailure()) == "invalid v2 response header/order",
-                "Sequence failure is surfaced explicitly");
+    V2ImportBegin begin;
+    begin.job = job;
+    begin.source_bytes = 128;
+    begin.source_sha256[0] = 0xA5;
+    begin.format_id = "SVG";
+    begin.profile_id = "svg-subset-v1";
+    const auto begin_packet = SerializeV2ImportBegin(begin, 1);
+    const auto parsed_begin = DeserializeV2ImportBegin(begin_packet);
+    TEST_ASSERT(parsed_begin && parsed_begin->job.IsMatching(job) && parsed_begin->source_bytes == 128,
+                "V2 import begin binds source hash and job identity");
 
-    config.arguments = {L"--test-v2-stream-oversize"};
-    TEST_ASSERT(host.Launch(config), "Launch oversized v2 fixture");
-    TEST_ASSERT(!host.TransactV2ProposalStream(
-                    request, std::chrono::seconds(2), 16, 4, {}),
-                "V2 stream rejects oversized header before body allocation");
-
-    config.arguments = {L"--test-v2-stream-quota"};
-    TEST_ASSERT(host.Launch(config), "Launch v2 quota fixture");
-    TEST_ASSERT(!host.TransactV2ProposalStream(
-                    request, std::chrono::seconds(2), 2, 4, {}),
-                "V2 stream rejects response above total-byte quota");
-
-    config.arguments = {L"--test-v2-stream-no-end"};
-    TEST_ASSERT(host.Launch(config), "Launch incomplete v2 fixture");
-    TEST_ASSERT(!host.TransactV2ProposalStream(
-                    request, std::chrono::seconds(2), 16, 4, {}),
-                "V2 stream rejects EOF before terminal frame");
-    TEST_ASSERT(std::string_view(host.LastTransportFailure()) == "v2 response header failed/timeout",
-                "Incomplete stream failure is surfaced explicitly");
-
-    config.arguments = {L"--test-v2-stream-good"};
-    TEST_ASSERT(host.Launch(config), "Launch v2 consumer-failure fixture");
-    TEST_ASSERT(!host.TransactV2ProposalStream(
-                    request, std::chrono::seconds(2), 16, 4,
-                    [](const IpcV2Frame&) { return false; }),
-                "V2 stream stops when the bounded staging consumer rejects a frame");
+    V2ProposalChunk chunk;
+    chunk.job = job;
+    chunk.record_count = 1;
+    const std::array<uint8_t, 3> record{1, 2, 3};
+    TEST_ASSERT(AppendV2ProposalRecord(chunk.canonical_record_bytes, 1, record),
+                "Encode a bounded typed proposal record");
+    chunk.checksum_crc32 = V2ProposalRecordsCrc32(chunk.canonical_record_bytes);
+    const auto chunk_packet = SerializeV2ProposalChunk(chunk, 1);
+    const auto parsed_chunk = DeserializeV2ProposalChunk(chunk_packet);
+    TEST_ASSERT(parsed_chunk && parsed_chunk->record_types.size() == 1 &&
+                    parsed_chunk->record_types[0] == 1,
+                "V2 chunk validates typed record framing and CRC32");
+    auto corrupt_chunk = chunk_packet;
+    corrupt_chunk.back() ^= 1;
+    TEST_ASSERT(!DeserializeV2ProposalChunk(corrupt_chunk), "V2 chunk rejects a modified record checksum");
 
     ++g_tests_passed;
-    std::cout << "[PASS] TestV2ProposalStreams\n";
+    std::cout << "[PASS] TestV2ProposalStreamsCodec\n";
 }
 void TestSourceSnapshotBroker() {
     TemporarySourceFile source;

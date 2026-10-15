@@ -2,6 +2,7 @@
 #include "pikdraw/interop/payload_validator.hpp"
 #include "pikdraw/workers/canary_definitions.hpp"
 #include "pikdraw/workers/source_snapshot.hpp"
+#include "v2_worker_protocol.hpp"
 #include "pikdraw/workers/win32_common.hpp"
 
 #include <iostream>
@@ -281,63 +282,12 @@ bool ProbeReadOnlySource(
     return GetLastError() == ERROR_ACCESS_DENIED;
 }
 
-int RunV2StreamFixture(std::string_view mode) {
-    HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
-    HANDLE output = GetStdHandle(STD_OUTPUT_HANDLE);
-    IpcHeader request_header{};
-    if (!ReadExact(input, &request_header, sizeof(request_header)) ||
-        !ValidateV2FrameHeader(request_header) ||
-        request_header.message_type != static_cast<uint16_t>(MessageType::V2ImportBegin)) {
-        return 50;
-    }
-    std::vector<uint8_t> request_packet(sizeof(IpcHeader) + request_header.payload_bytes);
-    std::memcpy(request_packet.data(), &request_header, sizeof(request_header));
-    if (request_header.payload_bytes &&
-        !ReadExact(input, request_packet.data() + sizeof(IpcHeader), request_header.payload_bytes)) {
-        return 51;
-    }
-    if (!DeserializeV2Frame(request_packet)) return 52;
-
-    const uint32_t first_sequence = request_header.sequence_id;
-    if (mode == "--test-v2-stream-oversize") {
-        IpcHeader oversized{};
-        oversized.wire_version = IPC_WIRE_VERSION_V2;
-        oversized.message_type = static_cast<uint16_t>(MessageType::V2ProposalChunk);
-        oversized.sequence_id = first_sequence;
-        oversized.payload_bytes = static_cast<uint32_t>(IPC_V2_MAX_FRAME_BYTES + 1);
-        return WriteExact(output, &oversized, sizeof(oversized)) ? 0 : 53;
-    }
-
-    const std::array<uint8_t, 3> chunk{0x11, 0x22, 0x33};
-    const auto chunk_packet = SerializeV2Frame(
-        MessageType::V2ProposalChunk, first_sequence, chunk);
-    if (!WriteExact(output, chunk_packet.data(), static_cast<DWORD>(chunk_packet.size()))) return 54;
-
-    if (mode == "--test-v2-stream-no-end") return 0;
-    const uint32_t end_sequence = mode == "--test-v2-stream-gap"
-        ? first_sequence + 2 : first_sequence + 1;
-    if (mode == "--test-v2-stream-quota") {
-        const std::array<uint8_t, 3> too_large{0x44, 0x55, 0x66};
-        const auto quota_packet = SerializeV2Frame(
-            MessageType::V2ProposalChunk, end_sequence, too_large);
-        return WriteExact(output, quota_packet.data(), static_cast<DWORD>(quota_packet.size())) ? 0 : 55;
-    }
-
-    const std::array<uint8_t, 2> end_payload{0x44, 0x55};
-    const auto end_packet = SerializeV2Frame(
-        MessageType::V2ImportEnd, end_sequence, end_payload);
-    return WriteExact(output, end_packet.data(), static_cast<DWORD>(end_packet.size())) ? 0 : 56;
-}
-
 } // namespace
 
 int main(int argc, char** argv) {
     if (argc==2 && std::string_view(argv[1])=="--test-child-exit") return 0;
     // Deterministic repository-owned failure fixtures, never a source-format adapter.
     if (argc==2 && std::string_view(argv[1])=="--test-stall-before-read") { Sleep(10000); return 0; }
-    if (argc == 2 && std::string_view(argv[1]).starts_with("--test-v2-stream-")) {
-        return RunV2StreamFixture(argv[1]);
-    }
     if (argc==2 && std::string_view(argv[1])=="--test-truncated-response") {
         uint8_t byte=0; DWORD written=0;
         WriteFile(GetStdHandle(STD_OUTPUT_HANDLE),&byte,1,&written,nullptr);
@@ -349,6 +299,7 @@ int main(int argc, char** argv) {
     bool has_expected_digest = false;
     uint64_t expected_size = 0;
     SourceDigest expected_digest{};
+    std::string_view v2_stream_fixture;
     for (int i = 1; i < argc; ++i) {
         const std::string_view argument(argv[i]);
         if (argument == "--pikdraw-source-handle" && i + 1 < argc) {
@@ -364,9 +315,17 @@ int main(int argc, char** argv) {
         } else if (argument == "--test-source-sha256" && i + 1 < argc) {
             if (!ParseDigest(argv[++i], expected_digest)) return 2;
             has_expected_digest = true;
+        } else if (argument.starts_with("--test-v2-stream-")) {
+            if (!v2_stream_fixture.empty()) return 2;
+            v2_stream_fixture = argument;
         } else {
             return 2;
         }
+    }
+    if (!v2_stream_fixture.empty()) {
+        return source_handle != INVALID_HANDLE_VALUE
+            ? RunV2StreamFixture(v2_stream_fixture, source_handle)
+            : 42;
     }
     if (test_source_probe) {
         return source_handle != INVALID_HANDLE_VALUE && has_expected_size &&
@@ -381,10 +340,19 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    bool v2_negotiated = false;
+    uint32_t v2_accepted_features = 0;
     while (true) {
         IpcHeader hdr{};
         if (!ReadExact(stdin_h, &hdr, sizeof(IpcHeader))) {
             break; // EOF or pipe closed by host
+        }
+
+        if (hdr.wire_version == IPC_WIRE_VERSION_V2) {
+            if (!ValidateV2FrameHeader(hdr) || !HandleV2WorkerFrame(
+                    stdin_h, stdout_h, source_handle, hdr, v2_negotiated, v2_accepted_features)) return 3;
+            if (hdr.message_type == static_cast<uint16_t>(MessageType::V2ImportBegin)) return 0;
+            continue;
         }
 
         auto diag = PayloadValidator::ValidateHeader(hdr);
