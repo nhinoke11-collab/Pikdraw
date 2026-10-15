@@ -77,3 +77,9 @@ No new runtime decision is accepted by this audit. Keep C++20/Qt/Skia, mm/binary
 Main được audit là `8f792202f63f44c3797a845b31986a126b7eed5b`. `desktop-layout`, `document-spike`, `interop-spike` còn `todo`, không lease, và worktree/base đều ở `e147be885a4fbce984930059391b7b0238c96b86`; không task nào được cập nhật hoặc chạy trên base cũ.
 
 `localization-foundation` cũng `todo`/không lease, base `e147be8`. Worktree giữ `?? core/localization/`; đây là dữ liệu chưa commit đã biết trước, không được xóa/ghi đè trong PS00. Khi mở lại phải đồng bộ contract/base bằng task riêng và giữ nguyên dữ liệu này. Không có path claim chồng lấn với PS00 đang làm.
+
+## Bổ sung nghiệm thu Remediation ngày 2026-10-15
+
+1. **Spike C (Containment)**: Tại revision `8dc7958`, probe mạng đã được cập nhật kiểm tra từ chối tường minh từ Windows kernel (`WSAEACCES` 10013) khi tiến trình AppContainer không có capability mạng `internetClient`/`privateNetworkClientServer`. Suite kiểm thử `spike_tests.exe` trên Windows live runner đạt **9 passed, 0 failed**, ghi nhận **5/5 canary bị OS từ chối tường minh** (Đọc file: 5, Ghi file: 5, Mạng ngoại vi: 10013 WSAEACCES, Handle rò rỉ: 6, Tiến trình con: 1816) cùng toàn bộ positive control thành công. Cổng containment chuyển thành **`pass`**.
+2. **Spike A (Compiler Compatibility)**: Tại revision `c27f993`, đã loại bỏ từ khóa `constexpr` trên phương thức `is_finite()` trong `types.hpp`, giải quyết triệt để lỗi C3615 trên trình biên dịch MSVC C++20 (MSVC 19.44.35229 /std:c++20 /TP) và Clang.
+3. **Foundation Acceptance**: Với việc cổng containment của Spike C đạt pass (5/5) và tính đúng đắn của Spike B (29/29) cùng Spike A được bảo toàn, nền tảng Spike chính thức được nghiệm thu (`foundation_accepted: true`) để chuyển sang **PS01 (Contract Pack)** nhằm khóa các hợp đồng C1–C7. Cột mốc M1 vẫn giữ đóng cho tới khi hoàn tất ps01 và ps02 của M0.
