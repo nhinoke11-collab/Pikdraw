@@ -9,11 +9,17 @@
 
 namespace pikdraw::document {
 
-/// Header for the native .pikdraw file container format
+/// Fixed v2/v3 container header: PKDR, version, flags, epoch, revision,
+/// payload-byte count and CRC32. All integers are little-endian; CRC offset 32.
+/// v3 payload order: document-ID string; minimum-compatible version; required
+/// authoring schema major/minor; v2 page/layer/object records. Each path object
+/// then carries required source winding, subpaths (stable ID, closed flag),
+/// nodes (stable ID, anchor, mode, optional handles, tension), and segments
+/// (stable ID, kind, then quadratic control or analytic ellipse basis/angles).
 #pragma pack(push, 1)
 struct PikDrawHeader {
     uint8_t magic[4];       // {'P', 'K', 'D', 'R'}
-    uint32_t version;       // Development codec v2; not accepted C5 container compliance
+    uint32_t version;       // v2 legacy input or current v3 authoring source
     uint32_t flags;         // feature flags / compression
     uint64_t epoch;         // document epoch at save
     uint64_t revision;      // document revision at save
@@ -23,7 +29,11 @@ struct PikDrawHeader {
 #pragma pack(pop)
 
 inline constexpr uint8_t kPikDrawMagic[4] = {'P', 'K', 'D', 'R'};
-inline constexpr uint32_t kCurrentFormatVersion = 2;
+inline constexpr uint32_t kLegacyFormatVersion = 2;
+inline constexpr uint32_t kCurrentFormatVersion = 3;
+inline constexpr uint32_t kMinimumCompatibleVersion = 3;
+inline constexpr uint32_t kAuthoringPathSchemaMajor = 1;
+inline constexpr uint32_t kAuthoringPathSchemaMinor = 0;
 
 /// Native format serialization and deserialization
 class NativeFormat {

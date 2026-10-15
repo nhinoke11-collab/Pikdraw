@@ -75,7 +75,9 @@ template <class T> void read_common(Reader &reader, T &object) {
 }
 } // namespace
 
-void write_object(Writer &writer, const ObjectVariant &value) {
+void write_object(Writer &writer, const ObjectVariant &value,
+                  bool include_authoring_source,
+                  const EditablePath *source_override) {
   writer.u8(static_cast<uint8_t>(value.index()));
   std::visit(
       [&](const auto &object) {
@@ -92,6 +94,16 @@ void write_object(Writer &writer, const ObjectVariant &value) {
           writer.flag(object.has_fill);
           writer.flag(object.has_stroke);
           write_path(writer, object.path);
+          if (include_authoring_source) {
+            const auto *source = source_override
+                                     ? source_override
+                                     : object.authoring_source.get();
+            if (!source)
+              throw std::invalid_argument(
+                  "Path object " + std::to_string(object.id) +
+                  " has no stable authoring source for native v3");
+            write_editable_path(writer, *source);
+          }
         } else if constexpr (std::is_same_v<T, TextObject>) {
           writer.str(object.text);
           writer.str(object.font.family_name);
@@ -111,7 +123,8 @@ void write_object(Writer &writer, const ObjectVariant &value) {
       value);
 }
 
-ObjectVariant read_object(Reader &reader, uint32_t &remaining_elements) {
+ObjectVariant read_object(Reader &reader, uint32_t &remaining_elements,
+                          bool include_authoring_source) {
   const auto type = reader.u8();
   if (type == 0) {
     PathObject object;
@@ -122,6 +135,14 @@ ObjectVariant read_object(Reader &reader, uint32_t &remaining_elements) {
     object.has_fill = reader.flag();
     object.has_stroke = reader.flag();
     object.path = read_path(reader, remaining_elements);
+    if (include_authoring_source) {
+      uint32_t authoring_budget = max_elements;
+      auto source = read_editable_path(reader, authoring_budget);
+      if (!editable_path_matches_adapter(source, object.path))
+        throw std::invalid_argument(
+            "Native v3 authoring source disagrees with its derived path adapter");
+      object.set_authoring_source(std::move(source));
+    }
     return object;
   }
   if (type == 1) {

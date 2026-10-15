@@ -98,8 +98,8 @@ public:
       throw std::length_error("Native collection count exceeds payload/budget");
     return value;
   }
-  std::string str() {
-    const auto length = count(max_string_bytes);
+  std::string str(uint32_t limit = max_string_bytes) {
+    const auto length = count(limit);
     const auto *start =
         reinterpret_cast<const char *>(data_.data() + position_);
     std::string result(start, length);
@@ -122,7 +122,12 @@ private:
 
 void write_color(Writer &writer, const color::ColorValue &value);
 color::ColorValue read_color(Reader &reader);
-void write_object(Writer &writer, const ObjectVariant &object);
-ObjectVariant read_object(Reader &reader, uint32_t &remaining_elements);
+void write_object(Writer &writer, const ObjectVariant &object,
+                  bool include_authoring_source,
+                  const EditablePath *source_override = nullptr);
+ObjectVariant read_object(Reader &reader, uint32_t &remaining_elements,
+                          bool include_authoring_source);
+void write_editable_path(Writer &writer, const EditablePath &source);
+EditablePath read_editable_path(Reader &reader, uint32_t &remaining_elements);
 uint32_t container_crc(const uint8_t *data, size_t size) noexcept;
 } // namespace pikdraw::document::storage_detail

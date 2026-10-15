@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <fstream>
+#include <iterator>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -188,6 +189,68 @@ void SaveRecoveryService::cleanup_checkpoints(const std::string &recovery_dir,
       std::filesystem::remove(entry.path(), error);
     }
   } catch (...) {
+  }
+}
+
+SaveResult SaveRecoveryService::atomic_write_recovery_draft(
+    const std::string &path, const RecoveryDraftRecord &draft,
+    const SaveOptions &options) {
+  SaveResult result;
+  result.path = path;
+  result.saved_epoch = draft.document_epoch;
+  result.saved_revision = draft.base_revision;
+  std::filesystem::path temporary;
+  bool created = false;
+  try {
+    const auto bytes = RecoveryDraftFormat::serialize(draft);
+    const auto target = utf8_path(path);
+    if (target.empty() || target.filename().empty())
+      throw std::invalid_argument("Empty recovery draft filename");
+    temporary = utf8_path(path + temp_suffix());
+    write_and_flush_exclusive(temporary, bytes, options, created);
+    inject_failure(options, SaveFaultPoint::BeforeReplace);
+    atomic_replace(temporary, target);
+    result.success = true;
+  } catch (const std::exception &error) {
+    result.error_message = error.what();
+    if (created) {
+      std::error_code cleanup_error;
+      std::filesystem::remove(temporary, cleanup_error);
+      if (cleanup_error)
+        result.error_message +=
+            "; temporary cleanup failed: " + cleanup_error.message();
+    }
+  }
+  return result;
+}
+
+std::optional<RecoveryDraftRecord> SaveRecoveryService::load_recovery_draft(
+    const std::string &path, std::string *out_error) {
+  if (out_error)
+    out_error->clear();
+  try {
+    std::ifstream input(utf8_path(path), std::ios::binary | std::ios::ate);
+    if (!input)
+      throw std::runtime_error("Cannot open recovery draft");
+    const auto size = input.tellg();
+    constexpr auto max_size = static_cast<std::streamoff>(
+        kRecoveryDraftPayloadLimit + 8 + 4 + 4 + 4 + 512 + 8 + 8 + 4 + 4 + 4);
+    if (size < 49 || size > max_size)
+      throw std::length_error("Recovery draft size exceeds its allowed range");
+    input.seekg(0, std::ios::beg);
+    std::vector<uint8_t> bytes(static_cast<size_t>(size));
+    if (!input.read(reinterpret_cast<char *>(bytes.data()),
+                    static_cast<std::streamsize>(bytes.size())))
+      throw std::runtime_error("Recovery draft read incomplete");
+    auto draft = RecoveryDraftFormat::deserialize(bytes.data(), bytes.size(),
+                                                   out_error);
+    if (!draft && out_error && out_error->empty())
+      *out_error = "Invalid recovery draft";
+    return draft;
+  } catch (const std::exception &error) {
+    if (out_error)
+      *out_error = error.what();
+    return std::nullopt;
   }
 }
 } // namespace pikdraw::document

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pikdraw/document/snapshots/document_snapshot.hpp"
+#include "pikdraw/document/storage/recovery_draft.hpp"
 #include <memory>
 #include <optional>
 #include <string>
@@ -55,6 +56,16 @@ public:
   /// Removes recovery checkpoints after clean save
   static void cleanup_checkpoints(const std::string &recovery_dir,
                                   const std::string &doc_id);
+
+  /// Atomically stores an in-progress tool draft as a distinct bounded record.
+  [[nodiscard]] static SaveResult atomic_write_recovery_draft(
+      const std::string &path, const RecoveryDraftRecord &draft,
+      const SaveOptions &options = {});
+
+  /// Reads a draft record; it never applies the draft to a document.
+  [[nodiscard]] static std::optional<RecoveryDraftRecord>
+  load_recovery_draft(const std::string &path,
+                      std::string *out_error = nullptr);
 };
 
 } // namespace pikdraw::document

@@ -1,7 +1,32 @@
 #include "byte_codec.hpp"
+#include <algorithm>
+#include <limits>
+#include <stdexcept>
+#include <unordered_map>
 
 namespace pikdraw::document {
 using namespace storage_detail;
+namespace {
+void assign_stable_source_ids(EditablePath &source, uint64_t &next_id) {
+  auto take_id = [&]() -> uint64_t {
+    if (next_id == 0)
+      throw std::overflow_error("Stable path ID range exhausted");
+    const auto result = next_id;
+    next_id = result == std::numeric_limits<uint64_t>::max() ? 0 : result + 1;
+    reserve_object_id(result);
+    return result;
+  };
+  for (auto &subpath : source.subpaths) {
+    subpath.id = SubpathId{take_id()};
+    for (auto &node : subpath.nodes)
+      node.id = NodeId{take_id()};
+    for (auto &segment : subpath.segments)
+      segment.id = SegmentId{take_id()};
+  }
+  if (const auto error = source.validation_error())
+    throw std::invalid_argument(*error);
+}
+} // namespace
 
 std::vector<uint8_t> NativeFormat::serialize(const DocumentSnapshot &snapshot) {
   if (snapshot.document_id().empty())
@@ -9,6 +34,41 @@ std::vector<uint8_t> NativeFormat::serialize(const DocumentSnapshot &snapshot) {
   validate_document_structure(snapshot.page(), snapshot.objects());
   Writer payload;
   payload.str(snapshot.document_id());
+  payload.u32(kMinimumCompatibleVersion);
+  payload.u32(kAuthoringPathSchemaMajor);
+  payload.u32(kAuthoringPathSchemaMinor);
+  uint64_t maximum_stable_id = 0;
+  for (const auto &[id, object] : snapshot.objects().all()) {
+    maximum_stable_id = std::max(maximum_stable_id, id);
+    if (const auto *path = std::get_if<PathObject>(&object);
+        path && path->authoring_source) {
+      for (const auto &subpath : path->authoring_source->subpaths) {
+        maximum_stable_id = std::max(maximum_stable_id, subpath.id.value());
+        for (const auto &node : subpath.nodes)
+          maximum_stable_id = std::max(maximum_stable_id, node.id.value());
+        for (const auto &segment : subpath.segments)
+          maximum_stable_id = std::max(maximum_stable_id, segment.id.value());
+      }
+    }
+  }
+  reserve_object_id(maximum_stable_id);
+  uint64_t next_migration_id = maximum_stable_id ==
+                                      std::numeric_limits<uint64_t>::max()
+                                  ? 0
+                                  : maximum_stable_id + 1;
+  std::unordered_map<ObjectId, EditablePath> migrated_sources;
+  for (const auto &[id, object] : snapshot.objects().all()) {
+    const auto *path = std::get_if<PathObject>(&object);
+    if (!path || path->authoring_source)
+      continue;
+    std::string error;
+    auto source = editable_path_from_path2d(path->path, &error);
+    if (!source)
+      throw std::invalid_argument("Path object " + std::to_string(id) +
+                                  " cannot be migrated for v3: " + error);
+    assign_stable_source_ids(*source, next_migration_id);
+    migrated_sources.emplace(id, std::move(*source));
+  }
   const auto &page = snapshot.page();
   payload.f64(page.width_mm);
   payload.f64(page.height_mm);
@@ -34,7 +94,11 @@ std::vector<uint8_t> NativeFormat::serialize(const DocumentSnapshot &snapshot) {
       elements += path->path.size();
     if (elements > max_elements)
       throw std::length_error("Too many total path elements");
-    write_object(payload, object);
+    const EditablePath *source_override = nullptr;
+    if (const auto *path = std::get_if<PathObject>(&object);
+        path && !path->authoring_source)
+      source_override = &migrated_sources.at(id);
+    write_object(payload, object, true, source_override);
   }
   Writer container;
   for (const auto byte : kPikDrawMagic)
@@ -66,9 +130,9 @@ NativeFormat::deserialize(const uint8_t *data, size_t length,
       if (header.u8() != byte)
         throw std::invalid_argument("Invalid PKDR magic");
     const auto version = header.u32();
-    if (version != kCurrentFormatVersion)
-      throw std::invalid_argument("Unsupported native version; lossy prototype "
-                                  "v1 is not silently migrated");
+    if (version != kLegacyFormatVersion && version != kCurrentFormatVersion)
+      throw std::invalid_argument("Unsupported native version; v1 is not "
+                                  "silently migrated and v3 requires a v3 reader");
     if (header.u32() != 0)
       throw std::invalid_argument("Unsupported native feature flags");
     const auto epoch = header.u64();
@@ -83,6 +147,17 @@ NativeFormat::deserialize(const uint8_t *data, size_t length,
     const auto document_id = reader.str();
     if (document_id.empty())
       throw std::invalid_argument("Empty native document ID");
+    if (version == kCurrentFormatVersion) {
+      const auto minimum_compatible = reader.u32();
+      const auto schema_major = reader.u32();
+      const auto schema_minor = reader.u32();
+      if (minimum_compatible > kCurrentFormatVersion ||
+          minimum_compatible < kMinimumCompatibleVersion)
+        throw std::invalid_argument("Unsupported native compatibility version");
+      if (schema_major != kAuthoringPathSchemaMajor ||
+          schema_minor > kAuthoringPathSchemaMinor)
+        throw std::invalid_argument("Unsupported required authoring-path schema");
+    }
     Page page;
     page.width_mm = reader.f64();
     page.height_mm = reader.f64();
@@ -105,18 +180,41 @@ NativeFormat::deserialize(const uint8_t *data, size_t length,
       page.layers.push_back(std::move(layer));
     }
     const auto object_count = reader.count(max_objects, 63);
-    PersistentObjectMap objects;
+    std::vector<ObjectVariant> decoded_objects;
+    decoded_objects.reserve(object_count);
+    std::unordered_set<ObjectId> seen_object_ids;
+    ObjectId maximum_object_id = 0;
     uint32_t remaining_elements = max_elements;
     for (uint32_t i = 0; i < object_count; ++i) {
-      auto object = read_object(reader, remaining_elements);
+      auto object = read_object(reader, remaining_elements,
+                                version == kCurrentFormatVersion);
       const auto id =
           std::visit([](const auto &value) { return value.id; }, object);
-      if (objects.contains(id))
+      if (id == kInvalidObjectId || !seen_object_ids.insert(id).second)
         throw std::invalid_argument("Duplicate native object ID");
-      objects = objects.set(id, std::move(object));
+      maximum_object_id = std::max(maximum_object_id, id);
+      decoded_objects.push_back(std::move(object));
     }
     if (reader.remaining() != 0)
       throw std::invalid_argument("Trailing native payload bytes");
+    reserve_object_id(maximum_object_id);
+    PersistentObjectMap objects;
+    for (auto &object : decoded_objects) {
+      if (version == kLegacyFormatVersion) {
+        if (auto *path = std::get_if<PathObject>(&object)) {
+          std::string migration_error;
+          auto source = editable_path_from_path2d(path->path, &migration_error);
+          if (!source)
+            throw std::invalid_argument(
+                "Legacy v2 path object " + std::to_string(path->id) +
+                " cannot be migrated losslessly: " + migration_error);
+          path->set_authoring_source(std::move(*source));
+        }
+      }
+      const auto id =
+          std::visit([](const auto &value) { return value.id; }, object);
+      objects = objects.set(id, std::move(object));
+    }
     auto result = std::make_shared<DocumentSnapshot>(
         epoch, revision, std::move(page), std::move(objects), document_id);
     if (!result->objects().empty())

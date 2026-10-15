@@ -1,6 +1,7 @@
 #include "pikdraw/document/document.hpp"
 #include "pikdraw/document/storage/native_format.hpp"
 #include "pikdraw/document/storage/save_recovery.hpp"
+#include "../../src/storage/byte_codec.hpp"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -32,6 +33,231 @@ void repair_checksum(std::vector<uint8_t> &bytes) {
       NativeFormat::calculate_crc32(bytes.data(), bytes.size());
   for (unsigned i = 0; i < 4; ++i)
     bytes[32 + i] = static_cast<uint8_t>(checksum >> (8 * i));
+}
+
+std::vector<uint8_t> make_legacy_v2_fixture(const PathObject &path) {
+  using namespace storage_detail;
+  Writer payload;
+  payload.str("legacy-v2-fixture");
+  const auto page = Page::make_default();
+  payload.f64(page.width_mm);
+  payload.f64(page.height_mm);
+  payload.count(page.layers.size(), 10000);
+  for (const auto &layer : page.layers) {
+    payload.str(layer.name);
+    payload.flag(layer.visible);
+    payload.flag(layer.locked);
+    payload.count(1, max_objects);
+    payload.u64(path.id);
+  }
+  payload.count(1, max_objects);
+  write_object(payload, ObjectVariant{path}, false);
+  Writer container;
+  for (const auto byte : kPikDrawMagic)
+    container.u8(byte);
+  container.u32(kLegacyFormatVersion);
+  container.u32(0);
+  container.u64(6);
+  container.u64(9);
+  container.u32(static_cast<uint32_t>(payload.bytes.size()));
+  container.u32(0);
+  container.append(payload.bytes);
+  const auto crc = NativeFormat::calculate_crc32(container.bytes.data(),
+                                                  container.bytes.size());
+  for (unsigned i = 0; i < 4; ++i)
+    container.bytes[32 + i] = static_cast<uint8_t>(crc >> (8 * i));
+  return std::move(container.bytes);
+}
+
+void authoring_source_roundtrip_and_legacy_migration() {
+  Document doc("authoring-source-roundtrip");
+  PathObject path;
+  path.id = 9001;
+  EditablePath source;
+  EditableSubpath subpath;
+  subpath.id = SubpathId{9002};
+  subpath.nodes = {
+      PathNode{NodeId{9003}, {100.0, 0.0}, PathNodeMode::Cusp, false, {},
+               true, {110.0, 5.0}},
+      PathNode{NodeId{9004}, {0.0, 100.0}, PathNodeMode::Cusp, true,
+               {-5.0, 110.0}, false, {}}};
+  EditableSegment arc;
+  arc.id = SegmentId{9005};
+  arc.kind = PathSegmentKind::EllipticArc;
+  arc.arc = {{0, 0}, {100, 0}, {0, 100}, 0, 1.57079632679489661923};
+  subpath.segments.push_back(arc);
+  source.subpaths.push_back(subpath);
+  path.set_authoring_source(source);
+  check(doc.execute_command(std::make_unique<AddObjectCommand>(path)).success,
+        "add analytic source path");
+
+  const auto bytes = NativeFormat::serialize(*doc.current_snapshot());
+  check(bytes.size() > 36 && bytes[4] == 3,
+        "native writer did not emit container v3");
+  std::string error;
+  const auto reopened =
+      NativeFormat::deserialize(bytes.data(), bytes.size(), &error);
+  check(reopened && error.empty(), "v3 authoring path did not reopen");
+  const auto restored = std::get<PathObject>(*reopened->get_object(path.id));
+  check(restored.authoring_source &&
+            restored.authoring_source->subpaths.front().id == SubpathId{9002} &&
+            restored.authoring_source->subpaths.front().nodes[1].id == NodeId{9004} &&
+            restored.authoring_source->subpaths.front().segments.front().id ==
+                SegmentId{9005},
+        "v3 changed stable path identities");
+  const auto &restored_arc =
+      restored.authoring_source->subpaths.front().segments.front().arc;
+  check(restored_arc.center == geometry::Point2D{0, 0} &&
+            restored_arc.axis_u == geometry::Point2D{100, 0} &&
+            restored_arc.axis_v == geometry::Point2D{0, 100} &&
+            restored_arc.start_angle_rad == 0 &&
+            restored_arc.sweep_angle_rad == arc.arc.sweep_angle_rad,
+        "analytic arc source was approximated or altered");
+  const auto saved_again = NativeFormat::serialize(*reopened);
+  const auto reopened_again =
+      NativeFormat::deserialize(saved_again.data(), saved_again.size());
+  check(reopened_again &&
+            std::get<PathObject>(*reopened_again->get_object(path.id))
+                    .authoring_source->subpaths.front().nodes[0].id ==
+                NodeId{9003},
+        "stable path identity changed on repeated save/reopen");
+
+  auto legacy_path = PathObject{};
+  legacy_path.id = 12000;
+  legacy_path.path.move_to({1, 2});
+  legacy_path.path.line_to({30, 2});
+  legacy_path.path.quad_to(35, 10, 30, 20);
+  legacy_path.path.cubic_to(24, 28, 8, 32, 1, 20);
+  legacy_path.path.close();
+  const auto legacy = make_legacy_v2_fixture(legacy_path);
+  const auto migrated =
+      NativeFormat::deserialize(legacy.data(), legacy.size(), &error);
+  check(migrated && error.empty(), "valid v2 migration failed");
+  const auto migrated_path =
+      std::get<PathObject>(*migrated->get_object(legacy_path.id));
+  check(migrated_path.authoring_source &&
+            migrated_path.authoring_source->subpaths.front().segments.size() ==
+                4 &&
+            migrated_path.authoring_source->subpaths.front().segments[1].kind ==
+                PathSegmentKind::QuadraticBezier &&
+            migrated_path.authoring_source->subpaths.front().segments[2].kind ==
+                PathSegmentKind::CubicBezier,
+        "v2 migration did not allocate stable authoring identities");
+  const auto migrated_id =
+      migrated_path.authoring_source->subpaths.front().nodes.front().id;
+  const auto migrated_v3 = NativeFormat::serialize(*migrated);
+  const auto migrated_again =
+      NativeFormat::deserialize(migrated_v3.data(), migrated_v3.size());
+  check(migrated_again &&
+            std::get<PathObject>(*migrated_again->get_object(legacy_path.id))
+                    .authoring_source->subpaths.front().nodes.front().id ==
+                migrated_id,
+        "v2 migration identities were not persisted by v3");
+
+  auto unsupported_legacy = PathObject{};
+  unsupported_legacy.id = 12001;
+  unsupported_legacy.path.move_to({0, 0});
+  unsupported_legacy.path.arc_to(0, 10, 0, false, true, 20, 0);
+  const auto unsupported_bytes = make_legacy_v2_fixture(unsupported_legacy);
+  check(!NativeFormat::deserialize(unsupported_bytes.data(),
+                                   unsupported_bytes.size(), &error) &&
+            error.find("12001") != std::string::npos &&
+            error.find("losslessly") != std::string::npos,
+        "ambiguous legacy arc did not report a blocking fidelity diagnostic");
+
+  auto future = bytes;
+  future[4] = 4;
+  repair_checksum(future);
+  check(!NativeFormat::deserialize(future.data(), future.size(), &error) &&
+            error.find("Unsupported native version") != std::string::npos,
+        "unknown container version was accepted");
+  auto unknown_schema = bytes;
+  const size_t schema_major = 36 + 4 + std::string("authoring-source-roundtrip").size() + 4;
+  unknown_schema[schema_major] = 99;
+  repair_checksum(unknown_schema);
+  check(!NativeFormat::deserialize(unknown_schema.data(), unknown_schema.size(),
+                                   &error) &&
+            error.find("authoring-path schema") != std::string::npos,
+        "unknown required authoring schema was accepted");
+}
+
+void versioned_recovery_draft_isolated_from_documents() {
+  RecoveryDraftRecord draft;
+  draft.document_id = "draft-parent-doc";
+  draft.document_epoch = 77;
+  draft.base_revision = 12;
+  draft.base_document_crc32 = 0x1234abcd;
+  draft.payload = {0, 1, 2, 0xfe, 0xff};
+  auto bytes = RecoveryDraftFormat::serialize(draft);
+  std::string error;
+  const auto decoded =
+      RecoveryDraftFormat::deserialize(bytes.data(), bytes.size(), &error);
+  check(decoded && error.empty() && decoded->document_id == draft.document_id &&
+            decoded->document_epoch == draft.document_epoch &&
+            decoded->base_revision == draft.base_revision &&
+            decoded->base_document_crc32 == draft.base_document_crc32 &&
+            decoded->payload == draft.payload,
+        "versioned draft metadata or payload failed roundtrip");
+  check(!NativeFormat::deserialize(bytes.data(), bytes.size(), &error),
+        "recovery draft was accepted as a committed native document");
+  bytes.back() ^= 1;
+  check(!RecoveryDraftFormat::deserialize(bytes.data(), bytes.size(), &error) &&
+            error.find("checksum") != std::string::npos,
+        "corrupt recovery draft checksum was accepted");
+
+  const auto directory =
+      std::filesystem::absolute("build/recovery-draft-owned-test");
+  std::filesystem::create_directories(directory);
+  const auto target = directory / "session.pikdraft";
+  auto saved = SaveRecoveryService::atomic_write_recovery_draft(
+      utf8(target), draft);
+  check(saved.success, "atomic recovery draft save failed");
+  const auto original = read_bytes(target);
+  const auto failed = SaveRecoveryService::atomic_write_recovery_draft(
+      utf8(target), RecoveryDraftRecord{"draft-parent-doc", 77, 13,
+                                        0x1234abcd, 1, {9, 8, 7}},
+      {SaveFaultPoint::BeforeReplace});
+  check(!failed.success && read_bytes(target) == original,
+        "failed draft save damaged its previous checkpoint");
+  const auto loaded = SaveRecoveryService::load_recovery_draft(utf8(target),
+                                                               &error);
+  check(loaded && error.empty() && loaded->base_revision == 12 &&
+            loaded->payload == draft.payload,
+        "atomic recovery draft did not reopen");
+  std::filesystem::remove(target);
+  std::filesystem::remove(directory);
+}
+
+void document_path_ids_are_globally_unique() {
+  auto make_path = [] {
+    PathObject path;
+    EditablePath source;
+    EditableSubpath subpath;
+    subpath.id = SubpathId{30002};
+    subpath.nodes = {PathNode{NodeId{30003}, {0, 0}},
+                     PathNode{NodeId{30004}, {10, 0}}};
+    subpath.segments = {EditableSegment{SegmentId{30005}}};
+    source.subpaths.push_back(std::move(subpath));
+    path.set_authoring_source(std::move(source));
+    return path;
+  };
+  auto first = make_path();
+  first.id = 30000;
+  auto second = make_path();
+  second.id = 30001;
+  Page page = Page::make_default();
+  page.layers.front().object_ids = {first.id, second.id};
+  PersistentObjectMap objects;
+  objects = objects.set(first.id, ObjectVariant{first});
+  objects = objects.set(second.id, ObjectVariant{second});
+  bool rejected = false;
+  try {
+    DocumentSnapshot invalid(99, 0, std::move(page), std::move(objects),
+                            "duplicate-path-id-test");
+  } catch (const std::invalid_argument &) {
+    rejected = true;
+  }
+  check(rejected, "duplicate authoring IDs across objects were accepted");
 }
 
 void source_roundtrip() {
@@ -101,6 +327,16 @@ void source_roundtrip() {
                 .success &&
             reopened.undo(),
         "reopened source is not editable");
+  const auto repeated_bytes = NativeFormat::serialize(*doc.current_snapshot());
+  const auto repeated =
+      NativeFormat::deserialize(repeated_bytes.data(), repeated_bytes.size());
+  check(repeated != nullptr, "source-less path repeat save failed to reopen");
+  const auto first_source = std::get<PathObject>(*loaded->get_object(100));
+  const auto repeated_source = std::get<PathObject>(*repeated->get_object(100));
+  check(first_source.authoring_source && repeated_source.authoring_source &&
+            first_source.authoring_source->subpaths.front().nodes.front().id ==
+                repeated_source.authoring_source->subpaths.front().nodes.front().id,
+        "source-less legacy path got different IDs on repeat save");
   Document epoch_source("epoch-source");
   DocumentSnapshot matching_epoch(epoch_source.epoch() + 1, 0,
                                   Page::make_default(), {},
@@ -213,6 +449,9 @@ void save_faults_and_paths() {
 int main() {
   try {
     source_roundtrip();
+    authoring_source_roundtrip_and_legacy_migration();
+    versioned_recovery_draft_isolated_from_documents();
+    document_path_ids_are_globally_unique();
     save_faults_and_paths();
     std::cout << "PASS source fidelity, malformed file quotas, checksum, save "
                  "faults, UTF8 paths and reopen\n";

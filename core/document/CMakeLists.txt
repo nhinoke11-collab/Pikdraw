@@ -14,6 +14,8 @@ add_library(pikdraw_document STATIC
     src/storage/crc32.cpp
     src/storage/color_codec.cpp
     src/storage/object_codec.cpp
+    src/storage/editable_path_codec.cpp
+    src/storage/recovery_draft.cpp
     src/storage/save_recovery.cpp
     src/storage/file_io.cpp
     src/document.cpp

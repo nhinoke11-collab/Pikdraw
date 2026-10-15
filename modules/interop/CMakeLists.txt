@@ -11,6 +11,7 @@ add_library(pikdraw_interop STATIC
     src/ipc_dto.cpp
     src/fixture_manifest.cpp
     src/format_capability_matrix.cpp
+    src/path_adapter/svg_path_adapter.cpp
     src/interop_types.cpp
     src/payload_validator.cpp
 )
