@@ -124,12 +124,13 @@ ToolSessionResult ToolSession::stage_recovery(
   if (state_ != ToolSessionState::Idle)
     return {ToolSessionResultCode::NeedsResolution,
             "Resolve the current tool session before loading a recovery draft"};
-  if (!current || current->document_id() != record.document_id ||
-      current->epoch() != record.document_epoch ||
+  if (!current || record.document_epoch == 0 ||
+      current->document_id() != record.document_id ||
       current->revision() != record.base_revision ||
       record.base_document_crc32 != expected_base_crc32) {
     if (out_error)
-      *out_error = "Recovery draft belongs to a different document revision";
+      *out_error =
+          "Recovery draft identity, revision or base checksum does not match";
     return {ToolSessionResultCode::Stale,
             "Recovery draft does not match the current document"};
   }

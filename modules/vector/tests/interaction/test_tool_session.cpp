@@ -1,4 +1,5 @@
 #include "pikdraw/document/document.hpp"
+#include "pikdraw/document/storage/native_format.hpp"
 #include "pikdraw/vector/interaction/tool_session.hpp"
 #include <chrono>
 #include <filesystem>
@@ -16,6 +17,15 @@ void check(bool condition, const char *message) {
 
 DraftEdit insert_byte(size_t offset, uint8_t value, bool can_finish) {
   return DraftEdit{offset, {}, {value}, can_finish};
+}
+
+uint32_t snapshot_crc32(const document::DocumentSnapshot &snapshot) {
+  const auto bytes = document::NativeFormat::serialize(snapshot);
+  check(bytes.size() >= 36, "serialized document has a checksum header");
+  return static_cast<uint32_t>(bytes[32]) |
+         (static_cast<uint32_t>(bytes[33]) << 8) |
+         (static_cast<uint32_t>(bytes[34]) << 16) |
+         (static_cast<uint32_t>(bytes[35]) << 24);
 }
 
 void test_draft_lifecycle_and_local_history() {
@@ -39,8 +49,12 @@ void test_draft_lifecycle_and_local_history() {
   check(!session.accepts(old_token), "old preview token is stale");
   check(session.undo_local().applied() && !session.can_finish(),
         "draft undo removes only the last local edit");
+  check(session.set_preview_payload({77}).applied(),
+        "update a candidate after local undo");
   check(session.redo_local().applied() && session.can_finish(),
         "draft redo restores the local edit");
+  check(session.preview_payload().empty(),
+        "redo invalidates the candidate for the previous draft revision");
   check(session.escape(false).code == ToolSessionResultCode::FinishRequested,
         "Escape requests open-path finish");
   FinishedToolDraft finished;
@@ -70,6 +84,11 @@ void test_escape_gesture_pan_and_profile_boundaries() {
   check(session.escape(false).code == ToolSessionResultCode::Cancelled &&
             session.draft_payload() == std::vector<uint8_t>({1}),
         "Escape in numeric input drops only the uncommitted value");
+  check(session.begin_numeric_input().applied() && session.begin_pan().applied(),
+        "temporary pan can suspend numeric entry");
+  check(session.on_focus_lost().code == ToolSessionResultCode::Cancelled &&
+            session.state() == ToolSessionState::PreviewSegment,
+        "focus loss unwinds pan and cancels nested numeric entry");
   check(session.begin_pan().applied(), "suspend draft for pan");
   check(session.end_pan().applied() &&
             session.state() == ToolSessionState::PreviewSegment,
@@ -99,6 +118,14 @@ void test_escape_gesture_pan_and_profile_boundaries() {
   check(session.set_profile_generation(2).applied() &&
             session.profile_generation() == 1,
         "profile change waits for gesture boundary");
+  check(session.begin_pan().applied() &&
+            session.state() == ToolSessionState::PanSuspended &&
+            !session.update_gesture({6, 4}, 1),
+        "pan suspends rather than mutates an active pointer gesture");
+  check(session.end_pan().applied() &&
+            session.state() == ToolSessionState::DragHandle &&
+            session.profile_generation() == 1,
+        "resuming pan restores gesture and defers modifier profile");
   const auto released = session.update_gesture({7, 6}, 0);
   check(released && released->anchor == first->anchor &&
             released->raw_pointer == geometry::Point2D{7, 6},
@@ -115,6 +142,11 @@ void test_escape_gesture_pan_and_profile_boundaries() {
   check(session.on_focus_lost().code == ToolSessionResultCode::Cancelled &&
             session.state() == ToolSessionState::PreviewSegment,
         "focus loss clears transient drag state");
+  check(session.begin_gesture({0, 0}, {2, 1}).applied() &&
+            session.begin_pan().applied() &&
+            session.on_focus_lost().code == ToolSessionResultCode::Cancelled &&
+            session.state() == ToolSessionState::PreviewSegment,
+        "focus loss during pan cancels the suspended pointer gesture");
 }
 
 void test_stale_revision_and_close_invalidate_proposals() {
@@ -166,26 +198,57 @@ void test_recovery_is_bounded_staged_and_explicit() {
                              .count()));
   std::filesystem::create_directories(root);
   const auto path = (root / "draft.pdr").string();
-  const auto saved = writer.write_recovery_checkpoint(path, 0x1234abcd);
+  const auto base_path = (root / "base.pkdr").string();
+  std::string error;
+  const auto base_crc = snapshot_crc32(*base);
+  const auto base_save =
+      document::SaveRecoveryService::atomic_save(base_path, *base);
+  check(base_save.success, "save the base document before simulating restart");
+  const auto loaded_base =
+      document::SaveRecoveryService::load(base_path, &error);
+  check(loaded_base != nullptr, "reload the base document snapshot");
+  document::Document reopened(*loaded_base);
+  const auto reopened_snapshot = reopened.current_snapshot();
+  check(reopened_snapshot->document_id() == base->document_id() &&
+            reopened_snapshot->revision() == base->revision() &&
+            reopened_snapshot->epoch() != base->epoch(),
+        "reopen preserves durable identity and revision with a fresh epoch");
+  const auto saved = writer.write_recovery_checkpoint(path, base_crc);
   check(saved.success, "write bounded recovery record atomically");
 
   ToolSession restored;
-  std::string error;
-  check(restored.stage_recovery_file(path, base, 0x1234abcd, &error).applied(),
-        "stage recovery matching document revision");
+  check(restored.stage_recovery_file(path, reopened_snapshot, base_crc,
+                                     &error)
+            .applied(),
+        "stage recovery on a reopened document with the same source revision");
   check(restored.state() == ToolSessionState::RecoveryPending &&
             restored.draft_payload().empty() && doc.revision() == 0,
         "staged recovery is not auto-applied to document");
   check(restored.accept_recovery().applied() &&
             restored.draft_payload() == std::vector<uint8_t>({3, 4}),
         "explicit acceptance restores the editable draft");
+  check(restored.undo_local().code == ToolSessionResultCode::NoHistory,
+        "R1 checkpoints restore confirmed geometry but intentionally omit draft history");
   check(doc.revision() == 0 && !doc.can_undo(),
         "recovery remains separate from saved document history");
 
+  ToolSession old_runtime;
+  check(old_runtime.begin("line", base).applied(),
+        "begin a live session tied to the old runtime epoch");
+  check(old_runtime.observe_snapshot(reopened_snapshot).code ==
+            ToolSessionResultCode::Stale,
+        "explicit recovery rebinding does not relax live-session epoch checks");
+
+  const auto record = writer.recovery_record(base_crc);
+  ToolSession stale_checksum;
+  check(stale_checksum.stage_recovery(record, reopened_snapshot, base_crc ^ 1u,
+                                      &error)
+                .code == ToolSessionResultCode::Stale,
+        "recovery rejects a reopened document with a different source checksum");
+
   document::Document other("different-document");
   ToolSession stale;
-  const auto record = writer.recovery_record(0x1234abcd);
-  check(stale.stage_recovery(record, other.current_snapshot(), 0x1234abcd,
+  check(stale.stage_recovery(record, other.current_snapshot(), base_crc,
                             &error)
                 .code == ToolSessionResultCode::Stale,
         "recovery for another document is rejected");
@@ -200,7 +263,7 @@ void test_recovery_is_bounded_staged_and_explicit() {
         "advance the checkpoint's source document");
   ToolSession stale_revision;
   check(stale_revision.stage_recovery(
-            record, doc.current_snapshot(), 0x1234abcd, &error)
+            record, doc.current_snapshot(), base_crc, &error)
                 .code == ToolSessionResultCode::Stale,
         "recovery for the same document at a different revision is rejected");
   std::filesystem::remove_all(root);
@@ -227,6 +290,23 @@ void test_session_and_checkpoint_budgets_fail_closed() {
             ToolSessionResultCode::BudgetExceeded &&
             session.preview_payload().empty(),
         "preview and history share the total session memory budget");
+
+  ToolSessionLimits undo_limits;
+  undo_limits.max_draft_bytes = 4;
+  undo_limits.max_history_bytes = 8;
+  undo_limits.max_session_bytes = 8;
+  ToolSession bounded_undo;
+  check(bounded_undo.begin("line", doc.current_snapshot(), undo_limits).applied(),
+        "begin session with a tight undo budget");
+  const std::vector<uint8_t> four_bytes{1, 2, 3, 4};
+  check(bounded_undo.apply_edit(DraftEdit{0, {}, four_bytes, true}).applied(),
+        "fill draft and history within the session budget");
+  check(bounded_undo.apply_edit(DraftEdit{0, four_bytes, {}, false}).applied(),
+        "replace draft with an equally bounded removal history");
+  check(bounded_undo.undo_local().code == ToolSessionResultCode::BudgetExceeded &&
+            bounded_undo.draft_payload().empty() &&
+            !bounded_undo.can_finish(),
+        "undo cannot restore bytes beyond the combined draft and history cap");
 }
 } // namespace
 

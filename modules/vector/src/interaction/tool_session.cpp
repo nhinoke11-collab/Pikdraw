@@ -275,7 +275,8 @@ ToolSessionResult ToolSession::cancel_numeric_input() noexcept {
 ToolSessionResult ToolSession::begin_pan() noexcept {
   if (state_ != ToolSessionState::AwaitFirstPoint &&
       state_ != ToolSessionState::PreviewSegment &&
-      state_ != ToolSessionState::NumericInput)
+      state_ != ToolSessionState::NumericInput &&
+      state_ != ToolSessionState::DragHandle)
     return {ToolSessionResultCode::Ignored,
             "Pan suspension is unavailable in the current state"};
   pan_return_state_ = state_;
@@ -396,8 +397,15 @@ ToolSessionResult ToolSession::on_focus_lost() noexcept {
     return cancel_gesture();
   if (state_ == ToolSessionState::NumericInput)
     return cancel_numeric_input();
-  if (state_ == ToolSessionState::PanSuspended)
-    return end_pan();
+  if (state_ == ToolSessionState::PanSuspended) {
+    const auto suspended_state = pan_return_state_;
+    const auto pan_result = end_pan();
+    if (suspended_state == ToolSessionState::DragHandle)
+      return cancel_gesture();
+    if (suspended_state == ToolSessionState::NumericInput)
+      return cancel_numeric_input();
+    return pan_result;
+  }
   modifier_mask_ = 0;
   apply_pending_profile();
   ++preview_generation_;
@@ -410,8 +418,13 @@ ToolSessionResult ToolSession::on_focus_lost() noexcept {
 ToolSessionResult ToolSession::on_capture_lost() noexcept {
   if (state_ == ToolSessionState::DragHandle)
     return cancel_gesture();
-  if (state_ == ToolSessionState::PanSuspended)
-    return end_pan();
+  if (state_ == ToolSessionState::PanSuspended) {
+    const auto suspended_state = pan_return_state_;
+    const auto pan_result = end_pan();
+    if (suspended_state == ToolSessionState::DragHandle)
+      return cancel_gesture();
+    return pan_result;
+  }
   modifier_mask_ = 0;
   apply_pending_profile();
   ++preview_generation_;

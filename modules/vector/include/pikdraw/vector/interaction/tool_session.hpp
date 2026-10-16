@@ -130,6 +130,9 @@ public:
   [[nodiscard]] document::SaveResult write_recovery_checkpoint(
       const std::string &path, uint32_t base_document_crc32,
       const document::SaveOptions &options = {}) const;
+  // Explicit recovery may bind a durable checkpoint to a new runtime epoch
+  // only when persistent document ID, revision and base checksum still match.
+  // Async proposals and live session tokens remain strict on epoch.
   [[nodiscard]] ToolSessionResult stage_recovery(
       const document::RecoveryDraftRecord &record,
       document::SnapshotPtr current, uint32_t expected_base_crc32,
