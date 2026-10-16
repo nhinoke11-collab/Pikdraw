@@ -2,7 +2,7 @@
   "schema_version": 1,
   "project": "PikDraw",
   "stage": "m1_editor_validation",
-  "updated_at": "2026-10-15",
+  "updated_at": "2026-10-16",
   "implemented": [
     "Provider-neutral module registry, task/worktree harness and contract/reference gates",
     "Native Win32/GDI desktop shell with C++20 document/vector/rendering services; Qt remains an architecture blueprint",
@@ -14,6 +14,7 @@
     "Atomic multi-object fill/stroke/width controls, numeric RGB/CMYK/opacity dialogs, source palettes and typed creation defaults",
     "Windows ICC source RGB/CMYK to sRGB session preview, channel-model validation and bounded conversion cache; source color channels remain intact",
     "Canvas frame cache keyed by immutable root/camera/size/profile/theme; overlay interactions reuse the source frame",
+    "D07 source snap core: revisioned endpoint/source-node/line-midpoint and grid candidates, DIP tolerances, configurable priorities/tool overrides, and Ortho/Polar direction constraints",
     "SVG subset workflows and isolated worker protocol/lifecycle services; coverage and OS containment require their own acceptance evidence"
   ],
   "specifications": [
@@ -26,7 +27,7 @@
     "Native Qt Widgets preview workflow with development-time UI/QSS reload and incremental C++ builds"
   ],
   "planned": [
-    "Milestone M2: Advanced node editing, raster tools, pen tool, full snapping engine, print proofing, soak testing, and production packaging",
+    "Milestone M2: Advanced node editing, raster tools, Pen and advanced curve/relation snaps, print proofing, soak testing, and production packaging; D08 line/polyline and D09 native snap UI remain planned",
     "PDF and PDF-compatible AI subset import, research CDR import, SVG/PDF/DXF output candidates with per-feature fixtures",
     "Production/CAD tools and basic linked 3D",
     "Isolated plugin host and conversion workers with validated IPC and OS containment"
@@ -46,6 +47,7 @@
   },
   "next_priorities": [
     "Review and integrate the tested editor delivery branch with uncommitted UI work currently present on main; do not overwrite that work",
+    "Implement D08 Line/Polyline consumers with candidate-feasibility filtering and immutable draft proposals, then D09 native snap controls, indicators and tool routing",
     "Improve full source redraw: this software trace exceeds both 16.7 ms and 33.3 ms p95 budgets; measure real present/input latency separately",
     "Complete actual text outlines/group semantics, document ICC embedding/proof/export, spatial index and remaining M1 acceptance coverage before declaring M1 complete"
   ],
@@ -68,6 +70,8 @@
     "Source redraw p95 is 36.8944-41.6398 ms in three measured software runs; full-quality 60 FPS is not achieved in this trace",
     "Cached hidden native CPU paint p95 is 12.1564-14.3293 ms; it is not a measured present interval",
     "Group editing and genuine text rendering remain incomplete; text hit bounds are approximate",
+    "D07 is core-only on this candidate: no native tool routing, snap preferences, markers, HUD or desktop interaction, so the app cannot use this snap engine yet",
+    "D07 indexes endpoints, source nodes, line midpoints and grid only; grouped authoring paths and declared curve/relation snap options remain unsupported",
     "ICC settings are per-machine preview only; no document ICC binding/embedding, paper/ink soft proof, gamut warning, BPC or PDF/X",
     "Native v1 lossy containers are rejected; no silent source-color flattening or legacy native round-trip claim",
     "Source AI/CDR authoring round-trip, CAD constraints, CAM, 3D and external AI-provider scheduling are not implemented by this delivery",

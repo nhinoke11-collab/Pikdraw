@@ -18,6 +18,10 @@ add_library(pikdraw_vector STATIC
     src/interaction/draft_recovery.cpp
     src/interaction/input_router.cpp
     src/precision/numeric/numeric_input.cpp
+    src/precision/snap/snap_config.cpp
+    src/precision/snap/snap_index.cpp
+    src/precision/snap/snap_math.cpp
+    src/precision/snap/direction_snap.cpp
 )
 
 target_include_directories(pikdraw_vector PUBLIC
@@ -55,4 +59,5 @@ if(PIKDRAW_BUILD_TESTS)
     add_vector_test(test_pikdraw_vector_tool_session tests/interaction/test_tool_session.cpp)
     add_vector_test(test_pikdraw_vector_input_router tests/interaction/test_input_router.cpp)
     add_vector_test(test_pikdraw_vector_numeric tests/precision/numeric/test_numeric_input.cpp)
+    add_vector_test(test_pikdraw_vector_snap tests/precision/snap/test_snap.cpp)
 endif()
