@@ -61,23 +61,25 @@ double perpendicular_distance(geometry::Point2D delta_dip,
     return std::abs(delta_dip.x * ray_dip.y - delta_dip.y * ray_dip.x) / ray_length;
 }
 
-bool project_to_ray(geometry::Point2D anchor_world, geometry::Point2D pointer_world,
-                    double angle_degrees, const SnapCameraTransform& camera,
-                    geometry::Point2D& projected_world) noexcept {
+enum class RayProjectionStatus : uint8_t { Projected, BehindRay, Invalid };
+
+RayProjectionStatus project_to_ray(geometry::Point2D anchor_world,
+                                   geometry::Point2D pointer_world,
+                                   double angle_degrees,
+                                   geometry::Point2D& projected_world) noexcept {
     const double radians = angle_degrees * kDegreesToRadians;
     const geometry::Point2D direction{std::cos(radians), std::sin(radians)};
-    const auto direction_dip = camera.world_vector_to_dip(direction);
-    const auto anchor_dip = camera.world_to_dip(anchor_world);
-    const auto pointer_dip = camera.world_to_dip(pointer_world);
-    const geometry::Point2D delta_dip = pointer_dip - anchor_dip;
-    const double denominator = direction_dip.x * direction_dip.x +
-                               direction_dip.y * direction_dip.y;
-    if (!std::isfinite(denominator) || denominator == 0.0) return false;
-    const double scalar = (delta_dip.x * direction_dip.x +
-                           delta_dip.y * direction_dip.y) / denominator;
-    if (!std::isfinite(scalar) || scalar < 0.0) return false;
+    const geometry::Point2D delta_world = pointer_world - anchor_world;
+    const double denominator = direction.x * direction.x + direction.y * direction.y;
+    if (!std::isfinite(denominator) || denominator == 0.0)
+        return RayProjectionStatus::Invalid;
+    const double scalar = (delta_world.x * direction.x +
+                           delta_world.y * direction.y) / denominator;
+    if (!std::isfinite(scalar)) return RayProjectionStatus::Invalid;
+    if (scalar < 0.0) return RayProjectionStatus::BehindRay;
     projected_world = anchor_world + direction * scalar;
-    return finite_point(projected_world);
+    return finite_point(projected_world) ? RayProjectionStatus::Projected
+                                         : RayProjectionStatus::Invalid;
 }
 
 std::optional<double> nearest_ray(const std::vector<double>& rays, double input_angle,
@@ -176,11 +178,16 @@ DirectionSnapResult constrain_direction(
                 const auto prior_radians = prior * kDegreesToRadians;
                 const auto prior_vector = camera.world_vector_to_dip(
                     {std::cos(prior_radians), std::sin(prior_radians)});
-                result.perpendicular_distance_dip = perpendicular_distance(delta_dip, prior_vector);
-                if (result.perpendicular_distance_dip <= kPolarReleaseRadiusDip) {
-                    result.world_angle_degrees = prior;
-                    retained = project_to_ray(anchor_world, pointer_world, prior, camera,
-                                              result.world_point);
+                const double prior_distance = perpendicular_distance(delta_dip, prior_vector);
+                if (prior_distance <= kPolarReleaseRadiusDip) {
+                    geometry::Point2D prior_projection;
+                    if (project_to_ray(anchor_world, pointer_world, prior, prior_projection) ==
+                        RayProjectionStatus::Projected) {
+                        result.perpendicular_distance_dip = prior_distance;
+                        result.world_angle_degrees = prior;
+                        result.world_point = prior_projection;
+                        retained = true;
+                    }
                 }
             }
         }
@@ -188,13 +195,21 @@ DirectionSnapResult constrain_direction(
             if (result.ray_length_dip < kPolarMinimumRayLengthDip ||
                 result.perpendicular_distance_dip > kPolarAcquireRadiusDip)
                 return result;
-            if (!project_to_ray(anchor_world, pointer_world, *angle, camera, result.world_point))
+            const auto projection = project_to_ray(anchor_world, pointer_world, *angle,
+                                                   result.world_point);
+            if (projection == RayProjectionStatus::Invalid) {
+                result.status = SnapQueryStatus::InvalidInput;
                 return result;
+            }
+            if (projection == RayProjectionStatus::BehindRay) return result;
             result.world_angle_degrees = *angle;
         }
     } else {
-        if (!project_to_ray(anchor_world, pointer_world, *angle, camera, result.world_point))
+        if (project_to_ray(anchor_world, pointer_world, *angle, result.world_point) !=
+            RayProjectionStatus::Projected) {
+            result.status = SnapQueryStatus::InvalidInput;
             return result;
+        }
         result.world_angle_degrees = *angle;
     }
 
