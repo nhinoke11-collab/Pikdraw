@@ -1,0 +1,115 @@
+{
+  "schema_version": 2,
+  "fixture_type": "canonical_import_records",
+  "status": "proposed",
+  "byte_order": "little_endian",
+  "floating_point": "IEEE-754 binary64 finite values",
+  "record_ids": {
+    "1": "Page",
+    "2": "Path",
+    "3": "Text",
+    "4": "FidelityReport",
+    "5": "FidelityIssue",
+    "6": "Layer",
+    "7": "Group"
+  },
+  "compatibility": "Page, Path, Text, FidelityReport and FidelityIssue payloads retain import-record-v1 layouts. Layer and Group are additive record types in schema v2.",
+  "payload_layouts": {
+    "Page": ["width_mm:f64", "height_mm:f64"],
+    "Layer": [
+      "local_id:u32 (sequential, nonzero, layer namespace)",
+      "source_id:string16",
+      "name:string16",
+      "visible:u8 (0 or 1)",
+      "locked:u8 (0 or 1)",
+      "reserved:u16=0",
+      "root_object_count:u32",
+      "root_object_local_ids:u32[root_object_count]"
+    ],
+    "Group": [
+      "local_id:u32 (sequential, nonzero, shared object namespace)",
+      "source_id:string16",
+      "name:string16",
+      "child_count:u32",
+      "child_object_local_ids:u32[child_count]"
+    ],
+    "Path": "same payload layout as import-record-v1.json",
+    "Text": "same payload layout as import-record-v1.json",
+    "FidelityReport": "same payload layout as import-record-v1.json",
+    "FidelityIssue": "same payload layout as import-record-v1.json"
+  },
+  "record_semantics": {
+    "proposal_order": "one Page first; one or more Layer records in source order; Group, Path and Text records in depth-first source order with sequential unique object local IDs; zero or more FidelityIssue records; exactly one FidelityReport last",
+    "layer_membership": "each object is owned exactly once, directly by a Layer or by one Group; every Group child and Layer root reference resolves to an object record",
+    "group_graph": "Group references are ordered, acyclic and have one owner; each Group child local ID is greater than its parent local ID",
+    "source_ids": "nonempty and unique across layers and object records within the proposal",
+    "Page": "positive page width_mm and height_mm within the selected import profile",
+    "FidelityReport": "coverage_profile is svg-hierarchy-v2; issue_count equals preceding FidelityIssue record count; unsupported issues are not accepted",
+    "FidelityIssue": "source_locator is empty or resolves to a source ID in this proposal"
+  },
+  "svg_profile": {
+    "format_id": "SVG",
+    "profile_id": "svg-hierarchy-v2",
+    "supported_elements": ["g", "rect", "path", "text"],
+    "group_support": "nested SVG g elements retain Group records; root-level Inkscape layers retain Layer records",
+    "inkscape_layer_namespace": "http://www.inkscape.org/namespaces/inkscape",
+    "supported_path_commands": ["M", "L", "H", "V", "C", "S", "Q", "T", "Z"],
+    "unsupported": ["transforms", "CSS/style", "filters/effects", "masks", "images/links", "scripts", "DTD/entities", "nested Inkscape layers", "arc path commands"],
+    "limits": {
+      "source_bytes": 16777216,
+      "elements_including_groups": 10000,
+      "group_depth": 128,
+      "attributes_per_tag": 64,
+      "text_bytes_per_object": 262144,
+      "path_elements_per_path": 6000,
+      "path_elements_total": 100000,
+      "page_dimension_mm": 1000000,
+      "canonical_stream_bytes": 16777216,
+      "response_chunks": 64
+    },
+    "unsupported_policy": "reject entire source and emit no proposal chunks"
+  },
+  "positive_vectors": [
+    {
+      "name": "two_layers_nested_groups_paths_and_unicode_text",
+      "record_order": [1, 6, 6, 7, 2, 3, 7, 2, 4],
+      "layer_count": 2,
+      "group_depth": 2,
+      "object_owner_count": "exactly_one_per_object",
+      "expected_valid": true
+    },
+    {
+      "name": "flat_svg_gets_default_layer",
+      "record_order": [1, 6, 2, 4],
+      "layer_source_id": "svg-default-layer",
+      "expected_valid": true
+    }
+  ],
+  "negative_vectors": [
+    {
+      "name": "unresolved_group_child",
+      "stage": "host_semantic_validation",
+      "expected_error": "unknown_object_reference"
+    },
+    {
+      "name": "object_owned_by_layer_and_group",
+      "stage": "host_semantic_validation",
+      "expected_error": "duplicate_object_owner"
+    },
+    {
+      "name": "layer_record_after_object_record",
+      "stage": "host_semantic_validation",
+      "expected_error": "record_order_invalid"
+    },
+    {
+      "name": "unsupported_svg_transform",
+      "profile_id": "svg-hierarchy-v2",
+      "expected_error": "source_rejected_no_partial_proposal"
+    },
+    {
+      "name": "legacy_flat_profile_not_enabled",
+      "profile_id": "svg-flat-v1",
+      "expected_error": "unsupported_import_profile"
+    }
+  ]
+}

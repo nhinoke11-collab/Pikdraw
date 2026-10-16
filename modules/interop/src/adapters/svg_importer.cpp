@@ -8,6 +8,7 @@
 #include <fstream>
 #include <initializer_list>
 #include <limits>
+#include <optional>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
@@ -20,6 +21,7 @@ constexpr size_t kMaxTotalPathElements = 100000;
 constexpr size_t kMaxTextBytes = 256 * 1024;
 constexpr size_t kMaxTagBytes = 64 * 1024;
 constexpr size_t kMaxAttributesPerTag = 64;
+constexpr size_t kMaxSvgGroupDepth = 128;
 
 struct XmlTag {
     std::string name;
@@ -534,6 +536,11 @@ SvgImportResult ImportSvgString(const std::string& input) {
     if (!namespace_uri.empty() && namespace_uri != "http://www.w3.org/2000/svg") {
         return Failure("SVG namespace is not supported", "unsupported_namespace");
     }
+    const std::string inkscape_namespace = Attribute(root, "xmlns:inkscape");
+    if (!inkscape_namespace.empty() &&
+        inkscape_namespace != "http://www.inkscape.org/namespaces/inkscape") {
+        return Failure("Inkscape layer namespace is not supported", "unsupported_namespace");
+    }
     const std::string version = Attribute(root, "version", "1.1");
     if (version != "1.0" && version != "1.1") return Failure("Only static SVG 1.0/1.1 is in the supported profile", "unsupported_version");
 
@@ -571,7 +578,53 @@ SvgImportResult ImportSvgString(const std::string& input) {
     result.page = document::Page::make_default();
     result.page.width_mm = width_mm;
     result.page.height_mm = height_mm;
+    result.page.layers.clear();
     std::unordered_set<std::string> source_ids;
+    struct GroupFrame {
+        document::ObjectId id{document::kInvalidObjectId};
+        std::string source_id;
+        std::string name;
+        bool is_layer{false};
+        size_t layer_index{0};
+        std::vector<document::ObjectId> children;
+    };
+    std::vector<GroupFrame> group_stack;
+    std::optional<size_t> default_layer_index;
+    const auto ensure_default_layer = [&] {
+        if (default_layer_index) return;
+        default_layer_index = result.page.layers.size();
+        result.page.layers.push_back(document::Layer{"Layer 1", true, false, {}});
+        std::string synthetic_id = "svg-default-layer";
+        uint32_t suffix = 1;
+        while (!source_ids.insert(synthetic_id).second) {
+            synthetic_id = "svg-default-layer-" + std::to_string(suffix++);
+        }
+        result.layer_source_ids.push_back(std::move(synthetic_id));
+    };
+    const auto add_to_container = [&](document::ObjectId id) {
+        if (group_stack.empty()) {
+            ensure_default_layer();
+            result.page.layers[*default_layer_index].object_ids.push_back(id);
+        } else if (group_stack.back().is_layer) {
+            result.page.layers[group_stack.back().layer_index].object_ids.push_back(id);
+        } else {
+            group_stack.back().children.push_back(id);
+        }
+    };
+    const auto close_group = [&]() {
+        if (group_stack.empty()) return false;
+        GroupFrame frame = std::move(group_stack.back());
+        group_stack.pop_back();
+        if (frame.is_layer) return true;
+        document::GroupObject object;
+        object.id = frame.id;
+        object.name = std::move(frame.name);
+        object.children_ids = std::move(frame.children);
+        result.objects.emplace_back(std::move(object));
+        result.source_ids.push_back(frame.source_id);
+        add_to_container(frame.id);
+        return true;
+    };
     size_t total_path_elements = 0;
     uint32_t ordinal = 0;
     bool root_closed = root.self_closing;
@@ -581,7 +634,13 @@ SvgImportResult ImportSvgString(const std::string& input) {
         XmlTag tag;
         if (!cursor.ParseTag(tag)) return Failure("Malformed SVG tag or attribute", "malformed_xml");
         if (tag.closing) {
-            if (tag.name != "svg") return Failure("Unexpected closing SVG tag", "malformed_xml");
+            if (tag.name == "g") {
+                if (!close_group()) return Failure("SVG group closing tag has no matching group", "malformed_xml");
+                continue;
+            }
+            if (tag.name != "svg" || !group_stack.empty()) {
+                return Failure("Unexpected or unbalanced SVG closing tag", "malformed_xml");
+            }
             root_closed = true;
             break;
         }
@@ -590,7 +649,43 @@ SvgImportResult ImportSvgString(const std::string& input) {
         if (!ParseSourceId(tag, ordinal, source_id, source_ids)) return Failure("SVG element IDs are invalid or duplicated", "invalid_source_id");
         bool element_close_already_consumed = false;
 
-        if (tag.name == "rect") {
+        if (tag.name == "g") {
+            if (!AttributesAllowed(tag, {"id", "inkscape:groupmode", "inkscape:label"})) {
+                return Failure("SVG group uses unsupported attributes", "unsupported_group_feature");
+            }
+            const std::string group_mode = Attribute(tag, "inkscape:groupmode");
+            const std::string label = Attribute(tag, "inkscape:label");
+            if (label.size() > 128) return Failure("SVG group or layer label exceeds the supported profile", "resource_limit");
+            if ((!group_mode.empty() || !label.empty()) &&
+                inkscape_namespace != "http://www.inkscape.org/namespaces/inkscape") {
+                return Failure("Inkscape layer metadata has no recognized namespace", "unsupported_namespace");
+            }
+            if (!group_mode.empty() && group_mode != "layer") {
+                return Failure("Inkscape group mode is unsupported", "unsupported_layer_feature");
+            }
+            const bool is_layer = group_mode == "layer";
+            if (is_layer && !group_stack.empty()) {
+                return Failure("Nested SVG layers are outside the supported profile", "nested_layer_unsupported");
+            }
+            if (!is_layer && group_stack.size() >= kMaxSvgGroupDepth) {
+                return Failure("SVG group nesting exceeds the supported profile", "resource_limit");
+            }
+            GroupFrame frame;
+            frame.id = document::generate_object_id();
+            frame.source_id = source_id;
+            frame.name = label.empty() ? source_id : label;
+            frame.is_layer = is_layer;
+            if (is_layer) {
+                frame.layer_index = result.page.layers.size();
+                result.page.layers.push_back(document::Layer{frame.name, true, false, {}});
+                result.layer_source_ids.push_back(source_id);
+            }
+            group_stack.push_back(std::move(frame));
+            if (tag.self_closing && !close_group()) {
+                return Failure("SVG empty group could not be closed", "malformed_xml");
+            }
+            continue;
+        } else if (tag.name == "rect") {
             if (!AttributesAllowed(tag, {"id", "x", "y", "width", "height", "fill", "stroke", "stroke-width"})) {
                 return Failure("SVG rectangle uses unsupported attributes", "unsupported_rectangle_feature");
             }
@@ -615,8 +710,10 @@ SvgImportResult ImportSvgString(const std::string& input) {
             object.stroke_width_mm *= std::abs(root_transform.a);
             if (!std::isfinite(object.stroke_width_mm) || object.stroke_width_mm < 0) return Failure("SVG stroke width is invalid", "invalid_geometry");
             total_path_elements += object.path.size();
+            const auto id = object.id;
             result.objects.emplace_back(std::move(object));
-            result.source_ids.push_back(std::move(source_id));
+            result.source_ids.push_back(source_id);
+            add_to_container(id);
         } else if (tag.name == "path") {
             if (!AttributesAllowed(tag, {"id", "d", "fill", "stroke", "stroke-width", "fill-rule"})) {
                 return Failure("SVG path uses unsupported attributes", "unsupported_path_feature");
@@ -639,9 +736,11 @@ SvgImportResult ImportSvgString(const std::string& input) {
                 return Failure("SVG stroke width is malformed", "unsupported_units");
             }
             object.stroke_width_mm *= std::abs(root_transform.a);
+            const auto id = object.id;
             total_path_elements += object.path.size();
             result.objects.emplace_back(std::move(object));
-            result.source_ids.push_back(std::move(source_id));
+            result.source_ids.push_back(source_id);
+            add_to_container(id);
         } else if (tag.name == "text") {
             if (!AttributesAllowed(tag, {"id", "x", "y", "fill", "font-family", "font-size", "font-weight", "font-style"}) || tag.self_closing) {
                 return Failure("SVG text uses unsupported attributes or empty-element syntax", "unsupported_text_feature");
@@ -684,10 +783,12 @@ SvgImportResult ImportSvgString(const std::string& input) {
             if (!has_fill) object.fill = color::RGBColor{0, 0, 0, 0};
             result.report.add_issue(FidelitySeverity::Warning, source_id, "font_resolution",
                                     "Font family is retained; rendered appearance is not verified");
+            const auto id = object.id;
             result.objects.emplace_back(std::move(object));
-            result.source_ids.push_back(std::move(source_id));
+            result.source_ids.push_back(source_id);
+            add_to_container(id);
         } else {
-            return Failure("SVG contains an element outside the supported flat subset", "unsupported_element");
+            return Failure("SVG contains an element outside the supported hierarchy subset", "unsupported_element");
         }
 
         if (total_path_elements > kMaxTotalPathElements) return Failure("SVG total path complexity exceeds the supported profile", "resource_limit");
@@ -698,6 +799,9 @@ SvgImportResult ImportSvgString(const std::string& input) {
                 return Failure("SVG element content or closing tag is unsupported", "malformed_xml");
             }
         }
+    }
+    if (result.page.layers.empty()) {
+        ensure_default_layer();
     }
     if (!cursor.SkipMisc() || !cursor.AtEnd()) return Failure("Trailing XML content is not supported", "malformed_xml");
     result.success = true;

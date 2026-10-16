@@ -48,6 +48,7 @@ public:
 
 private:
     struct DigestState;
+    struct SemanticState;
 
     pikdraw::interop::V2ImportBegin expected_;
     uint64_t max_canonical_bytes_{0};
@@ -60,6 +61,7 @@ private:
     bool complete_{false};
     std::string_view failure_{"none"};
     std::unique_ptr<DigestState> digest_;
+    std::unique_ptr<SemanticState> semantic_;
 };
 
 } // namespace pikdraw::workers

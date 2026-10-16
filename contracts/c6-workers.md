@@ -160,19 +160,26 @@ unsupported_protocol, không gọi parser trong host.
   alpha, spot name, alternate RGB và cờ overprint; host không đổi màu nguồn sang RGB âm thầm.
   FidelityReport tóm tắt coverage, appearance, editability, production assessment và tổng issue;
   host kiểm từng record, thứ tự, số issue và report trước khi nhận proposal.
-- **SVG spike profile hiện có:** chỉ chấp nhận `format_id=SVG`, `profile_id=svg-flat-v1`, nguồn
-  UTF-8 tĩnh tối đa 16 MiB, root có width/height rõ đơn vị, và các phần tử phẳng `rect`, `path`,
-  `text`. `viewBox` chỉ dùng mapping xMidYMid meet mặc định hoặc none đồng tỷ lệ. Path commands
-  được nhận là M/L/H/V/C/S/Q/T/Z. Text giữ Unicode, font family/weight/style và cỡ chữ; font có
-  sẵn hay hình glyph thực tế chưa được xác minh. Profile không nhận group/layer, transform riêng,
-  CSS/style, filter/effect, image/link ngoài, script, DTD/entity, arc command hoặc phần tử lạ.
-  Trường hợp ngoài subset kết thúc bằng structured worker error và không có proposal chunk; không
-  được flatten hoặc bỏ layer để tiếp tục. Giới hạn hiện tại là 10.000 phần tử, 6.000 verb/path và
-  100.000 path elements cộng dồn, 64 thuộc tính/tag, 256 KiB text/object, 16 MiB canonical stream
-  và 1.000.000 mm mỗi chiều trang. Đây là phạm vi spike, chưa phải claim hỗ trợ SVG tổng quát.
-- Semantic decoder host-side, layer/group records, document transaction và consumer review chưa
-  hoàn tất. Vì vậy C6 vẫn Proposed; parser test pass chỉ xác nhận subset và worker stream, không
-  chứng minh fidelity đầy đủ, lưu/mở document, hay an toàn OS trên mọi máy.
+- Record schema v2 tại [`import-record-v2.json`](../docs/quality/reference-fixtures/import-record-v2.json)
+  giữ nguyên payload v1 cho Page/Path/Text/FidelityReport/FidelityIssue và thêm `6=Layer`, `7=Group`.
+  Layer trỏ tới các object gốc; Group trỏ tới các object con. Host kiểm thứ tự, ID, UTF-8/source ID,
+  mọi tham chiếu, đúng một owner cho mỗi object, đồ thị không chu trình, issue locator và report
+  trước khi chấp nhận terminal frame. C6 host chỉ bật `format_id=SVG`, `profile_id=svg-hierarchy-v2`;
+  profile cũ `svg-flat-v1` không được dispatch.
+- **SVG profile `svg-hierarchy-v2`:** nguồn UTF-8 tĩnh tối đa 16 MiB, root có width/height rõ đơn vị,
+  hỗ trợ `rect`, `path`, `text`, `<g>` lồng nhau và layer Inkscape ở cấp root qua namespace chính thức.
+  Group giữ thứ tự/con trỏ con; layer giữ tên, source ID, visibility/lock hiện tại và danh sách object
+  gốc. SVG không khai báo layer được tạo một layer mặc định. `viewBox` chỉ dùng mapping xMidYMid meet
+  mặc định hoặc none đồng tỷ lệ. Path commands nhận M/L/H/V/C/S/Q/T/Z. Text giữ Unicode, family/weight/
+  style/cỡ chữ; việc tìm font và glyph hiển thị chưa được xác minh. Profile từ chối transform, CSS/style,
+  filter/effect, mask, image/link ngoài, script, DTD/entity, layer lồng nhau, arc command và phần tử lạ.
+  Từ chối toàn nguồn bằng structured worker error, không phát chunk dở dang. Giới hạn: 10.000 phần tử
+  gồm group, depth 128, 6.000 verb/path, 100.000 path elements cộng dồn, 64 thuộc tính/tag, 256 KiB
+  text/object, 16 MiB canonical stream và 1.000.000 mm mỗi chiều trang. Đây là phạm vi subset, chưa
+  phải claim hỗ trợ SVG tổng quát.
+- Host đã kiểm semantic hierarchy cho SVG profile, nhưng document transaction/consumer apply và review
+  tích hợp chưa hoàn tất. Vì vậy C6 vẫn Proposed; parser test pass không chứng minh import vào document,
+  fidelity đầy đủ, lưu/mở document hoặc an toàn OS trên mọi máy.
 - Host ghi chunks vào job staging riêng thay vì giữ toàn scene trong RAM, nhưng validate record
   ngay khi đọc. Chỉ một reader/writer có quyền consume stream; queue count/bytes và disk usage có
   trần. Hết quota, thiếu quyền hoặc staging I/O lỗi kết thúc job; không bỏ chunk hoặc giảm chất

@@ -18,7 +18,9 @@ enum class ImportRecordType : uint16_t {
     Path = 2,
     Text = 3,
     FidelityReport = 4,
-    FidelityIssue = 5
+    FidelityIssue = 5,
+    Layer = 6,
+    Group = 7
 };
 
 enum class ImportColorModel : uint8_t { Rgb = 1, Cmyk = 2, Spot = 3, Gray = 4 };
@@ -45,6 +47,22 @@ struct ImportPathElementRecord {
 };
 
 struct ImportPageRecord { double width_mm{0}; double height_mm{0}; };
+
+struct ImportLayerRecord {
+    uint32_t local_id{0};
+    std::string source_id;
+    std::string name;
+    bool visible{true};
+    bool locked{false};
+    std::vector<uint32_t> object_local_ids;
+};
+
+struct ImportGroupRecord {
+    uint32_t local_id{0};
+    std::string source_id;
+    std::string name;
+    std::vector<uint32_t> child_local_ids;
+};
 
 struct ImportPathRecord {
     uint32_t local_id{0};
@@ -92,6 +110,8 @@ struct ImportFidelityIssueRecord {
 
 using ImportRecordValue = std::variant<
     ImportPageRecord,
+    ImportLayerRecord,
+    ImportGroupRecord,
     ImportPathRecord,
     ImportTextRecord,
     ImportFidelityReportRecord,

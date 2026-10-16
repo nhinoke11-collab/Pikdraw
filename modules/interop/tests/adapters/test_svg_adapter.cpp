@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cmath>
 #include <iostream>
+#include <unordered_map>
 
 using namespace pikdraw::interop;
 using namespace pikdraw::document;
@@ -82,12 +83,50 @@ void test_relative_horizontal_vertical_path_commands() {
     assert(elements[4].verb == PathVerb::Close);
 }
 
+void test_nested_groups_and_inkscape_layers_are_preserved() {
+    const std::string svg = R"(<svg xmlns="http://www.w3.org/2000/svg"
+        xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="100mm" height="80mm">
+        <g id="layer-cut" inkscape:groupmode="layer" inkscape:label="Cut">
+            <g id="outer" inkscape:label="Outer group">
+                <rect id="rect-a" width="10mm" height="5mm"/>
+                <g id="inner"><path id="path-a" d="M0 0L5 5"/></g>
+            </g>
+        </g>
+        <g id="layer-print" inkscape:groupmode="layer" inkscape:label="Print">
+            <path id="path-b" d="M1 1L2 2"/>
+        </g>
+    </svg>)";
+
+    const auto result = SvgImporter::import_from_string(svg);
+    assert(result.success);
+    assert(result.page.layers.size() == 2);
+    assert(result.layer_source_ids == std::vector<std::string>({"layer-cut", "layer-print"}));
+    assert(result.page.layers[0].name == "Cut" && result.page.layers[1].name == "Print");
+    assert(result.objects.size() == 5 && result.source_ids.size() == 5);
+
+    std::unordered_map<std::string, size_t> object_by_source;
+    for (size_t index = 0; index < result.source_ids.size(); ++index) {
+        object_by_source.emplace(result.source_ids[index], index);
+    }
+    const auto& outer = std::get<GroupObject>(result.objects[object_by_source.at("outer")]);
+    assert(result.page.layers[0].object_ids == std::vector<ObjectId>{outer.id});
+    assert(outer.children_ids.size() == 2);
+    const auto& rect = std::get<PathObject>(result.objects[object_by_source.at("rect-a")]);
+    const auto& inner = std::get<GroupObject>(result.objects[object_by_source.at("inner")]);
+    const auto& path_a = std::get<PathObject>(result.objects[object_by_source.at("path-a")]);
+    const auto& path_b = std::get<PathObject>(result.objects[object_by_source.at("path-b")]);
+    assert(outer.children_ids[0] == rect.id && outer.children_ids[1] == inner.id);
+    assert(inner.children_ids == std::vector<ObjectId>{path_a.id});
+    assert(result.page.layers[1].object_ids == std::vector<ObjectId>{path_b.id});
+}
+
 void test_rejects_active_external_and_malformed_content() {
     for (const auto& svg : {
         R"(<svg width="10mm" height="10mm"><script>alert(1)</script></svg>)",
         R"(<!DOCTYPE svg [<!ENTITY x SYSTEM "file:///secret">]><svg width="10mm" height="10mm"/>)",
         R"(<svg width="10mm" height="10mm"><image href="https://example.invalid/x.png"/></svg>)",
-        R"(<svg width="10mm" height="10mm"><g><rect width="2" height="2"/></g></svg>)",
+        R"svg(<svg width="10mm" height="10mm"><g transform="translate(1 2)"><rect width="2" height="2"/></g></svg>)svg",
+        R"(<svg width="10mm" height="10mm"><g style="opacity:0.5"><rect width="2" height="2"/></g></svg>)",
         R"(<svg width="10mm" height="10mm"><path d="M 0 0 A 2 2 0 0 1 4 4"/></svg>)",
         R"(<svg width="10mm" height="10mm"><path style="fill:red" d="M0 0L1 1"/></svg>)",
         R"(<svg width="10mm" height="10mm"><path d="M0 0L1"/></svg>)",
@@ -120,6 +159,7 @@ int main() {
     test_svg_unsupported_filter_reported();
     test_viewbox_units_and_path_commands();
     test_relative_horizontal_vertical_path_commands();
+    test_nested_groups_and_inkscape_layers_are_preserved();
     test_rejects_active_external_and_malformed_content();
     test_rejects_source_limits_and_bad_utf8();
     std::cout << "[test_svg_adapter] All tests passed!\n";

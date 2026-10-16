@@ -253,7 +253,7 @@ bool HandleImportBegin(
     const auto request = DeserializeV2ImportBegin(packet);
     if (!request || header.sequence_id != 1 || (accepted_features & required) != required) return false;
     if (!VerifySource(source, *request)) return SendError(output, header.sequence_id, 2, "source capability hash mismatch");
-    if (request->format_id != "SVG" || request->profile_id != "svg-flat-v1") {
+    if (request->format_id != "SVG" || request->profile_id != "svg-hierarchy-v2") {
         return SendError(output, header.sequence_id, 1, "unsupported format or profile");
     }
     std::vector<uint8_t> source_bytes;

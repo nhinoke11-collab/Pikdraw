@@ -12,6 +12,7 @@ struct SvgImportResult {
     document::Page page;
     std::vector<document::ObjectVariant> objects;
     std::vector<std::string> source_ids;
+    std::vector<std::string> layer_source_ids;
     FidelityLossReport report;
     std::string error_message;
 };

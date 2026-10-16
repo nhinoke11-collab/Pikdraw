@@ -46,6 +46,15 @@
       "canonical_sha256_matches": true,
       "fidelity_report_complete": true,
       "expected_valid": true
+    },
+    {
+      "name": "svg_hierarchy_layers_groups_and_single_ownership",
+      "format_id": "SVG",
+      "profile_id": "svg-hierarchy-v2",
+      "records": ["Page", "Layer", "Group", "Path", "Text", "FidelityIssue", "FidelityReport"],
+      "all_references_resolve": true,
+      "each_object_has_one_owner": true,
+      "expected_valid": true
     }
   ],
   "negative_vectors": [
@@ -103,6 +112,21 @@
       "name": "incomplete_fidelity_report",
       "stage": "import_end",
       "expected_error": "incomplete_report"
+    },
+    {
+      "name": "unresolved_svg_group_child",
+      "stage": "host_import_semantics",
+      "expected_error": "invalid_svg_import_record_order_hierarchy_or_reference"
+    },
+    {
+      "name": "svg_object_has_layer_and_group_owner",
+      "stage": "host_import_semantics",
+      "expected_error": "invalid_svg_import_record_order_hierarchy_or_reference"
+    },
+    {
+      "name": "svg_layer_after_object_records",
+      "stage": "host_import_semantics",
+      "expected_error": "invalid_svg_import_record_order_hierarchy_or_reference"
     },
     {
       "name": "eof_before_import_end",

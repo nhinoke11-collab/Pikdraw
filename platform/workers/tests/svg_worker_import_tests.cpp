@@ -75,7 +75,7 @@ bool CaptureFrame(const IpcV2Frame& frame, ImportCapture& capture) {
                 record_index >= chunk->record_types.size() ||
                 chunk->record_types[record_index] != raw_type ||
                 raw_type < static_cast<uint16_t>(ImportRecordType::Page) ||
-                raw_type > static_cast<uint16_t>(ImportRecordType::FidelityIssue)) {
+                raw_type > static_cast<uint16_t>(ImportRecordType::Group)) {
                 return capture.semantic_records_valid = false;
             }
             const auto record = DeserializeImportRecord(
@@ -111,7 +111,7 @@ WorkerLaunchConfig ConfigFor(const SourceSnapshot& source) {
     return config;
 }
 
-V2ImportBegin BeginFor(const SourceSnapshot& source, std::string format = "SVG", std::string profile = "svg-flat-v1") {
+V2ImportBegin BeginFor(const SourceSnapshot& source, std::string format = "SVG", std::string profile = "svg-hierarchy-v2") {
     V2ImportBegin begin;
     begin.job.document_id = "svg-worker-import-test-document";
     begin.job.epoch = 3;
@@ -135,7 +135,7 @@ struct RunResult final {
     ImportCapture capture;
 };
 
-RunResult RunImport(const SourceSnapshot& source, std::string format = "SVG", std::string profile = "svg-flat-v1") {
+RunResult RunImport(const SourceSnapshot& source, std::string format = "SVG", std::string profile = "svg-hierarchy-v2") {
     WorkerProcessHost host;
     const auto config = ConfigFor(source);
     Require(fs::exists(config.worker_executable_path), "spike_worker executable was not found beside this test");
@@ -158,8 +158,12 @@ std::optional<SourceSnapshot> SnapshotFor(const fs::path& path) {
 
 void TestWorkerImportAndTypedProposal() {
     constexpr std::string_view source = R"(<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="100mm" height="50mm" viewBox="0 0 400 200">
-        <path id="outline" d="M0 0 C20 0 20 20 40 20 Q60 40 80 20 Z" fill="#2480c0" stroke="#123" stroke-width="2"/>
-        <text id="label" x="20" y="100" font-family="Noto Sans" font-size="24">Tiếng Việt &amp; vectors</text>
+        <g id="layer-main" inkscape:groupmode="layer" inkscape:label="Main">
+            <g id="group-main">
+                <path id="outline" d="M0 0 C20 0 20 20 40 20 Q60 40 80 20 Z" fill="#2480c0" stroke="#123" stroke-width="2"/>
+                <text id="label" x="20" y="100" font-family="Noto Sans" font-size="24">Tiếng Việt &amp; vectors</text>
+            </g>
+        </g>
     </svg>)";
     TemporarySource file;
     Require(file.Write(source), "could not write synthetic SVG test source");
@@ -169,23 +173,31 @@ void TestWorkerImportAndTypedProposal() {
     Require(result.complete, "worker did not return a complete SVG proposal stream");
     Require(result.capture.semantic_records_valid && result.capture.saw_end,
             "worker stream contains invalid typed import records or no terminal report");
-    Require(result.capture.chunk_count == 1 && result.capture.records.size() == 5,
+    Require(result.capture.chunk_count == 1 && result.capture.records.size() == 7,
             "worker proposal record count or chunking changed");
     Require(std::holds_alternative<ImportPageRecord>(result.capture.records[0]), "proposal did not begin with page record");
-    Require(std::holds_alternative<ImportPathRecord>(result.capture.records[1]), "proposal path record missing");
-    Require(std::holds_alternative<ImportTextRecord>(result.capture.records[2]), "proposal text record missing");
-    Require(std::holds_alternative<ImportFidelityIssueRecord>(result.capture.records[3]), "font fidelity issue missing");
-    Require(std::holds_alternative<ImportFidelityReportRecord>(result.capture.records[4]), "terminal fidelity report missing");
+    Require(std::holds_alternative<ImportLayerRecord>(result.capture.records[1]), "proposal layer record missing");
+    Require(std::holds_alternative<ImportGroupRecord>(result.capture.records[2]), "proposal group record missing");
+    Require(std::holds_alternative<ImportPathRecord>(result.capture.records[3]), "proposal path record missing");
+    Require(std::holds_alternative<ImportTextRecord>(result.capture.records[4]), "proposal text record missing");
+    Require(std::holds_alternative<ImportFidelityIssueRecord>(result.capture.records[5]), "font fidelity issue missing");
+    Require(std::holds_alternative<ImportFidelityReportRecord>(result.capture.records[6]), "terminal fidelity report missing");
     const auto& page = std::get<ImportPageRecord>(result.capture.records[0]);
-    const auto& path = std::get<ImportPathRecord>(result.capture.records[1]);
-    const auto& text = std::get<ImportTextRecord>(result.capture.records[2]);
-    const auto& report = std::get<ImportFidelityReportRecord>(result.capture.records[4]);
+    const auto& layer = std::get<ImportLayerRecord>(result.capture.records[1]);
+    const auto& group = std::get<ImportGroupRecord>(result.capture.records[2]);
+    const auto& path = std::get<ImportPathRecord>(result.capture.records[3]);
+    const auto& text = std::get<ImportTextRecord>(result.capture.records[4]);
+    const auto& report = std::get<ImportFidelityReportRecord>(result.capture.records[6]);
     Require(page.width_mm == 100 && page.height_mm == 50, "page dimensions were not converted to millimeters");
-    Require(path.source_id == "outline" && path.elements.size() == 4 && path.has_stroke,
+    Require(layer.source_id == "layer-main" && layer.name == "Main" && layer.object_local_ids == std::vector<uint32_t>{1},
+            "layer metadata or root group reference was lost");
+    Require(group.source_id == "group-main" && group.local_id == 1 && group.child_local_ids == std::vector<uint32_t>({2, 3}),
+            "nested group structure was lost");
+    Require(path.source_id == "outline" && path.local_id == 2 && path.elements.size() == 4 && path.has_stroke,
             "editable path geometry or source identity was lost");
-    Require(text.source_id == "label" && text.utf8_text == "Tiếng Việt & vectors" && text.font_family == "Noto Sans",
+    Require(text.source_id == "label" && text.local_id == 3 && text.utf8_text == "Tiếng Việt & vectors" && text.font_family == "Noto Sans",
             "editable Unicode text or font metadata was lost");
-    Require(report.coverage_profile == "svg-flat-v1" && report.issue_count == 1 &&
+    Require(report.coverage_profile == "svg-hierarchy-v2" && report.issue_count == 1 &&
             report.production == ImportProduction::NotAssessed,
             "proposal did not report its bounded coverage and production status");
 }
@@ -193,7 +205,8 @@ void TestWorkerImportAndTypedProposal() {
 void TestWorkerRejectsUnsupportedMarkupAndFormats() {
     for (const auto source_text : {
              std::string_view(R"(<!DOCTYPE svg [<!ENTITY x SYSTEM "file:///private">]><svg width="10mm" height="10mm"/>)"),
-             std::string_view(R"(<svg width="10mm" height="10mm"><filter id="f"/><rect width="2" height="2"/></svg>)")}) {
+             std::string_view(R"(<svg width="10mm" height="10mm"><filter id="f"/><rect width="2" height="2"/></svg>)"),
+             std::string_view(R"svg(<svg width="10mm" height="10mm"><g transform="translate(1 2)"><rect width="2" height="2"/></g></svg>)svg")}) {
         TemporarySource file;
         Require(file.Write(source_text), "could not write hostile SVG test source");
         auto snapshot = SnapshotFor(file.path);
@@ -232,7 +245,7 @@ void WriteCorpusReport(const fs::path& path, const std::vector<CorpusResult>& ro
         if (row.accepted) ++accepted;
         if (row.parser_executed) ++executed;
     }
-    report << "{\"schema_version\":1,\"profile\":\"svg-flat-v1\",\"parser_executed\":true,"
+    report << "{\"schema_version\":1,\"profile\":\"svg-hierarchy-v2\",\"parser_executed\":true,"
            << "\"svg_files\":" << rows.size() << ",\"parser_runs\":" << executed
            << ",\"accepted\":" << accepted << ",\"results\":[";
     for (size_t index = 0; index < rows.size(); ++index) {

@@ -1,5 +1,8 @@
 #include "pikdraw/workers/process_launcher.hpp"
+#include "pikdraw/interop/adapters/svg_worker_adapter.hpp"
+#include "../src/v2_proposal_validator.hpp"
 
+#include <bcrypt.h>
 #include <array>
 #include <filesystem>
 #include <fstream>
@@ -62,7 +65,7 @@ V2ImportBegin BeginFor(const SourceSnapshot& source) {
     begin.job.source_token = source.Token();
     begin.source_bytes = source.SizeBytes();
     begin.source_sha256 = source.Sha256();
-    begin.format_id = "SVG";
+    begin.format_id = "TEST";
     begin.profile_id = "test-subset-v1";
     return begin;
 }
@@ -77,6 +80,147 @@ bool StartNegotiated(
     std::wstring mode) {
     const auto config = ConfigFor(source, std::move(mode));
     return host.Launch(config) && host.NegotiateV2(IPC_V2_SUPPORTED_FEATURES, std::chrono::seconds(2));
+}
+
+bool Digest(std::span<const uint8_t> bytes, IpcV2Digest& output) {
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+    BCRYPT_HASH_HANDLE hash = nullptr;
+    std::vector<uint8_t> object;
+    const auto close = [&] {
+        if (hash) BCryptDestroyHash(hash);
+        if (algorithm) BCryptCloseAlgorithmProvider(algorithm, 0);
+    };
+    if (!BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0))) return false;
+    DWORD object_size = 0;
+    DWORD written = 0;
+    if (!BCRYPT_SUCCESS(BCryptGetProperty(algorithm, BCRYPT_OBJECT_LENGTH,
+            reinterpret_cast<PUCHAR>(&object_size), sizeof(object_size), &written, 0)) ||
+        object_size == 0 || written != sizeof(object_size)) {
+        close();
+        return false;
+    }
+    object.resize(object_size);
+    if (!BCRYPT_SUCCESS(BCryptCreateHash(algorithm, &hash, object.data(), object_size, nullptr, 0, 0))) {
+        close();
+        return false;
+    }
+    const bool updated = BCRYPT_SUCCESS(BCryptHashData(hash, const_cast<PUCHAR>(bytes.data()),
+        static_cast<ULONG>(bytes.size()), 0));
+    const bool finished = updated && BCRYPT_SUCCESS(BCryptFinishHash(hash, output.data(),
+        static_cast<ULONG>(output.size()), 0));
+    close();
+    return finished;
+}
+
+IpcV2Frame MakeFrame(std::vector<uint8_t> packet) {
+    const auto frame = DeserializeV2Frame(packet);
+    if (!frame) throw std::runtime_error("could not decode generated semantic test frame");
+    return *frame;
+}
+
+void TestSvgHierarchyHostSemantics(const SourceSnapshot& source) {
+    auto expected = BeginFor(source);
+    expected.format_id = "SVG";
+    expected.profile_id = "svg-hierarchy-v2";
+    auto legacy_profile = expected;
+    legacy_profile.profile_id = "svg-flat-v1";
+    V2ProposalStreamValidator legacy_validator(legacy_profile, 64 * 1024, 128, 4);
+    Require(!legacy_validator.IsReady(), "host enabled the incompatible legacy SVG profile");
+
+    const auto run = [&](bool duplicate_owner, bool missing_child, bool wrong_order) {
+        ImportPageRecord page{100, 50};
+        ImportLayerRecord layer;
+        layer.local_id = 1;
+        layer.source_id = "layer";
+        layer.name = "Layer";
+        layer.object_local_ids = duplicate_owner ? std::vector<uint32_t>{1, 2} : std::vector<uint32_t>{1};
+        ImportGroupRecord group;
+        group.local_id = 1;
+        group.source_id = "group";
+        group.name = "Group";
+        group.child_local_ids = missing_child ? std::vector<uint32_t>{99} : std::vector<uint32_t>{2};
+        ImportPathRecord path;
+        path.local_id = 2;
+        path.source_id = "path";
+        path.name = "Path";
+        path.elements.push_back({ImportPathVerb::Move, 0, {}});
+        ImportFidelityReportRecord report;
+        report.coverage_profile = "svg-hierarchy-v2";
+        report.issue_count = 0;
+
+        std::vector<ImportRecordValue> values;
+        values.emplace_back(page);
+        if (wrong_order) {
+            values.emplace_back(group);
+            values.emplace_back(layer);
+        } else {
+            values.emplace_back(layer);
+            values.emplace_back(group);
+        }
+        values.emplace_back(path);
+        values.emplace_back(report);
+
+        V2ProposalChunk chunk;
+        chunk.job = expected.job;
+        chunk.chunk_ordinal = 0;
+        chunk.first_record_ordinal = 0;
+        for (const auto& value : values) {
+            const auto record = SerializeImportRecord(value);
+            if (!record || !AppendV2ProposalRecord(chunk.canonical_record_bytes,
+                    static_cast<uint16_t>(record->type), record->payload)) {
+                throw std::runtime_error("could not encode semantic test record");
+            }
+            ++chunk.record_count;
+        }
+        chunk.checksum_crc32 = V2ProposalRecordsCrc32(chunk.canonical_record_bytes);
+        V2ProposalStreamValidator validator(expected, 64 * 1024, 128, 4);
+        if (!validator.IsReady()) throw std::runtime_error("SVG hierarchy validator failed to initialize");
+        const bool accepted = validator.Accept(MakeFrame(SerializeV2ProposalChunk(chunk, 1)));
+        return accepted;
+    };
+
+    {
+        ImportPageRecord page{100, 50};
+        ImportLayerRecord layer{1, "layer", "Layer", true, false, {1}};
+        ImportGroupRecord group{1, "group", "Group", {2}};
+        ImportPathRecord path;
+        path.local_id = 2;
+        path.source_id = "path";
+        path.name = "Path";
+        path.elements.push_back({ImportPathVerb::Move, 0, {}});
+        ImportFidelityReportRecord report;
+        report.coverage_profile = "svg-hierarchy-v2";
+
+        std::vector<ImportRecordValue> values{page, layer, group, path, report};
+        V2ProposalChunk chunk;
+        chunk.job = expected.job;
+        chunk.chunk_ordinal = 0;
+        chunk.first_record_ordinal = 0;
+        for (const auto& value : values) {
+            const auto record = SerializeImportRecord(value);
+            Require(record && AppendV2ProposalRecord(chunk.canonical_record_bytes,
+                static_cast<uint16_t>(record->type), record->payload), "could not encode valid SVG hierarchy records");
+            ++chunk.record_count;
+        }
+        chunk.checksum_crc32 = V2ProposalRecordsCrc32(chunk.canonical_record_bytes);
+        V2ProposalStreamValidator validator(expected, 64 * 1024, 128, 4);
+        Require(validator.IsReady(), "SVG hierarchy validator did not initialize");
+        Require(validator.Accept(MakeFrame(SerializeV2ProposalChunk(chunk, 1))),
+                "host rejected valid SVG layer/group references");
+
+        V2ImportEnd end;
+        end.job = expected.job;
+        end.chunk_count = 1;
+        end.record_count = chunk.record_count;
+        end.canonical_bytes = chunk.canonical_record_bytes.size();
+        end.fidelity_report_complete = true;
+        Require(Digest(chunk.canonical_record_bytes, end.canonical_sha256), "could not hash semantic test stream");
+        Require(validator.Accept(MakeFrame(SerializeV2ImportEnd(end, 2))) && validator.IsComplete(),
+                "host did not complete a valid SVG hierarchy proposal");
+    }
+    Require(!run(true, false, false), "host accepted duplicate group/layer ownership");
+    Require(!run(false, true, false), "host accepted a missing group child reference");
+    Require(!run(false, false, true), "host accepted a layer after object records began");
 }
 
 void TestPositiveStream(const SourceSnapshot& source) {
@@ -161,6 +305,7 @@ int main() {
         Require(V2ProposalRecordsCrc32(crc_probe) == 0xCBF43926u, "CRC32 known vector mismatch");
 
         TestPositiveStream(*source);
+        TestSvgHierarchyHostSemantics(*source);
         for (const auto* mode : {
                  L"--test-v2-stream-gap", L"--test-v2-stream-oversize", L"--test-v2-stream-quota",
                  L"--test-v2-stream-no-end", L"--test-v2-stream-bad-crc", L"--test-v2-stream-bad-hash",

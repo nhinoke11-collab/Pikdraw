@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <functional>
 #include <type_traits>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace pikdraw::interop {
 namespace {
@@ -212,6 +215,31 @@ bool ValidRecord(const ImportPageRecord& record) {
            record.height_mm <= SvgImporter::kMaxPageMillimeters;
 }
 
+bool ValidLocalReferences(std::span<const uint32_t> references, uint32_t owner_id) {
+    if (references.size() > SvgImporter::kMaxObjects) return false;
+    std::unordered_set<uint32_t> unique;
+    unique.reserve(references.size());
+    for (const uint32_t reference : references) {
+        if (reference == 0 || reference == owner_id || !unique.insert(reference).second) return false;
+    }
+    return true;
+}
+
+bool WriteLocalReferences(RecordWriter& writer, std::span<const uint32_t> references, uint32_t owner_id) {
+    if (!ValidLocalReferences(references, owner_id) ||
+        !writer.U32(static_cast<uint32_t>(references.size()))) return false;
+    for (const uint32_t reference : references) if (!writer.U32(reference)) return false;
+    return true;
+}
+
+bool ReadLocalReferences(RecordReader& reader, std::vector<uint32_t>& references, uint32_t owner_id) {
+    uint32_t count = 0;
+    if (!reader.U32(count) || count > SvgImporter::kMaxObjects) return false;
+    references.resize(count);
+    for (uint32_t& reference : references) if (!reader.U32(reference)) return false;
+    return ValidLocalReferences(references, owner_id);
+}
+
 bool ValidPathSequence(std::span<const ImportPathElementRecord> elements) {
     if (elements.empty() || elements.front().verb != ImportPathVerb::Move) return false;
     bool has_current_point = false;
@@ -233,6 +261,17 @@ std::optional<CanonicalImportRecord> SerializeImportRecord(const ImportRecordVal
         if constexpr (std::is_same_v<T, ImportPageRecord>) {
             type = ImportRecordType::Page;
             return ValidRecord(record) && writer.Double(record.width_mm) && writer.Double(record.height_mm);
+        } else if constexpr (std::is_same_v<T, ImportLayerRecord>) {
+            type = ImportRecordType::Layer;
+            return record.local_id != 0 && writer.U32(record.local_id) &&
+                   writer.String16(record.source_id, 128) && writer.String16(record.name, 128) &&
+                   writer.U8(record.visible ? 1 : 0) && writer.U8(record.locked ? 1 : 0) && writer.U16(0) &&
+                   WriteLocalReferences(writer, record.object_local_ids, 0);
+        } else if constexpr (std::is_same_v<T, ImportGroupRecord>) {
+            type = ImportRecordType::Group;
+            return record.local_id != 0 && writer.U32(record.local_id) &&
+                   writer.String16(record.source_id, 128) && writer.String16(record.name, 128) &&
+                   WriteLocalReferences(writer, record.child_local_ids, record.local_id);
         } else if constexpr (std::is_same_v<T, ImportPathRecord>) {
             type = ImportRecordType::Path;
             if (record.local_id == 0 || record.winding_rule > 1 || record.elements.empty() ||
@@ -296,6 +335,26 @@ std::optional<ImportRecordValue> DeserializeImportRecord(
     if (type == ImportRecordType::Page) {
         ImportPageRecord record;
         if (!reader.Double(record.width_mm) || !reader.Double(record.height_mm) || !reader.Done() || !ValidRecord(record)) return std::nullopt;
+        return record;
+    }
+    if (type == ImportRecordType::Layer) {
+        ImportLayerRecord record;
+        uint8_t visible = 0, locked = 0;
+        uint16_t reserved = 0;
+        if (!reader.U32(record.local_id) || record.local_id == 0 ||
+            !reader.String16(record.source_id, 128) || !reader.String16(record.name, 128) ||
+            !reader.U8(visible) || visible > 1 || !reader.U8(locked) || locked > 1 ||
+            !reader.U16(reserved) || reserved != 0 ||
+            !ReadLocalReferences(reader, record.object_local_ids, 0) || !reader.Done()) return std::nullopt;
+        record.visible = visible != 0;
+        record.locked = locked != 0;
+        return record;
+    }
+    if (type == ImportRecordType::Group) {
+        ImportGroupRecord record;
+        if (!reader.U32(record.local_id) || record.local_id == 0 ||
+            !reader.String16(record.source_id, 128) || !reader.String16(record.name, 128) ||
+            !ReadLocalReferences(reader, record.child_local_ids, record.local_id) || !reader.Done()) return std::nullopt;
         return record;
     }
     if (type == ImportRecordType::Path) {
@@ -394,16 +453,89 @@ bool BuildSvgImportRecords(std::span<const uint8_t> source,
         return records.size() <= SvgImporter::kMaxObjects * 2 + 2;
     };
 
+    if (imported.source_ids.size() != imported.objects.size() ||
+        imported.layer_source_ids.size() != imported.page.layers.size() ||
+        imported.page.layers.empty() || imported.page.layers.size() > SvgImporter::kMaxObjects) {
+        return fail("SVG importer returned inconsistent object or layer provenance");
+    }
+
+    std::unordered_map<document::ObjectId, size_t> object_indices;
+    object_indices.reserve(imported.objects.size());
+    for (size_t index = 0; index < imported.objects.size(); ++index) {
+        const document::ObjectId id = std::visit([](const auto& object) { return object.id; }, imported.objects[index]);
+        if (id == document::kInvalidObjectId || !object_indices.emplace(id, index).second) {
+            return fail("SVG importer returned a duplicate or invalid object ID");
+        }
+    }
+
+    std::unordered_map<document::ObjectId, uint32_t> local_ids;
+    local_ids.reserve(imported.objects.size());
+    std::vector<document::ObjectId> object_order;
+    object_order.reserve(imported.objects.size());
+    uint32_t next_local_id = 1;
+    std::function<bool(document::ObjectId, size_t)> visit_object;
+    visit_object = [&](document::ObjectId id, size_t depth) {
+        if (depth > 128 || object_order.size() >= SvgImporter::kMaxObjects || local_ids.contains(id)) return false;
+        const auto found = object_indices.find(id);
+        if (found == object_indices.end()) return false;
+        local_ids.emplace(id, next_local_id++);
+        object_order.push_back(id);
+        const auto* group = std::get_if<document::GroupObject>(&imported.objects[found->second]);
+        if (!group) return true;
+        for (const document::ObjectId child_id : group->children_ids) {
+            if (!visit_object(child_id, depth + 1)) return false;
+        }
+        return true;
+    };
+
+    for (const auto& layer : imported.page.layers) {
+        for (const document::ObjectId id : layer.object_ids) {
+            if (!visit_object(id, 0)) return fail("SVG layer and group references are inconsistent");
+        }
+    }
+    if (object_order.size() != imported.objects.size()) {
+        return fail("SVG object tree contains objects outside every layer");
+    }
+
     if (!add_record(ImportPageRecord{imported.page.width_mm, imported.page.height_mm})) {
         return fail("SVG page record exceeds C6 record limits");
     }
-    uint32_t local_id = 1;
-    for (size_t index = 0; index < imported.objects.size(); ++index) {
-        const std::string source_id = index < imported.source_ids.size() ? imported.source_ids[index] : "unknown-source";
+    for (size_t index = 0; index < imported.page.layers.size(); ++index) {
+        const auto& source_layer = imported.page.layers[index];
+        ImportLayerRecord record;
+        record.local_id = static_cast<uint32_t>(index + 1);
+        record.source_id = imported.layer_source_ids[index];
+        record.name = source_layer.name;
+        record.visible = source_layer.visible;
+        record.locked = source_layer.locked;
+        record.object_local_ids.reserve(source_layer.object_ids.size());
+        for (const document::ObjectId id : source_layer.object_ids) {
+            const auto found = local_ids.find(id);
+            if (found == local_ids.end()) return fail("SVG layer references an unknown object");
+            record.object_local_ids.push_back(found->second);
+        }
+        if (!add_record(record)) return fail("SVG layer record exceeds C6 record limits");
+    }
+
+    for (const document::ObjectId id : object_order) {
+        const size_t index = object_indices.at(id);
+        const std::string& source_id = imported.source_ids[index];
         const auto& object = imported.objects[index];
-        if (const auto* path = std::get_if<document::PathObject>(&object)) {
+        if (const auto* group = std::get_if<document::GroupObject>(&object)) {
+            ImportGroupRecord record;
+            record.local_id = local_ids.at(id);
+            record.source_id = source_id;
+            record.name = group->name;
+            record.child_local_ids.reserve(group->children_ids.size());
+            for (const document::ObjectId child_id : group->children_ids) {
+                const auto found = local_ids.find(child_id);
+                if (found == local_ids.end()) return fail("SVG group references an unknown child");
+                record.child_local_ids.push_back(found->second);
+            }
+            if (!add_record(record)) return fail("SVG group record exceeds C6 record limits");
+        } else if (const auto* path = std::get_if<document::PathObject>(&object)) {
             ImportPathRecord record;
-            record.local_id = local_id++;
+            record.local_id = local_ids.at(id);
             record.source_id = source_id;
             record.name = path->name;
             record.winding_rule = static_cast<uint8_t>(path->path.winding_rule());
@@ -429,7 +561,7 @@ bool BuildSvgImportRecords(std::span<const uint8_t> source,
             if (!add_record(record)) return fail("SVG path record exceeds C6 record limits");
         } else if (const auto* text = std::get_if<document::TextObject>(&object)) {
             ImportTextRecord record;
-            record.local_id = local_id++;
+            record.local_id = local_ids.at(id);
             record.source_id = source_id;
             record.name = text->name;
             record.utf8_text = text->text;
@@ -441,8 +573,6 @@ bool BuildSvgImportRecords(std::span<const uint8_t> source,
             record.y_mm = text->position.y;
             record.fill = FromColor(text->fill);
             if (!add_record(record)) return fail("SVG text record exceeds C6 record limits");
-        } else {
-            return fail("SVG group records are not supported by the current adapter profile");
         }
     }
 
@@ -456,7 +586,7 @@ bool BuildSvgImportRecords(std::span<const uint8_t> source,
         if (!add_record(record)) return fail("SVG fidelity report exceeds C6 record limits");
     }
     ImportFidelityReportRecord report;
-    report.coverage_profile = "svg-flat-v1";
+    report.coverage_profile = "svg-hierarchy-v2";
     report.parse_outcome = imported.report.is_clean() ? ImportParseOutcome::Complete : ImportParseOutcome::CompleteWithDiagnostics;
     report.coverage = ImportCoverage::Partial;
     report.appearance = imported.report.is_clean() ? ImportAppearance::Unknown : ImportAppearance::Partial;
@@ -466,25 +596,40 @@ bool BuildSvgImportRecords(std::span<const uint8_t> source,
     if (!add_record(report)) return fail("SVG fidelity summary exceeds C6 record limits");
 
     uint32_t expected_local_id = 1;
+    uint32_t expected_layer_id = 1;
     uint32_t issue_count = 0;
     bool issues_started = false;
     bool report_seen = false;
+    bool objects_started = false;
     for (size_t index = 0; index < records.size(); ++index) {
         const auto& record = records[index];
         const auto decoded = DeserializeImportRecord(record.type, record.payload);
         if (!decoded) return fail("SVG proposal record failed producer semantic validation");
         if (record.type == ImportRecordType::Page) {
             if (index != 0) return fail("SVG proposal page record is out of order");
+        } else if (record.type == ImportRecordType::Layer) {
+            const auto* layer = std::get_if<ImportLayerRecord>(&*decoded);
+            if (!layer || objects_started || issues_started || layer->local_id != expected_layer_id++) {
+                return fail("SVG proposal layer record order or ID is invalid");
+            }
+        } else if (record.type == ImportRecordType::Group) {
+            const auto* group = std::get_if<ImportGroupRecord>(&*decoded);
+            if (!group || issues_started || group->local_id != expected_local_id++) {
+                return fail("SVG proposal group record order or ID is invalid");
+            }
+            objects_started = true;
         } else if (record.type == ImportRecordType::Path) {
             const auto* path = std::get_if<ImportPathRecord>(&*decoded);
             if (!path || issues_started || path->local_id != expected_local_id++) {
                 return fail("SVG proposal path record order or ID is invalid");
             }
+            objects_started = true;
         } else if (record.type == ImportRecordType::Text) {
             const auto* text = std::get_if<ImportTextRecord>(&*decoded);
             if (!text || issues_started || text->local_id != expected_local_id++) {
                 return fail("SVG proposal text record order or ID is invalid");
             }
+            objects_started = true;
         } else if (record.type == ImportRecordType::FidelityIssue) {
             issues_started = true;
             ++issue_count;
