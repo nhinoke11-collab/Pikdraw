@@ -187,6 +187,12 @@ PathDrawingResult PathDrawingTool::update_from_snap_query(
         query.stamp != expected_stamp)
         return {PathDrawingResultCode::Stale,
                 "Snap query does not match the active document or tool generation", {}};
+    if (expected_stamp.camera_generation != camera.generation)
+        return {PathDrawingResultCode::Stale,
+                "Snap query was produced for a different camera generation", {}};
+    if (!camera.valid())
+        return {PathDrawingResultCode::InvalidInput,
+                "Snap query requires a valid camera transform", {}};
     if (query.status != precision::snap::SnapQueryStatus::Success)
         return {is_stale_status(query.status) ? PathDrawingResultCode::Stale
                                             : PathDrawingResultCode::InvalidInput,
@@ -225,8 +231,13 @@ PathDrawingResult PathDrawingTool::update_from_snap_query(
     }
     if (retained) return set_candidate(retained->world_point, false);
     if (best) return set_candidate(best->world_point, false);
-    if (has_anchor && direction && direction->constrained)
+    if (has_anchor && direction && direction->constrained) {
+        if (!lies_on_locked_ray(direction->world_point, anchor,
+                direction->world_angle_degrees, camera))
+            return {PathDrawingResultCode::InvalidInput,
+                    "Direction fallback point is outside the locked ray", {}};
         return set_candidate(direction->world_point, false);
+    }
     return set_candidate(raw_world, false);
 }
 
@@ -279,7 +290,9 @@ PathDrawingResult PathDrawingTool::confirm_candidate(document::Document& documen
     if (!points_.empty() && points_.back() == *candidate_)
         return {PathDrawingResultCode::InvalidInput,
                 "A zero-length segment was rejected", {}};
-    if (points_.size() >= limits_.max_draft_payload_bytes / sizeof(geometry::Point2D))
+    const auto maximum_points =
+        limits_.max_draft_payload_bytes / sizeof(geometry::Point2D);
+    if (points_.size() >= maximum_points)
         return {PathDrawingResultCode::BudgetExceeded,
                 "The path draft reached its configured point budget", {}};
 
@@ -287,7 +300,7 @@ PathDrawingResult PathDrawingTool::confirm_candidate(document::Document& documen
         try {
             points_.push_back(*candidate_);
         } catch (...) {
-            return {PathDrawingResultCode::InvalidInput,
+            return {PathDrawingResultCode::BudgetExceeded,
                     "Could not allocate the Line endpoint", {}};
         }
         const auto committed = finish_path(document, false, true);
@@ -298,21 +311,38 @@ PathDrawingResult PathDrawingTool::confirm_candidate(document::Document& documen
         return committed;
     }
 
+    // Reserve before editing ToolSession so allocation failure cannot leave a
+    // draft marker behind without the corresponding typed point.
+    try {
+        if (points_.size() == points_.capacity()) {
+            const auto capacity = points_.capacity();
+            const auto grown_capacity = capacity == 0 ? size_t{1} :
+                (capacity > maximum_points / 2 ? maximum_points : capacity * 2);
+            points_.reserve(std::max(points_.size() + 1, grown_capacity));
+        }
+    } catch (...) {
+        return {PathDrawingResultCode::BudgetExceeded,
+                "Could not reserve memory for a path point", {}};
+    }
+
+    bool session_edit_applied = false;
     if (points_.empty()) {
         const auto edit = session_.apply_edit(interaction::DraftEdit{0, {}, {0}, false});
         if (!edit.applied())
             return {PathDrawingResultCode::InvalidInput, edit.message, {}};
+        session_edit_applied = true;
     } else if (kind_ == PathDrawingKind::Polyline && points_.size() == 1) {
         const auto edit = session_.apply_edit(interaction::DraftEdit{0, {0}, {1}, true});
         if (!edit.applied())
             return {PathDrawingResultCode::InvalidInput, edit.message, {}};
+        session_edit_applied = true;
     }
     try {
         points_.push_back(*candidate_);
     } catch (...) {
-        if (points_.size() == 1 && kind_ == PathDrawingKind::Polyline)
-            (void)session_.undo_local();
-        return {PathDrawingResultCode::InvalidInput,
+        if (session_edit_applied && !session_.undo_local().applied())
+            cancel_all();
+        return {PathDrawingResultCode::BudgetExceeded,
                 "Could not allocate a path point", {}};
     }
     candidate_.reset();

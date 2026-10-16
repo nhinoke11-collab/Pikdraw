@@ -280,6 +280,29 @@ void test_hard_direction_filters_candidates_before_ranking_and_rejects_stale() {
               tool.candidate() == std::optional<geometry::Point2D>{{50, 0}},
           "an infeasible high-priority snap is filtered before selecting a feasible candidate");
 
+    const auto current_candidate = tool.candidate();
+    auto newer_camera = camera;
+    ++newer_camera.generation;
+    check(tool.update_from_snap_query({60, 25}, query, stamp, newer_camera,
+              direction, true).code == PathDrawingResultCode::Stale &&
+              tool.candidate() == current_candidate,
+          "snap results from an older camera generation cannot replace the preview");
+
+    precision::snap::SnapQueryResult no_candidates;
+    no_candidates.status = precision::snap::SnapQueryStatus::Success;
+    no_candidates.stamp = stamp;
+    direction.world_point = {30, 0};
+    check(tool.update_from_snap_query({30, 25}, no_candidates, stamp, camera,
+              direction, true).code == PathDrawingResultCode::PreviewUpdated &&
+              tool.candidate() == std::optional<geometry::Point2D>{{30, 0}},
+          "an empty snap set may use a direction fallback that lies on the locked ray");
+
+    direction.world_point = {30, 15};
+    check(tool.update_from_snap_query({30, 25}, no_candidates, stamp, camera,
+              direction, true).code == PathDrawingResultCode::InvalidInput &&
+              tool.candidate() == std::optional<geometry::Point2D>{{30, 0}},
+          "an off-ray direction fallback is rejected without changing the preview");
+
     auto stale_stamp = stamp;
     ++stale_stamp.document_revision;
     query.stamp = stale_stamp;
