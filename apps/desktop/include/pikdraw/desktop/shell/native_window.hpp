@@ -22,6 +22,7 @@
 
 namespace pikdraw::desktop {
 struct CanvasFrameCache;
+namespace tools { class DrawingToolController; }
 
 enum class UILanguage {
     Vietnamese,
@@ -51,6 +52,10 @@ public:
 
     [[nodiscard]] int active_tool() const noexcept { return active_tool_; }
     void set_active_tool(int tool_index) noexcept;
+    [[nodiscard]] bool drawing_snap_panel_open() const noexcept;
+    [[nodiscard]] bool drawing_snap_index_ready() const noexcept;
+    [[nodiscard]] bool drawing_path_active() const noexcept;
+    [[nodiscard]] size_t drawing_path_point_count() const noexcept;
 
     [[nodiscard]] int active_workspace() const noexcept { return active_workspace_; }
     void set_active_workspace(int ws_index) noexcept;
@@ -150,8 +155,15 @@ private:
     void save_document_dialog(bool force_save_as = false);
     void export_svg_dialog();
     void paint_canvas_rulers(HDC dc, int width, int height);
+    void paint_drawing_overlay(HDC dc);
+    bool handle_drawing_panel_click(int x, int y);
+    bool handle_drawing_click(int x, int y, unsigned modifiers);
+    bool handle_drawing_character(char value);
+    void finish_drawing_tool(bool select_tool);
+    [[nodiscard]] double window_dpi_scale() const noexcept;
 
     HWND hwnd_{nullptr};
+    HWND tooltip_hwnd_{nullptr};
     HINSTANCE hinstance_{nullptr};
 #endif
     bool apply_style_patch(const vector::StylePatch &patch);
@@ -161,7 +173,7 @@ private:
     ThemeMode theme_{ThemeMode::CyberDark};
 
     // Interactive UI State
-    int active_tool_{0}; // 0: Select, 1: Rectangle, 2: Ellipse, 3: Pan
+    int active_tool_{0}; // Select, Rectangle, Ellipse, Pan, Line, Polyline
     int active_workspace_{0}; // 0: Vector, 1: Print, 2: Production, 3: 3D
     int active_dock_tab_{0}; // 0: Inspector, 1: Layers, 2: History
     int zoom_level_{100}; // 50, 75, 100, 125, 150, 200
@@ -220,6 +232,9 @@ private:
     std::filesystem::path rgb_preview_profile_, cmyk_preview_profile_;
     std::unique_ptr<CanvasFrameCache> canvas_frame_;
     std::string document_path_;
+    std::unique_ptr<tools::DrawingToolController> drawing_tool_;
+    int last_canvas_pointer_x_{0};
+    int last_canvas_pointer_y_{0};
 
     std::string status_msg_{"Sẵn sàng | Nhấp chuột để tương tác các công cụ"};
 

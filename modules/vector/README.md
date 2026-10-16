@@ -1,7 +1,32 @@
 # PikDraw vector tools
 
-Trạng thái: pick/style/shape cơ bản có consumer Win32 trên nhánh editor-pick-style-delivery-20261015.
-ToolSession/input routing dưới đây là core API; chưa nối vào cửa sổ desktop cho đến task D09.
+Trạng thái: pick/style/shape cơ bản có consumer Win32; D09 nối Line/Polyline và snap controls
+vào cửa sổ native. Bằng chứng D09 hiện ở task candidate, chưa được tích hợp vào main.
+
+## D09 — Line, Polyline và snap trong desktop
+
+Win32 toolbar có icon Line/Polyline với tooltip và tên hành động; `L`, `Shift+L` và `F3`
+lần lượt chọn Line, Polyline và mở bảng Snap. `F8`, `F10` và `Shift+F2` không bị chiếm.
+Line đặt điểm đầu/cuối bằng chuột rồi commit thành một path nguồn có thể sửa. Polyline đặt
+nhiều node; Enter commit và bắt đầu bản nháp kế tiếp, Backspace bỏ candidate/node cuối,
+Escape commit đường đã có đoạn hoặc hủy bản nháp rỗng.
+
+Khi công cụ đang hoạt động, nhập tọa độ bằng cú pháp D06 như `#x;y` cho điểm tuyệt đối đầu
+tiên và `@distance<angle` cho điểm tiếp theo. HUD hiển thị tọa độ mm, chiều dài, góc, trạng
+thái snap và nội dung đang nhập. Shift khóa góc theo profile (45° PikDraw/Illustrator,
+15° Corel; Custom dùng bước đã đặt); Ctrl khóa Ortho.
+
+Bảng F3 bật/tắt snap tổng, Endpoint, Source node, Line midpoint, Grid, Free/Ortho/Polar,
+bước cực và profile. Bốn loại candidate được xây từ snapshot revision chính xác trên một
+worker latest-only; khi index chưa sẵn sàng hoặc lỗi, con trỏ thô vẫn dùng được. Tùy chọn
+quan hệ chưa triển khai hiện disabled kèm lý do. Thiết lập lưu riêng ngoài file bản vẽ, giới
+hạn 4096 byte và thay file nguyên tử.
+
+Kiểm thử consumer: `apps/desktop/tests/test_drawing_tool_controller.cpp` và
+`apps/desktop/tests/test_drawing_tool_ui.cpp`. Ảnh và benchmark có scope rõ ở
+[`apps/desktop/tests/evidence/drawing-tools-d09-20261016/review.md`](../../apps/desktop/tests/evidence/drawing-tools-d09-20261016/review.md).
+Không bao gồm Pen/Node editing, Intersection/Tangent/Bezier snaps, CAD constraints hoặc
+crash-recovery cho từng điểm nháp; benchmark CPU hiện có không đo FPS/present.
 
 ## Bổ sung pick/style — 2026-10-15
 
@@ -21,6 +46,7 @@ chưa có spatial index. Chưa chứng nhận 100.000 object riêng lẻ.
 
 | Nhóm | Public API | Implementation | Tests |
 |---|---|---|---|
+| Line/Polyline authoring | `tools/line/path_drawing_tool.hpp`, `precision/numeric/numeric_input.hpp`, `precision/snap/snap_index.hpp` | `src/tools/line/`; native consumer under `apps/desktop/src/tools/` | `tests/tools/line/`; desktop consumer tests |
 | Selection/painter order | `selection/selection_model.hpp` | `src/selection/hit_test.cpp`, `hit_geometry.*` | `tests/selection/` |
 | Drag move/lifecycle | `gestures/transform_gesture.hpp`, `edit_target.hpp` | Header nhỏ | `tests/gestures/` |
 | Shapes/pointer lifecycle | `tools/shape_tools.hpp`, `vector_controller.hpp` | `src/vector_controller.cpp` | `tests/tools/` |

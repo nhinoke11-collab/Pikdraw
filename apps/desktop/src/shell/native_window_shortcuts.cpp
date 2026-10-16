@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "../tools/drawing_tool_controller.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -12,6 +13,34 @@ bool NativeWindow::handle_key_down(WPARAM key) {
     }
     const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
     const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    if (drawing_tool_ && drawing_tool_->active()) {
+        if (key == VK_BACK) {
+            const auto state = drawing_tool_->visual_state();
+            if (state.numeric_entry.empty())
+                (void)drawing_tool_->backspace();
+            else
+                drawing_tool_->erase_numeric_character();
+            status_msg_ = drawing_tool_->visual_state().message;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
+        if (key == VK_RETURN) {
+            const auto result = drawing_tool_->enter();
+            if (result.committed() && result.object_id)
+                root_.vector_controller().set_selection({*result.object_id},
+                    *root_.document().current_snapshot());
+            status_msg_ = drawing_tool_->visual_state().message;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
+        if (key == VK_ESCAPE) {
+            (void)drawing_tool_->escape();
+            status_msg_ = drawing_tool_->visual_state().message;
+            if (!drawing_tool_->active()) finish_drawing_tool(true);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
+    }
     if (control) {
         if (key == 'N') {
             create_new_document();
@@ -92,6 +121,11 @@ bool NativeWindow::handle_key_down(WPARAM key) {
         set_active_tool(3);
         return true;
     }
+    if (key == VK_F3) {
+        (void)root_.window().action_dispatcher().dispatch_shortcut("F3");
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return true;
+    }
     if (key == '1') {
         auto &camera = root_.renderer().camera();
         camera.set_viewport_size(std::max(1, width_ - 352), std::max(1, height_ - 118));
@@ -110,6 +144,11 @@ bool NativeWindow::handle_key_down(WPARAM key) {
     }
     if (key == 'E') {
         set_active_tool(2);
+        return true;
+    }
+    if (key == 'L') {
+        (void)root_.window().action_dispatcher().dispatch_shortcut(
+            shift ? "Shift+L" : "L");
         return true;
     }
     return false;

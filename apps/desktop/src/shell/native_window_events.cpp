@@ -1,5 +1,6 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
 #include "native_window_file_menu.hpp"
+#include "../tools/drawing_tool_controller.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -164,6 +165,9 @@ void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
         close_file_menu();
     }
 
+    if (handle_drawing_panel_click(x, y))
+        return;
+
     // 2. Handle clicks on Home Screen (Trang Home)
     if (show_home_screen_) {
         // Back to Canvas button at top-right
@@ -265,6 +269,7 @@ void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
 
     // Space + left drag temporarily pans without changing the active tool.
     if (space_down_ && is_canvas_point(x, y)) {
+        if (drawing_tool_ && drawing_tool_->active()) drawing_tool_->suspend_for_pan();
         is_panning_ = true;
         last_pointer_x_ = x;
         last_pointer_y_ = y;
@@ -275,7 +280,7 @@ void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
     // 4. Tool Strip (x: 6 to 46)
     if (x >= 6 && x <= 46 && y >= 80) {
         int tool_idx = (y - 82) / 42;
-        if (tool_idx >= 0 && tool_idx < 4) {
+        if (tool_idx >= 0 && tool_idx < 6) {
             set_active_tool(tool_idx);
             return;
         }
@@ -309,21 +314,45 @@ void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
 
     if (handle_style_click(x, y))
         return;
+    if (handle_drawing_click(x, y, modifiers))
+        return;
     handle_canvas_mouse_down(x, y, modifiers);
 }
 
 void NativeWindow::handle_mouse_move(int x, int y, unsigned modifiers) {
+    last_canvas_pointer_x_ = x;
+    last_canvas_pointer_y_ = y;
+    if (drawing_tool_ && drawing_tool_->active() && !is_panning_) {
+        if (is_canvas_point(x, y)) {
+            drawing_tool_->pointer_move(canvas_to_world(x, y), root_.renderer().camera(),
+                window_dpi_scale(), (modifiers & MK_SHIFT) != 0,
+                (modifiers & MK_CONTROL) != 0);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        return;
+    }
     handle_canvas_mouse_move(x, y, modifiers);
 }
 
 void NativeWindow::handle_mouse_up(int x, int y, unsigned modifiers) {
     if (is_panning_) {
         is_panning_ = false;
+        if (drawing_tool_ && drawing_tool_->active()) drawing_tool_->resume_after_pan();
         if (GetCapture() == hwnd_)
             ReleaseCapture();
         return;
     }
+    if (drawing_tool_ && drawing_tool_->active()) return;
     handle_canvas_mouse_up(x, y, modifiers);
+}
+
+double NativeWindow::window_dpi_scale() const noexcept {
+    if (!hwnd_) return 1.0;
+    using GetDpiForWindowFunction = UINT(WINAPI*)(HWND);
+    const auto user32 = GetModuleHandleW(L"user32.dll");
+    const auto get_dpi = reinterpret_cast<GetDpiForWindowFunction>(
+        GetProcAddress(user32, "GetDpiForWindow"));
+    return get_dpi ? static_cast<double>(get_dpi(hwnd_)) / 96.0 : 1.0;
 }
 
 LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
@@ -347,8 +376,19 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
     case WM_KILLFOCUS:
         if (self) {
             self->space_down_ = false;
+            if (self->drawing_tool_ && self->drawing_tool_->active()) {
+                self->finish_drawing_tool(true);
+                self->status_msg_ = self->language_ == UILanguage::Vietnamese
+                    ? "Đã hủy đường vẽ khi cửa sổ mất tiêu điểm"
+                    : "Path drawing cancelled when the window lost focus";
+            }
             self->cancel_canvas_interaction();
         }
+        break;
+    case WM_CHAR:
+        if (self && wParam >= 0x20 && wParam <= 0x7e &&
+            self->handle_drawing_character(static_cast<char>(wParam)))
+            return 0;
         break;
     case WM_LBUTTONDOWN:
         if (self) {
@@ -368,7 +408,10 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         return 0;
     case WM_MBUTTONDOWN:
         if (self && self->is_canvas_point(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) {
-            self->cancel_canvas_interaction();
+            if (self->drawing_tool_ && self->drawing_tool_->active())
+                self->drawing_tool_->suspend_for_pan();
+            else
+                self->cancel_canvas_interaction();
             self->is_panning_ = true;
             self->last_pointer_x_ = GET_X_LPARAM(lParam);
             self->last_pointer_y_ = GET_Y_LPARAM(lParam);
@@ -378,6 +421,8 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
     case WM_MBUTTONUP:
         if (self && self->is_panning_) {
             self->is_panning_ = false;
+            if (self->drawing_tool_ && self->drawing_tool_->active())
+                self->drawing_tool_->resume_after_pan();
             if (GetCapture() == hwnd) ReleaseCapture();
         }
         return 0;
@@ -396,6 +441,22 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
                     static_cast<float>(point.y - area.top));
                 self->zoom_level_ = std::clamp(
                     static_cast<int>(std::lround(camera.zoom() * 100.0)), 1, 6400);
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+        }
+        return 0;
+    case WM_TIMER:
+        if (self && wParam == 9 && self->drawing_tool_ && self->drawing_tool_->active()) {
+            POINT point{};
+            GetCursorPos(&point);
+            ScreenToClient(hwnd, &point);
+            if (self->is_canvas_point(point.x, point.y)) {
+                const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+                const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+                self->last_canvas_pointer_x_ = point.x;
+                self->last_canvas_pointer_y_ = point.y;
+                self->drawing_tool_->pointer_move(self->canvas_to_world(point.x, point.y),
+                    self->root_.renderer().camera(), self->window_dpi_scale(), shift, control);
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
         }
@@ -435,6 +496,10 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
     }
     case WM_CAPTURECHANGED:
         if (self) {
+            if (self->drawing_tool_ && self->drawing_tool_->active()) {
+                self->is_panning_ = false;
+                self->drawing_tool_->resume_after_pan();
+            }
             self->cancel_canvas_interaction();
             InvalidateRect(hwnd, nullptr, FALSE);
         }

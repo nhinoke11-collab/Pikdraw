@@ -41,6 +41,18 @@ void draw_tool_icon(HDC dc, int tool, int center_x, int center_y, COLORREF color
         Rectangle(dc, center_x - 8, center_y - 6, center_x + 8, center_y + 6);
     } else if (tool == 2) {
         Ellipse(dc, center_x - 8, center_y - 6, center_x + 8, center_y + 6);
+    } else if (tool == 4) {
+        MoveToEx(dc, center_x - 8, center_y + 7, nullptr);
+        LineTo(dc, center_x + 8, center_y - 7);
+        Ellipse(dc, center_x - 10, center_y + 5, center_x - 6, center_y + 9);
+        Ellipse(dc, center_x + 6, center_y - 9, center_x + 10, center_y - 5);
+    } else if (tool == 5) {
+        MoveToEx(dc, center_x - 8, center_y + 6, nullptr);
+        LineTo(dc, center_x - 2, center_y - 5);
+        LineTo(dc, center_x + 3, center_y + 3);
+        LineTo(dc, center_x + 8, center_y - 7);
+        Ellipse(dc, center_x - 10, center_y + 4, center_x - 6, center_y + 8);
+        Ellipse(dc, center_x + 6, center_y - 9, center_x + 10, center_y - 5);
     } else {
         MoveToEx(dc, center_x - 6, center_y + 2, nullptr);
         LineTo(dc, center_x - 8, center_y - 1);
@@ -165,7 +177,7 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
         FillRect(mem_dc, &rc_tools, br_tools);
         DeleteObject(br_tools);
 
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 6; ++i) {
             int ty = topbar_h + ribbon_h + 10 + i * 42;
             RECT rc_tb = { 6, ty, tool_w - 6, ty + 36 };
             if (active_tool_ == i) {

@@ -52,6 +52,9 @@ struct ActionId {
     static constexpr std::string_view kToolRectangle = "action.tool.rectangle";
     static constexpr std::string_view kToolEllipse = "action.tool.ellipse";
     static constexpr std::string_view kToolText = "action.tool.text";
+    static constexpr std::string_view kToolLine = "action.tool.line";
+    static constexpr std::string_view kToolPolyline = "action.tool.polyline";
+    static constexpr std::string_view kToolSnapPanel = "action.tool.snap_panel";
 
     // Object domain
     static constexpr std::string_view kObjectGroup = "action.object.group";
