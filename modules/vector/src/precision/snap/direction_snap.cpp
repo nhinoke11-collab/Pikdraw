@@ -58,7 +58,14 @@ double perpendicular_distance(geometry::Point2D delta_dip,
     const double ray_length = std::hypot(ray_dip.x, ray_dip.y);
     if (!std::isfinite(ray_length) || ray_length == 0.0)
         return std::numeric_limits<double>::infinity();
-    return std::abs(delta_dip.x * ray_dip.y - delta_dip.y * ray_dip.x) / ray_length;
+    const double delta_scale = std::max(std::abs(delta_dip.x), std::abs(delta_dip.y));
+    if (delta_scale == 0.0) return 0.0;
+
+    const geometry::Point2D unit_ray{ray_dip.x / ray_length, ray_dip.y / ray_length};
+    const double scaled_cross = std::fma(delta_dip.x / delta_scale, unit_ray.y,
+        -(delta_dip.y / delta_scale) * unit_ray.x);
+    const double distance = std::abs(scaled_cross) * delta_scale;
+    return std::isfinite(distance) ? distance : std::numeric_limits<double>::infinity();
 }
 
 enum class RayProjectionStatus : uint8_t { Projected, BehindRay, Invalid };
@@ -167,6 +174,10 @@ DirectionSnapResult constrain_direction(
     const double radians = *angle * kDegreesToRadians;
     const auto ray_dip = camera.world_vector_to_dip({std::cos(radians), std::sin(radians)});
     result.perpendicular_distance_dip = perpendicular_distance(delta_dip, ray_dip);
+    if (!std::isfinite(result.perpendicular_distance_dip)) {
+        result.status = SnapQueryStatus::InvalidInput;
+        return result;
+    }
 
     if (config.direction.mode == DirectionMode::Polar) {
         bool retained = false;
@@ -179,7 +190,8 @@ DirectionSnapResult constrain_direction(
                 const auto prior_vector = camera.world_vector_to_dip(
                     {std::cos(prior_radians), std::sin(prior_radians)});
                 const double prior_distance = perpendicular_distance(delta_dip, prior_vector);
-                if (prior_distance <= kPolarReleaseRadiusDip) {
+                if (std::isfinite(prior_distance) &&
+                    prior_distance <= kPolarReleaseRadiusDip) {
                     geometry::Point2D prior_projection;
                     if (project_to_ray(anchor_world, pointer_world, prior, prior_projection) ==
                         RayProjectionStatus::Projected) {

@@ -427,6 +427,38 @@ void direction_vectors_and_masks() {
         compressed_view, overflow_config);
     CHECK(overflow_projection.status == SnapQueryStatus::InvalidInput);
     CHECK(!overflow_projection.constrained);
+
+    SnapConfiguration large_metric_configuration;
+    CHECK(large_metric_configuration.set_direction_mode(DirectionMode::Polar));
+    CHECK(large_metric_configuration.set_custom_polar_angles({45.0}));
+    const auto large_metric_config = large_metric_configuration.snapshot();
+    const auto large_metric_view = camera(1e100, 1.0, 10);
+    CHECK(large_metric_view.valid());
+    const SnapQueryStamp large_metric_stamp{
+        "direction", 1, 1, large_metric_view.generation,
+        large_metric_config.generation, capabilities.generation, "pen", 1};
+    const auto large_metric = constrain_direction(
+        large_metric_stamp, {0.0, 0.0}, {1e200, 1e200}, 0.0,
+        large_metric_view, large_metric_config);
+    CHECK(large_metric.status == SnapQueryStatus::Success);
+    CHECK(std::isfinite(large_metric.perpendicular_distance_dip));
+    if (large_metric.perpendicular_distance_dip > 6.0)
+        CHECK(!large_metric.constrained);
+
+    SnapConfiguration exact_axis_configuration;
+    CHECK(exact_axis_configuration.set_direction_mode(DirectionMode::Polar));
+    CHECK(exact_axis_configuration.set_custom_polar_angles({0.0}));
+    const auto exact_axis_config = exact_axis_configuration.snapshot();
+    const SnapQueryStamp exact_axis_stamp{
+        "direction", 1, 1, large_metric_view.generation, exact_axis_config.generation,
+        capabilities.generation, "pen", 2};
+    const auto exact_axis = constrain_direction(
+        exact_axis_stamp, {0.0, 0.0}, {1e200, 0.0}, 0.0,
+        large_metric_view, exact_axis_config);
+    CHECK(exact_axis.status == SnapQueryStatus::Success);
+    CHECK(exact_axis.constrained);
+    CHECK(exact_axis.world_angle_degrees == 0.0);
+    CHECK(exact_axis.perpendicular_distance_dip == 0.0);
 }
 
 void large_source_index_benchmark() {
