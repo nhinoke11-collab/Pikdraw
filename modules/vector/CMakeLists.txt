@@ -22,6 +22,9 @@ add_library(pikdraw_vector STATIC
     src/precision/snap/snap_index.cpp
     src/precision/snap/snap_math.cpp
     src/precision/snap/direction_snap.cpp
+    src/tools/line/path_drawing_tool.cpp
+    src/tools/line/path_drawing_tool_commit.cpp
+    src/tools/line/path_object_builder.cpp
 )
 
 target_include_directories(pikdraw_vector PUBLIC
@@ -61,4 +64,5 @@ if(PIKDRAW_BUILD_TESTS)
     add_vector_test(test_pikdraw_vector_numeric tests/precision/numeric/test_numeric_input.cpp)
     add_vector_test(test_pikdraw_vector_snap tests/precision/snap/test_snap.cpp)
     add_vector_test(test_pikdraw_vector_direction_snap tests/precision/snap/test_direction_snap.cpp)
+    add_vector_test(test_pikdraw_vector_line_polyline tests/tools/line/test_path_drawing_tool.cpp)
 endif()
