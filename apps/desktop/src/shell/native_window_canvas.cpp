@@ -1,4 +1,6 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "native_canvas_frame.hpp"
+#include "../tools/drawing_tool_controller.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -13,16 +15,6 @@ namespace pikdraw::desktop {
 
 #ifdef _WIN32
 namespace {
-
-std::optional<geometry::Rect2D> object_bounds(const document::ObjectVariant& object) {
-    return std::visit([](const auto& value) -> std::optional<geometry::Rect2D> {
-        using T = std::decay_t<decltype(value)>;
-        if constexpr (std::is_same_v<T, document::GroupObject>)
-            return std::nullopt;
-        else
-            return value.bounds();
-    }, object);
-}
 
 RECT screen_rect(const rendering::Camera2D& camera, const geometry::Rect2D& bounds,
                  int origin_x, int origin_y) {
@@ -410,6 +402,22 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
         DeleteObject(tip_f);
     }
 
+    paint_drawing_overlay(dc);
+    const auto &diagnostics = root().renderer().last_metric().diagnostics;
+    const auto errors = std::count_if(diagnostics.begin(), diagnostics.end(),
+        [](const auto &item) { return item.error; });
+    const bool icc_error = color_preview_ && color_preview_->conversion_failure_count() > 0;
+    if (errors > 0 || icc_error) {
+        const auto warning = icc_error ? (language_ == UILanguage::Vietnamese
+            ? L"ICC preview có lỗi; một số màu đang được hiển thị gần đúng."
+            : L"ICC preview failed for some colors; approximate preview is active.")
+            : language_ == UILanguage::Vietnamese
+            ? L"Một số đối tượng chưa dựng được. Dữ liệu nguồn được giữ nguyên."
+            : L"Some objects could not be displayed. Source data is preserved.";
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, RGB(205, 125, 45));
+        TextOutW(dc, area.left + 12, area.bottom - 24, warning, static_cast<int>(wcslen(warning)));
+    }
     RestoreDC(dc, saved);
 
     // Paint Breadcrumb Bar at the top of canvas when in isolation mode
@@ -648,6 +656,175 @@ void NativeWindow::paint_canvas_guidelines(HDC dc, int width, int height) {
     RestoreDC(dc, saved);
 }
 
+void NativeWindow::paint_drawing_overlay(HDC dc) {
+    if (!drawing_tool_) return;
+    const auto state = drawing_tool_->visual_state();
+    const RECT area = canvas_rect(width_, height_);
+    const auto& camera = root().renderer().camera();
+    const auto screen = [&](geometry::Point2D point) {
+        const auto local = camera.world_to_screen(point);
+        return POINT{area.left + static_cast<LONG>(std::lround(local.x)),
+                     area.top + static_cast<LONG>(std::lround(local.y))};
+    };
+    if (state.active) {
+        HPEN source_pen = CreatePen(PS_SOLID, 2, RGB(0, 242, 195));
+        HGDIOBJ old_pen = SelectObject(dc, source_pen);
+        for (size_t index = 1; index < state.points.size(); ++index) {
+            const auto first = screen(state.points[index - 1]);
+            const auto second = screen(state.points[index]);
+            MoveToEx(dc, first.x, first.y, nullptr);
+            LineTo(dc, second.x, second.y);
+        }
+        if (state.candidate && !state.points.empty()) {
+            HPEN preview_pen = CreatePen(PS_DASH, 1, RGB(0, 196, 255));
+            SelectObject(dc, preview_pen);
+            const auto start = screen(state.points.back());
+            const auto end = screen(*state.candidate);
+            MoveToEx(dc, start.x, start.y, nullptr);
+            LineTo(dc, end.x, end.y);
+            SelectObject(dc, source_pen);
+            DeleteObject(preview_pen);
+        }
+        SelectObject(dc, old_pen);
+        DeleteObject(source_pen);
+        HBRUSH anchor_brush = CreateSolidBrush(RGB(0, 242, 195));
+        HGDIOBJ old_brush = SelectObject(dc, anchor_brush);
+        for (const auto point : state.points) {
+            const auto marker = screen(point);
+            Ellipse(dc, marker.x - 3, marker.y - 3, marker.x + 4, marker.y + 4);
+        }
+        SelectObject(dc, old_brush);
+        DeleteObject(anchor_brush);
+        if (state.candidate) {
+            const auto marker = screen(*state.candidate);
+            HPEN marker_pen = CreatePen(PS_SOLID, 2,
+                state.snap_kind ? RGB(255, 190, 70) : RGB(0, 196, 255));
+            HGDIOBJ previous_pen = SelectObject(dc, marker_pen);
+            HGDIOBJ previous_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+            Ellipse(dc, marker.x - 6, marker.y - 6, marker.x + 7, marker.y + 7);
+            MoveToEx(dc, marker.x - 9, marker.y, nullptr);
+            LineTo(dc, marker.x + 10, marker.y);
+            MoveToEx(dc, marker.x, marker.y - 9, nullptr);
+            LineTo(dc, marker.x, marker.y + 10);
+            SelectObject(dc, previous_brush);
+            SelectObject(dc, previous_pen);
+            DeleteObject(marker_pen);
+        }
+
+        std::wostringstream hud;
+        const auto kind = state.kind == vector::tools::line::PathDrawingKind::Line
+            ? L"LINE" : L"POLYLINE";
+        hud << kind << L"  ·  " << state.points.size() << L" nodes";
+        if (state.candidate) {
+            hud << L"  ·  X " << std::fixed << std::setprecision(2)
+                << state.candidate->x << L" mm  Y " << state.candidate->y << L" mm";
+            if (!state.points.empty()) {
+                const auto delta = *state.candidate - state.points.back();
+                hud << L"  ·  L " << std::hypot(delta.x, delta.y) << L" mm"
+                    << L"  ∠ " << std::atan2(delta.y, delta.x) *
+                        180.0 / 3.14159265358979323846 << L"°";
+            }
+        }
+        if (!state.numeric_entry.empty())
+            hud << L"  ·  = " << NativeWindow::utf8_to_wide(state.numeric_entry);
+        const auto config = state.snap_config;
+        hud << L"  ·  Snap " << (config.master_enabled ? L"ON" : L"OFF")
+            << L"  ·  " << (config.direction.mode == vector::precision::snap::DirectionMode::Free
+                ? L"Free" : config.direction.mode == vector::precision::snap::DirectionMode::Ortho
+                ? L"Ortho" : L"Polar");
+        if (state.snap_index_failed) hud << L"  ·  Snap unavailable; raw input active";
+        else if (!state.snap_index_ready) hud << L"  ·  Index building";
+        RECT text{area.left + 264, area.top + 10, area.right - 12, area.top + 36};
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, RGB(0, 242, 195));
+        const auto line = hud.str();
+        DrawTextW(dc, line.c_str(), -1, &text,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        const wchar_t* hint = language_ == UILanguage::Vietnamese
+            ? L"Nhấp: đặt điểm   Enter: kết thúc Polyline   Backspace: lùi điểm   Esc: hoàn tất/hủy"
+            : L"Click: place point   Enter: finish Polyline   Backspace: undo point   Esc: finish/cancel";
+        RECT hint_rect{area.left + 264, area.top + 34, area.right - 12, area.top + 54};
+        SetTextColor(dc, RGB(150, 170, 190));
+        DrawTextW(dc, hint, -1, &hint_rect,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+    }
+
+    if (drawing_tool_->snap_panel_open_value()) {
+        const int left = area.left + 12, top = area.top + 12;
+        RECT panel{left, top, left + 250, top + 264};
+        HBRUSH panel_brush = CreateSolidBrush(theme_ == ThemeMode::CyberDark
+            ? RGB(13, 22, 34) : RGB(250, 252, 255));
+        HPEN panel_pen = CreatePen(PS_SOLID, 1, RGB(0, 196, 170));
+        HGDIOBJ previous_brush = SelectObject(dc, panel_brush);
+        HGDIOBJ previous_pen = SelectObject(dc, panel_pen);
+        RoundRect(dc, panel.left, panel.top, panel.right, panel.bottom, 8, 8);
+        SelectObject(dc, previous_brush);
+        SelectObject(dc, previous_pen);
+        DeleteObject(panel_brush);
+        DeleteObject(panel_pen);
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, theme_ == ThemeMode::CyberDark ? RGB(0, 242, 195) : RGB(0, 120, 95));
+        RECT title{left + 12, top + 5, left + 238, top + 27};
+        DrawTextW(dc, language_ == UILanguage::Vietnamese ? L"BẮT ĐIỂM & HƯỚNG"
+                                                          : L"SNAP & DIRECTION",
+                  -1, &title, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        const auto config = state.snap_config;
+        const COLORREF text_color = theme_ == ThemeMode::CyberDark
+            ? RGB(220, 230, 240) : RGB(30, 41, 59);
+        SetTextColor(dc, text_color);
+        const auto option = [&](int y, const wchar_t* label, bool enabled) {
+            RECT row{left + 10, top + y, left + 240, top + y + 22};
+            HBRUSH row_brush = CreateSolidBrush(enabled ? RGB(18, 55, 60)
+                : (theme_ == ThemeMode::CyberDark ? RGB(20, 31, 45) : RGB(235, 240, 246)));
+            FillRect(dc, &row, row_brush);
+            DeleteObject(row_brush);
+            SetTextColor(dc, enabled ? RGB(0, 242, 195) : text_color);
+            DrawTextW(dc, label, -1, &row, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
+                      DT_NOPREFIX | DT_LEFT);
+        };
+        option(32, language_ == UILanguage::Vietnamese ? L"Bắt điểm tổng" : L"Master snapping",
+               config.master_enabled);
+        option(58, L"Endpoint", config.options[static_cast<size_t>(vector::precision::snap::SnapOption::Endpoint)]);
+        option(82, L"Source node", config.options[static_cast<size_t>(vector::precision::snap::SnapOption::SourceNode)]);
+        option(106, L"Line midpoint", config.options[static_cast<size_t>(vector::precision::snap::SnapOption::LineMidpoint)]);
+        option(130, L"Grid", config.options[static_cast<size_t>(vector::precision::snap::SnapOption::Grid)]);
+        const wchar_t* modes[] = {L"Free", L"Ortho", L"Polar"};
+        for (int index = 0; index < 3; ++index) {
+            RECT mode{left + 10 + index * 78, top + 156, left + 84 + index * 78, top + 178};
+            const auto selected = static_cast<int>(config.direction.mode) == index;
+            HBRUSH mode_brush = CreateSolidBrush(selected ? RGB(0, 125, 112)
+                : (theme_ == ThemeMode::CyberDark ? RGB(20, 31, 45) : RGB(235, 240, 246)));
+            FillRect(dc, &mode, mode_brush);
+            DeleteObject(mode_brush);
+            SetTextColor(dc, selected ? RGB(255, 255, 255) : text_color);
+            DrawTextW(dc, modes[index], -1, &mode, DT_CENTER | DT_VCENTER |
+                      DT_SINGLELINE | DT_NOPREFIX);
+        }
+        std::wostringstream polar;
+        polar << L"Polar step: " << config.direction.polar.step_degrees << L"°  · click to cycle";
+        RECT polar_row{left + 10, top + 182, left + 240, top + 204};
+        SetTextColor(dc, text_color);
+        DrawTextW(dc, polar.str().c_str(), -1, &polar_row,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        std::wostringstream profile_label;
+        profile_label << L"Profile: " << NativeWindow::utf8_to_wide(state.profile)
+            << L" · Shift lock "
+            << (state.profile == "Corel" ? 15.0 : state.profile == "Custom"
+                ? config.direction.polar.step_degrees : 45.0) << L"° · click";
+        RECT profile{left + 10, top + 207, left + 240, top + 229};
+        SetTextColor(dc, text_color);
+        DrawTextW(dc, profile_label.str().c_str(), -1, &profile,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        RECT unsupported{left + 10, top + 232, left + 240, top + 256};
+        SetTextColor(dc, RGB(150, 160, 175));
+        DrawTextW(dc, language_ == UILanguage::Vietnamese
+            ? L"Giao, tiếp tuyến, Bezier: chưa khả dụng"
+            : L"Intersection, tangent, Bezier: unavailable",
+            -1, &unsupported, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
+            DT_END_ELLIPSIS | DT_NOPREFIX);
+    }
+}
+
 void NativeWindow::paint_canvas_rulers(HDC dc, int width, int height) {
     const RECT area = canvas_rect(width, height);
     const auto& camera = root().renderer().camera();
@@ -769,233 +946,6 @@ void NativeWindow::paint_canvas_rulers(HDC dc, int width, int height) {
     DeleteObject(line);
 }
 
-void NativeWindow::handle_canvas_mouse_down(int x, int y) {
-    if (!is_canvas_point(x, y))
-        return;
-    SetCapture(hwnd_);
-    if (active_tool_ == 3) {
-        is_panning_ = true;
-        last_pointer_x_ = x;
-        last_pointer_y_ = y;
-        return;
-    }
-    pointer_active_ = true;
-    pointer_down_world_ = canvas_to_world(x, y);
-    pointer_current_world_ = pointer_down_world_;
-    drag_preview_delta_ = {};
-    drag_preview_bounds_.reset();
-    const auto snapshot = root().document().current_snapshot();
-    pointer_start_revision_ = snapshot->revision();
-
-    if (active_tool_ == 0) {
-        auto& controller = root().vector_controller();
-#ifdef _WIN32
-        const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-#else
-        const bool shift = false;
-#endif
-        auto hit_id = vector::SelectionModel::hit_test(pointer_down_world_, *snapshot);
-        if (is_in_isolation_mode()) {
-            if (hit_id && !is_object_in_isolated_group(*hit_id)) {
-                hit_id = std::nullopt; // Outside objects cannot be selected in isolation mode
-            }
-        } else {
-            if (hit_id) {
-                // If clicked object is inside a group, select top parent group
-                document::ObjectId cur = *hit_id;
-                while (auto parent = workflow().find_parent_group(cur)) {
-                    cur = *parent;
-                }
-                hit_id = cur;
-            }
-        }
-
-        if (hit_id) {
-            if (shift) {
-                controller.selection().select(*hit_id, vector::SelectionMode::Toggle);
-            } else if (!controller.selection().is_selected(*hit_id)) {
-                controller.selection().select(*hit_id, vector::SelectionMode::Replace);
-            }
-
-            // Expand gesture target IDs to include all children of any selected group
-            std::vector<document::ObjectId> gesture_ids;
-            for (const auto id : controller.selection().selected_ids()) {
-                gesture_ids.push_back(id);
-                if (workflow().is_group(id)) {
-                    std::function<void(document::ObjectId)> add_desc = [&](document::ObjectId gid) {
-                        auto obj = snapshot->objects().get(gid);
-                        if (!obj) return;
-                        if (auto* g = std::get_if<document::GroupObject>(&*obj)) {
-                            for (auto cid : g->children_ids) {
-                                gesture_ids.push_back(cid);
-                                add_desc(cid);
-                            }
-                        }
-                    };
-                    add_desc(id);
-                }
-            }
-            controller.gesture().begin(pointer_down_world_, gesture_ids);
-        } else {
-            if (!shift) {
-                controller.selection().clear();
-            }
-        }
-        is_dragging_ = controller.gesture().is_active();
-        if (is_dragging_) {
-            for (const auto id : controller.selection().selected_ids()) {
-                if (const auto bounds = workflow().get_object_bounds(id))
-                    drag_preview_bounds_ = drag_preview_bounds_
-                        ? drag_preview_bounds_->united(*bounds) : *bounds;
-            }
-        }
-    } else if (active_tool_ == 5) {
-        is_knife_cutting_ = true;
-        knife_start_world_ = pointer_down_world_;
-        knife_current_world_ = pointer_down_world_;
-    } else if (active_tool_ == 4) {
-        // TEXT TOOL: click to start typing directly on canvas!
-        if (is_inline_text_editing_) {
-            commit_inline_text_editing();
-        }
-        auto hit_id = vector::SelectionModel::hit_test(pointer_down_world_, *snapshot);
-        if (hit_id) {
-            auto opt = snapshot->objects().get(*hit_id);
-            if (opt && std::holds_alternative<document::TextObject>(*opt)) {
-                start_inline_text_editing(pointer_down_world_, *hit_id);
-            } else {
-                start_inline_text_editing(pointer_down_world_, document::kInvalidObjectId);
-            }
-        } else {
-            start_inline_text_editing(pointer_down_world_, document::kInvalidObjectId);
-        }
-    } else {
-        if (is_inline_text_editing_) {
-            commit_inline_text_editing();
-        }
-        is_creating_shape_ = true;
-    }
-    InvalidateRect(hwnd_, nullptr, FALSE);
-}
-
-void NativeWindow::handle_canvas_mouse_move(int x, int y) {
-    if (is_canvas_point(x, y)) {
-        const auto point = canvas_to_world(x, y);
-        cursor_mm_x_ = point.x;
-        cursor_mm_y_ = point.y;
-    }
-    if (is_panning_) {
-        root().renderer().camera().pan_pixels(
-            static_cast<double>(x - last_pointer_x_),
-            static_cast<double>(y - last_pointer_y_));
-        last_pointer_x_ = x;
-        last_pointer_y_ = y;
-        InvalidateRect(hwnd_, nullptr, FALSE);
-        return;
-    }
-    if (!pointer_active_) {
-        RECT rc_coord{16, height_ - 26, 215, height_};
-        InvalidateRect(hwnd_, &rc_coord, FALSE);
-        return;
-    }
-
-    pointer_current_world_ = canvas_to_world(x, y);
-    const auto& page_snap = root().document().current_snapshot()->page();
-    const double half_canvas = geometry::kMaxCanvasDimensionMm * 0.5;
-    const double min_canvas_x = page_snap.width_mm * 0.5 - half_canvas;
-    const double max_canvas_x = page_snap.width_mm * 0.5 + half_canvas;
-    const double min_canvas_y = page_snap.height_mm * 0.5 - half_canvas;
-    const double max_canvas_y = page_snap.height_mm * 0.5 + half_canvas;
-    pointer_current_world_.x = std::clamp(pointer_current_world_.x, min_canvas_x, max_canvas_x);
-    pointer_current_world_.y = std::clamp(pointer_current_world_.y, min_canvas_y, max_canvas_y);
-
-    if (is_knife_cutting_) {
-        knife_current_world_ = pointer_current_world_;
-    } else if (is_dragging_) {
-        (void)root().vector_controller().on_pointer_move(pointer_current_world_);
-        drag_preview_delta_ = {pointer_current_world_.x - pointer_down_world_.x,
-                                pointer_current_world_.y - pointer_down_world_.y};
-    }
-    InvalidateRect(hwnd_, nullptr, FALSE);
-}
-
-void NativeWindow::handle_canvas_mouse_up(int x, int y) {
-    if (!pointer_active_)
-        return;
-    pointer_current_world_ = canvas_to_world(x, y);
-    const auto& page_snap = root().document().current_snapshot()->page();
-    const double half_canvas = geometry::kMaxCanvasDimensionMm * 0.5;
-    const double min_canvas_x = page_snap.width_mm * 0.5 - half_canvas;
-    const double max_canvas_x = page_snap.width_mm * 0.5 + half_canvas;
-    const double min_canvas_y = page_snap.height_mm * 0.5 - half_canvas;
-    const double max_canvas_y = page_snap.height_mm * 0.5 + half_canvas;
-    pointer_current_world_.x = std::clamp(pointer_current_world_.x, min_canvas_x, max_canvas_x);
-    pointer_current_world_.y = std::clamp(pointer_current_world_.y, min_canvas_y, max_canvas_y);
-
-    bool changed = false;
-    if (is_knife_cutting_) {
-        knife_current_world_ = pointer_current_world_;
-        if (workflow().split_objects_by_line(knife_start_world_, knife_current_world_)) {
-            changed = true;
-            status_msg_ = (language_ == UILanguage::Vietnamese)
-                ? "Đã dùng dao cắt phân tách hình khối thành công · Ctrl+Z để hoàn tác"
-                : "Knife split completed · Ctrl+Z to undo";
-        }
-    } else if (is_creating_shape_) {
-        auto bounds = bounds_between(pointer_down_world_, pointer_current_world_);
-        bounds.width = std::min(bounds.width, geometry::kMaxObjectDimensionMm);
-        bounds.height = std::min(bounds.height, geometry::kMaxObjectDimensionMm);
-        if (bounds.width > 1.0 && bounds.height > 1.0) {
-            document::ObjectId id = document::kInvalidObjectId;
-            if (active_tool_ == 1) {
-                id = workflow().add_rectangle(bounds.x, bounds.y, bounds.width, bounds.height,
-                                             "#00f2c3", "#0ea5e9", 2.0);
-            } else if (active_tool_ == 2) {
-                id = workflow().add_ellipse(bounds.x + bounds.width * 0.5,
-                                           bounds.y + bounds.height * 0.5,
-                                           bounds.width * 0.5, bounds.height * 0.5,
-                                           "#00f2c3", "#0ea5e9", 2.0);
-            } else if (active_tool_ == 4) {
-                id = workflow().add_vietnamese_text(bounds.x, bounds.y,
-                                                   "PikDraw 2026", "Be Vietnam Pro", 24.0, "#00f2c3");
-            }
-            if (id != document::kInvalidObjectId) {
-                if (is_in_isolation_mode()) {
-                    auto iso_id = *current_isolated_group_id();
-                    auto snap = root().document().current_snapshot();
-                    auto obj = snap->objects().get(iso_id);
-                    if (obj && std::holds_alternative<document::GroupObject>(*obj)) {
-                        document::GroupObject updated_grp = std::get<document::GroupObject>(*obj);
-                        updated_grp.children_ids.push_back(id);
-                        auto map = snap->objects().set(iso_id, std::move(updated_grp));
-                        root().document().apply_mutation(snap->page(), std::move(map));
-                    }
-                }
-                root().vector_controller().selection().select(id);
-                changed = true;
-            }
-        }
-    } else if (is_dragging_) {
-        const auto result = root().vector_controller().on_pointer_up(
-            pointer_current_world_, root().document());
-        changed = result.success &&
-            root().document().current_snapshot()->revision() != pointer_start_revision_;
-    }
-
-    pointer_active_ = false;
-    is_dragging_ = false;
-    is_creating_shape_ = false;
-    is_knife_cutting_ = false;
-    drag_preview_bounds_.reset();
-    drag_preview_delta_ = {};
-    if (GetCapture() == hwnd_)
-        ReleaseCapture();
-    workflow().sync_status_bar();
-    if (!changed) {
-        status_msg_ = (language_ == UILanguage::Vietnamese ? "Sẵn sàng" : "Ready");
-    }
-    InvalidateRect(hwnd_, nullptr, FALSE);
-}
 
 #endif
 

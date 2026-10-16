@@ -1,0 +1,67 @@
+[
+  {
+    "path": "core/document/include/pikdraw/document/storage/native_format.hpp",
+    "sha256": "b5b41c2d733fcbdbc2d8bef74940e34ab65ff7860ce65dcac2eaefa15835e887",
+    "nonblank_lines": 34
+  },
+  {
+    "path": "core/document/include/pikdraw/document/storage/save_recovery.hpp",
+    "sha256": "d9ed224b899a58a000a1424a84988d031a27c2ab12e0fe3ec0be6fb471440dbf",
+    "nonblank_lines": 49
+  },
+  {
+    "path": "core/document/src/storage/byte_codec.hpp",
+    "sha256": "9e10bd59d1cc8210c5a66ad8d335cf9169fa2df85af69487cf6c7ec9a8b205a6",
+    "nonblank_lines": 122
+  },
+  {
+    "path": "core/document/src/storage/color_codec.cpp",
+    "sha256": "0acd31702ba5032de890f506d9b7d2bebfcbd5e25a6dcf1bb8deb9a80293d9f8",
+    "nonblank_lines": 76
+  },
+  {
+    "path": "core/document/src/storage/crc32.cpp",
+    "sha256": "27426411c74bc686eb4910c0850afa7c7d7bb4a103316ca062ae69a3345d4f40",
+    "nonblank_lines": 33
+  },
+  {
+    "path": "core/document/src/storage/file_io.cpp",
+    "sha256": "d1bd2b6c2639a2889acec9f014bd1b1dba0c54a04cf5523f8f0f878aac611657",
+    "nonblank_lines": 125
+  },
+  {
+    "path": "core/document/src/storage/file_io.hpp",
+    "sha256": "c6b7767a915062e8b4725db51607b9ff6f1f8ee147a5d9ac0ece74f9c19c069f",
+    "nonblank_lines": 19
+  },
+  {
+    "path": "core/document/src/storage/native_format.cpp",
+    "sha256": "49cf90751640432cc5afe262e65334ef8ee6559e9de0d52d34fb05365d005d36",
+    "nonblank_lines": 128
+  },
+  {
+    "path": "core/document/src/storage/object_codec.cpp",
+    "sha256": "f07a758e3227b9b1d12c379d09c74efa3ab591dc755f985c85cc63b56f97a963",
+    "nonblank_lines": 149
+  },
+  {
+    "path": "core/document/src/storage/save_recovery.cpp",
+    "sha256": "9deca771528264ac563f94e170508d508112e5c8a623a8f2353dae95a17d1208",
+    "nonblank_lines": 186
+  },
+  {
+    "path": "core/document/CMakeLists.txt",
+    "sha256": "7267560367949906fb14e6133ee59b00f8342026526e08c37e3b8ef288108f0e",
+    "nonblank_lines": 49
+  },
+  {
+    "path": "core/document/src/document.cpp",
+    "sha256": "022541bd25bf61e1c7567a5c1b1e63b5a8664ca4b2ef5502f10889c86f386b93",
+    "nonblank_lines": 205
+  },
+  {
+    "path": "core/document/tests/storage/test_storage_fidelity.cpp",
+    "sha256": "fe054c80943df1790d6dafdf2efbc1072e4bfa14bf26e1aebab646ae37a3cdbd",
+    "nonblank_lines": 215
+  }
+]

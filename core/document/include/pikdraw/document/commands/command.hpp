@@ -59,6 +59,7 @@ private:
     ObjectId id_{kInvalidObjectId};
     std::optional<ObjectVariant> removed_object_;
     size_t layer_idx_{0};
+    size_t object_idx_{0};
 };
 
 /// Command: Transform an object

@@ -1,6 +1,7 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
 #include "native_window_file_menu.hpp"
 #include "native_window_page_presets.hpp"
+#include "../tools/drawing_tool_controller.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -15,7 +16,7 @@ namespace pikdraw::desktop {
 
 #ifdef _WIN32
 
-void NativeWindow::handle_mouse_down(int x, int y) {
+void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
     int w = width_;
     int h = height_;
     if (hwnd_) {
@@ -218,6 +219,11 @@ void NativeWindow::handle_mouse_down(int x, int y) {
                 if (x >= ux && x <= ux + 105) { set_settings_unit_choice(i); return; }
             }
         }
+        if (settings_active_tab_ == 3 && x >= modal_x + 205 && x <= modal_x + 695 &&
+            y >= modal_y + 338 && y <= modal_y + 370) {
+            show_color_profiles();
+            return;
+        }
 
         // Tab 4: Phím tắt & Thao tác (Shortcuts profile chooser)
         if (settings_active_tab_ == 4 && y >= modal_y + 80 && y <= modal_y + 115) {
@@ -338,6 +344,9 @@ void NativeWindow::handle_mouse_down(int x, int y) {
             return;
         }
     }
+
+    if (handle_drawing_panel_click(x, y))
+        return;
 
     // 2. Handle clicks on Home Screen (Trang Home)
     if (show_home_screen_) {
@@ -584,6 +593,7 @@ void NativeWindow::handle_mouse_down(int x, int y) {
 
     // Space + left drag temporarily pans without changing the active tool.
     if (space_down_ && is_canvas_point(x, y)) {
+        if (drawing_tool_ && drawing_tool_->active()) drawing_tool_->suspend_for_pan();
         is_panning_ = true;
         last_pointer_x_ = x;
         last_pointer_y_ = y;
@@ -591,10 +601,10 @@ void NativeWindow::handle_mouse_down(int x, int y) {
         return;
     }
 
-    // 4. Tool Strip (x: 6 to 46, y >= 102) - 6 tools
-    if (x >= 6 && x <= 46 && y >= 102) {
+    // 4. Tool Strip (x: 6 to 46, y >= 112) - 8 tools
+    if (x >= 6 && x <= 46 && y >= 112) {
         int tool_idx = (y - 112) / 42;
-        if (tool_idx >= 0 && tool_idx < 6) {
+        if (tool_idx >= 0 && tool_idx < 8) {
             set_active_tool(tool_idx);
             return;
         }
@@ -811,10 +821,14 @@ void NativeWindow::handle_mouse_down(int x, int y) {
         return;
     }
 
-    handle_canvas_mouse_down(x, y);
+    if (handle_style_click(x, y))
+        return;
+    if (handle_drawing_click(x, y, modifiers))
+        return;
+    handle_canvas_mouse_down(x, y, modifiers);
 }
 
-void NativeWindow::handle_mouse_move(int x, int y) {
+void NativeWindow::handle_mouse_move(int x, int y, unsigned modifiers) {
     bool prev_visible = tooltip_.visible;
     std::wstring prev_text = tooltip_.text;
 
@@ -845,10 +859,21 @@ void NativeWindow::handle_mouse_move(int x, int y) {
         return;
     }
 
-    handle_canvas_mouse_move(x, y);
+    last_canvas_pointer_x_ = x;
+    last_canvas_pointer_y_ = y;
+    if (drawing_tool_ && drawing_tool_->active() && !is_panning_) {
+        if (is_canvas_point(x, y)) {
+            drawing_tool_->pointer_move(canvas_to_world(x, y), root().renderer().camera(),
+                window_dpi_scale(), (modifiers & MK_SHIFT) != 0,
+                (modifiers & MK_CONTROL) != 0);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        return;
+    }
+    handle_canvas_mouse_move(x, y, modifiers);
 }
 
-void NativeWindow::handle_mouse_up(int x, int y) {
+void NativeWindow::handle_mouse_up(int x, int y, unsigned modifiers) {
     if (is_dragging_guideline_) {
         is_dragging_guideline_ = false;
         if (GetCapture() == hwnd_)
@@ -876,222 +901,25 @@ void NativeWindow::handle_mouse_up(int x, int y) {
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
+
     if (is_panning_) {
         is_panning_ = false;
+        if (drawing_tool_ && drawing_tool_->active()) drawing_tool_->resume_after_pan();
         if (GetCapture() == hwnd_)
             ReleaseCapture();
         return;
     }
-    handle_canvas_mouse_up(x, y);
+    if (drawing_tool_ && drawing_tool_->active()) return;
+    handle_canvas_mouse_up(x, y, modifiers);
 }
 
-bool NativeWindow::handle_key_down(WPARAM key) {
-    if (active_num_field_ != NumericFieldId::None) {
-        if (key == VK_ESCAPE) {
-            cancel_numeric_field();
-            return true;
-        }
-        if (key == VK_RETURN) {
-            commit_numeric_field();
-            return true;
-        }
-        if (key == VK_TAB) {
-            handle_numeric_char_input(9);
-            return true;
-        }
-        if (key == VK_BACK) {
-            return false;
-        }
-        return true;
-    }
-
-    const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-    const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-    const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
-    if (control) {
-        if (key == VK_OEM_1 || key == ';') {
-            if (alt) {
-                clear_guidelines();
-            } else {
-                toggle_guidelines();
-            }
-            return true;
-        }
-        if (key == 'N') { open_new_doc_modal(); return true; }
-        if (key == 'W') { close_tab(active_tab_index_); return true; }
-        if (key == VK_TAB) {
-            if (tabs_.size() > 1) switch_to_tab((active_tab_index_ + 1) % tabs_.size());
-            return true;
-        }
-        if (key == 'D') { workflow().duplicate_selected(15.0); InvalidateRect(hwnd_, nullptr, FALSE); return true; }
-        if (key == 'O') { open_document_dialog(); return true; }
-        if (key == 'S') { save_document_dialog(shift); return true; }
-        if (key == 'E') { export_svg_dialog(); return true; }
-        if (key == 'J') { open_settings_modal(); return true; }
-        if (key == 'A' && shift) { open_inspector_properties_panel(); return true; }
-        if (key == 'Z' || (key == 'Y' && shift)) {
-            workflow().undo();
-            root().vector_controller().selection().clear();
-            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã hoàn tác" : "Undo complete";
-            InvalidateRect(hwnd_, nullptr, FALSE);
-            return true;
-        }
-        if (key == 'Y') {
-            workflow().redo();
-            root().vector_controller().selection().clear();
-            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã làm lại" : "Redo complete";
-            InvalidateRect(hwnd_, nullptr, FALSE);
-            return true;
-        }
-        if (key == 'G') {
-            if (shift) {
-                if (workflow().ungroup_selected()) {
-                    status_msg_ = (language_ == UILanguage::Vietnamese) ? "Đã rã nhóm (Ungroup)" : "Ungrouped";
-                }
-            } else {
-                auto gid = workflow().group_selected();
-                if (gid != document::kInvalidObjectId) {
-                    status_msg_ = (language_ == UILanguage::Vietnamese) ? "Đã nhóm các đối tượng (Group)" : "Grouped selected objects";
-                }
-            }
-            InvalidateRect(hwnd_, nullptr, FALSE);
-            return true;
-        }
-        if (key == 'Q') {
-            convert_selected_text_to_curves();
-            return true;
-        }
-        if (key == 'B') {
-            toggle_font_bold();
-            return true;
-        }
-        if (key == 'I') {
-            toggle_font_italic();
-            return true;
-        }
-        if (key == 'U') {
-            if (workflow().ungroup_selected()) {
-                status_msg_ = (language_ == UILanguage::Vietnamese) ? "Đã rã nhóm (Ungroup)" : "Ungrouped";
-                InvalidateRect(hwnd_, nullptr, FALSE);
-            }
-            return true;
-        }
-        if (shift) {
-            if (key == 'U' || key == 'W') {
-                trigger_boolean_operation(geometry::BooleanOp::Union);
-                return true;
-            }
-            if (key == 'T') {
-                trigger_boolean_operation(geometry::BooleanOp::Difference);
-                return true;
-            }
-            if (key == 'I') {
-                trigger_boolean_operation(geometry::BooleanOp::Intersection);
-                return true;
-            }
-            if (key == 'X') {
-                trigger_boolean_operation(geometry::BooleanOp::Xor);
-                return true;
-            }
-            if (key == 'B') {
-                trigger_boolean_operation(geometry::BooleanOp::Boundary);
-                return true;
-            }
-        }
-    }
-    if (key == VK_RETURN) {
-        if (is_inline_text_editing_) {
-            commit_inline_text_editing();
-            return true;
-        }
-        const auto& sel = root().vector_controller().selection().selected_ids();
-        if (sel.size() == 1 && workflow().is_group(sel.front())) {
-            enter_group_isolation(sel.front());
-            return true;
-        }
-    }
-    if (key == VK_ESCAPE) {
-        if (is_dragging_guideline_) {
-            is_dragging_guideline_ = false;
-            if (GetCapture() == hwnd_) ReleaseCapture();
-            status_msg_ = (language_ == UILanguage::Vietnamese) ? "Đã hủy đường gióng" : "Cancelled guideline";
-            InvalidateRect(hwnd_, nullptr, FALSE);
-            return true;
-        }
-        if (is_inline_text_editing_) {
-            cancel_inline_text_editing();
-            return true;
-        }
-        if (is_in_isolation_mode()) {
-            exit_group_isolation();
-            return true;
-        }
-        if (show_new_doc_modal_) close_new_doc_modal();
-        else if (show_settings_modal_) close_settings_modal();
-        else if (show_file_menu_) close_file_menu();
-        else if (show_page_preset_dropdown_) close_page_preset_dropdown();
-        else if (is_panning_) {
-            is_panning_ = false;
-            if (GetCapture() == hwnd_) ReleaseCapture();
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        } else if (pointer_active_) {
-            root().vector_controller().on_escape();
-            pointer_active_ = false;
-            is_dragging_ = false;
-            is_creating_shape_ = false;
-            is_knife_cutting_ = false;
-            drag_preview_bounds_.reset();
-            if (GetCapture() == hwnd_) ReleaseCapture();
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        }
-        return true;
-    }
-    if (key == VK_DELETE || key == VK_BACK) {
-        if (is_inline_text_editing_) {
-            return false; // let WM_CHAR handle backspace
-        }
-        if (workflow().delete_selected()) {
-            status_msg_ = (language_ == UILanguage::Vietnamese) ?
-                "Đã xóa các đối tượng được chọn · Nhấn Ctrl+Z để hoàn tác" :
-                "Deleted selected object(s) · Press Ctrl+Z to undo";
-        }
-        InvalidateRect(hwnd_, nullptr, FALSE);
-        return true;
-    }
-    const auto sel_count = root().vector_controller().selection().count();
-    if (!is_inline_text_editing_ && sel_count >= 1) {
-        if (key == 'P') {
-            if (shift) align_selected_objects(geometry::AlignMode::CenterPageHorizontal);
-            else if (alt) align_selected_objects(geometry::AlignMode::CenterPageVertical);
-            else align_selected_objects(geometry::AlignMode::CenterPage);
-            return true;
-        }
-        if (sel_count >= 2 || align_reference_ == geometry::AlignReference::Page) {
-            if (key == 'L') { align_selected_objects(geometry::AlignMode::Left); return true; }
-            if (key == 'R') { align_selected_objects(geometry::AlignMode::Right); return true; }
-            if (key == 'T') { align_selected_objects(geometry::AlignMode::Top); return true; }
-            if (key == 'B') { align_selected_objects(geometry::AlignMode::Bottom); return true; }
-            if (key == 'C') { align_selected_objects(geometry::AlignMode::CenterHorizontal); return true; }
-            if (key == 'E') { align_selected_objects(geometry::AlignMode::CenterVertical); return true; }
-        }
-    }
-
-    if (key == 'F') { fit_page_to_canvas(); return true; }
-    if (key == 'H') { set_active_tool(3); return true; }
-    if (key == '1') {
-        auto& camera = root().renderer().camera();
-        camera.set_viewport_size(std::max(1, width_ - 352), std::max(1, height_ - 148));
-        camera.set_zoom(1.0);
-        zoom_level_ = 100;
-        InvalidateRect(hwnd_, nullptr, FALSE);
-        return true;
-    }
-    if (key == 'V') { set_active_tool(0); return true; }
-    if (key == 'R') { set_active_tool(1); return true; }
-    if (key == 'E') { set_active_tool(2); return true; }
-    if (key == 'K' || key == 'C') { set_active_tool(5); return true; }
-    if (key == 'A' || key == 'T') { set_active_tool(4); return true; }
-    return false;
+double NativeWindow::window_dpi_scale() const noexcept {
+    if (!hwnd_) return 1.0;
+    using GetDpiForWindowFunction = UINT(WINAPI*)(HWND);
+    const auto user32 = GetModuleHandleW(L"user32.dll");
+    const auto get_dpi = reinterpret_cast<GetDpiForWindowFunction>(
+        GetProcAddress(user32, "GetDpiForWindow"));
+    return get_dpi ? static_cast<double>(get_dpi(hwnd_)) / 96.0 : 1.0;
 }
 
 LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
@@ -1148,16 +976,35 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         if (self) {
             self->commit_numeric_field();
             self->space_down_ = false;
-            if (self->is_panning_) {
-                self->is_panning_ = false;
-                if (GetCapture() == hwnd) ReleaseCapture();
+            if (self->drawing_tool_ && self->drawing_tool_->active()) {
+                KillTimer(hwnd, 9);
+                if (self->is_panning_)
+                    self->drawing_tool_->resume_after_pan();
+                self->status_msg_ = self->language_ == UILanguage::Vietnamese
+                    ? "Tạm dừng đường vẽ · bản nháp được giữ lại"
+                    : "Drawing paused · draft preserved";
             }
+            self->cancel_canvas_interaction();
         }
+        break;
+    case WM_SETFOCUS:
+        if (self && self->drawing_tool_ && self->drawing_tool_->active()) {
+            SetTimer(hwnd, 9, 33, nullptr);
+            self->status_msg_ = self->language_ == UILanguage::Vietnamese
+                ? "Tiếp tục đường vẽ"
+                : "Drawing resumed";
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        break;
+    case WM_CHAR:
+        if (self && wParam >= 0x20 && wParam <= 0x7e &&
+            self->handle_drawing_character(static_cast<char>(wParam)))
+            return 0;
         break;
     case WM_LBUTTONDOWN:
         if (self) {
             SetFocus(hwnd);
-            self->handle_mouse_down(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+            self->handle_mouse_down(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), static_cast<unsigned>(wParam));
         }
         return 0;
     case WM_LBUTTONDBLCLK:
@@ -1167,13 +1014,21 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         }
         return 0;
     case WM_MOUSEMOVE:
-        if (self) self->handle_mouse_move(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+        if (self) self->handle_mouse_move(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), static_cast<unsigned>(wParam));
         return 0;
     case WM_LBUTTONUP:
-        if (self) self->handle_mouse_up(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+        if (self) self->handle_mouse_up(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), static_cast<unsigned>(wParam));
+        return 0;
+    case WM_RBUTTONDOWN:
+        if (self && !self->show_settings_modal_ && !self->show_file_menu_ && !self->show_home_screen_)
+            self->handle_style_click(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), true);
         return 0;
     case WM_MBUTTONDOWN:
         if (self && self->is_canvas_point(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam))) {
+            if (self->drawing_tool_ && self->drawing_tool_->active())
+                self->drawing_tool_->suspend_for_pan();
+            else
+                self->cancel_canvas_interaction();
             self->is_panning_ = true;
             self->last_pointer_x_ = GET_X_LPARAM(lParam);
             self->last_pointer_y_ = GET_Y_LPARAM(lParam);
@@ -1183,6 +1038,8 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
     case WM_MBUTTONUP:
         if (self && self->is_panning_) {
             self->is_panning_ = false;
+            if (self->drawing_tool_ && self->drawing_tool_->active())
+                self->drawing_tool_->resume_after_pan();
             if (GetCapture() == hwnd) ReleaseCapture();
         }
         return 0;
@@ -1205,10 +1062,28 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
             }
         }
         return 0;
+    case WM_TIMER:
+        if (self && wParam == 9 && self->drawing_tool_ && self->drawing_tool_->active()) {
+            POINT point{};
+            GetCursorPos(&point);
+            ScreenToClient(hwnd, &point);
+            if (self->is_canvas_point(point.x, point.y)) {
+                const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+                const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+                self->last_canvas_pointer_x_ = point.x;
+                self->last_canvas_pointer_y_ = point.y;
+                self->drawing_tool_->pointer_move(self->canvas_to_world(point.x, point.y),
+                    self->root().renderer().camera(), self->window_dpi_scale(), shift, control);
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+        }
+        return 0;
     case WM_SETCURSOR:
         if (self && LOWORD(lParam) == HTCLIENT) {
-            const WORD cursor_id = self->is_panning_ ? 32646
-                : self->active_tool_ == 3 ? 32649 : 32512;
+            POINT point;
+            GetCursorPos(&point);
+            ScreenToClient(hwnd, &point);
+            const WORD cursor_id = self->canvas_cursor_at(point.x, point.y);
             SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(cursor_id)));
             return TRUE;
         }
@@ -1240,6 +1115,9 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         if (self) {
             self->is_panning_ = false;
             self->is_dragging_guideline_ = false;
+            if (self->drawing_tool_ && self->drawing_tool_->active()) {
+                self->drawing_tool_->resume_after_pan();
+            }
             if (self->pointer_active_) {
                 self->root().vector_controller().on_escape();
                 self->pointer_active_ = false;
@@ -1248,6 +1126,8 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
                 self->drag_preview_bounds_.reset();
                 InvalidateRect(hwnd, nullptr, FALSE);
             }
+            self->cancel_canvas_interaction();
+            InvalidateRect(hwnd, nullptr, FALSE);
         }
         return 0;
     case WM_DESTROY:

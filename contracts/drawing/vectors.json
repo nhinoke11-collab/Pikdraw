@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "contract_version": "1.0.0",
+  "status": "reference_vectors_for_consumer_tests",
+  "vector_groups": {
+    "numeric_and_direction": [
+      {"id":"relative_polar_45","start_mm":[10.0,20.0],"input":"@250mm<45deg","expected_mm":[186.7766952966369,196.7766952966369],"absolute_tolerance_mm":1e-10},
+      {"id":"relative_cartesian","start_mm":[10.0,20.0],"input":"@20;15","expected_mm":[30.0,35.0],"absolute_tolerance_mm":1e-12},
+      {"id":"absolute_world","input":"#120;80","expected_mm":[120.0,80.0],"absolute_tolerance_mm":1e-12},
+      {"id":"inch_exact_factor","input":"1in","expected_mm":25.4,"absolute_tolerance_mm":1e-12},
+      {"id":"point_exact_factor","input":"72pt","expected_mm":25.4,"absolute_tolerance_mm":1e-12},
+      {"id":"typed_length_expression","input":"2*125mm","expected_mm":250.0,"absolute_tolerance_mm":1e-12},
+      {"id":"parenthesized_length_expression","input":"(100mm+20mm)/2","expected_mm":60.0,"absolute_tolerance_mm":1e-12},
+      {"id":"comma_decimal_locale","locale_decimal":",","input":"0,5in","expected_mm":12.7,"absolute_tolerance_mm":1e-12},
+      {"id":"coordinate_semicolon_avoids_decimal_comma_ambiguity","locale_decimal":",","input":"@20,5;15,25","expected_delta_mm":[20.5,15.25],"absolute_tolerance_mm":1e-12},
+      {"id":"polar_nearest_45","input_angle_deg":44.9,"step_deg":45.0,"previous_angle_deg":null,"expected_angle_deg":45.0},
+      {"id":"polar_exact_tie_low","input_angle_deg":22.5,"step_deg":45.0,"previous_angle_deg":null,"expected_angle_deg":0.0},
+      {"id":"polar_exact_tie_keep_lock","input_angle_deg":22.5,"step_deg":45.0,"previous_angle_deg":45.0,"expected_angle_deg":45.0},
+      {"id":"polar_wrap_tie","input_angle_deg":337.5,"step_deg":45.0,"previous_angle_deg":null,"expected_angle_deg":0.0},
+      {"id":"ortho_axis_lock","input_angle_deg":89.9,"mode":"ortho","expected_angle_deg":90.0},
+      {"id":"polar_acquire_threshold","perpendicular_distance_dip":5.9,"ray_length_dip":20.0,"mode":"polar","expected":"acquire_nearest_ray"},
+      {"id":"polar_outside_acquire_threshold","perpendicular_distance_dip":6.1,"ray_length_dip":20.0,"mode":"polar","expected":"leave_pointer_unconstrained"},
+      {"id":"polar_short_ray_ignored","perpendicular_distance_dip":1.0,"ray_length_dip":15.9,"mode":"polar","expected":"leave_pointer_unconstrained"},
+      {"id":"numeric_angle_beats_shift","locked_angle_deg":30.0,"profile_modifier_angle_deg":45.0,"expected_angle_deg":30.0},
+      {"id":"incompatible_snap_is_rejected","locked_angle_deg":30.0,"anchor_mm":[0.0,0.0],"candidate_mm":[100.0,0.0],"candidate_kind":"endpoint","expected_candidate":"rejected_before_ranking"},
+      {"id":"explicit_ortho_survives_snap_off","master_snap":false,"direction":"ortho","input_angle_deg":12.0,"expected_angle_deg":0.0},
+      {"id":"invalid_nan_rejected","input":"NaN","expected":"parse_error_no_command"},
+      {"id":"invalid_divide_zero_rejected","input":"10mm/0","expected":"parse_error_no_command"},
+      {"id":"invalid_mixed_dimension_addition","input":"10mm+2deg","expected":"parse_error_no_command"}
+    ],
+    "snap_state": [
+      {"id":"master_off_retains_masks","before":{"master":true,"object_points":{"endpoint":true,"analytic_center":false},"direction":"polar","angle_step_deg":45.0},"action":"toggle_master","expected":{"master":false,"object_points":{"endpoint":true,"analytic_center":false},"direction":"polar","angle_step_deg":45.0}},
+      {"id":"master_off_does_not_clear_numeric_lock","before":{"master":true,"numeric_length_mm":250.0,"direction":"ortho"},"action":"toggle_master","expected":{"master":false,"numeric_length_mm":250.0,"direction":"ortho"}},
+      {"id":"group_disable_preserves_child_mask","before":{"object_points_enabled":true,"children":{"endpoint":true,"quadrant":false}},"action":"disable_object_points_group","expected":{"object_points_enabled":false,"children":{"endpoint":true,"quadrant":false}}},
+      {"id":"select_all_is_not_group_enable","before":{"object_points_enabled":false,"children":{"endpoint":true,"quadrant":false}},"action":"select_all_children","expected":{"object_points_enabled":false,"children":{"endpoint":true,"quadrant":true}}},
+      {"id":"direction_modes_are_exclusive","before":"ortho","action":"enable_polar","expected":"polar"},
+      {"id":"toggle_active_direction_returns_free","before":"polar","action":"toggle_polar","expected":"free"},
+      {"id":"stale_config_candidate_rejected","query_stamp":{"document_revision":12,"config_generation":3,"capability_generation":2},"current_stamp":{"document_revision":12,"config_generation":4,"capability_generation":2},"expected":"reject_without_hint_or_commit"},
+      {"id":"stale_document_candidate_rejected","query_stamp":{"document_epoch":8,"document_revision":12,"config_generation":3},"current_stamp":{"document_epoch":8,"document_revision":13,"config_generation":3},"expected":"reject_without_hint_or_commit"},
+      {"id":"stale_capability_candidate_rejected","query_stamp":{"document_revision":12,"config_generation":3,"capability_generation":2},"current_stamp":{"document_revision":12,"config_generation":3,"capability_generation":3},"expected":"reject_without_hint_or_commit"},
+      {"id":"unsupported_snap_kind_disabled","capabilities":{"tangent":false},"option":"tangent","expected":"disabled_with_reason_and_no_geometry_query"}
+    ],
+    "modifier_profiles": [
+      {"id":"pikdraw_square_from_center","profile":"PikDraw","tool":"rectangle","pointer_phase":"drag","held":["Shift","Alt"],"expected":["preserve_aspect_1_to_1","center_at_original_anchor"]},
+      {"id":"corel_square_from_center","profile":"Corel-inspired","tool":"ellipse","pointer_phase":"drag","held":["Ctrl","Shift"],"expected":["preserve_aspect_1_to_1","center_at_original_anchor"]},
+      {"id":"alt_breaks_handles","profile":"Corel-inspired","tool":"pen","pointer_phase":"handle_drag","held":["Alt"],"expected":["break_opposite_handle"]},
+      {"id":"constrain_and_break_handle","profile":"Illustrator-inspired","tool":"pen","pointer_phase":"handle_drag","held":["Shift","Alt"],"expected":["quantize_handle_angle","break_opposite_handle"]},
+      {"id":"corel_temporary_node","profile":"Corel-inspired","tool":"pen","pointer_phase":"anchor_drag_before_handle_drag","held":["F2"],"expected":["temporary_node_on_same_draft"]},
+      {"id":"text_scope_owns_shift","profile":"PikDraw","focus":"numeric_text_field_with_ime_composition","held":["Shift"],"expected":["text_input_only","no_canvas_constraint"]},
+      {"id":"altgr_is_not_ctrl_alt_chord","profile":"Corel-inspired","focus":"canvas","keyboard_layout":"AltGr","held":["Ctrl","AltGr"],"expected":["layout_text_or_system_semantics","no_center_or_break_handle_action"]},
+      {"id":"save_as_rolls_back_only_active_gesture","profile":"Corel-inspired","focus":"canvas","pointer_phase":"active_drag","held":["Ctrl","Shift","S"],"expected":["rollback_current_gesture","preserve_confirmed_draft","open_save_as","no_snap_bypass"]},
+      {"id":"modifier_press_release_uses_original_anchor","profile":"Corel-inspired","tool":"line","anchor_mm":[12.0,8.0],"raw_pointer_mm":[32.0,29.0],"events":["drag","press_ctrl","release_ctrl"],"expected":"each_preview_recomputed_from_anchor_and_raw_pointer_without_incremental_snap_drift"},
+      {"id":"profile_change_waits_until_gesture_end","before_profile":"PikDraw","active_gesture":true,"requested_profile":"Corel-inspired","expected":["current_gesture_keeps_PikDraw_bindings","next_gesture_uses_Corel-inspired"]},
+      {"id":"focus_loss_clears_modifiers","active_gesture":true,"held":["Ctrl","Shift"],"event":"focus_lost","expected":["rollback_uncommitted_gesture","clear_temporary_modifiers"]},
+      {"id":"snap_bypass_alone","profile":"Corel-inspired","focus":"canvas","pointer_phase":"active_drag","held":["S"],"expected":["automatic_snap_bypassed","numeric_and_direction_constraints_retained"]}
+    ],
+    "shapes": [
+      {"id":"rectangle_from_center","anchor_mm":[10.0,20.0],"raw_corner_mm":[15.0,27.0],"expected_bounds_mm":[5.0,13.0,15.0,27.0],"expected_size_mm":[10.0,14.0]},
+      {"id":"center_invalidated_after_source_revision","reference":{"object_id":"shape-1","document_epoch":4,"document_revision":10},"current":{"document_epoch":4,"document_revision":11},"expected":"discard_center_reference"},
+      {"id":"polygon_center_vertex_up_n4_r10","N":4,"center_mm":[0.0,0.0],"R_mm":10.0,"orientation":"vertex_up","rotation_deg":0.0,"expected_vertices_mm":[[0.0,10.0],[-10.0,0.0],[0.0,-10.0],[10.0,0.0]],"absolute_tolerance_mm":1e-10},
+      {"id":"polygon_center_edge_up_n4_r10","N":4,"center_mm":[0.0,0.0],"R_mm":10.0,"orientation":"edge_up","rotation_deg":0.0,"expected_vertices_mm":[[-7.0710678118654755,7.0710678118654755],[-7.0710678118654755,-7.0710678118654755],[7.0710678118654755,-7.0710678118654755],[7.0710678118654755,7.0710678118654755]],"absolute_tolerance_mm":1e-10},
+      {"id":"polygon_radius_side_oracles","R_mm":10.0,"absolute_tolerance_mm":1e-10,"expected_by_N":{"3":{"side_mm":17.32050807568877,"inradius_mm":5.0},"4":{"side_mm":14.142135623730951,"inradius_mm":7.0710678118654755},"5":{"side_mm":11.755705045849464,"inradius_mm":8.090169943749475},"6":{"side_mm":10.0,"inradius_mm":8.660254037844387},"512":{"side_mm":0.1227176929830895,"inradius_mm":9.99981175282601}}},
+      {"id":"polygon_invalid_side_count","N":2,"expected":"reject_no_document_change"},
+      {"id":"polygon_fractional_side_count","N":5.5,"expected":"reject_no_document_change"},
+      {"id":"polygon_inconsistent_drivers","N":4,"R_mm":10.0,"side_mm":20.0,"expected":"retain_last_valid_candidate_and_report_conflict"}
+    ],
+    "path_identity": [
+      {"id":"split_line_preserves_endpoint_ids","before":{"subpath":"sp-1","segment":"sg-1","start_node":"n-1","end_node":"n-2"},"parameter_t":0.25,"after":{"subpath":"sp-1","segments":["sg-1","sg-2"],"nodes":["n-1","n-3","n-2"],"old_segment_is":"leading_segment"}},
+      {"id":"split_arc_preserves_analytic_source","kind":"elliptic_arc","parameter_t":0.5,"expected":["same_ellipse_basis","first_sweep_half","second_sweep_half","no_flattening"]},
+      {"id":"quarter_circle_midpoint","kind":"elliptic_arc","center_mm":[2.0,3.0],"U_mm":[10.0,0.0],"V_mm":[0.0,10.0],"alpha0_rad":0.0,"sweep_rad":1.5707963267948966,"parameter_t":0.5,"expected_mm":[9.071067811865476,10.071067811865476],"absolute_tolerance_mm":1e-10},
+      {"id":"reflected_arc_keeps_parameter","kind":"elliptic_arc","center_mm":[2.0,3.0],"U_mm":[10.0,0.0],"V_mm":[0.0,10.0],"affine":[[-1.0,0.0,20.0],[0.0,1.0,0.0]],"alpha0_rad":0.0,"sweep_rad":1.5707963267948966,"parameter_t":0.5,"expected_center_mm":[18.0,3.0],"expected_U_mm":[-10.0,0.0],"expected_V_mm":[0.0,10.0],"expected_mm":[10.928932188134524,10.071067811865476],"absolute_tolerance_mm":1e-10},
+      {"id":"join_gap_requires_bridge","endpoint_distance_mm":0.1,"action":"join_subpaths","expected":"reject_and_offer_bridge"},
+      {"id":"merge_requires_explicit_survivor","coincident_endpoints":["n-1","n-2"],"action":"merge_endpoints","survivor":"n-2","expected_id_map":{"n-1":"n-2"}},
+      {"id":"close_target_start_merges_endpoint","last_node":"n-9","start_node":"n-1","action":"close_to_target_node","expected_id_map":{"n-9":"n-1"}},
+      {"id":"close_zero_length_without_target_rejected","last_anchor_mm":[4.0,7.0],"start_anchor_mm":[4.0,7.0],"target_node_id":null,"expected":"reject_with_guidance_no_zero_length_segment"}
+    ]
+  }
+}

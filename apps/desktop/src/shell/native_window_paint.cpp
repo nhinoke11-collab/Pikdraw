@@ -62,12 +62,24 @@ void draw_tool_icon(HDC dc, int tool, int center_x, int center_y, COLORREF color
         LineTo(dc, center_x - 7, center_y + 5);
         LineTo(dc, center_x - 6, center_y + 2);
     } else if (tool == 4) {
+        MoveToEx(dc, center_x - 8, center_y + 7, nullptr);
+        LineTo(dc, center_x + 8, center_y - 7);
+        Ellipse(dc, center_x - 10, center_y + 5, center_x - 6, center_y + 9);
+        Ellipse(dc, center_x + 6, center_y - 9, center_x + 10, center_y - 5);
+    } else if (tool == 5) {
+        MoveToEx(dc, center_x - 8, center_y + 6, nullptr);
+        LineTo(dc, center_x - 2, center_y - 5);
+        LineTo(dc, center_x + 3, center_y + 3);
+        LineTo(dc, center_x + 8, center_y - 7);
+        Ellipse(dc, center_x - 10, center_y + 4, center_x - 6, center_y + 8);
+        Ellipse(dc, center_x + 6, center_y - 9, center_x + 10, center_y - 5);
+    } else if (tool == 6) {
         MoveToEx(dc, center_x - 7, center_y + 8, nullptr);
         LineTo(dc, center_x, center_y - 8);
         LineTo(dc, center_x + 7, center_y + 8);
         MoveToEx(dc, center_x - 4, center_y + 2, nullptr);
         LineTo(dc, center_x + 4, center_y + 2);
-    } else if (tool == 5) {
+    } else if (tool == 7) {
         // Knife / Scalpel icon: diagonal blade and handle cutting across
         MoveToEx(dc, center_x - 5, center_y + 7, nullptr);
         LineTo(dc, center_x - 2, center_y + 7);
@@ -466,13 +478,13 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
             draw_rib_btn(color_start_x + 120, color_start_x + 156, L"■", false, RGB(239, 68, 68));
         }
 
-        // 5. Left Tool Strip: 6 working tools (Select, Rect, Ellipse, Hand, Text, Knife)
+        // 5. Left Tool Strip: 8 working tools (Select, Rect, Ellipse, Hand, Line, Polyline, Text, Knife)
         HBRUSH br_tools = CreateSolidBrush(col_header);
         RECT rc_tools = { 0, content_top, tool_w, h - status_h };
         FillRect(mem_dc, &rc_tools, br_tools);
         DeleteObject(br_tools);
 
-        for (int i = 0; i < 6; ++i) {
+        for (int i = 0; i < 8; ++i) {
             int ty = content_top + 10 + i * 42;
             RECT rc_tb = { 6, ty, tool_w - 6, ty + 36 };
             if (active_tool_ == i) {
@@ -536,161 +548,136 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
 
         std::wostringstream content;
         if (active_dock_tab_ == 0) {
-            DrawTextW(mem_dc, is_vi ? L"THUỘC TÍNH ĐANG CHỌN" : L"SELECTION", -1,
-                      &rc_head, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
-            content << (is_vi ? L"Số đối tượng: " : L"Selected objects: ") << selection.size();
-            if (selection.size() == 1) {
-                const auto sel_id = selection.front();
-                const auto object = snapshot->objects().get(sel_id);
-                if (object) {
-                    const auto name = std::visit([](const auto& value) { return value.name; }, *object);
-                    content << L"\n" << utf8_to_wide(name);
-                    if (workflow().is_group(sel_id)) {
-                        const auto& grp = std::get<document::GroupObject>(*object);
-                        content << (is_vi ? L"\n[Nhóm đối tượng - " : L"\n[Group - ")
-                                << grp.children_ids.size() << (is_vi ? L" hình]" : L" items]");
-                    }
-                    if (const auto* im = std::get_if<document::ImageObject>(&*object)) {
-                        content << (is_vi ? L"\n[Ảnh Bitmap - " : L"\n[Raster Image - ")
-                                << im->width_px << L"×" << im->height_px << (is_vi ? L" px]" : L" px]");
-                    }
-                    if (const auto bounds = workflow().get_object_bounds(sel_id)) {
-                        content << L"\nX: " << std::fixed << std::setprecision(1) << bounds->x
-                                << L" mm\nY: " << bounds->y << L" mm\nW: " << bounds->width
-                                << L" mm\nH: " << bounds->height << L" mm";
-                    }
-                    if (workflow().is_group(sel_id) && !is_in_isolation_mode()) {
-                        content << (is_vi ? L"\nNhấp đúp/Enter để chui vào nhóm."
-                                          : L"\nDouble-click/Enter to edit inside.");
-                    }
-                }
+            if (selection.size() <= 1) {
+                paint_style_inspector(mem_dc, insp_x, content_y, h - status_h);
             } else {
-                content << (is_vi ? L"\nNhấp một đối tượng để xem kích thước (mm)."
-                                  : L"\nSelect an object to inspect its size in mm.");
+                DrawTextW(mem_dc, is_vi ? L"THUỘC TÍNH ĐANG CHỌN" : L"SELECTION", -1,
+                          &rc_head, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+                content << (is_vi ? L"Số đối tượng: " : L"Selected objects: ") << selection.size();
+                if (is_in_isolation_mode()) {
+                    content << (is_vi ? L"\n\n⚡ ĐANG CÔ LẬP NHÓM\nNhấn Esc để thoát."
+                                      : L"\n\n⚡ GROUP ISOLATION MODE\nPress Esc to exit.");
+                }
+                RECT body = { insp_x + 14, content_y + 28, w - 14, content_y + 190 };
+                const auto text = content.str();
+                DrawTextW(mem_dc, text.c_str(), -1, &body, DT_LEFT | DT_NOPREFIX);
+                SelectObject(mem_dc, font_be_vietnam_bold);
+                SetTextColor(mem_dc, col_teal);
+                RECT tools_head = { insp_x + 14, content_y + 195, w - 14, content_y + 218 };
+                DrawTextW(mem_dc, is_vi ? L"TẠO HÌNH KHỐI (SOLID TOOLS)" : L"SOLID & SHAPING TOOLS", -1,
+                          &tools_head, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+
+                // Checkboxes: Keep Source / Keep Target
+                RECT rc_chk1 = { insp_x + 14, content_y + 222, insp_x + 135, content_y + 244 };
+                RECT rc_chk2 = { insp_x + 140, content_y + 222, w - 14, content_y + 244 };
+                const wchar_t* chk1_txt = keep_source_object_ ?
+                    (is_vi ? L"☑ Giữ khuôn" : L"☑ Keep Source") :
+                    (is_vi ? L"☐ Giữ khuôn" : L"☐ Keep Source");
+                const wchar_t* chk2_txt = keep_target_object_ ?
+                    (is_vi ? L"☑ Giữ hình cắt" : L"☑ Keep Target") :
+                    (is_vi ? L"☐ Giữ hình cắt" : L"☐ Keep Target");
+                SelectObject(mem_dc, font_secondary);
+                SetTextColor(mem_dc, keep_source_object_ ? col_teal : col_text_muted);
+                DrawTextW(mem_dc, chk1_txt, -1, &rc_chk1, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                SetTextColor(mem_dc, keep_target_object_ ? col_teal : col_text_muted);
+                DrawTextW(mem_dc, chk2_txt, -1, &rc_chk2, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+                // Grid of Solid buttons
+                auto draw_shaping_btn = [&](int bx, int by, int bw, int bh, const wchar_t* blabel) {
+                    RECT brect = { bx, by, bx + bw, by + bh };
+                    HBRUSH br = CreateSolidBrush(col_btn_bg);
+                    HPEN pn = CreatePen(PS_SOLID, 1, col_btn_bdr);
+                    HGDIOBJ op = SelectObject(mem_dc, pn);
+                    HGDIOBJ ob = SelectObject(mem_dc, br);
+                    RoundRect(mem_dc, brect.left, brect.top, brect.right, brect.bottom, 4, 4);
+                    SelectObject(mem_dc, op);
+                    SelectObject(mem_dc, ob);
+                    DeleteObject(pn);
+                    DeleteObject(br);
+                    SetTextColor(mem_dc, col_text_white);
+                    DrawTextW(mem_dc, blabel, -1, &brect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                };
+
+                int btn_w = (inspect_w - 38) / 3;
+                int by1 = content_y + 248;
+                int by2 = by1 + 30;
+                draw_shaping_btn(insp_x + 14, by1, btn_w, 26, is_vi ? L"⧉ Hàn" : L"⧉ Weld");
+                draw_shaping_btn(insp_x + 14 + btn_w + 5, by1, btn_w, 26, is_vi ? L"✂ Xén" : L"✂ Trim");
+                draw_shaping_btn(insp_x + 14 + (btn_w + 5) * 2, by1, btn_w, 26, is_vi ? L"⨅ Giao" : L"⨅ Intersect");
+
+                draw_shaping_btn(insp_x + 14, by2, btn_w, 26, is_vi ? L"⧇ Rỗng" : L"⧇ Exclude");
+                draw_shaping_btn(insp_x + 14 + btn_w + 5, by2, btn_w, 26, is_vi ? L"◫ Trừ dưới" : L"◫ Back-Front");
+                draw_shaping_btn(insp_x + 14 + (btn_w + 5) * 2, by2, btn_w, 26, is_vi ? L"🔲 Bao ngoài" : L"🔲 Boundary");
+
+                // CNC Auto Weld Helper Button
+                int by3 = by2 + 32;
+                draw_shaping_btn(insp_x + 14, by3, inspect_w - 28, 28, is_vi ? L"⚡ Tự động hàn chữ/khối (CNC)" : L"⚡ CNC Auto-Weld Overlaps");
+
+                // ----------------------------------------------------
+                // Section: ALIGN & DISTRIBUTE (CorelDRAW & Illustrator)
+                // ----------------------------------------------------
+                int by_align_hdr = by3 + 36;
+                RECT align_head = { insp_x + 14, by_align_hdr, w - 14, by_align_hdr + 22 };
+                SelectObject(mem_dc, font_be_vietnam_bold);
+                SetTextColor(mem_dc, col_teal);
+                DrawTextW(mem_dc, is_vi ? L"CĂN CHỈNH & PHÂN BỔ" : L"ALIGN & DISTRIBUTE", -1,
+                          &align_head, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+
+                // Row 1: Horizontal Align (L, C, R)
+                int by_a1 = by_align_hdr + 24;
+                draw_shaping_btn(insp_x + 14, by_a1, btn_w, 26, L"|◀ L");
+                draw_shaping_btn(insp_x + 14 + btn_w + 5, by_a1, btn_w, 26, L"▶|◀ C");
+                draw_shaping_btn(insp_x + 14 + (btn_w + 5) * 2, by_a1, btn_w, 26, L"▶| R");
+
+                // Row 2: Vertical Align (T, E, B)
+                int by_a2 = by_a1 + 30;
+                draw_shaping_btn(insp_x + 14, by_a2, btn_w, 26, L"▲ T");
+                draw_shaping_btn(insp_x + 14 + btn_w + 5, by_a2, btn_w, 26, L"▼▲ E");
+                draw_shaping_btn(insp_x + 14 + (btn_w + 5) * 2, by_a2, btn_w, 26, L"▼ B");
+
+                // Row 3: Center to Page (P)
+                int by_a3 = by_a2 + 30;
+                draw_shaping_btn(insp_x + 14, by_a3, inspect_w - 28, 26, is_vi ? L"⌖ Căn giữa trang in (P)" : L"⌖ Center to Page (P)");
+
+                // Row 4: Align Reference Selector
+                int by_a4 = by_a3 + 32;
+                SelectObject(mem_dc, font_secondary);
+                SetTextColor(mem_dc, col_text_muted);
+                RECT rc_ref_lbl = { insp_x + 14, by_a4, insp_x + 72, by_a4 + 22 };
+                DrawTextW(mem_dc, is_vi ? L"Quy chiếu:" : L"Align to:", -1, &rc_ref_lbl, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+                int ref_w = (inspect_w - 85) / 3;
+                auto draw_ref_pill = [&](int rx, const wchar_t* rtxt, bool active) {
+                    RECT rrect = { rx, by_a4 - 2, rx + ref_w, by_a4 + 22 };
+                    HBRUSH rbr = CreateSolidBrush(active ? col_active_tab : col_btn_bg);
+                    HPEN rpn = CreatePen(PS_SOLID, 1, active ? col_teal : col_btn_bdr);
+                    HGDIOBJ rop = SelectObject(mem_dc, rpn);
+                    HGDIOBJ rob = SelectObject(mem_dc, rbr);
+                    RoundRect(mem_dc, rrect.left, rrect.top, rrect.right, rrect.bottom, 4, 4);
+                    SelectObject(mem_dc, rop);
+                    SelectObject(mem_dc, rob);
+                    DeleteObject(rpn);
+                    DeleteObject(rbr);
+                    SetTextColor(mem_dc, active ? col_teal : col_text_white);
+                    DrawTextW(mem_dc, rtxt, -1, &rrect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                };
+                draw_ref_pill(insp_x + 72, is_vi ? L"Vùng chọn" : L"Selection", align_reference_ == geometry::AlignReference::Selection);
+                draw_ref_pill(insp_x + 72 + ref_w + 3, is_vi ? L"Neo (Key)" : L"Key Object", align_reference_ == geometry::AlignReference::KeyObject);
+                draw_ref_pill(insp_x + 72 + (ref_w + 3) * 2, is_vi ? L"Trang giấy" : L"Page", align_reference_ == geometry::AlignReference::Page);
+
+                // Row 5: Distribute Spacing with Specified Gap mm
+                int by_a5 = by_a4 + 30;
+                SelectObject(mem_dc, font_secondary);
+                SetTextColor(mem_dc, col_text_muted);
+                RECT rc_gap_lbl = { insp_x + 14, by_a5, insp_x + 72, by_a5 + 24 };
+                DrawTextW(mem_dc, is_vi ? L"Khoảng hở:" : L"Spacing:", -1, &rc_gap_lbl, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+                int gap_half = (inspect_w - 90) / 2;
+                std::wstring gap_x_txt = (is_vi ? L"↔ Ngang " : L"↔ Horiz ") + std::to_wstring(static_cast<int>(distribute_spacing_mm_)) + L"mm";
+                std::wstring gap_y_txt = (is_vi ? L"↕ Dọc " : L"↕ Vert ") + std::to_wstring(static_cast<int>(distribute_spacing_mm_)) + L"mm";
+                draw_shaping_btn(insp_x + 72, by_a5 - 2, gap_half, 24, gap_x_txt.c_str());
+                draw_shaping_btn(insp_x + 72 + gap_half + 4, by_a5 - 2, gap_half, 24, gap_y_txt.c_str());
             }
-            if (is_in_isolation_mode()) {
-                content << (is_vi ? L"\n\n⚡ ĐANG CÔ LẬP NHÓM\nNhấn Esc để thoát."
-                                  : L"\n\n⚡ GROUP ISOLATION MODE\nPress Esc to exit.");
-            }
-            RECT body = { insp_x + 14, content_y + 28, w - 14, content_y + 190 };
-            const auto text = content.str();
-            DrawTextW(mem_dc, text.c_str(), -1, &body, DT_LEFT | DT_NOPREFIX);
-            SelectObject(mem_dc, font_be_vietnam_bold);
-            SetTextColor(mem_dc, col_teal);
-            RECT tools_head = { insp_x + 14, content_y + 195, w - 14, content_y + 218 };
-            DrawTextW(mem_dc, is_vi ? L"TẠO HÌNH KHỐI (SOLID TOOLS)" : L"SOLID & SHAPING TOOLS", -1,
-                      &tools_head, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
-
-            // Checkboxes: Keep Source / Keep Target
-            RECT rc_chk1 = { insp_x + 14, content_y + 222, insp_x + 135, content_y + 244 };
-            RECT rc_chk2 = { insp_x + 140, content_y + 222, w - 14, content_y + 244 };
-            const wchar_t* chk1_txt = keep_source_object_ ?
-                (is_vi ? L"☑ Giữ khuôn" : L"☑ Keep Source") :
-                (is_vi ? L"☐ Giữ khuôn" : L"☐ Keep Source");
-            const wchar_t* chk2_txt = keep_target_object_ ?
-                (is_vi ? L"☑ Giữ hình cắt" : L"☑ Keep Target") :
-                (is_vi ? L"☐ Giữ hình cắt" : L"☐ Keep Target");
-            SelectObject(mem_dc, font_secondary);
-            SetTextColor(mem_dc, keep_source_object_ ? col_teal : col_text_muted);
-            DrawTextW(mem_dc, chk1_txt, -1, &rc_chk1, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-            SetTextColor(mem_dc, keep_target_object_ ? col_teal : col_text_muted);
-            DrawTextW(mem_dc, chk2_txt, -1, &rc_chk2, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-            // Grid of Solid buttons
-            auto draw_shaping_btn = [&](int bx, int by, int bw, int bh, const wchar_t* blabel) {
-                RECT brect = { bx, by, bx + bw, by + bh };
-                HBRUSH br = CreateSolidBrush(col_btn_bg);
-                HPEN pn = CreatePen(PS_SOLID, 1, col_btn_bdr);
-                HGDIOBJ op = SelectObject(mem_dc, pn);
-                HGDIOBJ ob = SelectObject(mem_dc, br);
-                RoundRect(mem_dc, brect.left, brect.top, brect.right, brect.bottom, 4, 4);
-                SelectObject(mem_dc, op);
-                SelectObject(mem_dc, ob);
-                DeleteObject(pn);
-                DeleteObject(br);
-                SetTextColor(mem_dc, col_text_white);
-                DrawTextW(mem_dc, blabel, -1, &brect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-            };
-
-            int btn_w = (inspect_w - 38) / 3;
-            int by1 = content_y + 248;
-            int by2 = by1 + 30;
-            draw_shaping_btn(insp_x + 14, by1, btn_w, 26, is_vi ? L"⧉ Hàn" : L"⧉ Weld");
-            draw_shaping_btn(insp_x + 14 + btn_w + 5, by1, btn_w, 26, is_vi ? L"✂ Xén" : L"✂ Trim");
-            draw_shaping_btn(insp_x + 14 + (btn_w + 5) * 2, by1, btn_w, 26, is_vi ? L"⨅ Giao" : L"⨅ Intersect");
-
-            draw_shaping_btn(insp_x + 14, by2, btn_w, 26, is_vi ? L"⧇ Rỗng" : L"⧇ Exclude");
-            draw_shaping_btn(insp_x + 14 + btn_w + 5, by2, btn_w, 26, is_vi ? L"◫ Trừ dưới" : L"◫ Back-Front");
-            draw_shaping_btn(insp_x + 14 + (btn_w + 5) * 2, by2, btn_w, 26, is_vi ? L"🔲 Bao ngoài" : L"🔲 Boundary");
-
-            // CNC Auto Weld Helper Button
-            int by3 = by2 + 32;
-            draw_shaping_btn(insp_x + 14, by3, inspect_w - 28, 28, is_vi ? L"⚡ Tự động hàn chữ/khối (CNC)" : L"⚡ CNC Auto-Weld Overlaps");
-
-            // ----------------------------------------------------
-            // Section: ALIGN & DISTRIBUTE (CorelDRAW & Illustrator)
-            // ----------------------------------------------------
-            int by_align_hdr = by3 + 36;
-            RECT align_head = { insp_x + 14, by_align_hdr, w - 14, by_align_hdr + 22 };
-            SelectObject(mem_dc, font_be_vietnam_bold);
-            SetTextColor(mem_dc, col_teal);
-            DrawTextW(mem_dc, is_vi ? L"CĂN CHỈNH & PHÂN BỔ" : L"ALIGN & DISTRIBUTE", -1,
-                      &align_head, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
-
-            // Row 1: Horizontal Align (L, C, R)
-            int by_a1 = by_align_hdr + 24;
-            draw_shaping_btn(insp_x + 14, by_a1, btn_w, 26, L"|◀ L");
-            draw_shaping_btn(insp_x + 14 + btn_w + 5, by_a1, btn_w, 26, L"▶|◀ C");
-            draw_shaping_btn(insp_x + 14 + (btn_w + 5) * 2, by_a1, btn_w, 26, L"▶| R");
-
-            // Row 2: Vertical Align (T, E, B)
-            int by_a2 = by_a1 + 30;
-            draw_shaping_btn(insp_x + 14, by_a2, btn_w, 26, L"▲ T");
-            draw_shaping_btn(insp_x + 14 + btn_w + 5, by_a2, btn_w, 26, L"▼▲ E");
-            draw_shaping_btn(insp_x + 14 + (btn_w + 5) * 2, by_a2, btn_w, 26, L"▼ B");
-
-            // Row 3: Center to Page (P)
-            int by_a3 = by_a2 + 30;
-            draw_shaping_btn(insp_x + 14, by_a3, inspect_w - 28, 26, is_vi ? L"⌖ Căn giữa trang in (P)" : L"⌖ Center to Page (P)");
-
-            // Row 4: Align Reference Selector
-            int by_a4 = by_a3 + 32;
-            SelectObject(mem_dc, font_secondary);
-            SetTextColor(mem_dc, col_text_muted);
-            RECT rc_ref_lbl = { insp_x + 14, by_a4, insp_x + 72, by_a4 + 22 };
-            DrawTextW(mem_dc, is_vi ? L"Quy chiếu:" : L"Align to:", -1, &rc_ref_lbl, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-            int ref_w = (inspect_w - 85) / 3;
-            auto draw_ref_pill = [&](int rx, const wchar_t* rtxt, bool active) {
-                RECT rrect = { rx, by_a4 - 2, rx + ref_w, by_a4 + 22 };
-                HBRUSH rbr = CreateSolidBrush(active ? col_active_tab : col_btn_bg);
-                HPEN rpn = CreatePen(PS_SOLID, 1, active ? col_teal : col_btn_bdr);
-                HGDIOBJ rop = SelectObject(mem_dc, rpn);
-                HGDIOBJ rob = SelectObject(mem_dc, rbr);
-                RoundRect(mem_dc, rrect.left, rrect.top, rrect.right, rrect.bottom, 4, 4);
-                SelectObject(mem_dc, rop);
-                SelectObject(mem_dc, rob);
-                DeleteObject(rpn);
-                DeleteObject(rbr);
-                SetTextColor(mem_dc, active ? col_teal : col_text_white);
-                DrawTextW(mem_dc, rtxt, -1, &rrect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-            };
-            draw_ref_pill(insp_x + 72, is_vi ? L"Vùng chọn" : L"Selection", align_reference_ == geometry::AlignReference::Selection);
-            draw_ref_pill(insp_x + 72 + ref_w + 3, is_vi ? L"Neo (Key)" : L"Key Object", align_reference_ == geometry::AlignReference::KeyObject);
-            draw_ref_pill(insp_x + 72 + (ref_w + 3) * 2, is_vi ? L"Trang giấy" : L"Page", align_reference_ == geometry::AlignReference::Page);
-
-            // Row 5: Distribute Spacing with Specified Gap mm
-            int by_a5 = by_a4 + 30;
-            SelectObject(mem_dc, font_secondary);
-            SetTextColor(mem_dc, col_text_muted);
-            RECT rc_gap_lbl = { insp_x + 14, by_a5, insp_x + 72, by_a5 + 24 };
-            DrawTextW(mem_dc, is_vi ? L"Khoảng hở:" : L"Spacing:", -1, &rc_gap_lbl, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-            int gap_half = (inspect_w - 90) / 2;
-            std::wstring gap_x_txt = (is_vi ? L"↔ Ngang " : L"↔ Horiz ") + std::to_wstring(static_cast<int>(distribute_spacing_mm_)) + L"mm";
-            std::wstring gap_y_txt = (is_vi ? L"↕ Dọc " : L"↕ Vert ") + std::to_wstring(static_cast<int>(distribute_spacing_mm_)) + L"mm";
-            draw_shaping_btn(insp_x + 72, by_a5 - 2, gap_half, 24, gap_x_txt.c_str());
-            draw_shaping_btn(insp_x + 72 + gap_half + 4, by_a5 - 2, gap_half, 24, gap_y_txt.c_str());
         } else if (active_dock_tab_ == 1) {
             DrawTextW(mem_dc, is_vi ? L"ĐỐI TƯỢNG TRONG TÀI LIỆU" : L"DOCUMENT OBJECTS", -1,
                       &rc_head, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);

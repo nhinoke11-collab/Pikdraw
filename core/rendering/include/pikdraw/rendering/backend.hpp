@@ -1,38 +1,46 @@
 #pragma once
 
+#include "pikdraw/document/snapshots/document_snapshot.hpp"
 #include "pikdraw/rendering/camera.hpp"
 #include "pikdraw/rendering/frame_target.hpp"
-#include "pikdraw/document/snapshots/document_snapshot.hpp"
+#include "pikdraw/color/preview/icc_preview.hpp"
 #include <chrono>
+#include <string>
+#include <vector>
 
 namespace pikdraw::rendering {
 
-enum class DeviceLossStatus {
-    Healthy,
-    RecoverableLoss,
-    FatalDriverCrash
+enum class DeviceLossStatus { Healthy, RecoverableLoss, FatalDriverCrash };
+
+struct RenderDiagnostic {
+  document::ObjectId object_id{document::kInvalidObjectId};
+  bool error{false};
+  std::string message;
 };
 
 struct RenderMetric {
-    uint64_t snapshot_revision{0};
-    size_t total_objects{0};
-    size_t culled_objects{0};
-    size_t rendered_objects{0};
-    std::chrono::microseconds render_duration{0};
+  uint64_t snapshot_revision{0};
+  size_t total_objects{0};
+  size_t culled_objects{0};
+  size_t rendered_objects{0};
+  std::chrono::microseconds render_duration{0};
+  // Caller must surface errors/warnings. Software renderer caps this to 65
+  // entries.
+  std::vector<RenderDiagnostic> diagnostics;
 };
 
 class IRenderBackend {
 public:
-    virtual ~IRenderBackend() = default;
+  virtual ~IRenderBackend() = default;
 
-    [[nodiscard]] virtual DeviceLossStatus device_status() const noexcept = 0;
-    virtual bool recover_device() = 0;
+  [[nodiscard]] virtual DeviceLossStatus device_status() const noexcept = 0;
+  virtual bool recover_device() = 0;
+  virtual bool set_color_preview(std::shared_ptr<const color::IccPreview>) { return false; }
+  virtual bool set_canvas_background(color::DeviceRGBA) { return false; }
 
-    virtual bool render(
-        const document::DocumentSnapshot& snapshot,
-        const Camera2D& camera,
-        PixelBufferTarget& target,
-        RenderMetric* out_metric = nullptr) = 0;
+  virtual bool render(const document::DocumentSnapshot &snapshot,
+                      const Camera2D &camera, PixelBufferTarget &target,
+                      RenderMetric *out_metric = nullptr) = 0;
 };
 
 } // namespace pikdraw::rendering

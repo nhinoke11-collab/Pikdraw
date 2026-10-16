@@ -1,38 +1,65 @@
-# PikDraw Desktop Application Shell
+# PikDraw Desktop
 
-**Status**: Implemented in Milestone M1 (`ps05-native-preview`).  
-**Visual Reference**: [docs/architecture/ui-reference/ui_design_2026.html](../../docs/architecture/ui-reference/ui_design_2026.html) and [docs/architecture/workspace-layout.md](../../docs/architecture/workspace-layout.md).
+Adapter đang chạy là **Win32/GDI**, dùng ViewportRenderer software và document C++20.
+Canvas hiển thị snapshot thật; chỉnh sửa đi qua command của document. Qt/QSS và bốn workspace
+là kế hoạch kiến trúc; không suy ra các workflow đó đã chạy từ bản vẽ UI tham chiếu.
 
-## Responsibility
-Desktop shell host, dock layouts, 4-workspace switcher (Vector, In ấn, Thi công, 3D), action routing, Cyber Dark themes, and dynamic F5 UI reload.
+## Thao tác hiện có
 
-## Visual Design System & 2026 Standards
-All desktop UI implementation strictly adheres to the 2026 Cyber Design System:
-- **Canonical Design**: `docs/architecture/ui-reference/ui_design_2026.html` (Dark mode) and `ui_light_mode.html` (Light mode).
-- **Core Geometry**:
-  - Topbar: fixed 38px (`PK PRO 2026` logo gradient, menus, Spotlight search `Ctrl+K`, workspace switcher, theme toggle).
-  - Context Tool Ribbon: fixed 34px (target indicator, tabular geometry inputs `X`, `Y`, lock ratio, `W`, `H` mm).
-  - Tool Strip: width 48–56px with Cyber Teal `#00f2c3` active state and glow.
-  - Inspector Dock: width 280–320px (contextual properties, layers, style).
-  - Status Bar: height 26px (selection count, cursor coordinates in mm, color profile, preflight check status, zoom slider).
-- **Colors**:
-  - Cyber Dark: Base `#070b10`, Panels `#0c131d` / `#0e1622`, Hairline borders `#1d2636`, Accent `#00f2c3`.
-  - Light Mode: Base `#f8fafc`, Panels `#ffffff` / `#e8ecf2`, Accent `#00876a`.
-- **Typography**: `Plus Jakarta Sans` for UI labels; `JetBrains Mono` for numeric values.
+- Pick V: hover, khung tương phản, tám tay nắm resize và dấu tâm. Kéo thân để di chuyển;
+  kéo tay nắm để đổi kích thước; Shift giữ tỉ lệ ở góc. Preview chỉ đổi interaction state;
+  thả chuột commit một lệnh; Escape, mất capture hoặc mở menu/settings hủy an toàn.
+- Kéo từ vùng trống trái → phải: Window, chọn đối tượng nằm trọn trong khung, gồm viền.
+  Phải → trái: Crossing, giao với hình học/fill/stroke, kể cả vùng rỗng.
+  Shift thêm, Ctrl đảo chọn; Delete xóa, Ctrl+A chọn các root có thể sửa.
+- Inspector: sửa fill/stroke, bật/tắt, nhập RGB/CMYK/độ đục, preset hoặc nhập viền nguồn
+  bằng mm. Mỗi lần áp dụng cho nhiều đối tượng là một bước Undo. Màu hỗn hợp được báo rõ;
+  chọn tab palette không chuyển màu nguồn đã có. Trái áp mục hiện tại, phải áp stroke.
+- Hai palette cơ bản RGB/CMYK, mỗi palette 18 swatch có source channels thật. Chưa phải
+  palette thương hiệu vật liệu hoặc thư viện màu đã đo bằng thiết bị.
+- Profile preview: nạp ICC/ICM RGB hoặc CMYK; Windows Color Management chuyển về sRGB
+  với Relative Colorimetric. Có thể chọn SWOP đã cài trên Windows nếu file tồn tại.
+  Chưa nạp CMYK ICC thì preview gần đúng. Thiết lập lưu riêng tại
+  %LOCALAPPDATA%/PikDraw/preview-profiles.txt; không đổi source channels.
+- Tạo rectangle/ellipse dùng kiểu nguồn mặc định khi chưa chọn gì. Trang, pan, zoom,
+  native save/reopen và SVG export gọi workflow thật.
 
-## Feature Map & Code Organization
-| Feature Group | Public API (`include/pikdraw/desktop/`) | Implementation (`src/`) | Unit Tests (`tests/`) |
-| :--- | :--- | :--- | :--- |
-| **Shell Geometry** | `shell/shell_geometry.hpp` | `shell/shell_geometry.cpp` | `tests/test_desktop_shell.cpp` |
-| **Workspace State** | `shell/workspace_state.hpp` | `shell/workspace_state.cpp` | `tests/test_desktop_shell.cpp` |
-| **Status Bar Model** | `shell/status_bar_model.hpp` | `shell/status_bar_model.cpp` | `tests/test_desktop_shell.cpp` |
-| **Action Dispatcher**| `actions/action_id.hpp`, `action_dispatcher.hpp` | `actions/action_dispatcher.cpp` | `tests/test_desktop_actions.cpp` |
-| **Presenters** | `presenters/tool_strip_presenter.hpp`, `ribbon_presenter.hpp`, `inspector_presenter.hpp` | `presenters/*.cpp` | `tests/test_desktop_shell.cpp` |
-| **Theme Tokens** | `themes/theme_tokens.hpp` | `themes/theme_tokens.cpp` | `tests/test_desktop_shell.cpp` |
-| **UI Reload** | `development/ui_reload_controller.hpp` | `development/ui_reload_controller.cpp` | `tests/test_desktop_reload.cpp` |
-| **Desktop Facade** | `shell/desktop_window.hpp` | `shell/desktop_window.cpp`, `main.cpp` | `tests/test_desktop_shell.cpp` |
+## Bản đồ tính năng
 
-## Development Loop (Reload UI / F5)
-- Views are authored as declarative panel definitions in `ui/panels/` and styled with `.qss` in `themes/cyber_dark.qss`.
-- Pressing `F5` in development mode triggers `UIReloadController::reload()`, re-parsing stylesheets and forms instantly with allowlist security validation and rollback mechanics on malformed input.
-- Presentation logic is decoupled from View widgets according to Contract C7 and ADR 0004.
+| Nhóm | API / triển khai | Kiểm thử |
+| --- | --- | --- |
+| Canvas & input | native_window_canvas.cpp, native_window_selection.cpp, native_window_shortcuts.cpp | test_canvas_view.cpp, test_editor_tools.cpp |
+| Khung chọn & preview | native_window_selection_geometry.hpp, native_window_selection_paint.cpp | input native và ảnh từ test_editor_tools |
+| Frame cache | native_canvas_frame.hpp; key root/camera/size/profile/theme, giữ một frame | native CPU paint benchmark và ảnh |
+| Fill/stroke | presenters/object_style.hpp, object_style.cpp, native_window_style*.cpp, native_style_dialog.* | palette, hộp nhập và Undo tests |
+| ICC preview | native_window_color_profiles.cpp → color::IccPreview → render backend | ICC test và pixel consumer |
+| Document I/O | DocumentWorkflow, native_window_files.cpp | save/reopen và source-channel assertions |
+
+## Build và xác minh
+
+Chạy trong terminal đã nạp MSVC x64/Windows SDK. Các literal nguồn và test tiếng Việt
+cần UTF-8; giữ cả các cờ MSVC mặc định khi đặt CMAKE_CXX_FLAGS:
+
+    cmake --preset win-msvc-debug "-DCMAKE_CXX_FLAGS=/DWIN32 /D_WINDOWS /EHsc /utf-8"
+    cmake --build --preset win-msvc-debug --parallel 2
+    ctest --test-dir build/win-msvc-debug --output-on-failure
+
+test_pikdraw_editor_tools.exe [evidence-directory] gửi mouse/keyboard messages tới cửa sổ
+native, mở và thao tác hộp màu thật, kiểm tra source/Undo/ICC pixels/native reopen rồi
+chụp canvas bằng chính code paint của app. Cửa sổ test ẩn; đây không phải đo input-to-present.
+
+Build Release theo win-msvc-release với cùng cờ UTF-8. Các test mới dùng điều kiện có hiệu lực
+khi NDEBUG bật. benchmark_pikdraw_editor_tools.exe xuất JSON cho corpus 1.000 path /
+101.000 path elements: redraw CPU, point pick, Window/Crossing và cached native CPU paint.
+Không lấy số đo cửa sổ ẩn làm FPS/present hoặc chứng nhận GPU/min-spec.
+
+## Giới hạn
+
+Pick/transform/style hỗ trợ root path/text có thể sửa; group hierarchy chưa đầy đủ.
+Hit-test chữ dùng logical bounds gần đúng; build này báo unsupported nếu chưa có backend
+outline chữ thật. Resize biến đổi cả stroke theo transform; inspector ghi **viền nguồn**.
+Chưa có node editing, rotation handles, constraint CAD hoặc CAM.
+
+ICC hiện là preview của máy. Chưa gán/nhúng ICC vào document, soft proof giấy/mực, gamut
+warning, BPC hoặc PDF/X. Native v2 giữ RGB/CMYK/spot/overprint; native v1 lossy bị từ chối
+theo ADR 0005. Bản này không tự công bố native AI/CDR round-trip.

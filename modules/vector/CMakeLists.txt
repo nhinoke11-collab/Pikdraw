@@ -7,6 +7,24 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(pikdraw_vector STATIC
     src/vector_controller.cpp
+    src/selection/hit_test.cpp
+    src/selection/hit_geometry.cpp
+    src/selection/region_selection.cpp
+    src/gestures/style_tool.cpp
+    src/gestures/selection_resize.cpp
+    src/gestures/text_tool.cpp
+    src/interaction/tool_session.cpp
+    src/interaction/draft_history.cpp
+    src/interaction/draft_recovery.cpp
+    src/interaction/input_router.cpp
+    src/precision/numeric/numeric_input.cpp
+    src/precision/snap/snap_config.cpp
+    src/precision/snap/snap_index.cpp
+    src/precision/snap/snap_math.cpp
+    src/precision/snap/direction_snap.cpp
+    src/tools/line/path_drawing_tool.cpp
+    src/tools/line/path_drawing_tool_commit.cpp
+    src/tools/line/path_object_builder.cpp
 )
 
 target_include_directories(pikdraw_vector PUBLIC
@@ -40,4 +58,11 @@ if(PIKDRAW_BUILD_TESTS)
     add_vector_test(test_pikdraw_vector_selection tests/selection/test_selection.cpp)
     add_vector_test(test_pikdraw_vector_shapes tests/tools/test_shape_tools.cpp)
     add_vector_test(test_pikdraw_vector_gestures tests/gestures/test_gestures.cpp)
+    add_vector_test(test_pikdraw_editor_selection tests/selection/test_editor_selection.cpp)
+    add_vector_test(test_pikdraw_vector_tool_session tests/interaction/test_tool_session.cpp)
+    add_vector_test(test_pikdraw_vector_input_router tests/interaction/test_input_router.cpp)
+    add_vector_test(test_pikdraw_vector_numeric tests/precision/numeric/test_numeric_input.cpp)
+    add_vector_test(test_pikdraw_vector_snap tests/precision/snap/test_snap.cpp)
+    add_vector_test(test_pikdraw_vector_direction_snap tests/precision/snap/test_direction_snap.cpp)
+    add_vector_test(test_pikdraw_vector_line_polyline tests/tools/line/test_path_drawing_tool.cpp)
 endif()

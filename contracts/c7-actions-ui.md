@@ -1,7 +1,7 @@
 # Contract C7: Actions, UI Development Loop, and Localization
 
-Version: 1.0.0
-Status: Locked (M0 Foundation)
+Version: 1.1.0
+Status: M0 action IDs remain locked; drawing-tool actions and context bindings proposed pending consumer review
 Producers: `modules/desktop`
 Consumers: `modules/vector`, `modules/raster`, `modules/production`, `modules/plugin_host`
 
@@ -120,3 +120,20 @@ All UI components and QSS stylesheets in `apps/desktop/` must adhere to the 2026
   - `font_family_ui`: `Plus Jakarta Sans`, `Segoe UI`, sans-serif
   - `font_family_numeric`: `JetBrains Mono`, monospace (with tabular figures)
 
+
+## 5. Drawing actions, snap controls, and modifier profiles (extension 1.1)
+
+New stable action IDs are added without claiming that a runtime handler exists:
+
+- Tools: `action.tool.line`, `action.tool.polyline`, `action.tool.pencil`, `action.tool.curvature`, and `action.tool.polygon`.
+- Snap and direction: `action.snap.toggle`, `action.snap.open_config`, `action.snap.select_all`, `action.snap.clear_all`, `action.snap.direction.free`, `action.snap.direction.ortho`, and `action.snap.direction.polar`.
+- Precision/session: `action.precision.hud.toggle`, `action.pen.finish`, `action.pen.cancel_draft`, `action.shape.from_center`, `action.shape.keep_center`, and `action.preference.input_profile.select`.
+- Individual snap options use `action.snap.option.<group>.<option>` with the option IDs in `contracts/drawing/semantics.json`. Unknown options are rejected rather than silently accepted.
+
+Snap masks, direction parameters, angle lists, modifier profiles, and per-tool overrides are user/workspace preferences and do not dirty or revise a document. Committed guides, construction geometry, and shape parameters are document data and follow C2 commands/undo. The master snap action only enables/disables automatic candidate acquisition; it preserves child masks and never disables numeric locks, explicit shape constraints, Ortho, Polar, or the active gesture modifier.
+
+Continuous modifier behavior is resolved by focus scope, active tool, pointer phase, then exact chord. Text controls and IME composition own their keys before the canvas; AltGr and OS-reserved chords are not interpreted as PikDraw modifiers. A chord performs one named action or one declared composite, not two overlapping actions. The action descriptor records context and conflict policy; no global handler may guess from only the key code.
+
+Default profile semantics are stable: PikDraw/Illustrator-inspired uses Shift to constrain angle/aspect, Alt to draw a rectangle/ellipse from center, and Shift+Alt for both. Corel-inspired uses Ctrl to constrain, Shift for center, and Ctrl+Shift for both. Alt breaks Bézier handles in both profiles; with the constrain key it both constrains the handle angle and breaks the opposite handle. Temporary Node in an active Pen session uses Ctrl in the PikDraw/Illustrator-inspired profiles and held F2 in Corel-inspired. Shift+click adds/removes nodes in Node. Holding S in the canvas bypasses automatic snap only when no reserved command chord consumes S; it does not bypass numeric or geometric constraints. Space+drag and middle-button drag pan.
+
+F3 is the proposed default for the snap-master action. Other function-key defaults are not locked by this contract. The current native UI advertises F10 for Node, Shift+F2 for Zoom to Selection, and F8 for Text, while the current key handler does not implement all of those advertised bindings. D09 must reconcile the action map and product labels before assigning F-keys to Ortho/Polar/HUD. These actions remain available through named menu/command entries and user-remappable bindings. In particular, Corel Ctrl+Shift center-constrained drawing and the existing Ctrl+Shift+S Save As chord must be tested as a conflict vector; the reserved Save As chord wins when its terminal S key is pressed, so S-bypass is inactive for that exact chord. The user can turn snap off with the master action before the gesture.

@@ -3,6 +3,7 @@
 #include "pikdraw/desktop/shell/desktop_window.hpp"
 #include "pikdraw/desktop/runtime/composition_root.hpp"
 #include "pikdraw/desktop/workflows/document_workflow.hpp"
+#include "pikdraw/desktop/presenters/object_style.hpp"
 
 #include <string>
 #include <memory>
@@ -20,6 +21,8 @@
 #endif
 
 namespace pikdraw::desktop {
+struct CanvasFrameCache;
+namespace tools { class DrawingToolController; }
 
 enum class UILanguage {
     Vietnamese,
@@ -50,6 +53,10 @@ public:
 
     [[nodiscard]] int active_tool() const noexcept { return active_tool_; }
     void set_active_tool(int tool_index) noexcept;
+    [[nodiscard]] bool drawing_snap_panel_open() const noexcept;
+    [[nodiscard]] bool drawing_snap_index_ready() const noexcept;
+    [[nodiscard]] bool drawing_path_active() const noexcept;
+    [[nodiscard]] size_t drawing_path_point_count() const noexcept;
 
     [[nodiscard]] int active_workspace() const noexcept { return active_workspace_; }
     void set_active_workspace(int ws_index) noexcept;
@@ -63,6 +70,12 @@ public:
     void trigger_export() noexcept;
     bool export_svg_to(const std::string& file_path);
     void create_new_document();
+    bool apply_selection_color(bool stroke, color::ColorValue value);
+    bool set_selection_fill_enabled(bool enabled);
+    bool set_selection_stroke_enabled(bool enabled);
+    bool set_selection_stroke_width(double width_mm);
+    bool configure_preview_profiles(const std::filesystem::path &rgb_source,
+        const std::filesystem::path &cmyk_source, std::string *error = nullptr);
 
     // File Menu (CorelDRAW Reference)
     [[nodiscard]] bool is_file_menu_open() const noexcept { return show_file_menu_; }
@@ -286,26 +299,52 @@ private:
     void paint_file_menu(HDC mem_dc, int x, int y, int w, int h);
     void paint_home_screen(HDC mem_dc, int w, int h);
     void paint_document_canvas(HDC dc, int width, int height);
-    void handle_canvas_mouse_down(int x, int y);
-    void handle_canvas_mouse_move(int x, int y);
-    void handle_canvas_mouse_up(int x, int y);
+    void handle_mouse_down(int x, int y, unsigned modifiers = 0);
+    void handle_mouse_move(int x, int y, unsigned modifiers = 0);
+    void handle_mouse_up(int x, int y, unsigned modifiers = 0);
+    void handle_canvas_mouse_down(int x, int y, unsigned modifiers = 0);
+    void handle_canvas_mouse_move(int x, int y, unsigned modifiers = 0);
+    void handle_canvas_mouse_up(int x, int y, unsigned modifiers = 0);
+    void cancel_canvas_interaction();
+    bool commit_created_shape();
+    void paint_selection_overlay(HDC dc);
+    void paint_style_inspector(HDC dc, int left, int top, int bottom);
+    bool handle_style_click(int x, int y, bool right_click = false);
+    void open_style_editor(bool stroke);
+    void choose_stroke_width(int x, int y);
+    void show_color_profiles();
+    void load_color_preferences();
+    [[nodiscard]] int selection_handle_at(int x, int y) const;
+    [[nodiscard]] WORD canvas_cursor_at(int x, int y) const;
+    bool handle_key_down(WPARAM key);
+    [[nodiscard]] RECT canvas_rect(int width, int height) const noexcept;
+    [[nodiscard]] bool is_canvas_point(int x, int y) const noexcept;
+    [[nodiscard]] geometry::Point2D canvas_to_world(int x, int y) noexcept;
     void open_document_dialog();
     void save_document_dialog(bool force_save_as = false);
     void export_svg_dialog();
     void paint_canvas_rulers(HDC dc, int width, int height);
     void paint_canvas_guidelines(HDC dc, int width, int height);
     void paint_page_preset_dropdown(HDC dc, int x, int y, int width);
+    void paint_drawing_overlay(HDC dc);
+    bool handle_drawing_panel_click(int x, int y);
+    bool handle_drawing_click(int x, int y, unsigned modifiers);
+    bool handle_drawing_character(char value);
+    void finish_drawing_tool(bool select_tool);
+    [[nodiscard]] double window_dpi_scale() const noexcept;
 
     HWND hwnd_{nullptr};
+    HWND tooltip_hwnd_{nullptr};
     HINSTANCE hinstance_{nullptr};
 #endif
+    bool apply_style_patch(const vector::StylePatch &patch);
     int width_{1440};
     int height_{900};
     UILanguage language_{UILanguage::English};
     ThemeMode theme_{ThemeMode::Light};
 
     // Interactive UI State
-    int active_tool_{0}; // 0: Select, 1: Rectangle, 2: Ellipse, 3: Pan, 4: Text
+    int active_tool_{0}; // 0: Select, 1: Rect, 2: Ellipse, 3: Pan, 4: Line, 5: Polyline, 6: Text, 7: Knife
     int active_workspace_{0}; // 0: Vector, 1: Print, 2: Production, 3: 3D
     int active_dock_tab_{0}; // 0: Inspector, 1: Layers, 2: History
     int zoom_level_{100}; // 50, 75, 100, 125, 150, 200
@@ -408,7 +447,22 @@ private:
     geometry::Point2D pointer_current_world_{};
     geometry::Point2D drag_preview_delta_{};
     std::optional<geometry::Rect2D> drag_preview_bounds_;
+    bool is_marquee_{false};
+    bool pointer_preserve_aspect_{false};
+    int resize_handle_{-1};
+    vector::SelectionMode pointer_selection_mode_{vector::SelectionMode::Replace};
+    vector::GestureStamp pointer_stamp_;
+    std::optional<document::ObjectId> hover_object_;
+    EditorStyle default_style_;
+    bool palette_cmyk_{false};
+    bool palette_stroke_{false};
+    std::shared_ptr<const color::IccPreview> color_preview_;
+    std::filesystem::path rgb_preview_profile_, cmyk_preview_profile_;
+    std::unique_ptr<CanvasFrameCache> canvas_frame_;
     std::string document_path_;
+    std::unique_ptr<tools::DrawingToolController> drawing_tool_;
+    int last_canvas_pointer_x_{0};
+    int last_canvas_pointer_y_{0};
 
     std::string status_msg_{"Ready | Click canvas or tools to start vector editing"};
 

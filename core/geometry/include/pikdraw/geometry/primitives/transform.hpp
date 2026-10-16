@@ -80,6 +80,10 @@ struct Transform2D {
         };
     }
 
+    [[nodiscard]] Point2D map_vector(const Point2D& v) const {
+        return Point2D{a * v.x + c * v.y, b * v.x + d * v.y};
+    }
+
     [[nodiscard]] Rect2D map_rect(const Rect2D& r) const {
         const Point2D p1 = map_point({r.x, r.y});
         const Point2D p2 = map_point({r.right(), r.y});

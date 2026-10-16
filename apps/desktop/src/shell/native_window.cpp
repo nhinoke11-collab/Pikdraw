@@ -1,5 +1,8 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
 #include "native_window_page_presets.hpp"
+#include "pikdraw/desktop/actions/action_id.hpp"
+#include "native_canvas_frame.hpp"
+#include "../tools/drawing_tool_controller.hpp"
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -7,6 +10,10 @@
 #include <sstream>
 #include <algorithm>
 #include <cmath>
+
+#ifdef _WIN32
+#include <commctrl.h>
+#endif
 
 namespace pikdraw::desktop {
 
@@ -365,6 +372,20 @@ NativeWindow::NativeWindow(int width, int height)
       height_(height),
       shell_(static_cast<double>(width), static_cast<double>(height), 1.0) {
     initialize_default_tab();
+    drawing_tool_ = std::make_unique<tools::DrawingToolController>(root().document());
+    auto& dispatcher = root().window().action_dispatcher();
+    dispatcher.register_action({std::string(actions::ActionId::kToolLine),
+        "Vẽ đoạn thẳng", "Line Tool", "L", [this] { set_active_tool(4); }, nullptr});
+    dispatcher.register_action({std::string(actions::ActionId::kToolPolyline),
+        "Vẽ đường gấp khúc", "Polyline Tool", "Shift+L",
+        [this] { set_active_tool(5); }, nullptr});
+    dispatcher.register_action({std::string(actions::ActionId::kToolSnapPanel),
+        "Bắt điểm và hướng", "Snap and Direction", "F3", [this] {
+            if (drawing_tool_) drawing_tool_->toggle_snap_panel();
+#ifdef _WIN32
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+        }, nullptr});
     fit_page_to_canvas();
 }
 
@@ -374,6 +395,7 @@ NativeWindow::~NativeWindow() {
     cleanup_backbuffer();
     cleanup_ui_fonts();
     if (hwnd_) {
+        if (tooltip_hwnd_) DestroyWindow(tooltip_hwnd_);
         DestroyWindow(hwnd_);
         hwnd_ = nullptr;
     }
@@ -460,6 +482,8 @@ void NativeWindow::toggle_language() noexcept {
 
 void NativeWindow::set_theme(ThemeMode mode) noexcept {
     theme_ = mode;
+    (void)root().renderer().backend().set_canvas_background(mode == ThemeMode::CyberDark
+        ? color::DeviceRGBA{18, 20, 26, 255} : color::DeviceRGBA{241, 245, 249, 255});
     settings_theme_choice_ = (mode == ThemeMode::CyberDark) ? 0 : 1;
     status_msg_ = (language_ == UILanguage::Vietnamese) ?
         (mode == ThemeMode::CyberDark ? "Đã chuyển sang Chế độ Tối (Dark Mode Obsidian)" : "Đã chuyển sang Chế độ Sáng (Light Mode Silver)") :
@@ -474,6 +498,9 @@ void NativeWindow::toggle_theme() noexcept {
 }
 
 void NativeWindow::open_settings_modal() noexcept {
+#ifdef _WIN32
+    cancel_canvas_interaction();
+#endif
     show_settings_modal_ = true;
     status_msg_ = (language_ == UILanguage::Vietnamese) ?
         "Đã mở Cài đặt hệ thống (PikDraw Preferences)" : "Opened System Preferences (PikDraw Settings)";
@@ -533,20 +560,56 @@ void NativeWindow::set_settings_unit_choice(int unit) noexcept {
 }
 
 void NativeWindow::set_active_tool(int tool_index) noexcept {
-    if (tool_index < 0 || tool_index > 4)
+    if (tool_index < 0 || tool_index > 7)
         return;
+    if (tool_index == active_tool_ &&
+        ((tool_index < 4) || (drawing_tool_ && drawing_tool_->active())))
+        return;
+    if (drawing_tool_) drawing_tool_->cancel();
+#ifdef _WIN32
+    cancel_canvas_interaction();
+    if (hwnd_) KillTimer(hwnd_, 9);
+#endif
     active_tool_ = tool_index;
     const auto mode = tool_index == 1 ? vector::ToolMode::Rectangle
                     : tool_index == 2 ? vector::ToolMode::Ellipse
                                       : vector::ToolMode::Select;
     root().vector_controller().set_mode(mode);
-    const char* vi_tools[] = { "Chọn và di chuyển · V", "Vẽ hình chữ nhật · R",
-                               "Vẽ hình elip · E", "Di chuyển khung nhìn · Space/chuột giữa",
-                               "Văn bản tiếng Việt · A/T" };
-    const char* en_tools[] = { "Select and move · V", "Draw rectangle · R",
-                               "Draw ellipse · E", "Pan view · Space/middle mouse",
-                               "Vietnamese text · A/T" };
-    status_msg_ = language_ == UILanguage::Vietnamese ? vi_tools[tool_index] : en_tools[tool_index];
+    if (tool_index == 4 || tool_index == 5) {
+        const auto kind = tool_index == 4 ? vector::tools::line::PathDrawingKind::Line
+                                          : vector::tools::line::PathDrawingKind::Polyline;
+        if (!drawing_tool_ || !drawing_tool_->activate(kind)) {
+            active_tool_ = 0;
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Không thể bắt đầu công cụ vẽ đường" : "Could not start the path tool";
+        } else {
+#ifdef _WIN32
+            if (hwnd_) SetTimer(hwnd_, 9, 33, nullptr);
+#endif
+        }
+    }
+    const char* vi_tools[] = {
+        "Chọn và di chuyển · V",
+        "Vẽ hình chữ nhật · R",
+        "Vẽ hình elip · E",
+        "Di chuyển khung nhìn · Space/chuột giữa",
+        "Vẽ đoạn thẳng · L",
+        "Vẽ đường gấp khúc · Shift+L",
+        "Văn bản tiếng Việt · A/T",
+        "Dao cắt đối tượng (Knife) · K/C"
+    };
+    const char* en_tools[] = {
+        "Select and move · V",
+        "Draw rectangle · R",
+        "Draw ellipse · E",
+        "Pan view · Space/middle mouse",
+        "Draw Line · L",
+        "Draw Polyline · Shift+L",
+        "Vietnamese text · A/T",
+        "Knife cutting tool · K/C"
+    };
+    status_msg_ = language_ == UILanguage::Vietnamese ? vi_tools[active_tool_]
+                                                        : en_tools[active_tool_];
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
 #endif
@@ -616,6 +679,9 @@ void NativeWindow::fit_page_to_canvas() noexcept {
 }
 
 void NativeWindow::open_file_menu() noexcept {
+#ifdef _WIN32
+    cancel_canvas_interaction();
+#endif
     show_file_menu_ = true;
     status_msg_ = (language_ == UILanguage::Vietnamese) ?
         "Đã mở menu Tệp" : "File menu opened";
@@ -638,6 +704,9 @@ void NativeWindow::toggle_file_menu() noexcept {
 }
 
 void NativeWindow::open_home_screen() noexcept {
+#ifdef _WIN32
+    cancel_canvas_interaction();
+#endif
     show_home_screen_ = true;
     close_file_menu();
     status_msg_ = (language_ == UILanguage::Vietnamese) ?
@@ -891,7 +960,7 @@ bool NativeWindow::initialize(const std::string& title) {
     if (!hwnd_) return false;
 
     SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
-    RECT client_rc;
+    RECT client_rc{};
     if (GetClientRect(hwnd_, &client_rc)) {
         width_ = client_rc.right - client_rc.left;
         height_ = client_rc.bottom - client_rc.top;
@@ -899,6 +968,35 @@ bool NativeWindow::initialize(const std::string& title) {
         const auto area = canvas_rect(width_, height_);
         root().renderer().camera().set_viewport_size(
             area.right - area.left, area.bottom - area.top);
+    }
+    fit_page_to_canvas();
+    load_color_preferences();
+    INITCOMMONCONTROLSEX common_controls{sizeof(common_controls), ICC_WIN95_CLASSES};
+    InitCommonControlsEx(&common_controls);
+    tooltip_hwnd_ = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr,
+        WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, CW_USEDEFAULT, CW_USEDEFAULT,
+        CW_USEDEFAULT, CW_USEDEFAULT, hwnd_, nullptr, hinstance_, nullptr);
+    if (tooltip_hwnd_) {
+        const wchar_t* labels[] = {
+            L"Select objects and edit selection (V)",
+            L"Draw rectangle (R)",
+            L"Draw ellipse (E)",
+            L"Pan the canvas (H / Space)",
+            L"Draw a connected Line (L)",
+            L"Draw a continuous Polyline (Shift+L)",
+            L"Vietnamese text typography (A / T)",
+            L"Knife cutting tool (K / C)"
+        };
+        for (int i = 0; i < 8; ++i) {
+            TOOLINFOW tool{sizeof(TOOLINFOW)};
+            tool.uFlags = TTF_SUBCLASS;
+            tool.hwnd = hwnd_;
+            tool.uId = static_cast<UINT_PTR>(i + 1);
+            tool.rect = RECT{6, 82 + i * 42, 46, 118 + i * 42};
+            tool.lpszText = const_cast<LPWSTR>(labels[i]);
+            SendMessageW(tooltip_hwnd_, TTM_ADDTOOLW, 0,
+                         reinterpret_cast<LPARAM>(&tool));
+        }
     }
     ShowWindow(hwnd_, SW_SHOW);
     UpdateWindow(hwnd_);
@@ -1402,9 +1500,15 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
             tip_text = is_vi ? L"Kéo trượt vùng làm việc (Pan Hand Tool) · Phím H hoặc Giữ Chuột giữa"
                              : L"Pan Viewport Hand Tool · Shortcut: H or Middle Drag";
         } else if (tool_idx == 4) {
+            tip_text = is_vi ? L"Vẽ đoạn thẳng (Line Tool) · Phím L"
+                             : L"Line Drawing Tool · Shortcut: L";
+        } else if (tool_idx == 5) {
+            tip_text = is_vi ? L"Vẽ đường gấp khúc (Polyline Tool) · Phím Shift+L"
+                             : L"Polyline Drawing Tool · Shortcut: Shift+L";
+        } else if (tool_idx == 6) {
             tip_text = is_vi ? L"Soạn thảo văn bản & Bảng (Text Tool) · Phím F8"
                              : L"Text Typography & Table Tool · Shortcut: F8";
-        } else if (tool_idx == 5) {
+        } else if (tool_idx == 7) {
             tip_text = is_vi ? L"Dao cắt xén đối tượng vector (Knife Tool) · Phím K"
                              : L"Knife / Slice Tool · Shortcut: K";
         }
@@ -1814,10 +1918,41 @@ void NativeWindow::capture_screenshot_bmp(const std::string& path) {
     ReleaseDC(NULL, screen_dc);
 }
 
+void NativeWindow::finish_drawing_tool(bool select_tool) {
+    if (drawing_tool_) drawing_tool_->cancel();
+#ifdef _WIN32
+    if (hwnd_) KillTimer(hwnd_, 9);
+#endif
+    if (select_tool) {
+        active_tool_ = 0;
+        root().vector_controller().set_mode(vector::ToolMode::Select);
+    }
+}
+
+bool NativeWindow::drawing_snap_panel_open() const noexcept {
+    return drawing_tool_ && drawing_tool_->snap_panel_open_value();
+}
+
+bool NativeWindow::drawing_snap_index_ready() const noexcept {
+    return drawing_tool_ && drawing_tool_->visual_state().snap_index_ready;
+}
+
+bool NativeWindow::drawing_path_active() const noexcept {
+    return drawing_tool_ && drawing_tool_->active();
+}
+
+size_t NativeWindow::drawing_path_point_count() const noexcept {
+    return drawing_tool_ ? drawing_tool_->visual_state().points.size() : 0;
+}
+
 #else
 bool NativeWindow::initialize(const std::string&) { return true; }
 int NativeWindow::run() { return 0; }
 void NativeWindow::capture_screenshot_bmp(const std::string&) {}
+bool NativeWindow::drawing_snap_panel_open() const noexcept { return false; }
+bool NativeWindow::drawing_snap_index_ready() const noexcept { return false; }
+bool NativeWindow::drawing_path_active() const noexcept { return false; }
+size_t NativeWindow::drawing_path_point_count() const noexcept { return 0; }
 #endif
 
 } // namespace pikdraw::desktop

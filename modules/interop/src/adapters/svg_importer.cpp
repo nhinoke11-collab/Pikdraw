@@ -1,6 +1,7 @@
 #include "pikdraw/interop/adapters/svg_importer.hpp"
 #include "svg_path_parser.hpp"
 #include "svg_xml_cursor.hpp"
+#include "../path_adapter/svg_path_adapter.hpp"
 
 #include <algorithm>
 #include <array>
@@ -357,6 +358,11 @@ SvgImportResult ImportSvgString(const std::string& input) {
             }
             object.stroke_width_mm *= std::abs(root_transform.a);
             if (!std::isfinite(object.stroke_width_mm) || object.stroke_width_mm < 0) return Failure("SVG stroke width is invalid", "invalid_geometry");
+            std::string issue;
+            auto source = adapters::SvgPathAdapter::from_path2d(object.path, &issue);
+            if (source) {
+                object.set_authoring_source(std::move(*source));
+            }
             total_path_elements += object.path.size();
             const auto id = object.id;
             result.objects.emplace_back(std::move(object));
@@ -384,6 +390,11 @@ SvgImportResult ImportSvgString(const std::string& input) {
                 return Failure("SVG stroke width is malformed", "unsupported_units");
             }
             object.stroke_width_mm *= std::abs(root_transform.a);
+            std::string issue;
+            auto source = adapters::SvgPathAdapter::from_path2d(object.path, &issue);
+            if (source) {
+                object.set_authoring_source(std::move(*source));
+            }
             const auto id = object.id;
             total_path_elements += object.path.size();
             result.objects.emplace_back(std::move(object));
@@ -465,7 +476,6 @@ SvgImportResult SvgImporter::import_from_string(const std::string& input) {
         return Failure("SVG parser allocation or codec failure", "resource_limit");
     }
 }
-
 SvgImportResult SvgImporter::import_from_file(const std::string& path) {
     try {
     std::ifstream input(path, std::ios::binary | std::ios::ate);

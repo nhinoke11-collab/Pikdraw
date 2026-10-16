@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_library(pikdraw_geometry STATIC
     src/primitives/transform.cpp
     src/curves/curve.cpp
+    src/curves/curve_ops.cpp
     src/curves/path.cpp
     src/flattening/flattening.cpp
     src/operations/boolean.cpp
@@ -24,6 +25,7 @@ if(PIKDRAW_BUILD_TESTS)
         tests/test_main.cpp
         tests/primitives/test_primitives.cpp
         tests/curves/test_curves.cpp
+        tests/curves/test_curve_analytic.cpp
         tests/operations/test_operations.cpp
         tests/acceptance/test_20m_billboard.cpp
     )

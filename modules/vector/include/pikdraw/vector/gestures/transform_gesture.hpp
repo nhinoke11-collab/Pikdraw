@@ -1,73 +1,87 @@
 #pragma once
-
-#include "pikdraw/document/document.hpp"
-#include "pikdraw/geometry/primitives/point.hpp"
-#include "pikdraw/geometry/primitives/transform.hpp"
-#include <vector>
-
+#include "pikdraw/vector/gestures/edit_target.hpp"
 namespace pikdraw::vector {
-
-/// Transient transform gesture supporting move/drag with single atomic commit or Escape cancel
 class TransformGesture {
-public:
-    TransformGesture() = default;
-
-    void begin(geometry::Point2D start_pt, std::vector<document::ObjectId> target_ids) {
-        start_pt_ = start_pt;
-        current_pt_ = start_pt;
-        target_ids_ = std::move(target_ids);
-        active_ = !target_ids_.empty();
+  public:
+    bool begin(geometry::Point2D start, std::vector<document::ObjectId> ids,
+               const document::DocumentSnapshot &snapshot) {
+        cancel();
+        if (!finite_point(start) || ids.empty())
+            return false;
+        std::sort(ids.begin(), ids.end());
+        ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+        for (auto id : ids)
+            if (!editable_target(snapshot, id))
+                return false;
+        stamp_ = GestureStamp(snapshot);
+        start_ = current_ = start;
+        ids_ = std::move(ids);
+        active_ = true;
+        return true;
     }
-
-    [[nodiscard]] bool is_active() const noexcept { return active_; }
-
-    [[nodiscard]] geometry::Transform2D update(geometry::Point2D current_pt) noexcept {
-        if (!active_) return geometry::Transform2D::identity();
-        current_pt_ = current_pt;
-        double dx = current_pt_.x - start_pt_.x;
-        double dy = current_pt_.y - start_pt_.y;
-        return geometry::Transform2D::translation(dx, dy);
+    bool is_active() const noexcept {
+        return active_;
     }
-
-    [[nodiscard]] geometry::Transform2D current_delta() const noexcept {
-        if (!active_) return geometry::Transform2D::identity();
-        return geometry::Transform2D::translation(
-            current_pt_.x - start_pt_.x,
-            current_pt_.y - start_pt_.y
-        );
-    }
-
-    /// Commits the transformation as a single atomic transaction
-    document::CommandResult commit(document::Document& doc) {
-        if (!active_) {
-            return document::CommandResult::fail("Cannot commit inactive gesture");
+    geometry::Transform2D update(geometry::Point2D current) noexcept {
+        if (!active_ || !finite_point(current)) {
+            cancel();
+            return {};
         }
-        auto delta = current_delta();
+        current_ = current;
+        delta_ = geometry::Transform2D::translation(current_.x - start_.x, current_.y - start_.y);
+        if (!delta_.is_finite()) {
+            cancel();
+            return {};
+        }
+        return current_delta();
+    }
+    geometry::Transform2D current_delta() const noexcept {
+        if (!active_)
+            return {};
+        return delta_;
+    }
+    bool update_transform(const geometry::Transform2D &delta) noexcept {
+        if (!active_ || !delta.is_finite() || !delta.is_invertible())
+            return false;
+        delta_ = delta;
+        return true;
+    }
+    document::CommandResult commit(document::Document &doc) {
+        if (!active_)
+            return document::CommandResult::fail("Inactive/cancelled gesture");
+        const auto delta = current_delta();
+        const auto snapshot = doc.current_snapshot();
         active_ = false;
-
-        if (std::abs(delta.tx) < 1e-6 && std::abs(delta.ty) < 1e-6) {
-            return document::CommandResult::ok(); // Zero movement, no-op
+        if (!stamp_.matches(*snapshot)) {
+            ids_.clear();
+            return document::CommandResult::fail("Stale gesture document/epoch/revision");
         }
-
-        auto composite = std::make_unique<document::CompositeCommand>("Move Objects");
-        for (auto id : target_ids_) {
-            composite->add_command(std::make_unique<document::TransformObjectCommand>(id, delta));
+        for (auto id : ids_)
+            if (!editable_target(*snapshot, id)) {
+                ids_.clear();
+                return document::CommandResult::fail("Gesture target is no longer editable");
+            }
+        if (delta.a == 1 && delta.b == 0 && delta.c == 0 && delta.d == 1 && delta.tx == 0 && delta.ty == 0) {
+            ids_.clear();
+            return document::CommandResult::ok();
         }
-
-        return doc.execute_command(std::move(composite));
+        auto command = std::make_unique<document::CompositeCommand>("Transform Objects");
+        for (auto id : ids_)
+            command->add_command(std::make_unique<document::TransformObjectCommand>(id, delta));
+        ids_.clear();
+        return doc.execute_command(std::move(command));
     }
-
-    /// Cancels active gesture without touching document model
     void cancel() noexcept {
         active_ = false;
-        target_ids_.clear();
+        ids_.clear();
+        delta_ = {};
     }
 
-private:
+  private:
     bool active_{false};
-    geometry::Point2D start_pt_{0.0, 0.0};
-    geometry::Point2D current_pt_{0.0, 0.0};
-    std::vector<document::ObjectId> target_ids_;
+    geometry::Point2D start_, current_;
+    std::vector<document::ObjectId> ids_;
+    GestureStamp stamp_;
+    geometry::Transform2D delta_;
 };
-
 } // namespace pikdraw::vector

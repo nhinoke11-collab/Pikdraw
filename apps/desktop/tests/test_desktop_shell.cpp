@@ -500,7 +500,7 @@ void test_typography_inline_editing_ribbon_and_table() {
     // ----------------------------------------------------
     // Item 1: UI & Vector Text Object Interaction
     // ----------------------------------------------------
-    win.set_active_tool(4);
+    win.set_active_tool(6);
     assert(win.status_message().find("text") != std::string::npos ||
            win.status_message().find("Văn bản") != std::string::npos);
 
@@ -775,18 +775,26 @@ void test_compact_icons_and_hover_tooltips() {
     assert(win.tooltip().text.find(L"chọn") != std::wstring::npos);
     assert(win.tooltip().text.find(L"Phím V") != std::wstring::npos);
 
-    win.update_hover_tooltip(20, 115 + 4 * 42); // Tool 4 (Text Tool)
+    win.update_hover_tooltip(20, 115 + 4 * 42); // Tool 4 (Line Tool)
+    assert(win.tooltip().visible);
+    assert(win.tooltip().text.find(L"đoạn thẳng") != std::wstring::npos);
+
+    win.update_hover_tooltip(20, 115 + 5 * 42); // Tool 5 (Polyline Tool)
+    assert(win.tooltip().visible);
+    assert(win.tooltip().text.find(L"gấp khúc") != std::wstring::npos);
+
+    win.update_hover_tooltip(20, 115 + 6 * 42); // Tool 6 (Text Tool)
     assert(win.tooltip().visible);
     assert(win.tooltip().text.find(L"văn bản") != std::wstring::npos);
     assert(win.tooltip().text.find(L"F8") != std::wstring::npos);
 
-    win.update_hover_tooltip(20, 115 + 5 * 42); // Tool 5 (Knife Tool)
+    win.update_hover_tooltip(20, 115 + 7 * 42); // Tool 7 (Knife Tool)
     assert(win.tooltip().visible);
     assert(win.tooltip().text.find(L"Dao cắt") != std::wstring::npos);
     assert(win.tooltip().text.find(L"Phím K") != std::wstring::npos);
 
     // 3. Hover over Ribbon: Text Mode (Convert to Curves `⤹ Q`, Table `▦ Table`)
-    win.set_active_tool(4); // Text Tool active
+    win.set_active_tool(6); // Text Tool active
     win.update_hover_tooltip(580, 80); // Curves button (556 to 616)
     assert(win.tooltip().visible);
     assert(win.tooltip().text.find(L"đường cong") != std::wstring::npos);
@@ -831,7 +839,7 @@ void test_compact_icons_and_hover_tooltips() {
     win.capture_screenshot_bmp("docs/architecture/ui-reference/m1_pikdraw_compact_icons_hover_tooltip.bmp");
 
     // Also capture Text Ribbon with hover tooltip over ⤹ Q
-    win.set_active_tool(4);
+    win.set_active_tool(6);
     win.update_hover_tooltip(585, 80);
     win.capture_screenshot_bmp("docs/architecture/ui-reference/m1_pikdraw_compact_text_ribbon_hover.bmp");
 

@@ -15,13 +15,26 @@ add_library(pikdraw_desktop STATIC
     src/presenters/tool_strip_presenter.cpp
     src/presenters/ribbon_presenter.cpp
     src/presenters/inspector_presenter.cpp
+    src/presenters/object_style.cpp
     src/themes/theme_tokens.cpp
     src/development/ui_reload_controller.cpp
     src/runtime/composition_root.cpp
     src/workflows/document_workflow.cpp
+    src/tools/drawing_preferences.cpp
+    src/tools/drawing_tool_controller.cpp
+    src/tools/native_drawing_input.cpp
+    src/tools/snap_index_worker.cpp
     src/shell/native_window.cpp
     src/shell/native_window_events.cpp
+    src/shell/native_window_shortcuts.cpp
     src/shell/native_window_canvas.cpp
+    src/shell/native_window_selection.cpp
+    src/shell/native_window_selection_paint.cpp
+    src/shell/native_window_style.cpp
+    src/shell/native_window_style_events.cpp
+    src/shell/native_window_style_paint.cpp
+    src/shell/native_window_color_profiles.cpp
+    src/shell/native_style_dialog.cpp
     src/shell/native_window_files.cpp
     src/shell/native_window_paint.cpp
     src/shell/native_window_paint_menu.cpp
@@ -44,7 +57,7 @@ target_link_libraries(pikdraw_desktop PUBLIC
 )
 
 if(WIN32)
-    target_link_libraries(pikdraw_desktop PUBLIC user32 gdi32 msimg32 comdlg32)
+    target_link_libraries(pikdraw_desktop PUBLIC user32 gdi32 msimg32 comdlg32 comctl32)
     if(MSVC)
         target_compile_options(pikdraw_desktop PRIVATE /utf-8)
     endif()
@@ -108,4 +121,17 @@ if(PIKDRAW_BUILD_TESTS)
         pikdraw_desktop
     )
     add_test(NAME test_pikdraw_canvas_view COMMAND test_pikdraw_canvas_view)
+    add_executable(test_pikdraw_editor_tools tests/test_editor_tools.cpp)
+    target_link_libraries(test_pikdraw_editor_tools PRIVATE pikdraw_desktop)
+    add_test(NAME test_pikdraw_editor_tools COMMAND test_pikdraw_editor_tools)
+    add_executable(benchmark_pikdraw_editor_tools tests/benchmark_editor_tools.cpp)
+    target_link_libraries(benchmark_pikdraw_editor_tools PRIVATE pikdraw_desktop)
+
+    add_executable(test_pikdraw_drawing_tool_controller tests/test_drawing_tool_controller.cpp)
+    target_link_libraries(test_pikdraw_drawing_tool_controller PRIVATE pikdraw_desktop)
+    add_test(NAME test_pikdraw_drawing_tool_controller COMMAND test_pikdraw_drawing_tool_controller)
+
+    add_executable(test_pikdraw_drawing_tool_ui tests/test_drawing_tool_ui.cpp)
+    target_link_libraries(test_pikdraw_drawing_tool_ui PRIVATE pikdraw_desktop)
+    add_test(NAME test_pikdraw_drawing_tool_ui COMMAND test_pikdraw_drawing_tool_ui)
 endif()
