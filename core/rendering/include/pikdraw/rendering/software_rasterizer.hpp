@@ -34,6 +34,11 @@ public:
         RenderMetric* out_metric = nullptr) override;
 
 private:
+    void render_canvas_workspace(
+        const document::Page& page,
+        const Camera2D& camera,
+        PixelBufferTarget& target);
+
     void render_page_background(
         const document::Page& page,
         const Camera2D& camera,
@@ -49,6 +54,11 @@ private:
         const Camera2D& camera,
         PixelBufferTarget& target);
 
+    void render_image_object(
+        const document::ImageObject& obj,
+        const Camera2D& camera,
+        PixelBufferTarget& target);
+
     void draw_line_screen(
         int32_t x0, int32_t y0, int32_t x1, int32_t y1,
         color::DeviceRGBA color,
@@ -56,6 +66,11 @@ private:
 
     void draw_rect_filled_screen(
         int32_t x, int32_t y, int32_t w, int32_t h,
+        color::DeviceRGBA color,
+        PixelBufferTarget& target);
+
+    void draw_polygon_filled_screen(
+        const std::vector<ScreenPoint>& pts,
         color::DeviceRGBA color,
         PixelBufferTarget& target);
 

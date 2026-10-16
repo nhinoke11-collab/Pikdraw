@@ -33,6 +33,8 @@ public:
                     bounds = obj.bounds();
                 } else if constexpr (std::is_same_v<T, document::TextObject>) {
                     bounds = obj.bounds();
+                } else if constexpr (std::is_same_v<T, document::ImageObject>) {
+                    bounds = obj.bounds();
                 } else {
                     bounds = geometry::Rect2D{0, 0, 0, 0};
                 }

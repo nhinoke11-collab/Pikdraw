@@ -9,13 +9,23 @@ int main(int argc, char* argv[]) {
     std::string screenshot_path;
     bool headless = false;
     int timeout_ms = 0;
-    pikdraw::desktop::UILanguage initial_lang = pikdraw::desktop::UILanguage::Vietnamese;
-    pikdraw::desktop::ThemeMode initial_theme = pikdraw::desktop::ThemeMode::CyberDark;
+    pikdraw::desktop::UILanguage initial_lang = pikdraw::desktop::UILanguage::English;
+    pikdraw::desktop::ThemeMode initial_theme = pikdraw::desktop::ThemeMode::Light;
     bool open_settings = false;
     int settings_tab = 0;
     bool open_home = false;
     int home_tab = 0;
     bool open_file_menu = false;
+    bool open_new_doc_modal = false;
+    bool create_tabs = false;
+    bool demo_objects = false;
+    bool demo_group = false;
+    bool demo_isolation = false;
+    bool demo_solid_selected = false;
+    bool demo_solid_weld = false;
+    bool demo_solid_trim = false;
+    bool demo_knife = false;
+    bool demo_vector_bitmap = false;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -48,12 +58,133 @@ int main(int argc, char* argv[]) {
             home_tab = std::stoi(argv[++i]);
         } else if (arg == "--file-menu") {
             open_file_menu = true;
+        } else if (arg == "--new-doc-modal") {
+            open_new_doc_modal = true;
+        } else if (arg == "--create-tabs") {
+            create_tabs = true;
+        } else if (arg == "--demo-objects") {
+            demo_objects = true;
+        } else if (arg == "--demo-group") {
+            demo_group = true;
+        } else if (arg == "--demo-isolation") {
+            demo_isolation = true;
+        } else if (arg == "--demo-solid-selected") {
+            demo_solid_selected = true;
+        } else if (arg == "--demo-solid-weld") {
+            demo_solid_weld = true;
+        } else if (arg == "--demo-solid-trim") {
+            demo_solid_trim = true;
+        } else if (arg == "--demo-knife") {
+            demo_knife = true;
+        } else if (arg == "--demo-vector-bitmap") {
+            demo_vector_bitmap = true;
         }
     }
 
     pikdraw::desktop::NativeWindow window(1440, 900);
     window.set_language(initial_lang);
     window.set_theme(initial_theme);
+    if (create_tabs) {
+        window.create_new_tab("Pano Đô Thị (CMYK)", 2000.0, 1000.0, "CMYK", 150);
+        window.create_new_tab("Logo Nhãn Hàng (RGB)", 100.0, 100.0, "RGB", 300);
+        window.switch_to_tab(0);
+    }
+    if (demo_objects) {
+        const auto id1 = window.workflow().add_rectangle(30.0, 30.0, 120.0, 70.0, "#00f2c3", "#0ea5e9", 2.0);
+        window.workflow().add_ellipse(180.0, 40.0, 80.0, 80.0, "#f59e0b", "#d97706", 2.0);
+        if (id1 != pikdraw::document::kInvalidObjectId) {
+            window.root().vector_controller().selection().select(id1);
+        }
+    }
+    if (demo_solid_selected) {
+        const auto id1 = window.workflow().add_rectangle(40.0, 40.0, 100.0, 70.0, "#00f2c3", "#0ea5e9", 2.0);
+        const auto id2 = window.workflow().add_rectangle(100.0, 70.0, 90.0, 80.0, "#f59e0b", "#d97706", 2.0);
+        window.root().vector_controller().selection().clear();
+        window.root().vector_controller().selection().select(id1, pikdraw::vector::SelectionMode::Add);
+        window.root().vector_controller().selection().select(id2, pikdraw::vector::SelectionMode::Add);
+    }
+    if (demo_solid_weld) {
+        const auto id1 = window.workflow().add_rectangle(40.0, 40.0, 100.0, 70.0, "#00f2c3", "#0ea5e9", 2.0);
+        const auto id2 = window.workflow().add_rectangle(100.0, 70.0, 90.0, 80.0, "#f59e0b", "#d97706", 2.0);
+        window.root().vector_controller().selection().clear();
+        window.root().vector_controller().selection().select(id1, pikdraw::vector::SelectionMode::Add);
+        window.root().vector_controller().selection().select(id2, pikdraw::vector::SelectionMode::Add);
+        window.trigger_boolean_operation(pikdraw::geometry::BooleanOp::Union);
+    }
+    if (demo_solid_trim) {
+        const auto id1 = window.workflow().add_rectangle(40.0, 40.0, 120.0, 90.0, "#00f2c3", "#0ea5e9", 2.0);
+        const auto id2 = window.workflow().add_rectangle(110.0, 70.0, 80.0, 80.0, "#f59e0b", "#d97706", 2.0);
+        window.root().vector_controller().selection().clear();
+        window.root().vector_controller().selection().select(id1, pikdraw::vector::SelectionMode::Add);
+        window.root().vector_controller().selection().select(id2, pikdraw::vector::SelectionMode::Add);
+        window.workflow().boolean_operation_selected(pikdraw::geometry::BooleanOp::Difference, true);
+        window.workflow().transform_object(id2, 35.0, 15.0);
+        window.root().vector_controller().selection().clear();
+        window.root().vector_controller().selection().select(id2);
+    }
+    if (demo_knife) {
+        window.set_active_tool(5); // Knife Tool
+        const auto id1 = window.workflow().add_rectangle(40.0, 40.0, 140.0, 90.0, "#00f2c3", "#0ea5e9", 2.0);
+        window.root().vector_controller().selection().clear();
+        window.root().vector_controller().selection().select(id1);
+        // Execute knife cut across (105, 30) -> (105, 140) with 30mm separation offset!
+        window.workflow().split_objects_by_line({105.0, 30.0}, {105.0, 140.0}, 30.0);
+    }
+    if (demo_vector_bitmap) {
+        window.set_active_tool(5); // Knife Tool
+        // 1. Photographic bitmap image cut into two separated halves
+        const auto bmp_id = window.workflow().add_bitmap_image(20.0, 110.0, 100.0, 75.0, "Sunset Bitmap Asset");
+        window.root().vector_controller().selection().clear();
+        window.root().vector_controller().selection().select(bmp_id);
+        // Knife cut across x = 65 mm with 35mm separation offset
+        window.workflow().split_objects_by_line({65.0, 95.0}, {65.0, 200.0}, 35.0);
+
+        // 2. Second photographic bitmap trimmed by a Vector Circle (Cookie-Cutter)
+        const auto bmp2_id = window.workflow().add_bitmap_image(20.0, 25.0, 65.0, 65.0, "Photo Patch Sample");
+        const auto vec_cutter = window.workflow().add_ellipse(52.5, 57.5, 18.0, 18.0, "#00f2c3", "#0ea5e9", 2.0);
+        window.workflow().trim_bitmap_with_vector(bmp2_id, vec_cutter, 45.0);
+
+        // 3. Vector with Vector Knife Cut Demo beside it on the right
+        const auto v_id = window.workflow().add_rectangle(140.0, 25.0, 90.0, 65.0, "#00f2c3", "#0ea5e9", 2.0);
+        window.root().vector_controller().selection().clear();
+        window.root().vector_controller().selection().select(v_id);
+        window.workflow().split_objects_by_line({180.0, 15.0}, {180.0, 105.0}, 30.0);
+
+        // Select the trimmed patch
+        const auto snap = window.root().document().current_snapshot();
+        for (const auto& [id, obj] : snap->objects().all()) {
+            if (const auto* im = std::get_if<pikdraw::document::ImageObject>(&obj)) {
+                if (im->name.find("Trimmed") != std::string::npos) {
+                    window.root().vector_controller().selection().select(id, pikdraw::vector::SelectionMode::Replace);
+                    break;
+                }
+            }
+        }
+    }
+    if (demo_group) {
+        const auto id1 = window.workflow().add_rectangle(35.0, 35.0, 100.0, 60.0, "#00f2c3", "#0ea5e9", 2.0);
+        const auto id2 = window.workflow().add_ellipse(170.0, 65.0, 35.0, 35.0, "#f59e0b", "#d97706", 2.0);
+        window.root().vector_controller().selection().clear();
+        window.root().vector_controller().selection().select(id1, pikdraw::vector::SelectionMode::Add);
+        window.root().vector_controller().selection().select(id2, pikdraw::vector::SelectionMode::Add);
+        const auto gid = window.workflow().group_selected();
+        if (gid != pikdraw::document::kInvalidObjectId) {
+            window.root().vector_controller().selection().select(gid, pikdraw::vector::SelectionMode::Replace);
+        }
+    }
+    if (demo_isolation) {
+        window.workflow().add_rectangle(230.0, 40.0, 50.0, 80.0, "#8b5cf6", "#7c3aed", 2.0);
+        const auto id1 = window.workflow().add_rectangle(35.0, 35.0, 100.0, 60.0, "#00f2c3", "#0ea5e9", 2.0);
+        const auto id2 = window.workflow().add_ellipse(170.0, 65.0, 35.0, 35.0, "#f59e0b", "#d97706", 2.0);
+        window.root().vector_controller().selection().clear();
+        window.root().vector_controller().selection().select(id1, pikdraw::vector::SelectionMode::Add);
+        window.root().vector_controller().selection().select(id2, pikdraw::vector::SelectionMode::Add);
+        const auto gid = window.workflow().group_selected();
+        if (gid != pikdraw::document::kInvalidObjectId) {
+            window.enter_group_isolation(gid);
+            window.root().vector_controller().selection().select(id1, pikdraw::vector::SelectionMode::Replace);
+        }
+    }
     if (open_settings) {
         window.open_settings_modal();
         window.set_settings_tab(settings_tab);
@@ -64,6 +195,9 @@ int main(int argc, char* argv[]) {
     }
     if (open_file_menu) {
         window.open_file_menu();
+    }
+    if (open_new_doc_modal) {
+        window.open_new_doc_modal();
     }
 
     const auto area = window.shell().canvas_area();
@@ -84,7 +218,10 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    if (!window.initialize("PikDraw 2026 - Bản vẽ không tên [Vector Workspace]")) {
+    const std::string win_title = (initial_lang == pikdraw::desktop::UILanguage::Vietnamese) ?
+        "PikDraw 2026 - Bản vẽ không tên [Vector Workspace]" :
+        "PikDraw 2026 - Untitled Document [Vector Workspace]";
+    if (!window.initialize(win_title)) {
         std::cerr << "Failed to create native desktop window.\n";
         return 1;
     }

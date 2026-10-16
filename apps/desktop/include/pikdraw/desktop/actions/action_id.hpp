@@ -52,6 +52,7 @@ struct ActionId {
     static constexpr std::string_view kToolRectangle = "action.tool.rectangle";
     static constexpr std::string_view kToolEllipse = "action.tool.ellipse";
     static constexpr std::string_view kToolText = "action.tool.text";
+    static constexpr std::string_view kToolKnife = "action.tool.knife";
 
     // Object domain
     static constexpr std::string_view kObjectGroup = "action.object.group";
@@ -59,6 +60,11 @@ struct ActionId {
     static constexpr std::string_view kObjectToCurves = "action.object.to_curves";
     static constexpr std::string_view kObjectBooleanUnion = "action.object.boolean_union";
     static constexpr std::string_view kObjectBooleanDifference = "action.object.boolean_difference";
+    static constexpr std::string_view kObjectBooleanIntersect = "action.object.boolean_intersect";
+    static constexpr std::string_view kObjectBooleanExclude = "action.object.boolean_exclude";
+    static constexpr std::string_view kObjectBooleanBackMinus = "action.object.boolean_back_minus";
+    static constexpr std::string_view kObjectBooleanBoundary = "action.object.boolean_boundary";
+    static constexpr std::string_view kObjectBooleanAutoWeld = "action.object.boolean_auto_weld";
 
     [[nodiscard]] static bool is_valid_action_id(std::string_view id) noexcept;
 };

@@ -45,7 +45,7 @@ void NativeWindow::open_document_dialog() {
     if (!GetOpenFileNameW(&dialog))
         return;
 
-    if (root_.document().is_dirty() && root_.document().current_snapshot()->object_count() > 0) {
+    if (root().document().is_dirty() && root().document().current_snapshot()->object_count() > 0) {
         const auto prompt = utf8_to_wide(language_ == UILanguage::Vietnamese
             ? "Bỏ các thay đổi chưa lưu và mở tệp khác?"
             : "Discard unsaved changes and open another file?");
@@ -56,12 +56,12 @@ void NativeWindow::open_document_dialog() {
     }
 
     const auto utf8_path = wide_to_utf8(path.c_str());
-    if (utf8_path.empty() || !workflow_.open_native(utf8_path)) {
+    if (utf8_path.empty() || !workflow().open_native(utf8_path)) {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Không thể mở tệp PikDraw" : "Could not open PikDraw file";
     } else {
         document_path_ = utf8_path;
-        root_.vector_controller().selection().clear();
+        root().vector_controller().selection().clear();
         set_active_tool(0);
         fit_page_to_canvas();
         status_msg_ = language_ == UILanguage::Vietnamese
@@ -87,7 +87,7 @@ void NativeWindow::save_document_dialog(bool force_save_as) {
         path = wide_to_utf8(wide_path.c_str());
     }
 
-    if (path.empty() || !workflow_.save_native(path)) {
+    if (path.empty() || !workflow().save_native(path)) {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Không thể lưu tài liệu" : "Could not save document";
     } else {

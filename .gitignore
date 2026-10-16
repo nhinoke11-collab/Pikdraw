@@ -90,3 +90,6 @@ Testing/
 
 # Local source corpus can contain private customer artwork; keep it out of Git.
 cdr/
+
+*.bmp
+

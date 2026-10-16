@@ -48,8 +48,15 @@ void test_software_rasterizer_frame() {
     assert(buffer[page_idx + 1] == 255);
     assert(buffer[page_idx + 2] == 255);
 
-    // Now test off-page canvas background
-    renderer.camera().set_center({-5000.0, -5000.0}); // Far outside page
+    // Now test off-page canvas workspace (still white #FFFFFF within 40m limit)
+    renderer.camera().set_center({-5000.0, -5000.0}); // Outside page, within 40m canvas
+    renderer.render_frame(*doc.current_snapshot(), target, &metric);
+    assert(buffer[0] == 255);
+    assert(buffer[1] == 255);
+    assert(buffer[2] == 255);
+
+    // Test far beyond 40m canvas workspace limit (outer void #12141a)
+    renderer.camera().set_center({-50000.0, -50000.0}); // Far outside 40m limit
     renderer.render_frame(*doc.current_snapshot(), target, &metric);
     assert(buffer[0] == 18);
     assert(buffer[1] == 20);

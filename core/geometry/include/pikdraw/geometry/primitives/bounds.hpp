@@ -6,6 +6,9 @@
 
 namespace pikdraw::geometry {
 
+inline constexpr double kMaxCanvasDimensionMm = 40000.0; // 40 meters (40,000 mm) canvas workspace limit
+inline constexpr double kMaxObjectDimensionMm = 40000.0; // 40 meters (40,000 mm) max object dimension
+
 /// Axis-aligned bounding box in millimeters (mm)
 struct Rect2D {
     double x{0.0};
