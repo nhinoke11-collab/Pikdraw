@@ -1,6 +1,7 @@
 # D09 — Native Line/Polyline evidence
 
-Revision under test: task branch `agent/codex/drawing-native-tools-d09-20261016`.
+Revision under test: D09 plus independent-review follow-up on task branch
+`agent/codex/drawing-native-tools-d09-20261016`.
 The feature is built and verified in this worktree; it has not been integrated into `main`.
 
 ## Behavior checked
@@ -18,6 +19,14 @@ The feature is built and verified in this worktree; it has not been integrated i
   to Endpoint, Source node, Line midpoint and Grid; unsupported relation/curve options
   are disclosed in the panel.
 - Native save/reopen keeps the committed Line and editable three-node Polyline.
+- Independent review found that focus loss discarded an unfinished path and that `E`/`R`
+  keydown shortcuts interrupted numeric `deg`/`rad` suffixes. Focus loss now pauses the
+  preview timer while preserving the draft, and focus return resumes it. With a numeric
+  expression active, `E`/`R` keydown is left for `WM_CHAR` parsing instead of tool dispatch.
+- Native UI regression simulates focus loss/return both during a normal draft and during
+  middle-button pan after the first Polyline node, then sends keydown/character pairs for
+  `@20mm<45deg` and `@20mm<1.5707963267948966rad`; the tool remains active and the
+  saved/reopened Polyline retains three editable nodes.
 
 ## Build and checks
 
@@ -28,10 +37,14 @@ Release with `/utf-8`.
 |---|---|
 | `pikdraw.ps1 doctor` | `ok=true`, 15 modules |
 | Harness unit tests | 27/27 passed |
-| Full Debug CTest | 42/42 passed |
-| Final Debug D09 UI test | passed |
-| Final Release D09 controller and UI CTest | 2/2 passed |
-| Native Release UI run | passed; screenshots and native save/reopen verified |
+| Full Debug build and CTest | passed; 42/42 |
+| Native Debug UI regression | passed; focus preservation, `deg`/`rad`, and save/reopen |
+| Full Release build | passed; 105/105 steps |
+| Native Release UI regression | passed; focus preservation, `deg`/`rad`, and save/reopen |
+| Release D09 controller/UI CTest | passed; 2/2 |
+| Full Release CTest | 40/42 passed. `test_pikdraw_document_commands` exits `0xc0000409`
+  and `test_pikdraw_interop_svg_exporter` segfaults; both fail again when rerun alone.
+  Their Debug tests pass and neither module is changed by D09; Release failures remain open. |
 | `git diff --check` | pass on final source/docs/evidence diff |
 
 ## Screenshots
@@ -67,9 +80,11 @@ the product's 60 FPS target.
 ## Code-size check and limits
 
 Manual nonblank-line counts are below the configured caps. The largest changed desktop
-implementation is `native_window.cpp` at 491 lines (500 cap); the event adapter is 481.
-The drawing input adapter is 66 lines, controller 349, preferences 189, and each new test
-is under 150. No LOC checker is claimed as an automated gate.
+implementation is `native_window.cpp` at 491 lines (500 cap); the event adapter is 492.
+The drawing input adapter is 66 lines, controller 349, preferences 189, and the updated UI
+test is 162 lines. No LOC checker is claimed as an automated gate.
 
 Win32/GDI is the current native adapter. D09 does not add Pen/Node editing, curve/relation
 snaps, full CAD constraints, ToolSession crash-recovery serialization, or GPU qualification.
+Preference-save errors are still not surfaced to the user. Release-only failures in the
+document command and SVG exporter tests need a separate baseline/isolation investigation.

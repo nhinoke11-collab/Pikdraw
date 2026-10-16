@@ -54,6 +54,7 @@ public:
     [[nodiscard]] bool cycle_profile();
     [[nodiscard]] DrawingToolVisualState visual_state() const;
     [[nodiscard]] bool active() const noexcept { return path_.active(); }
+    [[nodiscard]] bool has_numeric_entry() const noexcept { return !numeric_entry_.empty(); }
     [[nodiscard]] bool snap_panel_open() const noexcept { return snap_panel_open_; }
     void toggle_snap_panel() noexcept { snap_panel_open_ = !snap_panel_open_; }
     [[nodiscard]] bool snap_panel_open_value() const noexcept { return snap_panel_open_; }

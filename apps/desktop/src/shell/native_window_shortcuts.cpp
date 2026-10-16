@@ -13,6 +13,13 @@ bool NativeWindow::handle_key_down(WPARAM key) {
     }
     const bool control = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
     const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+    // TranslateMessage posts WM_CHAR even when the window procedure leaves
+    // WM_KEYDOWN unhandled. Let E/R reach WM_CHAR while a numeric expression is
+    // active so the "deg" and "rad" suffixes cannot switch drawing tools.
+    if (drawing_tool_ && drawing_tool_->active() && drawing_tool_->has_numeric_entry() &&
+        !control && !alt && (key == 'E' || key == 'R'))
+        return false;
     if (drawing_tool_ && drawing_tool_->active()) {
         if (key == VK_BACK) {
             const auto state = drawing_tool_->visual_state();

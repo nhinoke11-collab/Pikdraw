@@ -377,12 +377,23 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         if (self) {
             self->space_down_ = false;
             if (self->drawing_tool_ && self->drawing_tool_->active()) {
-                self->finish_drawing_tool(true);
+                KillTimer(hwnd, 9);
+                if (self->is_panning_)
+                    self->drawing_tool_->resume_after_pan();
                 self->status_msg_ = self->language_ == UILanguage::Vietnamese
-                    ? "Đã hủy đường vẽ khi cửa sổ mất tiêu điểm"
-                    : "Path drawing cancelled when the window lost focus";
+                    ? "Tạm dừng đường vẽ · bản nháp được giữ lại"
+                    : "Drawing paused · draft preserved";
             }
             self->cancel_canvas_interaction();
+        }
+        break;
+    case WM_SETFOCUS:
+        if (self && self->drawing_tool_ && self->drawing_tool_->active()) {
+            SetTimer(hwnd, 9, 33, nullptr);
+            self->status_msg_ = self->language_ == UILanguage::Vietnamese
+                ? "Tiếp tục đường vẽ"
+                : "Drawing resumed";
+            InvalidateRect(hwnd, nullptr, FALSE);
         }
         break;
     case WM_CHAR:

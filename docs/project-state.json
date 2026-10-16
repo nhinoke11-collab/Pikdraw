@@ -16,7 +16,7 @@
     "Canvas frame cache keyed by immutable root/camera/size/profile/theme; overlay interactions reuse the source frame",
     "D07 source snap core: revisioned endpoint/source-node/line-midpoint and grid candidates, DIP tolerances, configurable priorities/tool overrides, and Ortho/Polar direction constraints",
     "D08 core Line/Polyline authoring: editable path commands, numeric points, hard-direction snapping, stale-camera rejection, and local draft editing",
-    "D09 candidate native Line/Polyline tools: recognizable toolbar actions, numeric HUD, supported source/grid snaps, Ortho/Polar controls, persistent preferences and native save/reopen",
+    "D09 candidate native Line/Polyline tools: recognizable toolbar actions, numeric HUD, supported source/grid snaps, Ortho/Polar controls, persistent preferences, draft preservation across focus changes, degree/radian keyboard input, and native save/reopen",
     "SVG subset workflows and isolated worker protocol/lifecycle services; coverage and OS containment require their own acceptance evidence"
   ],
   "specifications": [
@@ -68,13 +68,14 @@
   ],
   "limitations": [
     "This feature branch has a runnable native vector editor; its changes are not yet merged into the dirty main checkout",
-    "D09 candidate branch: Debug CTest 42/42 and Release D09 consumer CTest 2/2 pass; feature is not yet integrated into main",
+    "D09 candidate branch after review fixes: Debug CTest 42/42 and Release D09 controller/UI tests 2/2 pass; full Release CTest is 40/42 because document_commands exits 0xc0000409 and interop_svg_exporter segfaults, including on individual reruns; feature is not yet integrated into main",
     "Release CPU benchmark uses 1000 paths/101000 path elements on an i7-3537U with 8.45 GB RAM; no GPU/present/input-latency qualification",
     "Release source redraw p95 is 35.42-57.05 ms over three software runs; the trace exceeds the 16.7/33.3 ms budgets and does not meet 60 FPS",
     "Cached hidden native CPU paint p95 is 10.46-14.09 ms; it is not a measured present interval",
     "Group editing and genuine text rendering remain incomplete; text hit bounds are approximate",
     "D09 native shell routes the supported Endpoint, Source node, Line midpoint and Grid candidates; advanced curve/relation snaps remain unsupported",
     "The D09 feature branch is not integrated into main; screenshots and three Release CPU runs are in apps/desktop/tests/evidence/drawing-tools-d09-20261016/review.md",
+    "D09 Release-only document command and SVG exporter test failures are outside changed modules but remain unexplained and need a separate baseline/isolation task",
     "D08 typed Line/Polyline points are not crash-recovery serialized through ToolSession; per-point byte edits would copy growing payloads quadratically, so recovery needs a bounded optimized lifecycle design",
     "ICC settings are per-machine preview only; no document ICC binding/embedding, paper/ink soft proof, gamut warning, BPC or PDF/X",
     "Native v1 lossy containers are rejected; no silent source-color flattening or legacy native round-trip claim",

@@ -2,6 +2,7 @@
 #include "pikdraw/desktop/actions/action_id.hpp"
 
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <iostream>
@@ -48,6 +49,15 @@ struct DrawingUiFixture {
                      MAKELPARAM(position.x, position.y));
         SendMessageW(window.hwnd(), WM_LBUTTONUP, 0,
                      MAKELPARAM(position.x, position.y));
+    }
+
+    void type_numeric(const std::string& text) {
+        for (const unsigned char value : text) {
+            if (std::isalpha(value))
+                SendMessageW(window.hwnd(), WM_KEYDOWN,
+                    static_cast<WPARAM>(std::toupper(value)), 0);
+            SendMessageW(window.hwnd(), WM_CHAR, static_cast<WPARAM>(value), 0);
+        }
     }
 
     void capture(const wchar_t* name) {
@@ -112,10 +122,30 @@ int main(int argc, char** argv) {
         for (const char value : std::string("#15;15"))
             SendMessageW(window.hwnd(), WM_CHAR, value, 0);
         SendMessageW(window.hwnd(), WM_KEYDOWN, VK_RETURN, 0);
-        fixture.click(70, 100);
-        fixture.click(110, 60);
-        SendMessageW(window.hwnd(), WM_KEYDOWN, VK_BACK, 0);
-        fixture.click(110, 60);
+        REQUIRE(window.drawing_path_point_count() == 1);
+        SendMessageW(window.hwnd(), WM_KILLFOCUS, 0, 0);
+        REQUIRE(window.active_tool() == 5 && window.drawing_path_active());
+        REQUIRE(window.drawing_path_point_count() == 1);
+        SendMessageW(window.hwnd(), WM_SETFOCUS, 0, 0);
+        REQUIRE(window.active_tool() == 5 && window.drawing_path_active());
+        const auto pan = fixture.point(50, 50);
+        SendMessageW(window.hwnd(), WM_MBUTTONDOWN, MK_MBUTTON,
+                     MAKELPARAM(pan.x, pan.y));
+        SendMessageW(window.hwnd(), WM_KILLFOCUS, 0, 0);
+        REQUIRE(window.active_tool() == 5 && window.drawing_path_active());
+        REQUIRE(window.drawing_path_point_count() == 1);
+        SendMessageW(window.hwnd(), WM_SETFOCUS, 0, 0);
+        REQUIRE(window.active_tool() == 5 && window.drawing_path_active());
+
+        fixture.type_numeric("@20mm<45deg");
+        REQUIRE(window.active_tool() == 5 && window.drawing_path_active());
+        SendMessageW(window.hwnd(), WM_KEYDOWN, VK_RETURN, 0);
+        REQUIRE(window.drawing_path_point_count() == 2);
+        fixture.type_numeric("@20mm<1.5707963267948966rad");
+        REQUIRE(window.active_tool() == 5 && window.drawing_path_active());
+        SendMessageW(window.hwnd(), WM_KEYDOWN, VK_RETURN, 0);
+        REQUIRE(window.drawing_path_point_count() == 3);
+
         REQUIRE(document.current_snapshot()->object_count() == 1);
         SendMessageW(window.hwnd(), WM_KEYDOWN, VK_RETURN, 0);
         REQUIRE(document.current_snapshot()->object_count() == 2);
