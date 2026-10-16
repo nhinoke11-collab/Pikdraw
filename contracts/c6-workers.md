@@ -106,9 +106,10 @@ atomic commit. Đóng/mở, undo, cancel hoặc sửa document làm proposal cũ
 
 ## 6. IPC v2 — đề xuất source capability và bounded proposal stream
 
-Đây là **profile Proposed**, chưa được host/worker hiện tại hỗ trợ. Không phát request v2 tới
-worker v1. Negotiation xác nhận major version và danh sách message/features trước khi mở file;
-không downgrade request có source sang v1 raw bytes. Worker/host mismatch kết thúc job bằng
+Đây là **profile Proposed**; implementation spike hiện có một worker v2 và adapter SVG giới hạn,
+nhưng host chưa semantic-validate toàn bộ record để tạo document transaction. Không phát request
+v2 tới worker v1. Negotiation xác nhận major version và danh sách message/features trước khi mở
+file; không downgrade request có source sang v1 raw bytes. Worker/host mismatch kết thúc job bằng
 unsupported_protocol, không gọi parser trong host.
 
 ### 6.1 Nguồn đọc chỉ qua capability host
@@ -149,6 +150,29 @@ unsupported_protocol, không gọi parser trong host.
   nhận terminal frame. Sequence/message sai, token hoặc job identity khác, trailing bytes,
   checksum/hash/count không khớp, record vượt range hoặc EOF giữa frame làm hủy toàn proposal.
   Final hash không thay thế semantic validation từng record host-side.
+- Record ID và payload được version hóa tại
+  [`import-record-v1.json`](../docs/quality/reference-fixtures/import-record-v1.json): `1=Page`,
+  `2=Path`, `3=Text`, `4=FidelityReport`, `5=FidelityIssue`. Số nguyên, độ dài và IEEE-754 binary64
+  dùng little-endian. Page, endpoint/control points, arc radii, stroke width và vị trí text dùng
+  mm; font size dùng pt. Record ID của object chỉ ổn định trong một proposal; `source_id` giữ nguồn
+  ổn định nếu có. Path verbs là `Move=1`, `Line=2`, `Quad=3`, `Cubic=4`, `Arc=5`, `Close=6`;
+  trường không dùng phải zero. Text và tên font là UTF-8. Màu giữ model RGB/CMYK/Spot/Gray,
+  alpha, spot name, alternate RGB và cờ overprint; host không đổi màu nguồn sang RGB âm thầm.
+  FidelityReport tóm tắt coverage, appearance, editability, production assessment và tổng issue;
+  host kiểm từng record, thứ tự, số issue và report trước khi nhận proposal.
+- **SVG spike profile hiện có:** chỉ chấp nhận `format_id=SVG`, `profile_id=svg-flat-v1`, nguồn
+  UTF-8 tĩnh tối đa 16 MiB, root có width/height rõ đơn vị, và các phần tử phẳng `rect`, `path`,
+  `text`. `viewBox` chỉ dùng mapping xMidYMid meet mặc định hoặc none đồng tỷ lệ. Path commands
+  được nhận là M/L/H/V/C/S/Q/T/Z. Text giữ Unicode, font family/weight/style và cỡ chữ; font có
+  sẵn hay hình glyph thực tế chưa được xác minh. Profile không nhận group/layer, transform riêng,
+  CSS/style, filter/effect, image/link ngoài, script, DTD/entity, arc command hoặc phần tử lạ.
+  Trường hợp ngoài subset kết thúc bằng structured worker error và không có proposal chunk; không
+  được flatten hoặc bỏ layer để tiếp tục. Giới hạn hiện tại là 10.000 phần tử, 6.000 verb/path và
+  100.000 path elements cộng dồn, 64 thuộc tính/tag, 256 KiB text/object, 16 MiB canonical stream
+  và 1.000.000 mm mỗi chiều trang. Đây là phạm vi spike, chưa phải claim hỗ trợ SVG tổng quát.
+- Semantic decoder host-side, layer/group records, document transaction và consumer review chưa
+  hoàn tất. Vì vậy C6 vẫn Proposed; parser test pass chỉ xác nhận subset và worker stream, không
+  chứng minh fidelity đầy đủ, lưu/mở document, hay an toàn OS trên mọi máy.
 - Host ghi chunks vào job staging riêng thay vì giữ toàn scene trong RAM, nhưng validate record
   ngay khi đọc. Chỉ một reader/writer có quyền consume stream; queue count/bytes và disk usage có
   trần. Hết quota, thiếu quyền hoặc staging I/O lỗi kết thúc job; không bỏ chunk hoặc giảm chất

@@ -56,4 +56,13 @@ if(PIKDRAW_BUILD_TESTS)
     )
     add_dependencies(test_pikdraw_worker_v2_integrity spike_worker)
     add_test(NAME test_pikdraw_worker_v2_integrity COMMAND test_pikdraw_worker_v2_integrity)
+
+    add_executable(test_pikdraw_worker_svg_import
+        tests/svg_worker_import_tests.cpp
+    )
+    target_link_libraries(test_pikdraw_worker_svg_import PRIVATE
+        pikdraw_worker_common
+    )
+    add_dependencies(test_pikdraw_worker_svg_import spike_worker)
+    add_test(NAME test_pikdraw_worker_svg_import COMMAND test_pikdraw_worker_svg_import)
 endif()

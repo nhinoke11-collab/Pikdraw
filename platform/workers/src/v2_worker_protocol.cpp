@@ -1,5 +1,6 @@
 #include "v2_worker_protocol.hpp"
 
+#include "pikdraw/interop/adapters/svg_worker_adapter.hpp"
 #include "pikdraw/workers/source_snapshot.hpp"
 
 #include <bcrypt.h>
@@ -127,6 +128,100 @@ bool VerifySource(HANDLE source, const V2ImportBegin& request) {
     return SetFilePointerEx(source, beginning, nullptr, FILE_BEGIN) != FALSE;
 }
 
+bool ReadVerifiedSource(HANDLE source, uint64_t expected_bytes, std::vector<uint8_t>& bytes) {
+    if (source == INVALID_HANDLE_VALUE || expected_bytes == 0 ||
+        expected_bytes > SvgImporter::kMaxSourceBytes || expected_bytes > SIZE_MAX) return false;
+    LARGE_INTEGER beginning{};
+    if (!SetFilePointerEx(source, beginning, nullptr, FILE_BEGIN)) return false;
+    try {
+        bytes.resize(static_cast<size_t>(expected_bytes));
+    } catch (...) {
+        return false;
+    }
+    size_t offset = 0;
+    while (offset < bytes.size()) {
+        const DWORD requested = static_cast<DWORD>(std::min<size_t>(bytes.size() - offset, 1024 * 1024));
+        DWORD received = 0;
+        if (!ReadFile(source, bytes.data() + offset, requested, &received, nullptr) || received == 0) return false;
+        offset += received;
+    }
+    uint8_t extra = 0;
+    DWORD received = 0;
+    if (!ReadFile(source, &extra, 1, &received, nullptr) || received != 0) return false;
+    return SetFilePointerEx(source, beginning, nullptr, FILE_BEGIN) != FALSE;
+}
+
+bool SendError(HANDLE output, uint32_t sequence, uint32_t code, const char* diagnostic);
+
+bool SendSvgProposal(HANDLE output, const V2ImportBegin& request,
+                     std::span<const uint8_t> source, uint32_t request_sequence) {
+    const uint32_t first_response_sequence = request_sequence;
+    std::vector<CanonicalImportRecord> records;
+    std::string diagnostic;
+    if (!BuildSvgImportRecords(source, records, diagnostic)) {
+        return SendError(output, request_sequence, 3, diagnostic.empty() ? "SVG subset rejected source" : diagnostic.c_str());
+    }
+    if (records.empty() || records.size() > SvgImporter::kMaxObjects * 2 + 2) {
+        return SendError(output, request_sequence, 4, "SVG proposal record count exceeds profile");
+    }
+
+    std::vector<uint8_t> canonical_stream;
+    std::vector<V2ProposalChunk> chunks;
+    V2ProposalChunk chunk;
+    chunk.job = request.job;
+    uint32_t next_record_ordinal = 0;
+    constexpr size_t max_stream_bytes = 16 * 1024 * 1024;
+    constexpr size_t chunk_target_bytes = IPC_V2_MAX_FRAME_BYTES - 256;
+    try {
+        canonical_stream.reserve(1024 * 1024);
+        chunk.canonical_record_bytes.reserve(256 * 1024);
+        for (const auto& record : records) {
+            const size_t framed_bytes = 8 + record.payload.size();
+            if (record.payload.size() > IPC_V2_MAX_RECORD_BYTES || framed_bytes > chunk_target_bytes ||
+                framed_bytes > max_stream_bytes - canonical_stream.size()) {
+                return SendError(output, request_sequence, 4, "SVG proposal exceeds bounded record or byte profile");
+            }
+            if (chunk.record_count > 0 && chunk.canonical_record_bytes.size() + framed_bytes > chunk_target_bytes) {
+                chunk.checksum_crc32 = V2ProposalRecordsCrc32(chunk.canonical_record_bytes);
+                chunks.push_back(std::move(chunk));
+                if (chunks.size() >= 64) return SendError(output, request_sequence, 4, "SVG proposal has too many chunks");
+                chunk = {};
+                chunk.job = request.job;
+                chunk.chunk_ordinal = static_cast<uint32_t>(chunks.size());
+                chunk.first_record_ordinal = next_record_ordinal;
+                chunk.canonical_record_bytes.reserve(256 * 1024);
+            }
+            if (!AppendV2ProposalRecord(chunk.canonical_record_bytes, static_cast<uint16_t>(record.type), record.payload) ||
+                !AppendV2ProposalRecord(canonical_stream, static_cast<uint16_t>(record.type), record.payload)) {
+                return SendError(output, request_sequence, 4, "SVG proposal record could not be framed");
+            }
+            ++chunk.record_count;
+            ++next_record_ordinal;
+        }
+        chunk.checksum_crc32 = V2ProposalRecordsCrc32(chunk.canonical_record_bytes);
+        chunks.push_back(std::move(chunk));
+    } catch (...) {
+        return SendError(output, request_sequence, 4, "SVG proposal allocation failed");
+    }
+    IpcV2Digest digest{};
+    if (chunks.empty() || !HashBytes(canonical_stream, digest)) return SendError(output, request_sequence, 4, "SVG proposal digest failed");
+    for (size_t index = 0; index < chunks.size(); ++index) {
+        chunks[index].chunk_ordinal = static_cast<uint32_t>(index);
+        chunks[index].checksum_crc32 = V2ProposalRecordsCrc32(chunks[index].canonical_record_bytes);
+        const auto packet = SerializeV2ProposalChunk(chunks[index], first_response_sequence + static_cast<uint32_t>(index));
+        if (packet.empty() || !WritePacket(output, packet)) return false;
+    }
+    V2ImportEnd end;
+    end.job = request.job;
+    end.chunk_count = static_cast<uint32_t>(chunks.size());
+    end.record_count = records.size();
+    end.canonical_bytes = canonical_stream.size();
+    end.canonical_sha256 = digest;
+    end.fidelity_report_complete = true;
+    const auto packet = SerializeV2ImportEnd(end, first_response_sequence + static_cast<uint32_t>(chunks.size()));
+    return !packet.empty() && WritePacket(output, packet);
+}
+
 bool SendError(HANDLE output, uint32_t sequence, uint32_t code, const char* diagnostic) {
     return WritePacket(output, SerializeV2ErrorResponse({code, diagnostic}, sequence));
 }
@@ -148,7 +243,7 @@ bool Negotiate(HANDLE output, const IpcHeader& header, std::span<const uint8_t> 
     return true;
 }
 
-bool VerifyAndRejectUnsupportedAdapter(
+bool HandleImportBegin(
     HANDLE output,
     HANDLE source,
     const IpcHeader& header,
@@ -158,8 +253,14 @@ bool VerifyAndRejectUnsupportedAdapter(
     const auto request = DeserializeV2ImportBegin(packet);
     if (!request || header.sequence_id != 1 || (accepted_features & required) != required) return false;
     if (!VerifySource(source, *request)) return SendError(output, header.sequence_id, 2, "source capability hash mismatch");
-    // No parser is registered in this transport checkpoint. This is an explicit error, never a fake success.
-    return SendError(output, header.sequence_id, 1, "no format adapter registered");
+    if (request->format_id != "SVG" || request->profile_id != "svg-flat-v1") {
+        return SendError(output, header.sequence_id, 1, "unsupported format or profile");
+    }
+    std::vector<uint8_t> source_bytes;
+    if (!ReadVerifiedSource(source, request->source_bytes, source_bytes)) {
+        return SendError(output, header.sequence_id, 2, "source capability read failed");
+    }
+    return SendSvgProposal(output, *request, source_bytes, header.sequence_id);
 }
 
 bool SendFixtureStream(HANDLE output, const V2ImportBegin& request, uint32_t sequence, std::string_view mode) {
@@ -221,7 +322,7 @@ bool HandleV2WorkerFrame(
     if (!ReadPacketAfterHeader(input, header, packet, negotiation)) return false;
     if (negotiation) return Negotiate(output, header, packet, negotiated, accepted_features);
     if (!negotiated || header.message_type != static_cast<uint16_t>(MessageType::V2ImportBegin)) return false;
-    return VerifyAndRejectUnsupportedAdapter(output, source_handle, header, packet, accepted_features);
+    return HandleImportBegin(output, source_handle, header, packet, accepted_features);
 }
 
 int RunV2StreamFixture(std::string_view mode, HANDLE source_handle) {

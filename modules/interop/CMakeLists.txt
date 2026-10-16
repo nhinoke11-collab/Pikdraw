@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(pikdraw_interop STATIC
     src/adapters/svg_importer.cpp
+    src/adapters/svg_worker_adapter.cpp
     src/writers/svg_exporter.cpp
     src/ipc_dto.cpp
     src/ipc_v2_dto.cpp
@@ -46,5 +47,6 @@ if(PIKDRAW_BUILD_TESTS)
 
     add_interop_test(test_pikdraw_interop_capabilities tests/capabilities/test_capabilities.cpp)
     add_interop_test(test_pikdraw_interop_svg_adapter tests/adapters/test_svg_adapter.cpp)
+    add_interop_test(test_pikdraw_interop_svg_worker_adapter tests/adapters/test_svg_worker_adapter.cpp)
     add_interop_test(test_pikdraw_interop_svg_exporter tests/writers/test_svg_exporter.cpp)
 endif()

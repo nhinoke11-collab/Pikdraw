@@ -1,0 +1,208 @@
+{
+  "schema_version": 1,
+  "fixture_type": "import_proposal_record_semantics",
+  "status": "proposed",
+  "byte_order": "little_endian",
+  "floating_point": "finite_ieee754_binary64",
+  "record_header": {
+    "type": "u16",
+    "flags": "u16_zero",
+    "payload_length": "u32",
+    "maximum_payload_bytes": 524288
+  },
+  "record_types": {
+    "1": "Page",
+    "2": "Path",
+    "3": "Text",
+    "4": "FidelityReport",
+    "5": "FidelityIssue"
+  },
+  "units": {
+    "page_dimensions": "mm",
+    "path_points_and_controls": "mm",
+    "path_arc_radii": "mm",
+    "stroke_width": "mm",
+    "text_position": "mm",
+    "text_font_size": "pt"
+  },
+  "identity": {
+    "local_object_id": "nonzero and proposal-local; not a document object ID",
+    "source_id": "source stable ID when present, otherwise a deterministic source ordinal ID",
+    "strings": "length-prefixed UTF-8, no NUL, strict Unicode scalar encoding"
+  },
+  "path_verbs": {
+    "1": "Move",
+    "2": "Line",
+    "3": "Quad",
+    "4": "Cubic",
+    "5": "Arc",
+    "6": "Close"
+  },
+  "path_element_values": [
+    "endpoint_x_mm",
+    "endpoint_y_mm",
+    "control_1_x_mm",
+    "control_1_y_mm",
+    "control_2_x_mm",
+    "control_2_y_mm",
+    "arc_radius_x_mm",
+    "arc_radius_y_mm",
+    "arc_rotation_degrees"
+  ],
+  "path_flags": {
+    "bit_0": "large_arc",
+    "bit_1": "sweep",
+    "other_bits": "zero"
+  },
+  "payload_layouts": {
+    "Page": ["width_mm:f64", "height_mm:f64"],
+    "Path": [
+      "local_id:u32",
+      "source_id:string16",
+      "name:string16",
+      "winding_rule:u8 (0=NonZero, 1=EvenOdd)",
+      "has_fill:u8 (0 or 1)",
+      "has_stroke:u8 (0 or 1)",
+      "reserved:u8=0",
+      "stroke_width_mm:f64",
+      "fill:Color",
+      "stroke:Color",
+      "element_count:u32",
+      "elements:PathElement[element_count]"
+    ],
+    "PathElement": ["verb:u8", "flags:u8", "reserved:u16=0", "values:f64[9]"],
+    "Text": [
+      "local_id:u32",
+      "source_id:string16",
+      "name:string16",
+      "utf8_text:string16",
+      "font_family:string16",
+      "font_weight:u16",
+      "italic:u8 (0 or 1)",
+      "reserved:u8=0",
+      "font_size_pt:f64",
+      "x_mm:f64",
+      "y_mm:f64",
+      "fill:Color"
+    ],
+    "Color": [
+      "model:u8 (1=RGB, 2=CMYK, 3=Spot, 4=Gray)",
+      "overprint_flags:u8",
+      "reserved:u16=0",
+      "components:f64[5]",
+      "spot_name:string16 (empty unless Spot)",
+      "alternate_rgb:f64[4] (zero unless Spot)"
+    ],
+    "FidelityReport": [
+      "coverage_profile:string16",
+      "parse_outcome:u8 (1=Complete, 2=CompleteWithDiagnostics)",
+      "coverage:u8 (1=Partial, 2=Unknown)",
+      "appearance:u8 (1=Unknown, 2=Partial)",
+      "editability:u8 (1=NativeEditable, 2=ExplicitConversion)",
+      "production:u8 (1=NotAssessed, 2=Blocked)",
+      "reserved:u8=0",
+      "reserved:u16=0",
+      "issue_count:u32"
+    ],
+    "FidelityIssue": [
+      "severity:u8 (1=Info, 2=Warning, 3=Unsupported)",
+      "reserved:u8=0",
+      "reserved:u16=0",
+      "source_locator:string16",
+      "feature_code:string16",
+      "diagnostic_code:string16"
+    ]
+  },
+  "colors": {
+    "models": ["RGB", "CMYK", "Spot", "Gray"],
+    "components_range": "0..1 including alpha",
+    "component_order": {
+      "RGB": ["red", "green", "blue", "alpha", "zero"],
+      "CMYK": ["cyan", "magenta", "yellow", "black", "alpha"],
+      "Spot": ["tint", "alternate_rgb_alpha", "zero", "zero", "zero"],
+      "Gray": ["gray", "alpha", "zero", "zero", "zero"]
+    },
+    "spot": "preserve spot name, tint, alternate RGB and overprint metadata",
+    "overprint_flags": {
+      "bit_0": "fill",
+      "bit_1": "stroke",
+      "other_bits": "zero"
+    }
+  },
+  "record_semantics": {
+    "proposal_order": "one Page first; Path/Text in source order with unique sequential nonzero local IDs; zero or more FidelityIssue records; exactly one FidelityReport last",
+    "Page": "positive page width_mm and height_mm within the selected import profile",
+    "Path": "nonzero proposal-local ID; nonempty source ID/name; finite stroke width and nonempty bounded verb list",
+    "Text": "nonzero proposal-local ID; UTF-8 text and font family; finite mm position and positive pt size",
+    "FidelityReport": "exactly one terminal summary; issue_count equals preceding FidelityIssue record count",
+    "FidelityIssue": "severity, source locator, feature code and diagnostic code identify a reported fidelity limit"
+  },
+  "svg_profile": {
+    "format_id": "SVG",
+    "profile_id": "svg-flat-v1",
+    "supported_elements": ["rect", "path", "text"],
+    "supported_path_commands": ["M", "L", "H", "V", "C", "S", "Q", "T", "Z"],
+    "limits": {
+      "source_bytes": 16777216,
+      "objects": 10000,
+      "attributes_per_tag": 64,
+      "text_bytes_per_object": 262144,
+      "path_elements_per_path": 6000,
+      "path_elements_total": 100000,
+      "page_dimension_mm": 1000000,
+      "canonical_stream_bytes": 16777216,
+      "response_chunks": 64
+    },
+    "unsupported_policy": "reject entire source and emit no proposal chunks"
+  },
+  "positive_vectors": [
+    {
+      "name": "page_path_unicode_text_and_loss_report",
+      "record_order": [1, 2, 3, 5, 4],
+      "page_size_mm": [100, 50],
+      "path_verbs": [1, 4, 3, 6],
+      "text_utf8": "Tiếng Việt & vectors",
+      "font_size_pt": 17.00787401574803,
+      "fidelity_issue_count": 1,
+      "expected_valid": true
+    },
+    {
+      "name": "rgb_alpha_retained",
+      "color_model": "RGB",
+      "components_rgba": [0.1411764705882353, 0.5019607843137255, 0.7529411764705882, 0.5],
+      "expected_valid": true
+    }
+  ],
+  "negative_vectors": [
+    {
+      "name": "nonzero_record_flags",
+      "stage": "canonical_record_framing",
+      "expected_error": "unsupported_record_flags"
+    },
+    {
+      "name": "nonfinite_page_dimension",
+      "record_type": 1,
+      "expected_error": "nonfinite_or_out_of_range_value"
+    },
+    {
+      "name": "unknown_path_verb",
+      "record_type": 2,
+      "expected_error": "unknown_path_verb"
+    },
+    {
+      "name": "invalid_utf8_text",
+      "record_type": 3,
+      "expected_error": "invalid_utf8"
+    },
+    {
+      "name": "fidelity_issue_count_mismatch",
+      "record_type": 4,
+      "expected_error": "fidelity_report_incomplete"
+    },
+    {
+      "name": "unsupported_svg_group_or_filter",
+      "profile_id": "svg-flat-v1",
+      "expected_error": "source_rejected_no_partial_proposal"
+    }
+  ]
+}
