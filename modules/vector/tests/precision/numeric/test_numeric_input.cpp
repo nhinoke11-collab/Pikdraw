@@ -98,6 +98,23 @@ void point_vectors() {
         near(cartesian_in_frame.value->y, 40.0, 1e-12, "local Cartesian y transforms as a vector");
     }
 
+    auto negative_angle = numeric::evaluate_point_text("@10mm<-90deg", {0.0, 0.0});
+    auto wrapped_angle = numeric::evaluate_point_text("@10mm<450deg", {0.0, 0.0});
+    auto large_coordinate = numeric::evaluate_point_text("@0.001;0", {20000.0, 0.0});
+    check(negative_angle && wrapped_angle && large_coordinate,
+          "negative and wrapped angles and large-coordinate detail evaluate");
+    if (negative_angle) {
+        near(negative_angle.value->x, 0.0, 1e-12, "negative polar angle points down");
+        near(negative_angle.value->y, -10.0, 1e-12, "negative polar angle preserves length");
+    }
+    if (wrapped_angle) {
+        near(wrapped_angle.value->x, 0.0, 1e-12, "wrapped angle has normalized x");
+        near(wrapped_angle.value->y, 10.0, 1e-12, "450 degrees wraps to 90 degrees");
+    }
+    if (large_coordinate)
+        near(large_coordinate.value->x - 20000.0, 0.001, 1e-9,
+             "one-micron detail remains representable at twenty-meter coordinates");
+
     const numeric::ParseOptions comma{','};
     auto comma_length = numeric::parse_length_mm("0,5in", comma);
     auto comma_point = numeric::evaluate_point_text("@20,5;15,25", {10.0, 20.0}, std::nullopt, comma);
@@ -134,6 +151,9 @@ void rejects_invalid_or_unsafe_inputs() {
     injected_non_finite.first = {std::numeric_limits<double>::quiet_NaN(), numeric::Dimension::Length};
     injected_non_finite.second = {0.0, numeric::Dimension::Length};
     auto bad_evaluated_value = numeric::evaluate_point_input(injected_non_finite, {0.0, 0.0});
+    auto anchor_overflow = numeric::evaluate_point_text("@1e308;0", {1e308, 0.0});
+    auto rotation_overflow = numeric::evaluate_point_text("@1.7e308;1.7e308", {0.0, 0.0},
+                                                         numeric::ConstructionFrame{45.0});
 
     expect_error(nan.diagnostic.code, numeric::ErrorCode::NonFiniteValue, "NaN is rejected explicitly");
     expect_error(infinity.diagnostic.code, numeric::ErrorCode::NonFiniteValue, "infinity is rejected explicitly");
@@ -159,6 +179,10 @@ void rejects_invalid_or_unsafe_inputs() {
                  "non-finite relative anchor is rejected");
     expect_error(bad_evaluated_value.diagnostic.code, numeric::ErrorCode::NonFiniteValue,
                  "non-finite typed values are rejected by the evaluator");
+    expect_error(anchor_overflow.diagnostic.code, numeric::ErrorCode::Overflow,
+                 "relative addition that overflows world coordinates is rejected");
+    expect_error(rotation_overflow.diagnostic.code, numeric::ErrorCode::Overflow,
+                 "construction-frame rotation that overflows is rejected");
 
     const std::string too_long(numeric::max_input_bytes + 1, '1');
     auto long_input = numeric::parse_quantity(too_long);
@@ -168,6 +192,29 @@ void rejects_invalid_or_unsafe_inputs() {
     auto deep_input = numeric::parse_quantity(too_deep + "1" + std::string(33, ')'));
     expect_error(deep_input.diagnostic.code, numeric::ErrorCode::ExpressionTooDeep,
                  "recursive expression depth is bounded");
+
+    const std::string near_depth = std::string(16, '-') + std::string(16, '(') + "1" + std::string(16, ')');
+    const std::string mixed_depth = std::string(17, '-') + std::string(16, '(') + "1" + std::string(16, ')');
+    check(static_cast<bool>(numeric::parse_quantity(near_depth)),
+          "mixed unary and parenthesis depth at the boundary is accepted");
+    expect_error(numeric::parse_quantity(mixed_depth).diagnostic.code, numeric::ErrorCode::ExpressionTooDeep,
+                 "mixed unary and parenthesis depth beyond the boundary is rejected");
+
+    const auto repeated_sum = [](std::size_t terms) {
+        std::string expression;
+        for (std::size_t index = 0; index < terms; ++index) {
+            if (index != 0)
+                expression += "+";
+            expression += "1";
+        }
+        return expression;
+    };
+    const std::string token_boundary = repeated_sum(64);
+    const std::string too_many_tokens = repeated_sum(65);
+    check(static_cast<bool>(numeric::parse_quantity(token_boundary)),
+          "expression at the token-count boundary is accepted");
+    expect_error(numeric::parse_quantity(too_many_tokens).diagnostic.code, numeric::ErrorCode::TooManyTokens,
+                 "expression beyond the token-count boundary is rejected");
 
     auto malformed = numeric::parse_point_input("@1;2;3");
     expect_error(malformed.diagnostic.code, numeric::ErrorCode::InvalidSyntax,
