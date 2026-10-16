@@ -7,7 +7,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(pikdraw_interop STATIC
     src/adapters/svg_importer.cpp
+    src/adapters/svg_path_parser.cpp
+    src/adapters/svg_xml_cursor.cpp
     src/adapters/svg_worker_adapter.cpp
+    src/adapters/svg_import_record_codec.cpp
     src/writers/svg_exporter.cpp
     src/ipc_dto.cpp
     src/ipc_v2_dto.cpp

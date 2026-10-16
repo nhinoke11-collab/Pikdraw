@@ -1,4 +1,6 @@
 #include "pikdraw/interop/adapters/svg_importer.hpp"
+#include "svg_path_parser.hpp"
+#include "svg_xml_cursor.hpp"
 
 #include <algorithm>
 #include <array>
@@ -23,227 +25,13 @@ constexpr size_t kMaxTagBytes = 64 * 1024;
 constexpr size_t kMaxAttributesPerTag = 64;
 constexpr size_t kMaxSvgGroupDepth = 128;
 
-struct XmlTag {
-    std::string name;
-    std::unordered_map<std::string, std::string> attributes;
-    bool closing{false};
-    bool self_closing{false};
-};
-
-bool IsNameStart(char c) {
-    const auto value = static_cast<unsigned char>(c);
-    return std::isalpha(value) != 0 || c == '_' || c == ':';
-}
-
-bool IsNameChar(char c) {
-    const auto value = static_cast<unsigned char>(c);
-    return std::isalnum(value) != 0 || c == '_' || c == ':' || c == '-' || c == '.';
-}
-
-void AppendUtf8(uint32_t codepoint, std::string& output) {
-    if (codepoint <= 0x7f) {
-        output.push_back(static_cast<char>(codepoint));
-    } else if (codepoint <= 0x7ff) {
-        output.push_back(static_cast<char>(0xc0 | (codepoint >> 6)));
-        output.push_back(static_cast<char>(0x80 | (codepoint & 0x3f)));
-    } else if (codepoint <= 0xffff) {
-        output.push_back(static_cast<char>(0xe0 | (codepoint >> 12)));
-        output.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3f)));
-        output.push_back(static_cast<char>(0x80 | (codepoint & 0x3f)));
-    } else {
-        output.push_back(static_cast<char>(0xf0 | (codepoint >> 18)));
-        output.push_back(static_cast<char>(0x80 | ((codepoint >> 12) & 0x3f)));
-        output.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3f)));
-        output.push_back(static_cast<char>(0x80 | (codepoint & 0x3f)));
-    }
-}
-
-bool IsValidUtf8(std::string_view input) {
-    size_t index = 0;
-    while (index < input.size()) {
-        const uint8_t lead = static_cast<uint8_t>(input[index++]);
-        if (lead < 0x80) {
-            if (lead < 0x20 && lead != '\t' && lead != '\n' && lead != '\r') return false;
-            continue;
-        }
-        uint32_t codepoint = 0;
-        size_t continuation = 0;
-        if ((lead & 0xe0) == 0xc0) { codepoint = lead & 0x1f; continuation = 1; }
-        else if ((lead & 0xf0) == 0xe0) { codepoint = lead & 0x0f; continuation = 2; }
-        else if ((lead & 0xf8) == 0xf0) { codepoint = lead & 0x07; continuation = 3; }
-        else return false;
-        if (continuation > input.size() - index) return false;
-        for (size_t i = 0; i < continuation; ++i) {
-            const uint8_t next = static_cast<uint8_t>(input[index++]);
-            if ((next & 0xc0) != 0x80) return false;
-            codepoint = (codepoint << 6) | (next & 0x3f);
-        }
-        if ((continuation == 1 && codepoint < 0x80) ||
-            (continuation == 2 && codepoint < 0x800) ||
-            (continuation == 3 && codepoint < 0x10000) ||
-            codepoint > 0x10ffff || (codepoint >= 0xd800 && codepoint <= 0xdfff)) return false;
-    }
-    return true;
-}
-
-bool DecodeEntities(std::string_view input, std::string& output) {
-    output.clear();
-    if (input.size() > kMaxTextBytes) return false;
-    for (size_t index = 0; index < input.size();) {
-        if (input[index] != '&') {
-            if (input[index] == '\0') return false;
-            output.push_back(input[index++]);
-            continue;
-        }
-        const size_t end = input.find(';', index + 1);
-        if (end == std::string_view::npos || end - index > 16) return false;
-        const auto entity = input.substr(index + 1, end - index - 1);
-        if (entity == "amp") output.push_back('&');
-        else if (entity == "lt") output.push_back('<');
-        else if (entity == "gt") output.push_back('>');
-        else if (entity == "quot") output.push_back('"');
-        else if (entity == "apos") output.push_back('\'');
-        else if (!entity.empty() && entity.front() == '#') {
-            uint32_t value = 0;
-            const bool hex = entity.size() > 2 && (entity[1] == 'x' || entity[1] == 'X');
-            const auto digits = entity.substr(hex ? 2 : 1);
-            const auto parsed = std::from_chars(digits.data(), digits.data() + digits.size(), value, hex ? 16 : 10);
-            if (digits.empty() || parsed.ec != std::errc{} || parsed.ptr != digits.data() + digits.size() ||
-                value == 0 || value > 0x10ffff || (value >= 0xd800 && value <= 0xdfff)) return false;
-            AppendUtf8(value, output);
-        } else return false;
-        index = end + 1;
-        if (output.size() > kMaxTextBytes) return false;
-    }
-    return IsValidUtf8(output);
-}
-
-class XmlCursor final {
-public:
-    explicit XmlCursor(std::string_view source) : source_(source) {}
-
-    bool SkipDocumentPreamble() {
-        SkipSpace();
-        if (source_.substr(position_).starts_with("<?xml")) {
-            if (position_ + 5 >= source_.size() ||
-                std::isspace(static_cast<unsigned char>(source_[position_ + 5])) == 0) return false;
-            const size_t end = source_.find("?>", position_ + 5);
-            if (end == std::string_view::npos || end - position_ > 256) return false;
-            const auto declaration = source_.substr(position_, end + 2 - position_);
-            std::string lower(declaration);
-            std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) {
-                return static_cast<char>(std::tolower(c));
-            });
-            const size_t encoding = lower.find("encoding");
-            if (encoding != std::string::npos) {
-                if (encoding == 0 || std::isspace(static_cast<unsigned char>(lower[encoding - 1])) == 0) return false;
-                size_t cursor = encoding + 8;
-                while (cursor < lower.size() && std::isspace(static_cast<unsigned char>(lower[cursor])) != 0) ++cursor;
-                if (cursor >= lower.size() || lower[cursor++] != '=') return false;
-                while (cursor < lower.size() && std::isspace(static_cast<unsigned char>(lower[cursor])) != 0) ++cursor;
-                if (cursor >= lower.size() || (lower[cursor] != '\'' && lower[cursor] != '"')) return false;
-                const char quote = lower[cursor++];
-                const size_t value_end = lower.find(quote, cursor);
-                if (value_end == std::string::npos || lower.substr(cursor, value_end - cursor) != "utf-8") return false;
-            }
-            position_ = end + 2;
-        }
-        return SkipMisc();
-    }
-
-    bool SkipMisc() {
-        while (true) {
-            SkipSpace();
-            if (!source_.substr(position_).starts_with("<!--")) return true;
-            const size_t end = source_.find("-->", position_ + 4);
-            if (end == std::string_view::npos || end - position_ > kMaxTagBytes) return false;
-            if (source_.substr(position_ + 4, end - position_ - 4).find("--") != std::string_view::npos) return false;
-            position_ = end + 3;
-        }
-    }
-
-    bool ParseTag(XmlTag& tag) {
-        if (position_ >= source_.size() || source_[position_++] != '<') return false;
-        tag = {};
-        if (position_ < source_.size() && source_[position_] == '/') {
-            tag.closing = true;
-            ++position_;
-        }
-        if (position_ >= source_.size() || !IsNameStart(source_[position_])) return false;
-        const size_t name_start = position_++;
-        while (position_ < source_.size() && IsNameChar(source_[position_])) ++position_;
-        tag.name.assign(source_.substr(name_start, position_ - name_start));
-        if (tag.closing) {
-            SkipSpace();
-            if (position_ >= source_.size() || source_[position_++] != '>') return false;
-            return true;
-        }
-
-        while (position_ < source_.size()) {
-            SkipSpace();
-            if (source_.substr(position_).starts_with("/>")) {
-                position_ += 2;
-                tag.self_closing = true;
-                return true;
-            }
-            if (source_[position_] == '>') { ++position_; return true; }
-            if (!IsNameStart(source_[position_])) return false;
-            const size_t attr_start = position_++;
-            while (position_ < source_.size() && IsNameChar(source_[position_])) ++position_;
-            std::string name(source_.substr(attr_start, position_ - attr_start));
-            SkipSpace();
-            if (position_ >= source_.size() || source_[position_++] != '=') return false;
-            SkipSpace();
-            if (position_ >= source_.size() || (source_[position_] != '\'' && source_[position_] != '"')) return false;
-            const char quote = source_[position_++];
-            const size_t value_start = position_;
-            const size_t end = source_.find(quote, position_);
-            if (end == std::string_view::npos || end - value_start > kMaxTagBytes) return false;
-            if (source_.substr(value_start, end - value_start).find('<') != std::string_view::npos ||
-                tag.attributes.size() >= kMaxAttributesPerTag) return false;
-            std::string value;
-            if (!DecodeEntities(source_.substr(value_start, end - value_start), value) ||
-                !tag.attributes.emplace(std::move(name), std::move(value)).second) return false;
-            position_ = end + 1;
-        }
-        return false;
-    }
-
-    bool ReadText(std::string& text) {
-        const size_t end = source_.find('<', position_);
-        if (end == std::string_view::npos || end - position_ > kMaxTextBytes) return false;
-        if (!DecodeEntities(source_.substr(position_, end - position_), text)) return false;
-        position_ = end;
-        return true;
-    }
-
-    [[nodiscard]] bool AtEnd() const noexcept { return position_ == source_.size(); }
-    [[nodiscard]] bool AtTagStart() const noexcept { return position_ < source_.size() && source_[position_] == '<'; }
-    [[nodiscard]] std::string_view Remaining() const noexcept { return source_.substr(position_); }
-    void SkipSpace() {
-        while (position_ < source_.size() && std::isspace(static_cast<unsigned char>(source_[position_])) != 0) ++position_;
-    }
-
-private:
-    std::string_view source_;
-    size_t position_{0};
-};
-
-bool ParseNumber(std::string_view input, double& value, size_t& consumed) {
-    if (input.empty()) return false;
-    const auto result = std::from_chars(input.data(), input.data() + input.size(), value, std::chars_format::general);
-    if (result.ec != std::errc{} || result.ptr == input.data() || !std::isfinite(value)) return false;
-    consumed = static_cast<size_t>(result.ptr - input.data());
-    return true;
-}
-
 struct SvgLength { double value{0}; std::string_view unit; };
 
 bool ParseLength(std::string_view source, SvgLength& output) {
     while (!source.empty() && std::isspace(static_cast<unsigned char>(source.front())) != 0) source.remove_prefix(1);
     while (!source.empty() && std::isspace(static_cast<unsigned char>(source.back())) != 0) source.remove_suffix(1);
     size_t consumed = 0;
-    if (!ParseNumber(source, output.value, consumed)) return false;
+    if (!ParseSvgNumber(source, output.value, consumed)) return false;
     output.unit = source.substr(consumed);
     return output.unit.empty() || output.unit == "px" || output.unit == "mm" || output.unit == "cm" ||
            output.unit == "in" || output.unit == "pt" || output.unit == "pc";
@@ -262,144 +50,6 @@ bool LengthToUserUnits(const SvgLength& length, double& value) {
     if (length.unit.empty() || length.unit == "px") value = length.value;
     else value = LengthToMm(length) / kPxToMm;
     return std::isfinite(value);
-}
-
-class NumberCursor final {
-public:
-    explicit NumberCursor(std::string_view source) : source_(source) {}
-    bool Next(double& value) {
-        SkipSeparators();
-        if (position_ >= source_.size() || IsCommand(source_[position_])) return false;
-        size_t consumed = 0;
-        if (!ParseNumber(source_.substr(position_), value, consumed)) return false;
-        position_ += consumed;
-        return true;
-    }
-    bool MoreNumbers() {
-        SkipSeparators();
-        return position_ < source_.size() && !IsCommand(source_[position_]);
-    }
-    bool Done() { SkipSeparators(); return position_ == source_.size(); }
-    char TakeCommand() {
-        SkipSeparators();
-        return position_ < source_.size() && IsCommand(source_[position_]) ? source_[position_++] : 0;
-    }
-    bool IsCommandAhead() {
-        SkipSeparators();
-        return position_ < source_.size() && IsCommand(source_[position_]);
-    }
-
-private:
-    static bool IsCommand(char c) { return std::isalpha(static_cast<unsigned char>(c)) != 0; }
-    void SkipSeparators() {
-        while (position_ < source_.size() &&
-               (std::isspace(static_cast<unsigned char>(source_[position_])) != 0 || source_[position_] == ',')) ++position_;
-    }
-    std::string_view source_;
-    size_t position_{0};
-};
-
-enum class SvgPathVerb : uint8_t { Move, Line, Quad, Cubic, Arc, Close };
-
-bool AddPathElement(geometry::Path2D& path, const geometry::Transform2D& transform,
-                    SvgPathVerb verb, const std::array<double, 9>& values, uint8_t flags,
-                    size_t maximum) {
-    if (path.size() >= maximum) return false;
-    const auto point = [&](size_t index) { return transform.map_point({values[index], values[index + 1]}); };
-    switch (verb) {
-        case SvgPathVerb::Move: { const auto p = point(0); path.move_to(p); return true; }
-        case SvgPathVerb::Line: { const auto p = point(0); path.line_to(p); return true; }
-        case SvgPathVerb::Quad: {
-            const auto control = point(2); const auto p = point(0); path.quad_to(control.x, control.y, p.x, p.y); return true;
-        }
-        case SvgPathVerb::Cubic: {
-            const auto first = point(2); const auto second = point(4); const auto p = point(0);
-            path.cubic_to(first.x, first.y, second.x, second.y, p.x, p.y); return true;
-        }
-        case SvgPathVerb::Close: path.close(); return true;
-        case SvgPathVerb::Arc: (void)flags; return false;
-    }
-    return false;
-}
-
-bool ParsePath(std::string_view data, const geometry::Transform2D& transform,
-               geometry::Path2D& output, size_t maximum) {
-    NumberCursor cursor(data);
-    char command = 0;
-    char previous = 0;
-    double x = 0, y = 0, start_x = 0, start_y = 0, previous_cx = 0, previous_cy = 0;
-    bool has_move = false;
-    size_t elements = 0;
-    while (!cursor.Done()) {
-        if (cursor.IsCommandAhead()) command = cursor.TakeCommand();
-        else if (command == 0) return false;
-        const char upper = static_cast<char>(std::toupper(static_cast<unsigned char>(command)));
-        const bool relative = std::islower(static_cast<unsigned char>(command)) != 0;
-        if (upper == 'Z') {
-            if (!has_move || !AddPathElement(output, transform, SvgPathVerb::Close, {}, 0, maximum)) return false;
-            x = start_x; y = start_y; previous = 'Z'; command = 0;
-            continue;
-        }
-        if (upper == 'A' || (upper != 'M' && upper != 'L' && upper != 'H' && upper != 'V' &&
-                             upper != 'C' && upper != 'S' && upper != 'Q' && upper != 'T')) return false;
-        size_t sets = 0;
-        while (cursor.MoreNumbers()) {
-            std::array<double, 9> values{};
-            SvgPathVerb verb = SvgPathVerb::Line;
-            double nx = x, ny = y;
-            if (upper == 'M' || upper == 'L' || upper == 'T') {
-                if (!cursor.Next(nx) || !cursor.Next(ny)) return false;
-                if (relative) { nx += x; ny += y; }
-                values[0] = nx; values[1] = ny;
-                if (upper == 'M' && sets == 0) {
-                    verb = SvgPathVerb::Move; start_x = nx; start_y = ny; has_move = true;
-                } else if (upper == 'T') {
-                    const bool reflect = previous == 'Q' || previous == 'T';
-                    const double cx = reflect ? 2 * x - previous_cx : x;
-                    const double cy = reflect ? 2 * y - previous_cy : y;
-                    values[2] = cx; values[3] = cy; values[0] = nx; values[1] = ny;
-                    verb = SvgPathVerb::Quad; previous_cx = cx; previous_cy = cy;
-                } else { verb = upper == 'M' && sets == 0 ? SvgPathVerb::Move : SvgPathVerb::Line; }
-            } else if (upper == 'H') {
-                if (!cursor.Next(nx)) return false;
-                if (relative) nx += x;
-                values[0] = nx; values[1] = y; verb = SvgPathVerb::Line;
-            } else if (upper == 'V') {
-                if (!cursor.Next(ny)) return false;
-                if (relative) ny += y;
-                values[0] = x; values[1] = ny; verb = SvgPathVerb::Line;
-            } else if (upper == 'Q' || upper == 'T') {
-                double cx = 0, cy = 0;
-                if (!cursor.Next(cx) || !cursor.Next(cy) || !cursor.Next(nx) || !cursor.Next(ny)) return false;
-                if (relative) { cx += x; cy += y; nx += x; ny += y; }
-                values[0] = nx; values[1] = ny; values[2] = cx; values[3] = cy;
-                verb = SvgPathVerb::Quad; previous_cx = cx; previous_cy = cy;
-            } else if (upper == 'C' || upper == 'S') {
-                double c1x = x, c1y = y, c2x = 0, c2y = 0;
-                if (upper == 'C') {
-                    if (!cursor.Next(c1x) || !cursor.Next(c1y) || !cursor.Next(c2x) || !cursor.Next(c2y) ||
-                        !cursor.Next(nx) || !cursor.Next(ny)) return false;
-                    if (relative) { c1x += x; c1y += y; c2x += x; c2y += y; nx += x; ny += y; }
-                } else {
-                    const bool reflect = previous == 'C' || previous == 'S';
-                    c1x = reflect ? 2 * x - previous_cx : x;
-                    c1y = reflect ? 2 * y - previous_cy : y;
-                    if (!cursor.Next(c2x) || !cursor.Next(c2y) || !cursor.Next(nx) || !cursor.Next(ny)) return false;
-                    if (relative) { c2x += x; c2y += y; nx += x; ny += y; }
-                }
-                values[0] = nx; values[1] = ny; values[2] = c1x; values[3] = c1y;
-                values[4] = c2x; values[5] = c2y; verb = SvgPathVerb::Cubic;
-                previous_cx = c2x; previous_cy = c2y;
-            }
-            for (double value : values) if (!std::isfinite(value) || std::abs(value) > 1.0e9) return false;
-            if (!has_move && verb != SvgPathVerb::Move) return false;
-            if (!AddPathElement(output, transform, verb, values, 0, maximum)) return false;
-            x = nx; y = ny; previous = upper; ++sets; ++elements;
-            if (upper == 'M' && sets == 1) command = relative ? 'l' : 'L';
-        }
-        if (sets == 0) return false;
-    }
-    return has_move && elements > 0;
 }
 
 bool AttributesAllowed(const XmlTag& tag, std::initializer_list<std::string_view> allowed) {
@@ -433,9 +83,7 @@ bool ParseUserLength(std::string_view source, double fallback, double& value, bo
 }
 
 bool ParseViewBox(std::string_view source, std::array<double, 4>& values) {
-    NumberCursor cursor(source);
-    for (double& value : values) if (!cursor.Next(value) || !std::isfinite(value)) return false;
-    return cursor.Done() && values[2] > 0 && values[3] > 0 &&
+    return ParseSvgNumberList(source, values) && values[2] > 0 && values[3] > 0 &&
            std::abs(values[0]) <= 1.0e9 && std::abs(values[1]) <= 1.0e9 &&
            values[2] <= 1.0e9 && values[3] <= 1.0e9;
 }
@@ -721,7 +369,7 @@ SvgImportResult ImportSvgString(const std::string& input) {
             document::PathObject object;
             object.id = document::generate_object_id();
             object.name = "Imported Path";
-            if (!ParsePath(Attribute(tag, "d"), root_transform, object.path, SvgImporter::kMaxPathElements)) {
+            if (!ParseSvgPath(Attribute(tag, "d"), root_transform, object.path, SvgImporter::kMaxPathElements)) {
                 return Failure("SVG path data is malformed or uses an unsupported command", "unsupported_path_command");
             }
             const std::string rule = Attribute(tag, "fill-rule", "nonzero");

@@ -12,6 +12,7 @@ add_library(pikdraw_worker_common STATIC
     src/process_launcher.cpp
     src/source_snapshot.cpp
     src/v2_proposal_validator.cpp
+    src/v2_proposal_semantics.cpp
 )
 
 target_include_directories(pikdraw_worker_common PUBLIC
