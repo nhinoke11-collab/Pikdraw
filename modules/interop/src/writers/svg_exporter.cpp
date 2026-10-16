@@ -3,6 +3,7 @@
 #include <fstream>
 #include <sstream>
 #include <iomanip>
+#include <limits>
 
 namespace pikdraw::interop {
 
@@ -44,6 +45,7 @@ std::string SvgExporter::export_to_string(
     const document::DocumentSnapshot& snapshot,
     const SvgExportOptions& options) {
     std::stringstream ss;
+    ss << std::setprecision(std::numeric_limits<double>::max_digits10);
     if (options.include_xml_header) {
         ss << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
     }
@@ -81,7 +83,8 @@ std::string SvgExporter::export_to_string(
                 if (!obj.visible) return;
                 ss << "  <text x=\"" << obj.position.x << "\" y=\"" << obj.position.y << "\" "
                    << "font-family=\"" << obj.font.family_name << "\" "
-                   << "font-size=\"" << obj.font.size_pt << "\" "
+                   // The exported viewBox uses millimeters as user units.
+                   << "font-size=\"" << obj.font.size_pt * 25.4 / 72.0 << "\" "
                    << "fill=\"" << color_to_hex(obj.fill) << "\">"
                    << obj.text << "</text>\n";
             }

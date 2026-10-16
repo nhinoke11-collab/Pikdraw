@@ -2,6 +2,7 @@
 #include "pikdraw/interop/adapters/svg_importer.hpp"
 #include "pikdraw/document/document.hpp"
 #include <cassert>
+#include <cmath>
 #include <iostream>
 
 using namespace pikdraw;
@@ -34,6 +35,7 @@ void test_svg_export_and_roundtrip() {
     assert(!svg_out.empty());
     assert(svg_out.find("<svg") != std::string::npos);
     assert(svg_out.find("PikDraw Vector Editor Việt Nam") != std::string::npos);
+    assert(svg_out.find("font-size=\"11.288888888888888\"") != std::string::npos);
 
     // Re-import exported SVG to prove roundtrip fidelity
     auto import_res = SvgImporter::import_from_string(svg_out);
@@ -43,7 +45,7 @@ void test_svg_export_and_roundtrip() {
     const auto& re_text = std::get<TextObject>(import_res.objects[1]);
     assert(re_text.text == "PikDraw Vector Editor Việt Nam");
     assert(re_text.font.family_name == "PikDrawSans");
-    assert(re_text.font.size_pt == 32.0);
+    assert(std::abs(re_text.font.size_pt - 32.0) < 1e-12);
 }
 
 int main() {
