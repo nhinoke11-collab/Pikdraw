@@ -41,8 +41,8 @@ ToolSessionResult ToolSession::undo_local() {
     return {ToolSessionResultCode::InvalidInput,
             "Draft history no longer matches the confirmed payload"};
   const size_t retained_history = history_bytes();
-  if (next.size() > limits_.max_session_bytes ||
-      retained_history > limits_.max_session_bytes - next.size())
+  if (next.size() > limits_.max_session_payload_bytes ||
+      retained_history > limits_.max_session_payload_bytes - next.size())
     return {ToolSessionResultCode::BudgetExceeded,
             "Undo would exceed the total draft session byte budget"};
   try {
@@ -76,8 +76,8 @@ ToolSessionResult ToolSession::redo_local() {
     return {ToolSessionResultCode::InvalidInput,
             "Draft redo no longer matches the confirmed payload"};
   const size_t retained_history = history_bytes();
-  if (next.size() > limits_.max_session_bytes ||
-      retained_history > limits_.max_session_bytes - next.size())
+  if (next.size() > limits_.max_session_payload_bytes ||
+      retained_history > limits_.max_session_payload_bytes - next.size())
     return {ToolSessionResultCode::BudgetExceeded,
             "Redo would exceed the total draft session byte budget"};
   try {

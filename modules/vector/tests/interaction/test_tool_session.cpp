@@ -273,9 +273,9 @@ void test_session_and_checkpoint_budgets_fail_closed() {
   document::Document doc("tool-session-budget");
   ToolSession session;
   ToolSessionLimits limits;
-  limits.max_draft_bytes = 2;
-  limits.max_history_bytes = 2;
-  limits.max_session_bytes = 4;
+  limits.max_draft_payload_bytes = 2;
+  limits.max_history_payload_bytes = 2;
+  limits.max_session_payload_bytes = 4;
   check(session.begin("line", doc.current_snapshot(), limits).applied(),
         "begin bounded session");
   check(session.apply_edit(insert_byte(0, 1, false)).applied(),
@@ -289,12 +289,12 @@ void test_session_and_checkpoint_budgets_fail_closed() {
   check(session.set_preview_payload({3}).code ==
             ToolSessionResultCode::BudgetExceeded &&
             session.preview_payload().empty(),
-        "preview and history share the total session memory budget");
+        "preview and history share the total session payload budget");
 
   ToolSessionLimits undo_limits;
-  undo_limits.max_draft_bytes = 4;
-  undo_limits.max_history_bytes = 8;
-  undo_limits.max_session_bytes = 8;
+  undo_limits.max_draft_payload_bytes = 4;
+  undo_limits.max_history_payload_bytes = 8;
+  undo_limits.max_session_payload_bytes = 8;
   ToolSession bounded_undo;
   check(bounded_undo.begin("line", doc.current_snapshot(), undo_limits).applied(),
         "begin session with a tight undo budget");

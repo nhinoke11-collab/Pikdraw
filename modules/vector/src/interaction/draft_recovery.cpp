@@ -146,7 +146,7 @@ ToolSessionResult ToolSession::stage_recovery(
                          pending.can_finish, out_error))
     return {ToolSessionResultCode::InvalidInput,
             out_error ? *out_error : "Invalid tool recovery payload"};
-  if (pending.payload.size() > limits_.max_draft_bytes) {
+  if (pending.payload.size() > limits_.max_draft_payload_bytes) {
     if (out_error)
       *out_error = "Recovered draft exceeds the current tool session budget";
     return {ToolSessionResultCode::BudgetExceeded,

@@ -46,9 +46,11 @@ struct ToolSessionResult {
 };
 
 struct ToolSessionLimits {
-  size_t max_draft_bytes{8u * 1024u * 1024u};
-  size_t max_history_bytes{6u * 1024u * 1024u};
-  size_t max_session_bytes{16u * 1024u * 1024u};
+  // These cap retained logical payload sizes, not vector capacity, allocator
+  // overhead, or temporary copies. Peak process memory needs runtime measurement.
+  size_t max_draft_payload_bytes{8u * 1024u * 1024u};
+  size_t max_history_payload_bytes{6u * 1024u * 1024u};
+  size_t max_session_payload_bytes{16u * 1024u * 1024u};
   size_t max_history_entries{256};
   size_t max_checkpoint_bytes{document::kRecoveryDraftPayloadLimit};
 };

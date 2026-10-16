@@ -26,10 +26,10 @@ ToolSessionResult ToolSession::begin(std::string tool_id,
             "Finish or cancel the current draft before starting another tool"};
   if (!base || base->document_id().empty() || base->epoch() == 0 ||
       tool_id.empty() || tool_id.size() > kMaxToolIdBytes ||
-      limits.max_draft_bytes == 0 || limits.max_history_entries == 0 ||
-      limits.max_session_bytes == 0 ||
-      limits.max_draft_bytes > limits.max_session_bytes ||
-      limits.max_history_bytes > limits.max_session_bytes ||
+      limits.max_draft_payload_bytes == 0 || limits.max_history_entries == 0 ||
+      limits.max_session_payload_bytes == 0 ||
+      limits.max_draft_payload_bytes > limits.max_session_payload_bytes ||
+      limits.max_history_payload_bytes > limits.max_session_payload_bytes ||
       limits.max_checkpoint_bytes > document::kRecoveryDraftPayloadLimit ||
       limits.max_checkpoint_bytes < 17)
     return {ToolSessionResultCode::InvalidInput,
@@ -71,15 +71,15 @@ ToolSessionResult ToolSession::apply_edit_internal(DraftEdit edit,
     return {ToolSessionResultCode::InvalidInput,
             "Draft edit does not match the confirmed source"};
   const size_t retained_bytes = draft_payload_.size() - edit.removed.size();
-  if (edit.inserted.size() > limits_.max_draft_bytes ||
-      retained_bytes > limits_.max_draft_bytes - edit.inserted.size())
+  if (edit.inserted.size() > limits_.max_draft_payload_bytes ||
+      retained_bytes > limits_.max_draft_payload_bytes - edit.inserted.size())
     return {ToolSessionResultCode::BudgetExceeded,
             "Draft payload exceeds the session byte budget"};
   std::vector<uint8_t> next_payload;
   if (!apply_patch(edit.offset, edit.removed, edit.inserted, next_payload))
     return {ToolSessionResultCode::InvalidInput,
             "Draft edit does not match the confirmed source"};
-  if (next_payload.size() > limits_.max_draft_bytes)
+  if (next_payload.size() > limits_.max_draft_payload_bytes)
     return {ToolSessionResultCode::BudgetExceeded,
             "Draft payload exceeds the session byte budget"};
   if (edit.removed.empty() && edit.inserted.empty())
@@ -95,20 +95,20 @@ ToolSessionResult ToolSession::apply_edit_internal(DraftEdit edit,
     const size_t new_entry_bytes = entry.removed.size() + entry.inserted.size();
     const size_t current_history_bytes = history_bytes();
     if (current_history_bytes < discarded_redo_bytes ||
-        new_entry_bytes > limits_.max_history_bytes ||
+        new_entry_bytes > limits_.max_history_payload_bytes ||
         current_history_bytes - discarded_redo_bytes >
-            limits_.max_history_bytes - new_entry_bytes ||
+            limits_.max_history_payload_bytes - new_entry_bytes ||
         undo_history_.size() >= limits_.max_history_entries)
       return {ToolSessionResultCode::BudgetExceeded,
               "Draft local history exceeds its configured budget"};
     projected_history_bytes = current_history_bytes - discarded_redo_bytes +
                               new_entry_bytes;
   }
-  if (next_payload.size() > limits_.max_session_bytes ||
+  if (next_payload.size() > limits_.max_session_payload_bytes ||
       projected_history_bytes >
-          limits_.max_session_bytes - next_payload.size())
+          limits_.max_session_payload_bytes - next_payload.size())
     return {ToolSessionResultCode::BudgetExceeded,
-            "Draft and local history exceed the session memory budget"};
+              "Draft and local history exceed the session payload budget"};
   if (record_history) {
     try {
       undo_history_.push_back(std::move(entry));
@@ -133,10 +133,10 @@ bool ToolSession::apply_patch(size_t offset,
   if (offset > draft_payload_.size() ||
       removed.size() > draft_payload_.size() - offset ||
       !same_bytes_at(draft_payload_, offset, removed) ||
-      inserted.size() > limits_.max_draft_bytes)
+      inserted.size() > limits_.max_draft_payload_bytes)
     return false;
   const size_t retained = draft_payload_.size() - removed.size();
-  if (inserted.size() > limits_.max_draft_bytes - retained)
+  if (inserted.size() > limits_.max_draft_payload_bytes - retained)
     return false;
   try {
     out = draft_payload_;
@@ -157,16 +157,16 @@ ToolSessionResult ToolSession::set_preview_payload(
       state_ == ToolSessionState::PanSuspended)
     return {ToolSessionResultCode::Ignored,
             "Transient preview is unavailable in the current state"};
-  if (payload.size() > limits_.max_draft_bytes)
+  if (payload.size() > limits_.max_draft_payload_bytes)
     return {ToolSessionResultCode::BudgetExceeded,
             "Transient preview exceeds the session byte budget"};
   const size_t history = history_bytes();
-  if (draft_payload_.size() > limits_.max_session_bytes ||
-      payload.size() > limits_.max_session_bytes - draft_payload_.size() ||
-      history > limits_.max_session_bytes - draft_payload_.size() -
+  if (draft_payload_.size() > limits_.max_session_payload_bytes ||
+      payload.size() > limits_.max_session_payload_bytes - draft_payload_.size() ||
+      history > limits_.max_session_payload_bytes - draft_payload_.size() -
                     payload.size())
     return {ToolSessionResultCode::BudgetExceeded,
-            "Draft, preview and local history exceed the session memory budget"};
+            "Draft, preview and local history exceed the session payload budget"};
   preview_payload_ = std::move(payload);
   ++preview_generation_;
   return {ToolSessionResultCode::Applied, {}};
