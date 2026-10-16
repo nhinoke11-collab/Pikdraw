@@ -164,8 +164,12 @@ unsupported_protocol, không gọi parser trong host.
   giữ nguyên payload v1 cho Page/Path/Text/FidelityReport/FidelityIssue và thêm `6=Layer`, `7=Group`.
   Layer trỏ tới các object gốc; Group trỏ tới các object con. Host kiểm thứ tự, ID, UTF-8/source ID,
   mọi tham chiếu, đúng một owner cho mỗi object, đồ thị không chu trình, issue locator và report
-  trước khi chấp nhận terminal frame. C6 host chỉ bật `format_id=SVG`, `profile_id=svg-hierarchy-v2`;
-  profile cũ `svg-flat-v1` không được dispatch.
+  trước khi chấp nhận terminal frame. Production worker dispatch chỉ nhận đúng các cặp profile đã đăng ký:
+  `format_id=SVG`, `profile_id=svg-hierarchy-v2` và `format_id=DXF`,
+  `profile_id=dxf-entities-v1`; profile khác không được dispatch. Với hai profile này host semantic
+  validator khớp profile report chính xác. Generic stream fixtures chỉ kiểm protocol, không phải
+  format adapters. DXF hiện chỉ được báo là worker profile; `FormatCapabilities::is_import_supported(Dxf)`
+  vẫn false cho tới khi app có consumer áp dụng proposal vào document bằng transaction và UI import flow.
 - **SVG profile `svg-hierarchy-v2`:** nguồn UTF-8 tĩnh tối đa 16 MiB, root có width/height rõ đơn vị,
   hỗ trợ `rect`, `path`, `text`, `<g>` lồng nhau và layer Inkscape ở cấp root qua namespace chính thức.
   Group giữ thứ tự/con trỏ con; layer giữ tên, source ID, visibility/lock hiện tại và danh sách object
@@ -177,7 +181,21 @@ unsupported_protocol, không gọi parser trong host.
   gồm group, depth 128, 6.000 verb/path, 100.000 path elements cộng dồn, 64 thuộc tính/tag, 256 KiB
   text/object, 16 MiB canonical stream và 1.000.000 mm mỗi chiều trang. Đây là phạm vi subset, chưa
   phải claim hỗ trợ SVG tổng quát.
-- Host đã kiểm semantic hierarchy cho SVG profile, nhưng document transaction/consumer apply và review
+- **DXF profile `dxf-entities-v1`:** chỉ nhận group-code lines dạng ASCII và value dạng UTF-8, tối đa
+  16 MiB/500.000 group pairs; yêu cầu
+  `$INSUNITS` tường minh và chỉ nhận inch, foot, mm, cm, m hoặc yard. Hỗ trợ modelspace 2D gồm
+  `LINE`, `ARC`, `CIRCLE`, `LWPOLYLINE` phẳng và bulge arc; chuyển mọi tọa độ sang mm/binary64.
+  Layer giữ tên, thứ tự, visible, frozen/locked và quan hệ entity. Màu chỉ nhận ACI 1–9; kiểu nét
+  chỉ nhận BYLAYER/CONTINUOUS. Kích thước trang proposal được tính từ bounds hình học, không đại diện
+  paper/layout extents nguồn. Profile từ chối unitless/đơn vị khác, entity lạ (kể cả INSERT/block),
+  paperspace, section/table không hỗ trợ, Z/thickness khác 0, normal OCS khác +Z, width,
+  linetype/override/TrueColor không hỗ trợ và dữ liệu bảng layer ngoài subset. Giới hạn:
+  10.000 entity, 6.000 path elements/entity,
+  tọa độ tối đa 1.000.000.000 mm và mỗi chiều trang tối đa 1.000.000 mm. Từ chối toàn nguồn bằng
+  structured worker error, không phát chunk dở dang. Đây không phải hỗ trợ DXF tổng quát và chưa xác
+  minh thông tin màu CAD theo nền, hiệu ứng hoặc round-trip.
+- Host kiểm semantic hierarchy/layer membership và profile report cho SVG, DXF. Tuy nhiên
+  document transaction/consumer apply và review
   tích hợp chưa hoàn tất. Vì vậy C6 vẫn Proposed; parser test pass không chứng minh import vào document,
   fidelity đầy đủ, lưu/mở document hoặc an toàn OS trên mọi máy.
 - Host ghi chunks vào job staging riêng thay vì giữ toàn scene trong RAM, nhưng validate record

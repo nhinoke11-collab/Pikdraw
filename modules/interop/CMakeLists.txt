@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(pikdraw_interop STATIC
+    src/adapters/dxf_importer.cpp
+    src/adapters/dxf_worker_adapter.cpp
     src/adapters/svg_importer.cpp
     src/adapters/svg_path_parser.cpp
     src/adapters/svg_xml_cursor.cpp
@@ -49,6 +51,8 @@ if(PIKDRAW_BUILD_TESTS)
     endmacro()
 
     add_interop_test(test_pikdraw_interop_capabilities tests/capabilities/test_capabilities.cpp)
+    add_interop_test(test_pikdraw_interop_dxf_adapter tests/adapters/test_dxf_adapter.cpp)
+    add_interop_test(test_pikdraw_interop_dxf_worker_adapter tests/adapters/test_dxf_worker_adapter.cpp)
     add_interop_test(test_pikdraw_interop_svg_adapter tests/adapters/test_svg_adapter.cpp)
     add_interop_test(test_pikdraw_interop_svg_worker_adapter tests/adapters/test_svg_worker_adapter.cpp)
     add_interop_test(test_pikdraw_interop_svg_exporter tests/writers/test_svg_exporter.cpp)

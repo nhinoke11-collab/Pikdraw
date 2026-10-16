@@ -223,6 +223,71 @@ void TestSvgHierarchyHostSemantics(const SourceSnapshot& source) {
     Require(!run(false, false, true), "host accepted a layer after object records began");
 }
 
+void TestDxfProfileHostSemantics(const SourceSnapshot& source) {
+    auto expected = BeginFor(source);
+    expected.format_id = "DXF";
+    expected.profile_id = "dxf-entities-v1";
+    auto unsupported = expected;
+    unsupported.profile_id = "dxf-full-v1";
+    V2ProposalStreamValidator unsupported_validator(unsupported, 64 * 1024, 128, 4);
+    Require(!unsupported_validator.IsReady(), "host enabled an unregistered DXF profile");
+
+    ImportPageRecord page{100, 50};
+    ImportLayerRecord layer{1, "layer", "CUT", true, false, {1}};
+    ImportPathRecord path;
+    path.local_id = 1;
+    path.source_id = "entity";
+    path.name = "LINE";
+    path.elements.push_back({ImportPathVerb::Move, 0, {}});
+    ImportFidelityReportRecord report;
+    report.coverage_profile = "dxf-entities-v1";
+    const std::vector<ImportRecordValue> values{page, layer, path, report};
+    V2ProposalChunk chunk;
+    chunk.job = expected.job;
+    for (const auto& value : values) {
+        const auto record = SerializeImportRecord(value);
+        Require(record && AppendV2ProposalRecord(chunk.canonical_record_bytes,
+            static_cast<uint16_t>(record->type), record->payload),
+            "could not encode valid DXF semantic records");
+        ++chunk.record_count;
+    }
+    chunk.checksum_crc32 = V2ProposalRecordsCrc32(chunk.canonical_record_bytes);
+    V2ProposalStreamValidator validator(expected, 64 * 1024, 128, 4);
+    Require(validator.IsReady(), "DXF host semantic validator did not initialize");
+    Require(validator.Accept(MakeFrame(SerializeV2ProposalChunk(chunk, 1))),
+            "host rejected a valid DXF layer/path proposal");
+
+    V2ImportEnd end;
+    end.job = expected.job;
+    end.chunk_count = 1;
+    end.record_count = chunk.record_count;
+    end.canonical_bytes = chunk.canonical_record_bytes.size();
+    end.fidelity_report_complete = true;
+    Require(Digest(chunk.canonical_record_bytes, end.canonical_sha256),
+            "could not hash valid DXF semantic records");
+    Require(validator.Accept(MakeFrame(SerializeV2ImportEnd(end, 2))) &&
+                validator.IsComplete(),
+            "host did not complete a valid DXF proposal");
+
+    auto wrong_report = values;
+    std::get<ImportFidelityReportRecord>(wrong_report.back()).coverage_profile =
+        "svg-hierarchy-v2";
+    V2ProposalChunk wrong_chunk;
+    wrong_chunk.job = expected.job;
+    for (const auto& value : wrong_report) {
+        const auto record = SerializeImportRecord(value);
+        Require(record && AppendV2ProposalRecord(wrong_chunk.canonical_record_bytes,
+            static_cast<uint16_t>(record->type), record->payload),
+            "could not encode wrong-profile DXF records");
+        ++wrong_chunk.record_count;
+    }
+    wrong_chunk.checksum_crc32 = V2ProposalRecordsCrc32(wrong_chunk.canonical_record_bytes);
+    V2ProposalStreamValidator wrong_profile(expected, 64 * 1024, 128, 4);
+    Require(wrong_profile.IsReady(), "DXF validator did not initialize for wrong-report test");
+    Require(!wrong_profile.Accept(MakeFrame(SerializeV2ProposalChunk(wrong_chunk, 1))),
+            "host accepted a DXF stream carrying the SVG coverage profile");
+}
+
 void TestPositiveStream(const SourceSnapshot& source) {
     WorkerProcessHost host;
     Require(StartNegotiated(host, source, L"--test-v2-stream-good"), "v2 fixture negotiation failed");
@@ -306,6 +371,7 @@ int main() {
 
         TestPositiveStream(*source);
         TestSvgHierarchyHostSemantics(*source);
+        TestDxfProfileHostSemantics(*source);
         for (const auto* mode : {
                  L"--test-v2-stream-gap", L"--test-v2-stream-oversize", L"--test-v2-stream-quota",
                  L"--test-v2-stream-no-end", L"--test-v2-stream-bad-crc", L"--test-v2-stream-bad-hash",

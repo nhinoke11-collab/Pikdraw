@@ -55,6 +55,16 @@
       "all_references_resolve": true,
       "each_object_has_one_owner": true,
       "expected_valid": true
+    },
+    {
+      "name": "dxf_planar_entities_with_source_layers",
+      "format_id": "DXF",
+      "profile_id": "dxf-entities-v1",
+      "records": ["Page", "Layer", "Path", "FidelityReport"],
+      "units_converted_to_mm": true,
+      "all_references_resolve": true,
+      "each_object_has_one_owner": true,
+      "expected_valid": true
     }
   ],
   "negative_vectors": [
@@ -127,6 +137,21 @@
       "name": "svg_layer_after_object_records",
       "stage": "host_import_semantics",
       "expected_error": "invalid_svg_import_record_order_hierarchy_or_reference"
+    },
+    {
+      "name": "dxf_report_uses_wrong_profile",
+      "format_id": "DXF",
+      "profile_id": "dxf-entities-v1",
+      "stage": "host_import_semantics",
+      "expected_error": "profile_mismatch"
+    },
+    {
+      "name": "unsupported_dxf_entity_no_partial_stream",
+      "format_id": "DXF",
+      "profile_id": "dxf-entities-v1",
+      "entity": "ELLIPSE",
+      "stage": "worker_adapter",
+      "expected_error": "structured_error_without_proposal_chunks"
     },
     {
       "name": "eof_before_import_end",

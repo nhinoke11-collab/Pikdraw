@@ -66,4 +66,13 @@ if(PIKDRAW_BUILD_TESTS)
     )
     add_dependencies(test_pikdraw_worker_svg_import spike_worker)
     add_test(NAME test_pikdraw_worker_svg_import COMMAND test_pikdraw_worker_svg_import)
+
+    add_executable(test_pikdraw_worker_dxf_import
+        tests/dxf_worker_import_tests.cpp
+    )
+    target_link_libraries(test_pikdraw_worker_dxf_import PRIVATE
+        pikdraw_worker_common
+    )
+    add_dependencies(test_pikdraw_worker_dxf_import spike_worker)
+    add_test(NAME test_pikdraw_worker_dxf_import COMMAND test_pikdraw_worker_dxf_import)
 endif()

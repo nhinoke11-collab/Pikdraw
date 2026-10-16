@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace pikdraw::interop {
@@ -66,6 +67,23 @@ public:
             case FormatType::Cdr:
             case FormatType::Ai:
                 return false; // Reported as unsupported without silent flattening
+        }
+        return false;
+    }
+
+    [[nodiscard]] static bool is_worker_import_profile_supported(
+        FormatType type, std::string_view profile) noexcept {
+        switch (type) {
+            case FormatType::Svg:
+                return profile == "svg-hierarchy-v2";
+            case FormatType::Dxf:
+                return profile == "dxf-entities-v1";
+            case FormatType::Pdf:
+            case FormatType::Png:
+            case FormatType::Jpeg:
+            case FormatType::Cdr:
+            case FormatType::Ai:
+                return false;
         }
         return false;
     }

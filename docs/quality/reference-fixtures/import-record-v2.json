@@ -44,7 +44,7 @@
     "group_graph": "Group references are ordered, acyclic and have one owner; each Group child local ID is greater than its parent local ID",
     "source_ids": "nonempty and unique across layers and object records within the proposal",
     "Page": "positive page width_mm and height_mm within the selected import profile",
-    "FidelityReport": "coverage_profile is svg-hierarchy-v2; issue_count equals preceding FidelityIssue record count; unsupported issues are not accepted",
+    "FidelityReport": "coverage_profile equals the exact profile selected by the host; issue_count equals preceding FidelityIssue record count; unsupported issues are not accepted",
     "FidelityIssue": "source_locator is empty or resolves to a source ID in this proposal"
   },
   "svg_profile": {
@@ -69,6 +69,34 @@
     },
     "unsupported_policy": "reject entire source and emit no proposal chunks"
   },
+  "dxf_profile": {
+    "format_id": "DXF",
+    "profile_id": "dxf-entities-v1",
+    "encoding": "ASCII group-code lines with UTF-8 values",
+    "units": {
+      "required_header_variable": "$INSUNITS",
+      "accepted_values": {"1": "inch", "2": "foot", "4": "mm", "5": "cm", "6": "m", "10": "yard"},
+      "canonical_unit": "mm",
+      "unitless_or_unknown": "reject"
+    },
+    "supported_entities": ["LINE", "ARC", "CIRCLE", "LWPOLYLINE"],
+    "polyline": "2D planar; closed flag and per-vertex bulge arcs are preserved as path verbs",
+    "layers": "source order, names, visible, frozen/locked state and entity membership",
+    "styles": "ACI 1-9 and BYLAYER/CONTINUOUS only",
+    "page_extent": "computed from imported geometry bounds; source paper/layout extent is not represented",
+    "unsupported": ["binary DXF", "missing or unknown units", "nonzero Z/thickness/elevation", "non-default OCS", "paper space", "INSERT/block", "all other entities", "unrecognized sections", "widths", "TrueColor", "unsupported linetype or entity style overrides", "unsupported layer table fields"],
+    "limits": {
+      "source_bytes": 16777216,
+      "group_pairs": 500000,
+      "entities": 10000,
+      "path_elements_per_entity": 6000,
+      "coordinate_mm": 1000000000,
+      "page_dimension_mm": 1000000,
+      "canonical_stream_bytes": 16777216,
+      "response_chunks": 64
+    },
+    "unsupported_policy": "reject entire source and emit no proposal chunks"
+  },
   "positive_vectors": [
     {
       "name": "two_layers_nested_groups_paths_and_unicode_text",
@@ -82,6 +110,15 @@
       "name": "flat_svg_gets_default_layer",
       "record_order": [1, 6, 2, 4],
       "layer_source_id": "svg-default-layer",
+      "expected_valid": true
+    },
+    {
+      "name": "dxf_entities_preserve_layers_and_bulge_arc",
+      "format_id": "DXF",
+      "profile_id": "dxf-entities-v1",
+      "records": ["Page", "Layer", "Path", "FidelityReport"],
+      "units": "explicit_insunits_to_mm",
+      "object_owner_count": "exactly_one_per_object",
       "expected_valid": true
     }
   ],
@@ -110,6 +147,20 @@
       "name": "legacy_flat_profile_not_enabled",
       "profile_id": "svg-flat-v1",
       "expected_error": "unsupported_import_profile"
+    },
+    {
+      "name": "dxf_report_profile_mismatch",
+      "format_id": "DXF",
+      "profile_id": "dxf-entities-v1",
+      "coverage_profile": "svg-hierarchy-v2",
+      "expected_valid": false
+    },
+    {
+      "name": "unsupported_dxf_entity_rejected_atomically",
+      "format_id": "DXF",
+      "profile_id": "dxf-entities-v1",
+      "entity": "ELLIPSE",
+      "expected_error": "source_rejected_no_partial_proposal"
     }
   ]
 }

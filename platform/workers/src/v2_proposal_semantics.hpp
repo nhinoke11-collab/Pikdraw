@@ -26,6 +26,7 @@ struct V2ProposalStreamValidator::SemanticState {
   uint32_t next_object_id{1};
   uint32_t issue_count{0};
   uint64_t records_seen{0};
+  std::string expected_coverage_profile;
   std::unordered_set<std::string> source_ids;
   std::vector<std::vector<uint32_t>> layer_roots;
   std::unordered_map<uint32_t, ObjectInfo> objects;

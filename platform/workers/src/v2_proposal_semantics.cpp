@@ -68,7 +68,8 @@ bool V2ProposalStreamValidator::SemanticState::Consume(
     if (!report ||
         (phase != Phase::Layers && phase != Phase::Objects &&
          phase != Phase::Issues) ||
-        layer_roots.empty() || report->coverage_profile != "svg-hierarchy-v2" ||
+        layer_roots.empty() ||
+        report->coverage_profile != expected_coverage_profile ||
         report->issue_count != issue_count ||
         report->coverage != ImportCoverage::Partial ||
         report->parse_outcome !=

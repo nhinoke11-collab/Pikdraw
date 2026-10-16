@@ -1,5 +1,7 @@
 #include "v2_worker_protocol.hpp"
 
+#include "pikdraw/interop/adapters/dxf_importer.hpp"
+#include "pikdraw/interop/adapters/dxf_worker_adapter.hpp"
 #include "pikdraw/interop/adapters/svg_worker_adapter.hpp"
 #include "pikdraw/workers/source_snapshot.hpp"
 
@@ -130,7 +132,8 @@ bool VerifySource(HANDLE source, const V2ImportBegin& request) {
 
 bool ReadVerifiedSource(HANDLE source, uint64_t expected_bytes, std::vector<uint8_t>& bytes) {
     if (source == INVALID_HANDLE_VALUE || expected_bytes == 0 ||
-        expected_bytes > SvgImporter::kMaxSourceBytes || expected_bytes > SIZE_MAX) return false;
+        expected_bytes > std::max(SvgImporter::kMaxSourceBytes, DxfImporter::kMaxSourceBytes) ||
+        expected_bytes > SIZE_MAX) return false;
     LARGE_INTEGER beginning{};
     if (!SetFilePointerEx(source, beginning, nullptr, FILE_BEGIN)) return false;
     try {
@@ -153,16 +156,22 @@ bool ReadVerifiedSource(HANDLE source, uint64_t expected_bytes, std::vector<uint
 
 bool SendError(HANDLE output, uint32_t sequence, uint32_t code, const char* diagnostic);
 
-bool SendSvgProposal(HANDLE output, const V2ImportBegin& request,
-                     std::span<const uint8_t> source, uint32_t request_sequence) {
+template <typename Builder>
+bool SendImportProposal(HANDLE output, const V2ImportBegin& request,
+                        std::span<const uint8_t> source,
+                        uint32_t request_sequence, std::string_view format,
+                        size_t max_records, Builder&& build_records) {
     const uint32_t first_response_sequence = request_sequence;
     std::vector<CanonicalImportRecord> records;
     std::string diagnostic;
-    if (!BuildSvgImportRecords(source, records, diagnostic)) {
-        return SendError(output, request_sequence, 3, diagnostic.empty() ? "SVG subset rejected source" : diagnostic.c_str());
+    if (!build_records(source, records, diagnostic)) {
+        const char* fallback = format == "DXF" ? "DXF subset rejected source"
+                                                : "SVG subset rejected source";
+        return SendError(output, request_sequence, 3,
+                         diagnostic.empty() ? fallback : diagnostic.c_str());
     }
-    if (records.empty() || records.size() > SvgImporter::kMaxObjects * 2 + 2) {
-        return SendError(output, request_sequence, 4, "SVG proposal record count exceeds profile");
+    if (records.empty() || records.size() > max_records) {
+        return SendError(output, request_sequence, 4, "import proposal record count exceeds profile");
     }
 
     std::vector<uint8_t> canonical_stream;
@@ -179,12 +188,12 @@ bool SendSvgProposal(HANDLE output, const V2ImportBegin& request,
             const size_t framed_bytes = 8 + record.payload.size();
             if (record.payload.size() > IPC_V2_MAX_RECORD_BYTES || framed_bytes > chunk_target_bytes ||
                 framed_bytes > max_stream_bytes - canonical_stream.size()) {
-                return SendError(output, request_sequence, 4, "SVG proposal exceeds bounded record or byte profile");
+                return SendError(output, request_sequence, 4, "import proposal exceeds bounded record or byte profile");
             }
             if (chunk.record_count > 0 && chunk.canonical_record_bytes.size() + framed_bytes > chunk_target_bytes) {
                 chunk.checksum_crc32 = V2ProposalRecordsCrc32(chunk.canonical_record_bytes);
                 chunks.push_back(std::move(chunk));
-                if (chunks.size() >= 64) return SendError(output, request_sequence, 4, "SVG proposal has too many chunks");
+                if (chunks.size() >= 64) return SendError(output, request_sequence, 4, "import proposal has too many chunks");
                 chunk = {};
                 chunk.job = request.job;
                 chunk.chunk_ordinal = static_cast<uint32_t>(chunks.size());
@@ -193,7 +202,7 @@ bool SendSvgProposal(HANDLE output, const V2ImportBegin& request,
             }
             if (!AppendV2ProposalRecord(chunk.canonical_record_bytes, static_cast<uint16_t>(record.type), record.payload) ||
                 !AppendV2ProposalRecord(canonical_stream, static_cast<uint16_t>(record.type), record.payload)) {
-                return SendError(output, request_sequence, 4, "SVG proposal record could not be framed");
+                return SendError(output, request_sequence, 4, "import proposal record could not be framed");
             }
             ++chunk.record_count;
             ++next_record_ordinal;
@@ -201,10 +210,10 @@ bool SendSvgProposal(HANDLE output, const V2ImportBegin& request,
         chunk.checksum_crc32 = V2ProposalRecordsCrc32(chunk.canonical_record_bytes);
         chunks.push_back(std::move(chunk));
     } catch (...) {
-        return SendError(output, request_sequence, 4, "SVG proposal allocation failed");
+        return SendError(output, request_sequence, 4, "import proposal allocation failed");
     }
     IpcV2Digest digest{};
-    if (chunks.empty() || !HashBytes(canonical_stream, digest)) return SendError(output, request_sequence, 4, "SVG proposal digest failed");
+    if (chunks.empty() || !HashBytes(canonical_stream, digest)) return SendError(output, request_sequence, 4, "import proposal digest failed");
     for (size_t index = 0; index < chunks.size(); ++index) {
         chunks[index].chunk_ordinal = static_cast<uint32_t>(index);
         chunks[index].checksum_crc32 = V2ProposalRecordsCrc32(chunks[index].canonical_record_bytes);
@@ -253,14 +262,30 @@ bool HandleImportBegin(
     const auto request = DeserializeV2ImportBegin(packet);
     if (!request || header.sequence_id != 1 || (accepted_features & required) != required) return false;
     if (!VerifySource(source, *request)) return SendError(output, header.sequence_id, 2, "source capability hash mismatch");
-    if (request->format_id != "SVG" || request->profile_id != "svg-hierarchy-v2") {
+    const bool is_svg = request->format_id == "SVG" &&
+        FormatCapabilities::is_worker_import_profile_supported(
+            FormatType::Svg, request->profile_id);
+    const bool is_dxf = request->format_id == "DXF" &&
+        FormatCapabilities::is_worker_import_profile_supported(
+            FormatType::Dxf, request->profile_id);
+    if (!is_svg && !is_dxf) {
         return SendError(output, header.sequence_id, 1, "unsupported format or profile");
+    }
+    const uint64_t source_limit = is_dxf ? DxfImporter::kMaxSourceBytes
+                                         : SvgImporter::kMaxSourceBytes;
+    if (request->source_bytes > source_limit) {
+        return SendError(output, header.sequence_id, 4, "source exceeds import profile byte limit");
     }
     std::vector<uint8_t> source_bytes;
     if (!ReadVerifiedSource(source, request->source_bytes, source_bytes)) {
         return SendError(output, header.sequence_id, 2, "source capability read failed");
     }
-    return SendSvgProposal(output, *request, source_bytes, header.sequence_id);
+    if (is_dxf) {
+        return SendImportProposal(output, *request, source_bytes, header.sequence_id,
+            "DXF", DxfImporter::kMaxObjects * 4 + 2, BuildDxfImportRecords);
+    }
+    return SendImportProposal(output, *request, source_bytes, header.sequence_id,
+        "SVG", SvgImporter::kMaxObjects * 2 + 2, BuildSvgImportRecords);
 }
 
 bool SendFixtureStream(HANDLE output, const V2ImportBegin& request, uint32_t sequence, std::string_view mode) {

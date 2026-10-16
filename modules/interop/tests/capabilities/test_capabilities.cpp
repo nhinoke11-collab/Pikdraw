@@ -9,9 +9,18 @@ void test_format_capabilities() {
     assert(FormatCapabilities::is_import_supported(FormatType::Png));
     assert(FormatCapabilities::is_import_supported(FormatType::Jpeg));
 
+    assert(!FormatCapabilities::is_import_supported(FormatType::Dxf));
+    assert(FormatCapabilities::is_worker_import_profile_supported(
+        FormatType::Svg, "svg-hierarchy-v2"));
+    assert(FormatCapabilities::is_worker_import_profile_supported(
+        FormatType::Dxf, "dxf-entities-v1"));
+    assert(!FormatCapabilities::is_worker_import_profile_supported(
+        FormatType::Dxf, "dxf-full-v1"));
+
     // Proprietary formats without parser sandboxes must be unsupported
     assert(!FormatCapabilities::is_import_supported(FormatType::Cdr));
     assert(!FormatCapabilities::is_import_supported(FormatType::Ai));
+    assert(!FormatCapabilities::is_import_supported(FormatType::Pdf));
 
     assert(FormatCapabilities::is_export_supported(FormatType::Svg));
     assert(FormatCapabilities::is_export_supported(FormatType::Pdf));

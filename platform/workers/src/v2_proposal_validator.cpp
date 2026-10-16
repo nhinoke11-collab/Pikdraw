@@ -1,5 +1,6 @@
 #include "v2_proposal_validator.hpp"
 #include "v2_proposal_semantics.hpp"
+#include "pikdraw/interop/capabilities/format_capabilities.hpp"
 
 #include <bcrypt.h>
 #include <algorithm>
@@ -158,12 +159,24 @@ V2ProposalStreamValidator::V2ProposalStreamValidator(
       max_chunks_(max_chunks) {
     digest_.reset(new (std::nothrow) DigestState());
     const bool is_svg = expected_.format_id == "SVG";
-    const bool supported_svg_profile = !is_svg || expected_.profile_id == "svg-hierarchy-v2";
-    if (is_svg && supported_svg_profile) semantic_.reset(new (std::nothrow) SemanticState());
+    const bool is_dxf = expected_.format_id == "DXF";
+    const bool supported_svg_profile = is_svg &&
+        FormatCapabilities::is_worker_import_profile_supported(
+            FormatType::Svg, expected_.profile_id);
+    const bool supported_dxf_profile = is_dxf &&
+        FormatCapabilities::is_worker_import_profile_supported(
+            FormatType::Dxf, expected_.profile_id);
+    const bool supported_profile =
+        (!is_svg && !is_dxf) || supported_svg_profile || supported_dxf_profile;
+    const bool requires_semantics = is_svg || is_dxf;
+    if (requires_semantics && supported_profile) {
+        semantic_.reset(new (std::nothrow) SemanticState());
+        if (semantic_) semantic_->expected_coverage_profile = expected_.profile_id;
+    }
     ready_ = digest_ && max_canonical_bytes_ > 0 && max_records_ > 0 && max_chunks_ > 0 &&
              !expected_.job.document_id.empty() && expected_.source_bytes > 0 &&
-             supported_svg_profile && (!is_svg || semantic_) && digest_->sha.Start();
-    if (!supported_svg_profile) failure_ = "unsupported SVG import profile";
+             supported_profile && (!requires_semantics || semantic_) && digest_->sha.Start();
+    if (!supported_profile) failure_ = "unsupported format import profile";
     else if (!ready_) failure_ = "v2 validator initialization failed";
 }
 
@@ -197,7 +210,7 @@ bool V2ProposalStreamValidator::Accept(const pikdraw::interop::IpcV2Frame& frame
                 return reject("v2 proposal record or canonical byte quota exceeded");
             }
             if (semantic_ && !semantic_->ConsumeChunk(chunk->canonical_record_bytes, chunk->record_count)) {
-                return reject("invalid SVG import record order, hierarchy, or reference");
+                return reject("invalid import record order, hierarchy, or reference");
             }
             if (!digest_->sha.Update(chunk->canonical_record_bytes)) return reject("v2 canonical SHA-256 update failed");
             ++chunk_count_;
@@ -211,7 +224,7 @@ bool V2ProposalStreamValidator::Accept(const pikdraw::interop::IpcV2Frame& frame
         if (!end) return reject("malformed v2 import end");
         if (!end->job.IsMatching(expected_.job)) return reject("v2 import end job/source identity mismatch");
         if (!end->fidelity_report_complete) return reject("v2 fidelity report is incomplete");
-        if (semantic_ && !semantic_->IsComplete()) return reject("v2 SVG fidelity report or hierarchy is incomplete");
+        if (semantic_ && !semantic_->IsComplete()) return reject("v2 fidelity report or hierarchy is incomplete");
         if (end->chunk_count != chunk_count_ || end->record_count != record_count_ ||
             end->canonical_bytes != canonical_bytes_) return reject("v2 final chunk/record/byte count mismatch");
 
