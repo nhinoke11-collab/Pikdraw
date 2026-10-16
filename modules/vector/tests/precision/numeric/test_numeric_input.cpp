@@ -209,7 +209,7 @@ void rejects_invalid_or_unsafe_inputs() {
         }
         return expression;
     };
-    const std::string token_boundary = repeated_sum(64);
+    const std::string token_boundary = "+" + repeated_sum(64);
     const std::string too_many_tokens = repeated_sum(65);
     check(static_cast<bool>(numeric::parse_quantity(token_boundary)),
           "expression at the token-count boundary is accepted");
