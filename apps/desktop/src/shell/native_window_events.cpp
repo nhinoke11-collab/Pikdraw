@@ -417,6 +417,12 @@ void NativeWindow::activate_toolbox_effect_item(int item) {
         execute_menu_action(static_cast<int>(MenuActionId::ObjectProperties));
         return;
     }
+    if (item == 3) {
+        toolbox_open_group_ = 0;
+        workflow().cancel_effect_draft();
+        set_active_tool(13);
+        return;
+    }
     if (item < 1 || item > 2) return;
 
     const auto action = item == 1 ? MenuActionId::EffectsGaussianBlur
@@ -446,17 +452,22 @@ bool NativeWindow::handle_toolbox_key(WPARAM key, bool alt_pressed, bool shift_p
             : std::string(group) + " · Tab/Shift+Tab groups · Alt+Down opens · Esc returns";
     };
     const auto set_item_hint = [&]() {
-        const char *labels_en[3][3] = {
-            {"Rectangle", "Ellipse", "Polygon"},
-            {"Line", "Polyline", "Pen"},
-            {"Appearance Properties", "Gaussian Blur", "Drop Shadow"}};
-        const char *labels_vi[3][3] = {
-            {"Hình chữ nhật", "Hình elip", "Đa giác"},
-            {"Đoạn thẳng", "Đường gấp khúc", "Pen"},
-            {"Thuộc tính diện mạo", "Gaussian Blur", "Drop Shadow"}};
+        const char *labels_en[3][4] = {
+            {"Rectangle", "Ellipse", "Polygon", ""},
+            {"Line", "Polyline", "Pen", ""},
+            {"Appearance Properties", "Gaussian Blur", "Drop Shadow", "Gradient"}};
+        const char *labels_vi[3][4] = {
+            {"Hình chữ nhật", "Hình elip", "Đa giác", ""},
+            {"Đoạn thẳng", "Đường gấp khúc", "Pen", ""},
+            {"Thuộc tính diện mạo", "Gaussian Blur", "Drop Shadow", "Chuyển sắc"}};
         const int group_index = std::clamp(toolbox_focus_group_ - 1, 0, 2);
-        const int item_index = std::clamp(toolbox_flyout_index_, 0, 2);
-        if (toolbox_focus_group_ == 3 && item_index > 0) {
+        const int max_items = toolbox_focus_group_ == 3 ? 4 : 3;
+        const int item_index = std::clamp(toolbox_flyout_index_, 0, max_items - 1);
+        if (toolbox_focus_group_ == 3 && item_index == 3) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Sửa màu chuyển sắc bằng tay nắm trên đối tượng · Enter chọn · Esc đóng"
+                : "Edit a path fill using gradient handles · Enter choose · Esc closes";
+        } else if (toolbox_focus_group_ == 3 && item_index > 0) {
             const auto parameters = item_index == 1
                 ? document::EffectParameters{document::GaussianBlurEffect{1.0, 1.0}}
                 : document::EffectParameters{document::DropShadowEffect{}};
@@ -515,7 +526,8 @@ bool NativeWindow::handle_toolbox_key(WPARAM key, bool alt_pressed, bool shift_p
             return true;
         }
         if (key == VK_UP || key == VK_DOWN) {
-            toolbox_flyout_index_ = (toolbox_flyout_index_ + (key == VK_UP ? 2 : 1)) % 3;
+            const int max_items = toolbox_open_group_ == 3 ? 4 : 3;
+            toolbox_flyout_index_ = (toolbox_flyout_index_ + (key == VK_UP ? max_items - 1 : 1)) % max_items;
             set_item_hint();
             return true;
         }
@@ -1184,7 +1196,7 @@ bool NativeWindow::handle_gradient_property_click(int x, int y) {
             ? "Góc quay: " + std::to_string(static_cast<int>(proj.angle_degrees)) + "°"
             : "Angle: " + std::to_string(static_cast<int>(proj.angle_degrees)) + "°";
     } else if (x >= 675 && x < 735) {
-        gradient_tool_->presenter().add_stop(0.5, color::ColorValue{color::RGBColor{255, 200, 50}});
+        gradient_tool_->presenter().add_stop(0.5, color::ColorValue{color::RGBColor{1.0, 0.784, 0.196, 1.0}});
         status_msg_ = language_ == UILanguage::Vietnamese ? "Đã thêm điểm dừng màu ở vị trí 50%" : "Added color stop at 50%";
     } else if (x >= 745 && x < 815) {
         if (gradient_tool_->apply()) {
@@ -1195,6 +1207,53 @@ bool NativeWindow::handle_gradient_property_click(int x, int y) {
         status_msg_ = language_ == UILanguage::Vietnamese ? "Đã hủy thay đổi chuyển sắc" : "Cancelled gradient edits";
     } else {
         return false;
+    }
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    return true;
+}
+
+bool NativeWindow::handle_gradient_pointer_down(int x, int y, unsigned modifiers) {
+    if (active_tool_ != 13 || !gradient_tool_ || !gradient_tool_->active() || is_panning_)
+        return false;
+    if (!is_canvas_point(x, y))
+        return false;
+    const auto world_pt = canvas_to_world(x, y);
+    const bool shift = (modifiers & MK_SHIFT) != 0;
+    const bool ctrl = (modifiers & MK_CONTROL) != 0;
+    gradient_tool_->on_pointer_down(world_pt, shift, ctrl);
+    if (hwnd_) SetCapture(hwnd_);
+    status_msg_ = language_ == UILanguage::Vietnamese
+        ? "Đang kéo chỉnh Gradient · Giữ Shift khóa góc 15° · Thả chuột để áp dụng"
+        : "Dragging Gradient · Hold Shift for 15° snap · Release mouse to apply";
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    return true;
+}
+
+bool NativeWindow::handle_gradient_pointer_move(int x, int y, unsigned modifiers) {
+    if (active_tool_ != 13 || !gradient_tool_ || !gradient_tool_->active() || is_panning_)
+        return false;
+    if (GetCapture() != hwnd_)
+        return false;
+    const auto world_pt = canvas_to_world(x, y);
+    const bool shift = (modifiers & MK_SHIFT) != 0;
+    const bool ctrl = (modifiers & MK_CONTROL) != 0;
+    gradient_tool_->on_pointer_move(world_pt, shift, ctrl);
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    return true;
+}
+
+bool NativeWindow::handle_gradient_pointer_up(int x, int y, unsigned modifiers) {
+    (void)modifiers;
+    if (active_tool_ != 13 || !gradient_tool_ || !gradient_tool_->active())
+        return false;
+    if (GetCapture() == hwnd_)
+        ReleaseCapture();
+    const auto world_pt = canvas_to_world(x, y);
+    const bool committed = gradient_tool_->on_pointer_up(world_pt);
+    if (committed) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đã áp dụng chuyển sắc vào đối tượng · Ctrl+Z để hoàn tác"
+            : "Applied gradient fill to object · Ctrl+Z to undo";
     }
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
     return true;
@@ -1821,11 +1880,12 @@ void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
-            int color_start_x = (!selection.empty()) ? 754 : 698;
-            if (x >= color_start_x && x <= color_start_x + 36) { apply_fill_to_selection("#00f2c3"); return; }
-            if (x >= color_start_x + 40 && x <= color_start_x + 76) { apply_fill_to_selection("#0ea5e9"); return; }
-            if (x >= color_start_x + 80 && x <= color_start_x + 116) { apply_fill_to_selection("#eab308"); return; }
-            if (x >= color_start_x + 120 && x <= color_start_x + 156) { apply_fill_to_selection("#ef4444"); return; }
+            int opacity_x = (!selection.empty()) ? 754 : 698;
+            if (selection.size() == 1 && workflow().can_set_selected_object_opacity() &&
+                x >= opacity_x && x <= opacity_x + 124) {
+                start_numeric_input(NumericFieldId::ObjectOpacity);
+                return;
+            }
             return;
         } else if (selection.empty()) {
             // PAGE MODE (Direct Numeric Input + Compact Preset Combobox)
@@ -1851,7 +1911,7 @@ void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
             if (x >= 290 && x <= 360) { commit_numeric_field(); toggle_aspect_ratio_lock(); InvalidateRect(hwnd_, nullptr, FALSE); return; } // Lock toggle
             if (x >= 365 && x <= 460) { start_numeric_input(NumericFieldId::ObjectHeight); return; } // H box
             if (selection.size() == 1 && workflow().can_set_selected_object_opacity() &&
-                x >= 820 && x <= 944 && x + 124 <= w - 280) {
+                x >= 720 && x <= 844 && x + 124 <= w - 280) {
                 start_numeric_input(NumericFieldId::ObjectOpacity);
                 return;
             }
@@ -1933,13 +1993,6 @@ void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
                 }
             }
 
-            int color_start_x = (selection.size() == 1 && workflow().is_group(selection.front())) ? 920
-                              : (selection.size() == 1) ? 780
-                              : (selection.size() >= 2) ? 1160
-                              : is_in_isolation_mode() ? 676 : 580;
-            if (x >= color_start_x && x <= color_start_x + 36) { apply_fill_to_selection("#00f2c3"); return; }
-            if (x >= color_start_x + 40 && x <= color_start_x + 76) { apply_fill_to_selection("#0ea5e9"); return; }
-            if (x >= color_start_x + 80 && x <= color_start_x + 116) { apply_fill_to_selection("#eab308"); return; }
         }
         return;
     }
@@ -1975,11 +2028,13 @@ void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
         const int group_row = toolbox_open_group_ == 1 ? 1
                             : toolbox_open_group_ == 2 ? 2 : 6;
         const int flyout_top = 112 + group_row * 42;
+        const int flyout_height = toolbox_open_group_ == 3 ? 145 : 116;
         const bool inside_flyout = x >= 54 && x <= 242 &&
-            y >= flyout_top && y < flyout_top + 116;
+            y >= flyout_top && y < flyout_top + flyout_height;
         if (inside_flyout && y >= flyout_top + 26) {
             const int item = (y - flyout_top - 26) / 29;
-            if (item >= 0 && item < 3) {
+            const int max_items = toolbox_open_group_ == 3 ? 4 : 3;
+            if (item >= 0 && item < max_items) {
                 if (toolbox_open_group_ == 3) {
                     activate_toolbox_effect_item(item);
                     InvalidateRect(hwnd_, nullptr, FALSE);
@@ -2159,6 +2214,8 @@ void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
         return;
     if (handle_pen_pointer_down(x, y, modifiers))
         return;
+    if (handle_gradient_pointer_down(x, y, modifiers))
+        return;
     if (handle_drawing_click(x, y, modifiers))
         return;
 
@@ -2220,9 +2277,11 @@ void NativeWindow::handle_mouse_move(int x, int y, unsigned modifiers) {
         const int group_row = toolbox_open_group_ == 1 ? 1
                             : toolbox_open_group_ == 2 ? 2 : 6;
         const int flyout_top = 112 + group_row * 42;
-        if (x >= 54 && x <= 242 && y >= flyout_top + 26 && y < flyout_top + 116) {
+        const int flyout_height = toolbox_open_group_ == 3 ? 145 : 116;
+        const int max_items = toolbox_open_group_ == 3 ? 4 : 3;
+        if (x >= 54 && x <= 242 && y >= flyout_top + 26 && y < flyout_top + flyout_height) {
             const int item = (y - flyout_top - 26) / 29;
-            if (item >= 0 && item < 3 && toolbox_flyout_index_ != item) {
+            if (item >= 0 && item < max_items && toolbox_flyout_index_ != item) {
                 toolbox_flyout_index_ = item;
                 if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
             }
@@ -2233,7 +2292,7 @@ void NativeWindow::handle_mouse_move(int x, int y, unsigned modifiers) {
 
     if (toolbox_open_group_ == 3) {
         const int flyout_top = 112 + 6 * 42;
-        if (x >= 54 && x <= 242 && y >= flyout_top + 26 && y < flyout_top + 116) {
+        if (x >= 54 && x <= 242 && y >= flyout_top + 26 && y < flyout_top + 145) {
             const int item = (y - flyout_top - 26) / 29;
             if (item == 1 || item == 2) {
                 const auto parameters = item == 1
@@ -2256,6 +2315,13 @@ void NativeWindow::handle_mouse_move(int x, int y, unsigned modifiers) {
                     tooltip_.text = existing
                         ? L"Select the existing effect to edit; no new node is created. Full settings are in Properties."
                         : L"Add the default once; select it again to edit in Properties.";
+            } else if (item == 3) {
+                tooltip_.visible = true;
+                tooltip_.x = x;
+                tooltip_.y = y;
+                tooltip_.text = language_ == UILanguage::Vietnamese
+                    ? L"Sửa màu chuyển sắc bằng tay nắm trên đối tượng."
+                    : L"Edit a path fill using gradient handles.";
             }
         }
     }
@@ -2380,6 +2446,10 @@ void NativeWindow::handle_mouse_move(int x, int y, unsigned modifiers) {
         handle_node_pointer_move(x, y, modifiers))
         return;
 
+    if (active_tool_ == 13 && gradient_tool_ && gradient_tool_->active() && !is_panning_ &&
+        handle_gradient_pointer_move(x, y, modifiers))
+        return;
+
     if (drawing_tool_ && drawing_tool_->active() && !is_panning_) {
         if (is_canvas_point(x, y)) {
             drawing_tool_->pointer_move(canvas_to_world(x, y), root().renderer().camera(),
@@ -2490,6 +2560,8 @@ void NativeWindow::handle_mouse_up(int x, int y, unsigned modifiers) {
         return;
     if (handle_node_pointer_up(x, y, modifiers))
         return;
+    if (handle_gradient_pointer_up(x, y, modifiers))
+        return;
     if (drawing_tool_ && drawing_tool_->active())
         return;
     handle_canvas_mouse_up(x, y, modifiers);
@@ -2514,6 +2586,40 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         if (self && self->active_numeric_field() != NumericFieldId::None) {
             self->handle_numeric_char_input(static_cast<wchar_t>(wParam));
             return 0;
+        }
+        if (self && self->is_quick_dimension_active() && !self->is_inline_text_editing_) {
+            if (wParam == VK_BACK) {
+                if (!self->quick_dimension_buffer_.empty()) {
+                    self->quick_dimension_buffer_.pop_back();
+                    self->status_msg_ = (self->language_ == UILanguage::Vietnamese ? "Kích thước: " : "Dimensions: ") +
+                                        self->quick_dimension_buffer_ +
+                                        (self->language_ == UILanguage::Vietnamese ? " mm (Enter để nhận, Esc hủy)" : " mm (Enter to apply, Esc to cancel)");
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
+                return 0;
+            }
+            if (wParam == VK_RETURN) {
+                self->apply_quick_dimension();
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (wParam == VK_ESCAPE) {
+                self->end_quick_dimension();
+                self->status_msg_ = self->language_ == UILanguage::Vietnamese ? "Đã hủy nhập kích thước" : "Cancelled dimension input";
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if ((wParam >= '0' && wParam <= '9') || wParam == '.' || wParam == ',' || wParam == ';' ||
+                wParam == 'x' || wParam == 'X' || wParam == ' ' || wParam == '-') {
+                self->quick_dimension_buffer_ += static_cast<char>(wParam);
+                self->status_msg_ = (self->language_ == UILanguage::Vietnamese ? "Kích thước: " : "Dimensions: ") +
+                                    self->quick_dimension_buffer_ +
+                                    (self->language_ == UILanguage::Vietnamese ? " mm (Enter để nhận, Esc hủy)" : " mm (Enter to apply, Esc to cancel)");
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            // Ký tự khác khi đang ở chế độ gõ nhanh thì kết thúc gõ nhanh và để lệnh tiếp diễn
+            self->end_quick_dimension();
         }
         if (self && self->workflow().is_array_session_active() && !self->is_inline_text_editing_) {
             if (wParam == VK_BACK) {

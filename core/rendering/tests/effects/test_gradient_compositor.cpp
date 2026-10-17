@@ -1,8 +1,8 @@
 #include "pikdraw/rendering/software_rasterizer.hpp"
 #include "pikdraw/rendering/gradient_sampler.hpp"
 #include "pikdraw/document/model/object.hpp"
-#include "effects/object_compositor.hpp"
-#include "raster/path_raster.hpp"
+#include "../../src/effects/object_compositor.hpp"
+#include "../../src/raster/path_raster.hpp"
 #include <cassert>
 #include <cmath>
 #include <iostream>

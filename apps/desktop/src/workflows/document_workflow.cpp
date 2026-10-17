@@ -1618,6 +1618,103 @@ bool DocumentWorkflow::rotate_selected_180(std::optional<geometry::Point2D> pivo
     return rotate_selected_degrees(180.0, pivot);
 }
 
+namespace {
+
+class SetObjectFillCommand final : public document::DocumentCommand {
+public:
+    SetObjectFillCommand(std::vector<document::ObjectId> targets, color::ColorValue fill)
+        : targets_(std::move(targets)), fill_(std::move(fill)) {}
+
+    std::string_view name() const noexcept override { return "Set Fill"; }
+
+    document::CommandResult execute(document::Document& doc) override {
+        if (executed_) return document::CommandResult::fail("Already executed");
+        before_objects_ = doc.objects();
+        auto objects = doc.objects();
+        bool changed = false;
+        for (const auto id : targets_) {
+            const auto opt = objects.get(id);
+            if (!opt) continue;
+            auto updated = *opt;
+            if (auto* path = std::get_if<document::PathObject>(&updated)) {
+                path->fill = fill_;
+                path->has_fill = true;
+                path->fill_gradient.reset();
+                objects = objects.set(id, std::move(updated));
+                changed = true;
+            } else if (auto* text = std::get_if<document::TextObject>(&updated)) {
+                text->fill = fill_;
+                objects = objects.set(id, std::move(updated));
+                changed = true;
+            }
+        }
+        if (!changed) return document::CommandResult::no_change();
+        doc.apply_mutation(doc.page(), std::move(objects));
+        executed_ = true;
+        return document::CommandResult::ok();
+    }
+
+    document::CommandResult undo(document::Document& doc) override {
+        if (!executed_ || !before_objects_) return document::CommandResult::fail("No state to undo");
+        doc.apply_mutation(doc.page(), *before_objects_);
+        executed_ = false;
+        return document::CommandResult::ok();
+    }
+
+private:
+    std::vector<document::ObjectId> targets_;
+    color::ColorValue fill_;
+    std::optional<document::PersistentObjectMap> before_objects_;
+    bool executed_{false};
+};
+
+class SetObjectStrokeCommand final : public document::DocumentCommand {
+public:
+    SetObjectStrokeCommand(std::vector<document::ObjectId> targets, color::ColorValue stroke, double width_mm)
+        : targets_(std::move(targets)), stroke_(std::move(stroke)), width_mm_(width_mm) {}
+
+    std::string_view name() const noexcept override { return "Set Stroke"; }
+
+    document::CommandResult execute(document::Document& doc) override {
+        if (executed_) return document::CommandResult::fail("Already executed");
+        before_objects_ = doc.objects();
+        auto objects = doc.objects();
+        bool changed = false;
+        for (const auto id : targets_) {
+            const auto opt = objects.get(id);
+            if (!opt) continue;
+            auto updated = *opt;
+            if (auto* path = std::get_if<document::PathObject>(&updated)) {
+                path->stroke = stroke_;
+                path->stroke_width_mm = width_mm_;
+                path->has_stroke = true;
+                objects = objects.set(id, std::move(updated));
+                changed = true;
+            }
+        }
+        if (!changed) return document::CommandResult::no_change();
+        doc.apply_mutation(doc.page(), std::move(objects));
+        executed_ = true;
+        return document::CommandResult::ok();
+    }
+
+    document::CommandResult undo(document::Document& doc) override {
+        if (!executed_ || !before_objects_) return document::CommandResult::fail("No state to undo");
+        doc.apply_mutation(doc.page(), *before_objects_);
+        executed_ = false;
+        return document::CommandResult::ok();
+    }
+
+private:
+    std::vector<document::ObjectId> targets_;
+    color::ColorValue stroke_;
+    double width_mm_{0.0};
+    std::optional<document::PersistentObjectMap> before_objects_;
+    bool executed_{false};
+};
+
+} // namespace
+
 bool DocumentWorkflow::set_selected_fill(const std::string& hex_color) {
     const auto ids = root_.vector_controller().selection().selected_ids();
     if (ids.empty())
@@ -1626,33 +1723,20 @@ bool DocumentWorkflow::set_selected_fill(const std::string& hex_color) {
     const auto col = parse_hex_color(hex_color);
     auto& doc = root_.document();
     const auto snapshot = doc.current_snapshot();
-    auto objects = snapshot->objects();
+    if (!snapshot)
+        return false;
+    const auto& objects = snapshot->objects();
 
+    std::vector<document::ObjectId> targets;
     for (const auto id : ids) {
-        std::vector<document::ObjectId> targets = { id };
+        targets.push_back(id);
         collect_all_descendants(id, objects, targets);
-        for (const auto tid : targets) {
-            const auto obj_opt = objects.get(tid);
-            if (!obj_opt)
-                continue;
-
-            document::ObjectVariant updated = *obj_opt;
-            std::visit([&col](auto& val) {
-                using T = std::decay_t<decltype(val)>;
-                if constexpr (std::is_same_v<T, document::PathObject>) {
-                    val.fill = col;
-                    val.has_fill = true;
-                } else if constexpr (std::is_same_v<T, document::TextObject>) {
-                    val.fill = col;
-                }
-            }, updated);
-            objects = objects.set(tid, std::move(updated));
-        }
     }
 
-    doc.apply_mutation(snapshot->page(), std::move(objects));
+    auto cmd = std::make_unique<SetObjectFillCommand>(std::move(targets), col);
+    auto res = doc.execute_command(std::move(cmd));
     sync_status_bar();
-    return true;
+    return res.success;
 }
 
 bool DocumentWorkflow::set_selected_stroke(const std::string& hex_color, double stroke_width_mm) {
@@ -1663,32 +1747,20 @@ bool DocumentWorkflow::set_selected_stroke(const std::string& hex_color, double 
     const auto col = parse_hex_color(hex_color);
     auto& doc = root_.document();
     const auto snapshot = doc.current_snapshot();
-    auto objects = snapshot->objects();
+    if (!snapshot)
+        return false;
+    const auto& objects = snapshot->objects();
 
+    std::vector<document::ObjectId> targets;
     for (const auto id : ids) {
-        std::vector<document::ObjectId> targets = { id };
+        targets.push_back(id);
         collect_all_descendants(id, objects, targets);
-        for (const auto tid : targets) {
-            const auto obj_opt = objects.get(tid);
-            if (!obj_opt)
-                continue;
-
-            document::ObjectVariant updated = *obj_opt;
-            std::visit([&col, stroke_width_mm](auto& val) {
-                using T = std::decay_t<decltype(val)>;
-                if constexpr (std::is_same_v<T, document::PathObject>) {
-                    val.stroke = col;
-                    val.stroke_width_mm = stroke_width_mm;
-                    val.has_stroke = true;
-                }
-            }, updated);
-            objects = objects.set(tid, std::move(updated));
-        }
     }
 
-    doc.apply_mutation(snapshot->page(), std::move(objects));
+    auto cmd = std::make_unique<SetObjectStrokeCommand>(std::move(targets), col, stroke_width_mm);
+    auto res = doc.execute_command(std::move(cmd));
     sync_status_bar();
-    return true;
+    return res.success;
 }
 
 bool DocumentWorkflow::can_set_selected_object_opacity() const {

@@ -6,6 +6,7 @@
 #include "../tools/pen_tool_controller.hpp"
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
+#include "../tools/gradient_tool_controller.hpp"
 
 #include <iostream>
 #include <fstream>
@@ -397,6 +398,13 @@ void draw_tool_icon_gdiplus(GdiplusApi* api, GpGraphics* g, int tool, float cx, 
         api->FillRectangle(g, front_bg, cx - 7.0f, cy - 7.0f, 9.0f, 9.0f);
         api->DeleteBrush(front_bg);
         api->DrawRectangle(g, pen, cx - 7.0f, cy - 7.0f, 9.0f, 9.0f);
+    } else if (tool == 13) {
+        // Tool 13: Gradient: ramp rectangle with vector guide line and stop handles
+        api->DrawRectangle(g, pen, cx - 7.5f, cy - 6.5f, 15.0f, 13.0f);
+        api->DrawLine(g, pen, cx - 6.0f, cy + 4.5f, cx + 6.0f, cy - 4.5f);
+        api->FillEllipse(g, fill_brush, cx - 7.5f, cy + 3.0f, 3.5f, 3.5f);
+        api->FillEllipse(g, fill_brush, cx + 4.0f, cy - 6.0f, 3.5f, 3.5f);
+        api->FillEllipse(g, fill_brush, cx - 1.2f, cy - 1.2f, 2.4f, 2.4f);
     }
 
     api->DeleteBrush(fill_brush);
@@ -479,6 +487,12 @@ void draw_tool_icon_gdi_fallback(HDC dc, int tool, int center_x, int center_y, C
     } else if (tool == 12) {
         Rectangle(dc, center_x - 6, center_y - 6, center_x + 2, center_y + 2);
         Rectangle(dc, center_x - 2, center_y - 2, center_x + 6, center_y + 6);
+    } else if (tool == 13) {
+        Rectangle(dc, center_x - 7, center_y - 6, center_x + 8, center_y + 7);
+        MoveToEx(dc, center_x - 6, center_y + 4, nullptr);
+        LineTo(dc, center_x + 6, center_y - 4);
+        Ellipse(dc, center_x - 7, center_y + 2, center_x - 4, center_y + 5);
+        Ellipse(dc, center_x + 4, center_y - 5, center_x + 7, center_y - 2);
     }
     SelectObject(dc, old_brush);
     SelectObject(dc, old_pen);
@@ -817,6 +831,67 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
             }
         }
 
+        // Gradient Tool on-canvas handles overlay
+        if (active_tool_ == 13 && gradient_tool_ && gradient_tool_->active()) {
+            const auto handles = gradient_tool_->tool().get_handles();
+            if (!handles.empty()) {
+                const auto area = canvas_rect(w, h);
+                const auto pen_axis = CreatePen(PS_DASH, 1, col_teal);
+                const auto old_pen = SelectObject(mem_dc, pen_axis);
+
+                geometry::Point2D p_start{0, 0};
+                geometry::Point2D p_end{0, 0};
+                bool has_axis = false;
+                for (const auto& handle : handles) {
+                    if (handle.kind == vector::tools::GradientHandleKind::LinearStart ||
+                        handle.kind == vector::tools::GradientHandleKind::RadialCenter) {
+                        p_start = handle.position_object;
+                        has_axis = true;
+                    } else if (handle.kind == vector::tools::GradientHandleKind::LinearEnd ||
+                               handle.kind == vector::tools::GradientHandleKind::RadialRadius) {
+                        p_end = handle.position_object;
+                    }
+                }
+                if (has_axis) {
+                    const auto s_screen = root().renderer().camera().world_to_screen(p_start);
+                    const auto e_screen = root().renderer().camera().world_to_screen(p_end);
+                    MoveToEx(mem_dc, area.left + static_cast<int>(std::lround(s_screen.x)),
+                             area.top + static_cast<int>(std::lround(s_screen.y)), nullptr);
+                    LineTo(mem_dc, area.left + static_cast<int>(std::lround(e_screen.x)),
+                           area.top + static_cast<int>(std::lround(e_screen.y)));
+                }
+                SelectObject(mem_dc, old_pen);
+                DeleteObject(pen_axis);
+
+                for (const auto& handle : handles) {
+                    const auto screen_pt = root().renderer().camera().world_to_screen(handle.position_object);
+                    const int hx = area.left + static_cast<int>(std::lround(screen_pt.x));
+                    const int hy = area.top + static_cast<int>(std::lround(screen_pt.y));
+                    COLORREF fill_color = col_text_white;
+                    if (handle.kind == vector::tools::GradientHandleKind::Stop) {
+                        fill_color = RGB(255, 200, 50);
+                    } else if (handle.kind == vector::tools::GradientHandleKind::LinearStart ||
+                               handle.kind == vector::tools::GradientHandleKind::RadialCenter) {
+                        fill_color = col_teal;
+                    }
+                    const auto h_brush = CreateSolidBrush(fill_color);
+                    const auto h_pen = CreatePen(PS_SOLID, 1, RGB(20, 24, 33));
+                    const auto op = SelectObject(mem_dc, h_pen);
+                    const auto ob = SelectObject(mem_dc, h_brush);
+                    if (handle.kind == vector::tools::GradientHandleKind::Stop) {
+                        POINT pts[4] = {{hx, hy - 5}, {hx + 5, hy}, {hx, hy + 5}, {hx - 5, hy}};
+                        Polygon(mem_dc, pts, 4);
+                    } else {
+                        Ellipse(mem_dc, hx - 5, hy - 5, hx + 6, hy + 6);
+                    }
+                    SelectObject(mem_dc, ob);
+                    SelectObject(mem_dc, op);
+                    DeleteObject(h_pen);
+                    DeleteObject(h_brush);
+                }
+            }
+        }
+
         // Document Tab Bar
         paint_document_tab_bar(mem_dc, w, topbar_h, tabbar_h);
 
@@ -977,7 +1052,51 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
 
             draw_rib_btn(760, 825, is_vi ? L"Áp dụng" : L"Apply", false, col_teal);
             draw_rib_btn(830, 940, is_vi ? L"Rã viền (Ctrl+K)" : L"Break (Ctrl+K)", false, col_text_white);
-        } else if (active_tool_ == 9) {
+        } else if (active_tool_ == 13 && gradient_tool_ && gradient_tool_->active()) {
+            SelectObject(mem_dc, font_be_vietnam_bold);
+            SetTextColor(mem_dc, col_teal);
+            RECT label{10, topbar_h + tabbar_h, 75, content_top};
+            DrawTextW(mem_dc, is_vi ? L"Chuyển sắc:" : L"Gradient:", -1, &label, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+            const auto* draft = gradient_tool_->presenter().draft_paint();
+            const auto kind = draft ? draft->kind : gradient_tool_->tool().kind();
+            const auto spread = draft ? draft->spread : gradient_tool_->tool().spread();
+
+            // 80..145: Linear
+            draw_rib_btn(80, 145, is_vi ? L"Tuyến tính" : L"Linear",
+                         kind == document::GradientKind::Linear,
+                         kind == document::GradientKind::Linear ? col_teal : col_text_white);
+            // 150..215: Radial
+            draw_rib_btn(150, 215, is_vi ? L"Tỏa tròn" : L"Radial",
+                         kind == document::GradientKind::Radial,
+                         kind == document::GradientKind::Radial ? col_teal : col_text_white);
+            // 225..275: Pad
+            draw_rib_btn(225, 275, is_vi ? L"Chặn" : L"Pad",
+                         spread == document::GradientSpread::Pad,
+                         spread == document::GradientSpread::Pad ? col_teal : col_text_white);
+            // 280..345: Repeat
+            draw_rib_btn(280, 345, is_vi ? L"Lặp" : L"Repeat",
+                         spread == document::GradientSpread::Repeat,
+                         spread == document::GradientSpread::Repeat ? col_teal : col_text_white);
+            // 350..420: Reflect
+            draw_rib_btn(350, 420, is_vi ? L"Đối xứng" : L"Reflect",
+                         spread == document::GradientSpread::Reflect,
+                         spread == document::GradientSpread::Reflect ? col_teal : col_text_white);
+            // 430..500: Reverse
+            draw_rib_btn(430, 500, is_vi ? L"Đảo màu" : L"Reverse", false, col_text_white);
+            // 505..575: Fit Bounds
+            draw_rib_btn(505, 575, is_vi ? L"Khớp khung" : L"Fit Bounds", false, col_text_white);
+            // 585..665: Angle (+45 deg)
+            const auto proj = gradient_tool_->presenter().geometry_projection();
+            std::wstring angle_str = std::to_wstring(static_cast<int>(proj.angle_degrees)) + L"° (+45°)";
+            draw_rib_btn(585, 665, angle_str.c_str(), false, col_teal);
+            // 675..735: + Stop
+            draw_rib_btn(675, 735, is_vi ? L"+ Điểm" : L"+ Stop", false, col_text_white);
+            // 745..815: Apply
+            draw_rib_btn(745, 815, is_vi ? L"Áp dụng" : L"Apply", false, col_teal);
+            // 820..880: Cancel
+            draw_rib_btn(820, 880, is_vi ? L"Hủy" : L"Cancel", false, col_text_white);
+        } else if (active_tool_ == 9 && selection.empty()) {
             SelectObject(mem_dc, font_be_vietnam_bold);
             SetTextColor(mem_dc, col_teal);
             RECT label{10, topbar_h + tabbar_h, 52, content_top};
@@ -1045,16 +1164,12 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
                 draw_rib_btn(698, 748, is_vi ? L"✕ Xóa" : L"✕ Del", false, RGB(239, 68, 68));
             }
 
-            // 8. Color Palette Swatches
-            int color_start_x = (!selection.empty()) ? 754 : 698;
-            draw_rib_btn(color_start_x, color_start_x + 36, L"■", false, RGB(0, 242, 195));
-            draw_rib_btn(color_start_x + 40, color_start_x + 76, L"■", false, RGB(14, 165, 233));
-            draw_rib_btn(color_start_x + 80, color_start_x + 116, L"■", false, RGB(234, 179, 8));
-            draw_rib_btn(color_start_x + 120, color_start_x + 156, L"■", false, RGB(239, 68, 68));
+            // 8. Opacity field if single text object is selected
+            int opacity_x = (!selection.empty()) ? 754 : 698;
             if (selection.size() == 1 && workflow().can_set_selected_object_opacity() &&
-                1044 <= w - inspect_w) {
+                opacity_x + 124 <= w - inspect_w) {
                 const auto appearance = selection_appearance(*snapshot, selection);
-                draw_num_input(920, 1044, is_vi ? L"Độ mờ:" : L"Opacity:",
+                draw_num_input(opacity_x, opacity_x + 124, is_vi ? L"Độ mờ:" : L"Opacity:",
                                opacity_percent_text(appearance.object_opacity),
                                NumericFieldId::ObjectOpacity, false);
             }
@@ -1214,18 +1329,10 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
                 draw_rib_btn((std::max)(10, w - inspect_w - 280), w - inspect_w - 10, array_text.c_str(), true, col_teal);
             }
 
-            int color_start_x = (selection.size() == 1 && workflow().is_group(selection.front())) ? 920
-                              : (selection.size() == 1) ? 780
-                              : (selection.size() >= 2) ? 1160
-                              : is_in_isolation_mode() ? 676 : 580;
-            draw_rib_btn(color_start_x, color_start_x + 36, L"■", false, RGB(0, 242, 195));
-            draw_rib_btn(color_start_x + 40, color_start_x + 76, L"■", false, RGB(14, 165, 233));
-            draw_rib_btn(color_start_x + 80, color_start_x + 116, L"■", false, RGB(234, 179, 8));
-            draw_rib_btn(color_start_x + 120, color_start_x + 156, L"■", false, RGB(239, 68, 68));
             if (selection.size() == 1 && workflow().can_set_selected_object_opacity() &&
-                944 <= w - inspect_w) {
+                844 <= w - inspect_w) {
                 const auto appearance = selection_appearance(*snapshot, selection);
-                draw_num_input(818, 944, is_vi ? L"Độ mờ:" : L"Opacity:",
+                draw_num_input(720, 844, is_vi ? L"Độ mờ:" : L"Opacity:",
                                opacity_percent_text(appearance.object_opacity),
                                NumericFieldId::ObjectOpacity, false);
             }
@@ -1290,7 +1397,8 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
             const int flyout_top = content_top + 10 + group_row * 42;
             const int flyout_left = 54;
             const int flyout_width = toolbox_open_group_ == 3 ? 208 : 188;
-            RECT flyout{flyout_left, flyout_top, flyout_left + flyout_width, flyout_top + 116};
+            const int flyout_height = toolbox_open_group_ == 3 ? 145 : 116;
+            RECT flyout{flyout_left, flyout_top, flyout_left + flyout_width, flyout_top + flyout_height};
             HBRUSH flyout_brush = CreateSolidBrush(is_dark ? RGB(20, 31, 46) : RGB(250, 252, 255));
             HPEN flyout_pen = CreatePen(PS_SOLID, 1, col_border);
             const HGDIOBJ old_flyout_pen = SelectObject(mem_dc, flyout_pen);
@@ -1318,23 +1426,25 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
             const int flyout_tools[] = {
                 quick_shapes ? 1 : path_drawing ? 6 : 10,
                 quick_shapes ? 2 : path_drawing ? 7 : 11,
-                quick_shapes ? 9 : path_drawing ? 8 : 12};
-            const wchar_t* labels_en[] = {L"Rectangle", L"Ellipse", L"Polygon"};
-            const wchar_t* labels_vi[] = {L"Hình chữ nhật", L"Hình elip", L"Đa giác"};
-            const wchar_t* path_en[] = {L"Line", L"Polyline", L"Pen"};
-            const wchar_t* path_vi[] = {L"Đoạn thẳng", L"Đường gấp khúc", L"Pen"};
-            const wchar_t* appearance_en[] = {L"Appearance Properties", L"Gaussian Blur", L"Drop Shadow"};
-            const wchar_t* appearance_vi[] = {L"Thuộc tính diện mạo", L"Gaussian Blur", L"Drop Shadow"};
+                quick_shapes ? 9 : path_drawing ? 8 : 12,
+                13};
+            const wchar_t* labels_en[] = {L"Rectangle", L"Ellipse", L"Polygon", L""};
+            const wchar_t* labels_vi[] = {L"Hình chữ nhật", L"Hình elip", L"Đa giác", L""};
+            const wchar_t* path_en[] = {L"Line", L"Polyline", L"Pen", L""};
+            const wchar_t* path_vi[] = {L"Đoạn thẳng", L"Đường gấp khúc", L"Pen", L""};
+            const wchar_t* appearance_en[] = {L"Appearance Properties", L"Gaussian Blur", L"Drop Shadow", L"Gradient"};
+            const wchar_t* appearance_vi[] = {L"Thuộc tính diện mạo", L"Gaussian Blur", L"Drop Shadow", L"Chuyển sắc"};
             const bool has_blur = appearance && workflow().selected_effect_index(
                 document::GaussianBlurEffect{1.0, 1.0}).has_value();
             const bool has_shadow = appearance && workflow().selected_effect_index(
                 document::DropShadowEffect{}).has_value();
-            for (int item = 0; item < 3; ++item) {
+            const int max_items = toolbox_open_group_ == 3 ? 4 : 3;
+            for (int item = 0; item < max_items; ++item) {
                 const int item_top = flyout_top + 26 + item * 29;
                 const bool selected = appearance
-                    ? (item == 1 && has_blur) || (item == 2 && has_shadow)
+                    ? (item == 1 && has_blur) || (item == 2 && has_shadow) || (item == 3 && active_tool_ == 13)
                     : active_tool_ == flyout_tools[item];
-                const bool available = !appearance || item == 0 ||
+                const bool available = !appearance || item == 0 || item == 3 ||
                     (item == 1 && workflow().can_activate_selected_effect(
                         document::GaussianBlurEffect{1.0, 1.0})) ||
                     (item == 2 && workflow().can_activate_selected_effect(

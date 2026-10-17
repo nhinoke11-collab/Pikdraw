@@ -351,6 +351,12 @@ public:
     void handle_array_backspace();
     void commit_array_input();
 
+    // Quick Shape Dimension Input (SketchUp style VCB)
+    [[nodiscard]] bool is_quick_dimension_active() const noexcept { return quick_dimension_active_; }
+    [[nodiscard]] const std::string& quick_dimension_buffer() const noexcept { return quick_dimension_buffer_; }
+    void end_quick_dimension() noexcept;
+    bool apply_quick_dimension();
+
     [[nodiscard]] CompositionRoot& root() noexcept;
     [[nodiscard]] const CompositionRoot& root() const noexcept;
 
@@ -370,10 +376,16 @@ public:
     [[nodiscard]] tools::GradientToolController* gradient_tool() noexcept { return gradient_tool_.get(); }
     [[nodiscard]] const tools::GradientToolController* gradient_tool() const noexcept { return gradient_tool_.get(); }
     bool handle_gradient_property_click(int x, int y);
+    bool handle_gradient_pointer_down(int x, int y, unsigned modifiers);
+    bool handle_gradient_pointer_move(int x, int y, unsigned modifiers);
+    bool handle_gradient_pointer_up(int x, int y, unsigned modifiers);
     void paint_gradient_canvas_overlay(HDC hdc, const RECT& canvas);
 
 #ifdef _WIN32
     [[nodiscard]] HWND hwnd() const noexcept { return hwnd_; }
+    [[nodiscard]] int toolbox_open_group() const noexcept { return toolbox_open_group_; }
+    [[nodiscard]] int toolbox_focus_group() const noexcept { return toolbox_focus_group_; }
+    [[nodiscard]] int toolbox_flyout_index() const noexcept { return toolbox_flyout_index_; }
     bool handle_key_down(WPARAM key);
     bool handle_toolbox_key(WPARAM key, bool alt_pressed = false, bool shift_pressed = false);
     void handle_mouse_down(int x, int y);
@@ -657,6 +669,16 @@ private:
     size_t property_effect_index_{0};
     size_t numeric_effect_index_{0};
     std::string array_input_buffer_;
+
+    // Quick Shape Dimension input (SketchUp style VCB)
+    bool quick_dimension_active_{false};
+    document::ObjectId quick_dimension_object_id_{document::kInvalidObjectId};
+    std::string quick_dimension_buffer_;
+    geometry::Point2D quick_dimension_origin_{};
+    double quick_dimension_drag_dir_x_{1.0};
+    double quick_dimension_drag_dir_y_{1.0};
+    double quick_dimension_initial_w_{0.0};
+    double quick_dimension_initial_h_{0.0};
 
     // Canvas Viewport Cache (Fast zero-allocation redraw during interaction)
     bool canvas_cache_valid_{false};

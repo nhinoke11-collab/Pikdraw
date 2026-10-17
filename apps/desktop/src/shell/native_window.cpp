@@ -830,17 +830,19 @@ void NativeWindow::set_settings_unit_choice(int unit) noexcept {
 }
 
 void NativeWindow::set_active_tool(int tool_index) noexcept {
-    if (tool_index < 0 || (tool_index > 9 && tool_index != 11 && tool_index != 12))
+    if (tool_index < 0 || (tool_index > 9 && tool_index != 11 && tool_index != 12 && tool_index != 13))
         return;
     const bool path_tool = tool_index == 6 || tool_index == 7;
     const bool pen_tool = tool_index == 8;
     const bool node_tool = tool_index == 11;
     const bool contour_tool = tool_index == 12;
+    const bool gradient_tool = tool_index == 13;
     if (tool_index == active_tool_ &&
         ((!path_tool || (drawing_tool_ && drawing_tool_->active())) &&
          (!pen_tool || (pen_tool_ && pen_tool_->active())) &&
          (!node_tool || (node_tool_ && node_tool_->active())) &&
-         (!contour_tool || (contour_tool_ && contour_tool_->active()))))
+         (!contour_tool || (contour_tool_ && contour_tool_->active())) &&
+         (!gradient_tool || (gradient_tool_ && gradient_tool_->active()))))
         return;
     if (active_num_field_ != NumericFieldId::None &&
         active_num_field_ != NumericFieldId::PenExpression) {
@@ -861,6 +863,10 @@ void NativeWindow::set_active_tool(int tool_index) noexcept {
     if (pen_tool_) pen_tool_->cancel();
     if (node_tool_) node_tool_->deactivate();
     if (contour_tool_) contour_tool_->deactivate();
+    if (gradient_tool_ && tool_index != 13) {
+        gradient_tool_->cancel();
+        gradient_tool_->deactivate();
+    }
     pen_numeric_buffer_.clear();
     if (active_num_field_ == NumericFieldId::PenExpression) {
         active_num_field_ = NumericFieldId::None;
@@ -954,6 +960,21 @@ void NativeWindow::set_active_tool(int tool_index) noexcept {
         const auto target = sel.empty() ? document::kInvalidObjectId : sel.front();
         (void)contour_tool_->activate(target);
     }
+    if (gradient_tool) {
+        if (!gradient_tool_) {
+            try {
+                gradient_tool_ = std::make_unique<tools::GradientToolController>(root().document());
+            } catch (...) {
+                active_tool_ = 0;
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Không đủ bộ nhớ để bắt đầu công cụ Gradient"
+                    : "Not enough memory to start the Gradient tool";
+                return;
+            }
+        }
+        const auto& sel = root().vector_controller().selection().selected_ids();
+        (void)gradient_tool_->activate(sel);
+    }
     if (tool_index == 11) {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Chỉnh sửa điểm Node · F10 · Kéo chọn điểm · Chỉnh tiếp tuyến Bézier"
@@ -962,6 +983,10 @@ void NativeWindow::set_active_tool(int tool_index) noexcept {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Contour / Offset · Tạo viền có tham số · Ctrl+K để rã khối viền"
             : "Contour / Offset · Parametric contour offset · Ctrl+K to break apart";
+    } else if (tool_index == 13) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Công cụ Gradient · Kéo chuột trên canvas để tạo/chỉnh chuyển sắc · Phím Esc hủy"
+            : "Gradient Tool · Drag on canvas to create or edit gradient · Esc to cancel";
     } else {
         const char* vi_tools[] = { "Chọn và di chuyển · V", "Kéo vẽ chữ nhật · Shift vuông · Ctrl từ tâm",
             "Kéo vẽ elip · Shift tròn · Ctrl từ tâm", "Di chuyển khung nhìn · Space/chuột giữa",
@@ -1864,15 +1889,13 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
                                  : L"Insert 3×3 Text Table (CorelDRAW Style)";
             } else if (!selection.empty() && mouse_x >= 698 && mouse_x <= 748) {
                 tip_text = is_vi ? L"Xóa văn bản đang chọn (Delete)" : L"Delete selected text (Delete)";
-            } else if (selection.size() == 1 && workflow().can_set_selected_object_opacity() &&
-                       mouse_x >= 920 && mouse_x <= 1044 && mouse_x + 124 <= w - inspect_w) {
-                tip_text = is_vi
-                    ? L"Độ mờ toàn đối tượng 0–100% · nhập số · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
-                    : L"Object opacity 0–100% · type a value · Enter applies · Esc cancels · Ctrl+Z undoes";
             } else {
-                int color_start_x = (!selection.empty()) ? 754 : 698;
-                if (mouse_x >= color_start_x && mouse_x <= color_start_x + 160) {
-                    tip_text = is_vi ? L"Màu sắc tô chữ nhanh (Quick Fill Color Swatch)" : L"Quick Fill Color Swatch";
+                int opacity_x = (!selection.empty()) ? 754 : 698;
+                if (selection.size() == 1 && workflow().can_set_selected_object_opacity() &&
+                    mouse_x >= opacity_x && mouse_x <= opacity_x + 124 && opacity_x + 124 <= w - inspect_w) {
+                    tip_text = is_vi
+                        ? L"Độ mờ toàn đối tượng 0–100% · nhập số · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
+                        : L"Object opacity 0–100% · type a value · Enter applies · Esc cancels · Ctrl+Z undoes";
                 }
             }
         } else if (selection.empty()) {
@@ -1892,7 +1915,7 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
         } else {
             // Object Selection Mode
             if (selection.size() == 1 && workflow().can_set_selected_object_opacity() &&
-                mouse_x >= 818 && mouse_x <= 944 && mouse_x + 126 <= w - inspect_w) {
+                mouse_x >= 720 && mouse_x <= 844 && 844 <= w - inspect_w) {
                 tip_text = is_vi
                     ? L"Độ mờ toàn đối tượng 0–100% · nhập số · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
                     : L"Object opacity 0–100% · type a value · Enter applies · Esc cancels · Ctrl+Z undoes";
@@ -3162,6 +3185,106 @@ void NativeWindow::commit_array_input() {
                 : "Multiplied by *" + std::to_string(count) + " · Type to change or Esc to finish";
         }
     }
+}
+
+void NativeWindow::end_quick_dimension() noexcept {
+    quick_dimension_active_ = false;
+    quick_dimension_object_id_ = document::kInvalidObjectId;
+    quick_dimension_buffer_.clear();
+}
+
+bool NativeWindow::apply_quick_dimension() {
+    if (!quick_dimension_active_ || quick_dimension_object_id_ == document::kInvalidObjectId) {
+        return false;
+    }
+    const auto snapshot = root().document().current_snapshot();
+    const auto obj = snapshot->objects().get(quick_dimension_object_id_);
+    if (!obj) {
+        end_quick_dimension();
+        return false;
+    }
+    const auto bounds_opt = workflow().get_object_bounds(quick_dimension_object_id_);
+    if (!bounds_opt || bounds_opt->width <= 0.0 || bounds_opt->height <= 0.0) {
+        end_quick_dimension();
+        return false;
+    }
+
+    double new_w = bounds_opt->width;
+    double new_h = bounds_opt->height;
+
+    // Phân tích chuỗi quick_dimension_buffer_
+    // Định dạng: "30,40" hoặc "30, 40" hoặc "30;40" hoặc "30"
+    std::string s = quick_dimension_buffer_;
+    s.erase(0, s.find_first_not_of(" \t\r\n"));
+    s.erase(s.find_last_not_of(" \t\r\n") + 1);
+    if (s.empty()) {
+        end_quick_dimension();
+        return false;
+    }
+
+    size_t sep = s.find_first_of(",; ");
+    if (sep != std::string::npos) {
+        std::string part_w = s.substr(0, sep);
+        std::string part_h = s.substr(sep + 1);
+        part_w.erase(0, part_w.find_first_not_of(" \t\r\n"));
+        part_w.erase(part_w.find_last_not_of(" \t\r\n") + 1);
+        part_h.erase(0, part_h.find_first_not_of(" \t\r\n"));
+        part_h.erase(part_h.find_last_not_of(" \t\r\n") + 1);
+        try {
+            if (!part_w.empty()) new_w = std::stod(part_w);
+            if (!part_h.empty()) new_h = std::stod(part_h);
+        } catch (...) {
+            end_quick_dimension();
+            return false;
+        }
+    } else {
+        try {
+            new_w = std::stod(s);
+            if (active_tool_ == 2 || active_tool_ == 9) {
+                new_h = new_w;
+            }
+        } catch (...) {
+            end_quick_dimension();
+            return false;
+        }
+    }
+
+    if (new_w <= 0.0 || new_h <= 0.0) {
+        end_quick_dimension();
+        return false;
+    }
+
+    new_w = std::clamp(new_w, 0.1, geometry::kMaxObjectDimensionMm);
+    new_h = std::clamp(new_h, 0.1, geometry::kMaxObjectDimensionMm);
+
+    const double cur_w = bounds_opt->width;
+    const double cur_h = bounds_opt->height;
+    const double sx = new_w / cur_w;
+    const double sy = new_h / cur_h;
+
+    // Scale giữ cố định điểm gốc ban đầu quick_dimension_origin_
+    const auto delta = geometry::Transform2D::translation(quick_dimension_origin_.x, quick_dimension_origin_.y) *
+                       geometry::Transform2D::scale(sx, sy) *
+                       geometry::Transform2D::translation(-quick_dimension_origin_.x, -quick_dimension_origin_.y);
+
+    auto cmd = std::make_unique<document::TransformObjectCommand>(quick_dimension_object_id_, delta);
+    const auto res = root().document().execute_command(std::move(cmd));
+    if (res.success) {
+        root().vector_controller().set_selection({quick_dimension_object_id_}, *root().document().current_snapshot());
+        workflow().sync_status_bar();
+        std::ostringstream ss_w, ss_h;
+        ss_w << std::fixed << std::setprecision(1) << new_w;
+        ss_h << std::fixed << std::setprecision(1) << new_h;
+        std::string w_str = ss_w.str();
+        std::string h_str = ss_h.str();
+        if (w_str.size() > 2 && w_str.substr(w_str.size() - 2) == ".0") w_str.erase(w_str.size() - 2);
+        if (h_str.size() > 2 && h_str.substr(h_str.size() - 2) == ".0") h_str.erase(h_str.size() - 2);
+        status_msg_ = (language_ == UILanguage::Vietnamese)
+            ? "Đã áp dụng kích thước: " + w_str + " × " + h_str + " mm"
+            : "Applied dimensions: " + w_str + " × " + h_str + " mm";
+    }
+    end_quick_dimension();
+    return res.success;
 }
 
 #else

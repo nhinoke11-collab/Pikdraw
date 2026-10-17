@@ -84,6 +84,8 @@ if(PIKDRAW_BUILD_TESTS)
     add_rendering_test(test_pikdraw_rendering_drop_shadow tests/effects/test_drop_shadow.cpp)
     add_rendering_test(test_pikdraw_rendering_gaussian_blur tests/effects/test_gaussian_blur.cpp)
     add_rendering_test(test_pikdraw_rendering_gaussian_blur_simd tests/effects/test_gaussian_blur_simd.cpp)
+    add_rendering_test(test_pikdraw_rendering_gradient tests/rasterizer/test_gradient_pixels.cpp)
+    add_rendering_test(test_pikdraw_rendering_gradient_compositor tests/effects/test_gradient_compositor.cpp)
 
     # Explicitly built performance probe; not registered as a normal CTest test.
     add_executable(benchmark_pikdraw_rendering_effects

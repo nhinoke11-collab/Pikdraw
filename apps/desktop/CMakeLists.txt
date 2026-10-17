@@ -214,4 +214,29 @@ if(PIKDRAW_BUILD_TESTS)
         pikdraw_geometry
     )
     add_test(NAME test_pikdraw_dimension_tool_controller COMMAND test_pikdraw_dimension_tool_controller)
+ 
+    add_executable(test_pikdraw_gradient_tool_controller
+        tests/test_gradient_tool_controller.cpp
+        src/tools/gradient_tool_controller.cpp
+        src/presenters/gradient_properties.cpp
+    )
+    target_include_directories(test_pikdraw_gradient_tool_controller PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(test_pikdraw_gradient_tool_controller PRIVATE
+        pikdraw_document
+        pikdraw_vector
+        pikdraw_geometry
+        pikdraw_color
+    )
+    add_test(NAME test_pikdraw_gradient_tool_controller COMMAND test_pikdraw_gradient_tool_controller)
+
+    add_executable(test_pikdraw_gradient_native_shell
+        tests/test_gradient_native_shell.cpp
+    )
+    target_link_libraries(test_pikdraw_gradient_native_shell PRIVATE
+        pikdraw_desktop
+    )
+    add_test(NAME test_pikdraw_gradient_native_shell COMMAND test_pikdraw_gradient_native_shell)
 endif()
