@@ -252,22 +252,33 @@ void test_clipping_and_failure() {
   }
   require(rejected_color && invalid.objects.empty(),
           "invalid source color entered an immutable snapshot");
-  Fixture group;
-  GroupObject g;
-  g.id = 1;
-  group.objects = group.objects.set(1, g);
-  group.page.layers[0].object_ids = {1};
-  RenderMetric group_metric;
-  require(!group.render(&group_metric), "unsupported group falsely succeeded");
-  require(group_metric.diagnostics.size() == 1 && group_metric.diagnostics[0].error &&
-              group_metric.diagnostics[0].object_id == 1,
-          "missing per-object failure diagnostic");
+  Fixture unsupported_image;
+  ImageObject bad_clip_image;
+  bad_clip_image.id = 1;
+  bad_clip_image.width_px = 1;
+  bad_clip_image.height_px = 1;
+  bad_clip_image.pixels_rgba = {0xff0000ff};
+  bad_clip_image.bounds_rect = {8, 8, 40, 40};
+  geometry::Path2D unsupported_clip;
+  unsupported_clip.move_to(8, 8);
+  unsupported_clip.arc_to(4, 4, 0, false, true, 48, 48);
+  bad_clip_image.clip_path = unsupported_clip;
+  unsupported_image.objects = unsupported_image.objects.set(1, bad_clip_image);
+  unsupported_image.page.layers[0].object_ids = {1};
+  RenderMetric image_metric;
+  require(!unsupported_image.render(&image_metric),
+          "unsupported image clip falsely succeeded");
+  require(image_metric.diagnostics.size() == 1 &&
+              image_metric.diagnostics[0].error &&
+              image_metric.diagnostics[0].object_id == 1,
+          "missing per-object image failure diagnostic");
   for (ObjectId id = 2; id <= 70; ++id) {
-    g.id = id;
-    group.objects = group.objects.set(id, g);
-    group.page.layers[0].object_ids.push_back(id);
+    bad_clip_image.id = id;
+    unsupported_image.objects =
+        unsupported_image.objects.set(id, bad_clip_image);
+    unsupported_image.page.layers[0].object_ids.push_back(id);
   }
-  require(!group.render(&metric) && metric.diagnostics.size() == 65,
+  require(!unsupported_image.render(&metric) && metric.diagnostics.size() == 65,
           "diagnostics are unbounded or missing overflow summary");
 }
 void test_curve_projection_and_source_preservation() {
@@ -294,6 +305,56 @@ void test_curve_projection_and_source_preservation() {
   ellipse.path.line_to(32, 32);
   invalid.add(ellipse);
   require(!invalid.render(), "path without MoveTo falsely succeeded");
+}
+
+void test_nested_groups_apply_parent_transforms() {
+  Fixture f;
+  auto child = rectangle(2, {1, 0, 0, 1}, 8, 8, 8, 8);
+  GroupObject inner;
+  inner.id = 3;
+  inner.children_ids = {child.id};
+  inner.transform = geometry::Transform2D::translation(5, 0);
+  GroupObject outer;
+  outer.id = 1;
+  outer.children_ids = {inner.id};
+  outer.transform = geometry::Transform2D::translation(15, 0);
+  f.objects = f.objects.set(child.id, child);
+  f.objects = f.objects.set(inner.id, inner);
+  f.objects = f.objects.set(outer.id, outer);
+  f.page.layers[0].object_ids = {outer.id};
+
+  RenderMetric metric;
+  require(f.render(&metric), "nested group frame failed");
+  require(f.channel(32, 52, 0) == 255 && f.channel(32, 52, 1) == 0 &&
+              f.channel(32, 52, 2) == 0,
+          "parent group transforms were not composed onto child geometry");
+  require(f.channel(12, 52, 0) == 255 && f.channel(12, 52, 1) == 255,
+          "group child rendered at its untransformed location");
+  require(metric.total_objects == 3 && metric.rendered_objects == 3 &&
+              metric.culled_objects == 0,
+          "group rendering metrics omitted hierarchy objects");
+}
+
+void test_image_clip_masks_transformed_pixels() {
+  Fixture f;
+  ImageObject image;
+  image.id = 10;
+  image.width_px = 2;
+  image.height_px = 1;
+  image.pixels_rgba = {0xff0000ff, 0x0000ffff};
+  image.bounds_rect = {8, 8, 40, 40};
+  image.transform = geometry::Transform2D::translation(10, 0);
+  image.clip_path = geometry::Path2D::make_rect(8, 8, 20, 40);
+  f.objects = f.objects.set(image.id, image);
+  f.page.layers[0].object_ids = {image.id};
+
+  require(f.render(), "transformed clipped image frame failed");
+  require(f.channel(25, 32, 0) == 255 && f.channel(25, 32, 1) == 0 &&
+              f.channel(25, 32, 2) == 0,
+          "image transform or clip path removed an included source pixel");
+  require(f.channel(45, 32, 0) == 255 && f.channel(45, 32, 1) == 255 &&
+              f.channel(45, 32, 2) == 255,
+          "image clip path did not mask pixels outside its path");
 }
 void test_text_backend() {
   Fixture f;
@@ -515,6 +576,8 @@ int main() {
     test_text_backend();
     test_text_appearance_effects_use_glyph_alpha();
     test_curve_projection_and_source_preservation();
+    test_nested_groups_apply_parent_transforms();
+    test_image_clip_masks_transformed_pixels();
     std::cout << "Pixel semantics, winding, layers, alpha, stroke, clipping "
                  "and validation passed.\n";
   } catch (const std::exception &error) {

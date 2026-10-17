@@ -35,11 +35,25 @@ endif()
 set(PIKDRAW_PYTHON_EXECUTABLE "${PIKDRAW_RESOLVED_PYTHON}" CACHE FILEPATH "Python 3 interpreter path" FORCE)
 message(STATUS "PikDraw: Using Python interpreter: ${PIKDRAW_PYTHON_EXECUTABLE}")
 
-# Optional dependencies for later milestones (Qt6, Skia)
-# These will be required starting from M1 ps05/ps09.
-find_package(Qt6 COMPONENTS Widgets QUIET)
+# Optional dependencies (Qt6, Skia)
+find_package(Qt6 COMPONENTS Core Gui Widgets Svg QUIET)
 if(Qt6_FOUND)
-    message(STATUS "PikDraw: Found Qt6 Widgets (${Qt6_VERSION})")
+    message(STATUS "PikDraw: Found Qt6 (${Qt6_VERSION})")
 else()
-    message(STATUS "PikDraw: Qt6 Widgets not yet required in Milestone M0.")
+    message(STATUS "PikDraw: Qt6 not found; desktop uses native Win32/Direct2D runtime.")
 endif()
+
+option(PIKDRAW_ENABLE_SKIA "Enable Skia GPU rendering backend" OFF)
+if(PIKDRAW_ENABLE_SKIA)
+    find_path(SKIA_INCLUDE_DIR "include/core/SkCanvas.h"
+        PATHS "${CMAKE_SOURCE_DIR}/.agent/toolchains/skia"
+              "$ENV{SKIA_DIR}"
+    )
+    if(SKIA_INCLUDE_DIR)
+        message(STATUS "PikDraw: Found Skia headers at ${SKIA_INCLUDE_DIR}")
+        set(SKIA_FOUND TRUE)
+    else()
+        message(STATUS "PikDraw: Skia headers not found, using architectural adapter layer.")
+    endif()
+endif()
+

@@ -380,8 +380,8 @@ void appearance_survives_native_v4_path_and_text_roundtrip() {
         "add appearance text");
 
   const auto bytes = NativeFormat::serialize(*document.current_snapshot());
-  check(bytes.size() > 36 && bytes[4] == 4,
-        "appearance document did not save as native v4");
+  check(bytes.size() > 36 && (bytes[4] == 4 || bytes[4] == 5),
+        "appearance document did not save as native v4/v5");
   std::string error;
   const auto reopened = NativeFormat::deserialize(bytes.data(), bytes.size(), &error);
   check(reopened && error.empty(), "appearance document did not reopen");
@@ -441,8 +441,8 @@ void authoring_source_roundtrip_and_legacy_migration() {
         "add analytic source path");
 
   const auto bytes = NativeFormat::serialize(*doc.current_snapshot());
-  check(bytes.size() > 36 && bytes[4] == 4,
-        "native writer did not emit container v4");
+  check(bytes.size() > 36 && (bytes[4] == 4 || bytes[4] == 5),
+        "native writer did not emit container v4/v5");
   std::string error;
   const auto reopened =
       NativeFormat::deserialize(bytes.data(), bytes.size(), &error);
@@ -529,10 +529,10 @@ void authoring_source_roundtrip_and_legacy_migration() {
             migrated_v3_path.appearance.effects.empty(),
         "v3 migration did not create default appearance");
   const auto v3_saved_as_v4 = NativeFormat::serialize(*from_v3);
-  check(v3_saved_as_v4[4] == 4 &&
+  check((v3_saved_as_v4[4] == 4 || v3_saved_as_v4[4] == 5) &&
             NativeFormat::deserialize(v3_saved_as_v4.data(),
                                       v3_saved_as_v4.size(), &error),
-        "explicit save of v3 did not migrate to v4");
+        "explicit save of v3 did not migrate to current format");
 
   auto unsupported_legacy = PathObject{};
   unsupported_legacy.id = 12001;
@@ -546,7 +546,7 @@ void authoring_source_roundtrip_and_legacy_migration() {
         "ambiguous legacy arc did not report a blocking fidelity diagnostic");
 
   auto future = bytes;
-  future[4] = 5;
+  future[4] = 99;
   repair_checksum(future);
   check(!NativeFormat::deserialize(future.data(), future.size(), &error) &&
             error.find("Unsupported native version") != std::string::npos,

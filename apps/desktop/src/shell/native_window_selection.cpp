@@ -429,6 +429,7 @@ bool NativeWindow::commit_created_shape() {
         }
         root().vector_controller().set_selection({object.id}, *root().document().current_snapshot());
         previous_drawing_tool_ = active_tool_;
+        set_active_tool(0);
 
         // Kích hoạt chế độ gõ nhanh kích thước ngang dài kiểu SketchUp (chỉ áp dụng cho lần vẽ đầu tiên)
         quick_dimension_active_ = true;

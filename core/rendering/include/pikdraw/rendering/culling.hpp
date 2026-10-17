@@ -297,6 +297,28 @@ class SpatialCuller {
   }
 
 public:
+  [[nodiscard]] static bool compute_object_bounds(
+      const document::ObjectVariant &object,
+      geometry::Rect2D &world_bounds,
+      double camera_zoom,
+      double conservative_world_margin_mm = 0.0) {
+    return std::visit(
+        [&](const auto &obj) -> bool {
+          using T = std::decay_t<decltype(obj)>;
+          if constexpr (std::is_same_v<T, document::PathObject>) {
+            return path_output_bounds(obj, world_bounds, camera_zoom,
+                                      conservative_world_margin_mm);
+          } else if constexpr (std::is_same_v<T, document::ImageObject>) {
+            world_bounds = obj.transform.map_rect(obj.bounds_rect);
+            return finite_rect(world_bounds);
+          } else {
+            world_bounds = geometry::Rect2D{-10000.0, -10000.0, 20000.0, 20000.0};
+            return true;
+          }
+        },
+        object);
+  }
+
   /// `camera_zoom` supplies the target pixel density; effect support is rounded
   /// with the same finite ceil(4*sigma_px) rule as the compositor. The final
   /// world-space margin covers target pixel-center sampling after transforms.

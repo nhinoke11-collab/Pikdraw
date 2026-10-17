@@ -21,6 +21,9 @@ add_library(pikdraw_desktop STATIC
     src/development/ui_reload_controller.cpp
     src/runtime/composition_root.cpp
     src/workflows/document_workflow.cpp
+    src/workflows/document_workflow_clipboard_transform.cpp
+    src/workflows/document_workflow_appearance.cpp
+    src/workflows/document_workflow_io_shaping.cpp
     src/clipboard/native_clipboard.cpp
     src/tools/drawing_preferences.cpp
     src/tools/drawing_tool_controller.cpp
@@ -33,11 +36,19 @@ add_library(pikdraw_desktop STATIC
     src/tools/snap_status_controller.cpp
     src/tools/dimension_tool_controller.cpp
     src/shell/native_window.cpp
+    src/shell/native_window_settings.cpp
+    src/shell/native_window_text_align.cpp
+    src/shell/native_window_tooltips_guides.cpp
+    src/shell/native_window_numeric_input.cpp
     src/automation/automation_pipe_host.cpp
     src/automation/native_window_automation.cpp
     src/shell/native_window_events.cpp
+    src/shell/native_window_tool_events.cpp
+    src/shell/native_window_modal_clicks.cpp
+    src/shell/native_window_chrome_clicks.cpp
     src/shell/native_window_shortcuts.cpp
     src/shell/native_window_canvas.cpp
+    src/shell/native_window_canvas_overlays.cpp
     src/shell/native_window_selection.cpp
     src/shell/native_window_selection_paint.cpp
     src/shell/native_window_style.cpp
@@ -46,14 +57,18 @@ add_library(pikdraw_desktop STATIC
     src/shell/native_window_color_profiles.cpp
     src/shell/native_style_dialog.cpp
     src/shell/native_window_files.cpp
+    src/shell/native_window_paint_icons.cpp
+    src/shell/native_window_paint_docks.cpp
     src/shell/native_window_paint.cpp
     src/shell/native_window_paint_menu.cpp
     src/shell/native_window_paint_home.cpp
     src/shell/native_window_paint_modal.cpp
+    src/shell/native_window_paint_settings_modal.cpp
 )
 
 target_include_directories(pikdraw_desktop PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}>
 )
 
 target_link_libraries(pikdraw_desktop PUBLIC

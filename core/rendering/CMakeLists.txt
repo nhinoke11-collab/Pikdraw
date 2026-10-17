@@ -13,12 +13,23 @@ add_library(pikdraw_rendering STATIC
     src/effects/gaussian_blur_avx.cpp
     src/effects/gaussian_blur_simd.cpp
     src/effects/object_compositor.cpp
+    src/effects/object_compositor_surface.cpp
     src/renderer.cpp
     src/raster/path_flatten.cpp
     src/raster/path_paint.cpp
     src/raster/path_stroke.cpp
     src/raster/gradient_sampler.cpp
     src/path_adapter/authoring_path_adapter.cpp
+    src/culling/spatial_index.cpp
+    src/culling/damage_tracker.cpp
+    src/gpu/d2d/d2d_device_manager.cpp
+    src/gpu/d2d/d2d_geometry_cache.cpp
+    src/gpu/d2d/d2d_effects_pipeline.cpp
+    src/gpu/d2d/d2d_render_backend.cpp
+    src/gpu/skia/skia_context_d3d12.cpp
+    src/gpu/skia/skia_path_converter.cpp
+    src/gpu/skia/skia_effects_compositor.cpp
+    src/gpu/skia/skia_render_backend.cpp
 )
 
 target_include_directories(pikdraw_rendering PUBLIC
@@ -32,6 +43,16 @@ target_link_libraries(pikdraw_rendering PUBLIC
     pikdraw_color
     pikdraw_typography
 )
+
+if(WIN32)
+    target_link_libraries(pikdraw_rendering PUBLIC
+        d2d1
+        d3d11
+        dxgi
+        dwrite
+        ole32
+    )
+endif()
 
 # Keep the dispatcher at the baseline ISA and isolate AVX instructions in one
 # translation unit. Runtime dispatch checks both CPU support and OS XMM/YMM
@@ -86,6 +107,15 @@ if(PIKDRAW_BUILD_TESTS)
     add_rendering_test(test_pikdraw_rendering_gaussian_blur_simd tests/effects/test_gaussian_blur_simd.cpp)
     add_rendering_test(test_pikdraw_rendering_gradient tests/rasterizer/test_gradient_pixels.cpp)
     add_rendering_test(test_pikdraw_rendering_gradient_compositor tests/effects/test_gradient_compositor.cpp)
+
+    # A header probe alone does not mean a Skia runtime is linked. Keep this
+    # independent fallback contract enabled until CMake wires up that runtime.
+    if(NOT PIKDRAW_SKIA_RUNTIME_ENABLED)
+        add_rendering_test(test_pikdraw_skia_fallback_contract_independent
+            tests/gpu_independent/test_skia_fallback_contract.cpp)
+        set_tests_properties(test_pikdraw_skia_fallback_contract_independent
+            PROPERTIES ENVIRONMENT "PIKDRAW_RENDER_BACKEND=auto")
+    endif()
 
     # Explicitly built performance probe; not registered as a normal CTest test.
     add_executable(benchmark_pikdraw_rendering_effects

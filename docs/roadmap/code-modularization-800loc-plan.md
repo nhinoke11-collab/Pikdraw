@@ -200,3 +200,17 @@
 | `automation_service.cpp` | **1.078** | `automation_service.cpp`, `automation_service_batch.cpp` | **530 – 550** |
 | `native_window_paint_modal.cpp` | **1.077** | `native_window_paint_modal.cpp`, `native_window_paint_settings_modal.cpp` | **310 – 770** |
 | `object_compositor.cpp` | **1.003** | `object_compositor.cpp`, `object_compositor_surface.cpp` | **490 – 520** |
+
+---
+
+### Gói M09 (Bắt buộc sau khi xong M01 $\rightarrow$ M08): Chuẩn hóa lại Tài liệu & Xóa Kế hoạch Đã Hoàn tất
+Để tránh các Agent đời sau đọc nhầm bản đồ file cũ hoặc chạy lại kế hoạch đã xong, Agent thực hiện bước cuối cùng này:
+1. **Cập nhật bản đồ file trong tài liệu**:
+   - `apps/desktop/README.md`: Cập nhật bảng "Bản đồ tính năng" khớp với tên các file mới đã tách (`native_window_paint_icons.cpp`, `native_window_paint_docks.cpp`, `native_window_canvas_overlays.cpp`, `document_workflow_*.cpp`...).
+   - `docs/development/code-organization.md`: Ghi nhận toàn bộ codebase đã đạt chuẩn $\le 800$ dòng/file.
+   - `docs/project-state.json`: Cập nhật snapshot trạng thái ngắn gọn (giữ dung lượng $< 8.000$ byte).
+2. **Xóa bỏ file kế hoạch đã hoàn thành**:
+   - Chạy `git rm docs/roadmap/code-modularization-800loc-plan.md` để không lưu trữ kế hoạch lịch sử đã xong trong `docs/roadmap/`.
+3. **Kiểm tra cổng kiến trúc**:
+   - Chạy `powershell -File tooling/pikdraw.ps1 doctor` và `powershell -File tooling/native/check.ps1` đảm bảo pass 100%.
+

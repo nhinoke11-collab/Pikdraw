@@ -39,6 +39,24 @@ struct RenderMetric {
   std::vector<RenderDiagnostic> diagnostics;
 };
 
+enum class GpuTargetType {
+  PixelBuffer,
+  GpuTexture,
+  DxgiSwapChain
+};
+
+struct GpuSurfaceTarget {
+  GpuTargetType type{GpuTargetType::PixelBuffer};
+  void *native_resource{nullptr};
+  int32_t width{0};
+  int32_t height{0};
+  float device_pixel_ratio{1.0f};
+
+  [[nodiscard]] bool is_valid() const noexcept {
+    return native_resource != nullptr && width > 0 && height > 0;
+  }
+};
+
 class IRenderBackend {
 public:
   virtual ~IRenderBackend() = default;
@@ -51,6 +69,16 @@ public:
   virtual bool render(const document::DocumentSnapshot &snapshot,
                       const Camera2D &camera, PixelBufferTarget &target,
                       RenderMetric *out_metric = nullptr) = 0;
+
+  virtual bool render_gpu(const document::DocumentSnapshot &snapshot,
+                          const Camera2D &camera, const GpuSurfaceTarget &target,
+                          RenderMetric *out_metric = nullptr) {
+    (void)snapshot;
+    (void)camera;
+    (void)target;
+    (void)out_metric;
+    return false;
+  }
 };
 
 } // namespace pikdraw::rendering

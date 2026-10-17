@@ -7,7 +7,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(pikdraw_automation STATIC
     src/automation_service.cpp
+    src/automation_service_batch.cpp
     src/automation_rpc.cpp
+    src/automation_rpc_parsers.cpp
     src/json_value.cpp
 )
 target_include_directories(pikdraw_automation PUBLIC

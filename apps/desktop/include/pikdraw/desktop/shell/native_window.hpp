@@ -418,6 +418,8 @@ private:
     void paint_settings_modal(HDC mem_dc, int width, int height);
     void paint_new_document_modal(HDC mem_dc, int width, int height);
     void paint_document_tab_bar(HDC mem_dc, int w, int topbar_h, int tabbar_h);
+    void paint_left_toolbox(HDC mem_dc, int w, int h);
+    void paint_right_inspector_dock(HDC mem_dc, int w, int h);
     void paint_main_menu_bar(HDC mem_dc, int w, int topbar_h);
     void paint_dropdown_menu(HDC mem_dc, int menu_id, int x, int y);
     RECT get_menu_bar_item_rect(int menu_index, int topbar_h) const noexcept;
@@ -428,6 +430,8 @@ private:
     void paint_file_menu(HDC mem_dc, int x, int y, int w, int h);
     void paint_home_screen(HDC mem_dc, int w, int h);
     void paint_document_canvas(HDC dc, int width, int height);
+    bool handle_modal_and_home_mouse_down(int x, int y);
+    bool handle_workspace_chrome_mouse_down(int x, int y, unsigned modifiers);
     void handle_canvas_mouse_down(int x, int y, unsigned modifiers);
     void handle_canvas_mouse_move(int x, int y, unsigned modifiers);
     void handle_canvas_mouse_up(int x, int y, unsigned modifiers);

@@ -1,0 +1,539 @@
+#include "pikdraw/desktop/shell/native_window.hpp"
+#include "../automation/native_window_automation.hpp"
+#include "pikdraw/desktop/actions/action_id.hpp"
+#include "native_window_menus.hpp"
+#include "native_window_page_presets.hpp"
+#include "native_canvas_frame.hpp"
+#ifdef _WIN32
+#include "../clipboard/native_clipboard.hpp"
+#endif
+#include "../tools/drawing_tool_controller.hpp"
+#include "../tools/pen_tool_controller.hpp"
+#include "../tools/node_tool_controller.hpp"
+#include "../tools/contour_tool_controller.hpp"
+#include "../tools/gradient_tool_controller.hpp"
+#include "pikdraw/vector/tools/shape_tools.hpp"
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <iomanip>
+#include <sstream>
+#include <algorithm>
+#include <cmath>
+#include <stdexcept>
+
+namespace pikdraw::desktop {
+
+void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
+    bool is_vi = (language_ == UILanguage::Vietnamese);
+    int w = width_;
+    int h = height_;
+    int topbar_h = 38, tabbar_h = 28, ribbon_h = 36, status_h = 26, tool_w = 52, inspect_w = 280;
+    int content_top = topbar_h + tabbar_h + ribbon_h;
+    int insp_x = w - inspect_w;
+
+    std::wstring tip_text;
+
+    // 1. Main menu groups (y: 5 to 34)
+    if (mouse_y >= 6 && mouse_y <= 32) {
+        const int menu_index = get_menu_bar_item_at(mouse_x, mouse_y, 38);
+        if (menu_index >= 0) {
+            const auto& entry = kMenuBarEntries[static_cast<size_t>(menu_index)];
+            tip_text = is_vi ? std::wstring(entry.label_vi) + L" · menu"
+                             : std::wstring(entry.label_en) + L" menu";
+        } else if (mouse_x >= 10 && mouse_x <= 36) {
+            tip_text = is_vi ? L"PikDraw Pro · Phần mềm thiết kế đồ họa vector chuyên nghiệp"
+                             : L"PikDraw Pro · Professional Vector & Manufacturing Editor";
+        }
+    }
+
+    // 2. Tab Bar (y: topbar_h to topbar_h + tabbar_h)
+    else if (mouse_y >= topbar_h && mouse_y < topbar_h + tabbar_h) {
+        int cur_x = 10;
+        int tab_w = 210;
+        for (size_t i = 0; i < tabs_.size(); ++i) {
+            if (mouse_x >= cur_x && mouse_x <= cur_x + tab_w) {
+                if (mouse_x >= cur_x + tab_w - 24) {
+                    tip_text = is_vi ? L"Đóng tab tài liệu này (Ctrl+W)" : L"Close document tab (Ctrl+W)";
+                } else {
+                    tip_text = (is_vi ? L"Tab tài liệu: " : L"Document Tab: ") + utf8_to_wide(tabs_[i].title);
+                }
+                break;
+            }
+            cur_x += tab_w + 4;
+        }
+        if (tip_text.empty() && mouse_x >= cur_x && mouse_x <= cur_x + 28) {
+            tip_text = is_vi ? L"Tạo tài liệu mới dạng Tab (Ctrl+N)" : L"New Document Tab (Ctrl+N)";
+        }
+    }
+
+    // 3. Ribbon (y: topbar_h + tabbar_h to content_top)
+    else if (mouse_y >= topbar_h + tabbar_h && mouse_y < content_top) {
+        const auto& selection = root().vector_controller().selection().selected_ids();
+        bool is_text_mode = (active_tool_ == 4 || is_inline_text_editing_ || is_text_object_selected());
+
+        if (active_tool_ == 8) {
+            if (mouse_x >= 52 && mouse_x <= 390)
+                tip_text = is_vi
+                    ? L"Nhập @L<góc, @ΔX;ΔY hoặc #X;Y; Enter đặt điểm, Tab cũng áp dụng"
+                    : L"Enter @L<angle, @dX;dY or #X;Y; Enter places a point; Tab applies";
+            else if (mouse_x >= 402 && mouse_x <= 480)
+                tip_text = is_vi ? L"Hoàn tất đường đang vẽ · Enter" : L"Finish the current path · Enter";
+            else if (mouse_x >= 490 && mouse_x <= 560)
+                tip_text = is_vi ? L"Hủy toàn bộ bản nháp Pen · Shift+Esc" : L"Cancel the whole Pen draft · Shift+Esc";
+        } else if (active_tool_ == 9) {
+            if (mouse_x >= 58 && mouse_x <= 164)
+                tip_text = is_vi
+                    ? L"Số cạnh đa giác đều · nhập số nguyên 3–256 · Enter áp dụng"
+                    : L"Regular polygon sides · enter a whole number from 3 to 256 · Enter applies";
+            else if (mouse_x >= 174 && mouse_x <= 780)
+                tip_text = is_vi
+                    ? L"Shift khóa hướng theo bước 15° · Ctrl lấy điểm đầu làm tâm"
+                    : L"Shift snaps direction to 15° · Ctrl uses the start point as center";
+        } else if (is_text_mode) {
+            if (mouse_x >= 52 && mouse_x <= 192) {
+                tip_text = is_vi ? L"Chọn kiểu phông chữ văn bản (Font Family)" : L"Select Font Family";
+            } else if (mouse_x >= 220 && mouse_x <= 240) {
+                tip_text = is_vi ? L"Giảm cỡ chữ (-2 pt)" : L"Decrease Font Size (-2 pt)";
+            } else if (mouse_x >= 294 && mouse_x <= 314) {
+                tip_text = is_vi ? L"Tăng cỡ chữ (+2 pt)" : L"Increase Font Size (+2 pt)";
+            } else if (mouse_x >= 322 && mouse_x <= 350) {
+                tip_text = is_vi ? L"In đậm chữ (Bold · Ctrl+B)" : L"Bold text (Ctrl+B)";
+            } else if (mouse_x >= 354 && mouse_x <= 382) {
+                tip_text = is_vi ? L"In nghiêng chữ (Italic · Ctrl+I)" : L"Italic text (Ctrl+I)";
+            } else if (mouse_x >= 386 && mouse_x <= 414) {
+                tip_text = is_vi ? L"Gạch chân chữ (Underline · Ctrl+U)" : L"Underline text (Ctrl+U)";
+            } else if (mouse_x >= 422 && mouse_x <= 462) {
+                tip_text = is_vi ? L"Căn lề trái dòng chữ (Align Left)" : L"Align text Left";
+            } else if (mouse_x >= 466 && mouse_x <= 506) {
+                tip_text = is_vi ? L"Căn giữa dòng chữ (Align Center)" : L"Align text Center";
+            } else if (mouse_x >= 510 && mouse_x <= 550) {
+                tip_text = is_vi ? L"Căn phải dòng chữ (Align Right)" : L"Align text Right";
+            } else if (mouse_x >= 556 && mouse_x <= 616) {
+                tip_text = is_vi ? L"Chuyển văn bản thành đường cong vector (Convert to Curves · Ctrl+Q)"
+                                 : L"Convert Text to Curves / Vector Outlines (Ctrl+Q)";
+            } else if (mouse_x >= 622 && mouse_x <= 692) {
+                tip_text = is_vi ? L"Tạo bảng văn bản 3×3 (Table Tool - CorelDRAW Style)"
+                                 : L"Insert 3×3 Text Table (CorelDRAW Style)";
+            } else if (!selection.empty() && mouse_x >= 698 && mouse_x <= 748) {
+                tip_text = is_vi ? L"Xóa văn bản đang chọn (Delete)" : L"Delete selected text (Delete)";
+            } else {
+                int opacity_x = (!selection.empty()) ? 754 : 698;
+                if (selection.size() == 1 && workflow().can_set_selected_object_opacity() &&
+                    mouse_x >= opacity_x && mouse_x <= opacity_x + 124 && opacity_x + 124 <= w - inspect_w) {
+                    tip_text = is_vi
+                        ? L"Độ mờ toàn đối tượng 0–100% · nhập số · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
+                        : L"Object opacity 0–100% · type a value · Enter applies · Esc cancels · Ctrl+Z undoes";
+                }
+            }
+        } else if (selection.empty()) {
+            if (mouse_x >= 52 && mouse_x <= 165) {
+                tip_text = is_vi ? L"Danh sách khổ giấy chuẩn (A4, A3, A2, Pano, Standee, Card...)" : L"Standard Page Presets List (A4, A3, A2, Pano, Standee, Card...)";
+            } else if (mouse_x >= 175 && mouse_x <= 275) {
+                tip_text = is_vi ? L"Chiều rộng khổ giấy (W mm) · Nhập trực tiếp số từ bàn phím" : L"Page Width (W mm) · Type directly from keyboard";
+            } else if (mouse_x >= 283 && mouse_x <= 383) {
+                tip_text = is_vi ? L"Chiều cao khổ giấy (H mm) · Nhập trực tiếp số từ bàn phím" : L"Page Height (H mm) · Type directly from keyboard";
+            } else if (mouse_x >= 391 && mouse_x <= 455) {
+                tip_text = is_vi ? L"Chuyển trang in sang hướng Dọc (Portrait)" : L"Page Orientation: Portrait";
+            } else if (mouse_x >= 461 && mouse_x <= 525) {
+                tip_text = is_vi ? L"Chuyển trang in sang hướng Ngang (Landscape)" : L"Page Orientation: Landscape";
+            } else if (mouse_x >= 533 && mouse_x <= 665) {
+                tip_text = is_vi ? L"Hệ màu in ấn CMYK · Độ phân giải 300 DPI" : L"CMYK Print Color Profile · 300 DPI High-Res";
+            }
+        } else {
+            // Object Selection Mode
+            if (selection.size() == 1 && workflow().can_set_selected_object_opacity() &&
+                mouse_x >= 720 && mouse_x <= 844 && 844 <= w - inspect_w) {
+                tip_text = is_vi
+                    ? L"Độ mờ toàn đối tượng 0–100% · nhập số · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
+                    : L"Object opacity 0–100% · type a value · Enter applies · Esc cancels · Ctrl+Z undoes";
+            } else if (mouse_x >= 10 && mouse_x <= 95) {
+                tip_text = is_vi ? L"Nhập vị trí X của đối tượng (mm)" : L"Enter the object's X position in millimeters";
+            } else if (mouse_x >= 100 && mouse_x <= 185) {
+                tip_text = is_vi ? L"Nhập vị trí Y của đối tượng (mm)" : L"Enter the object's Y position in millimeters";
+            } else if (mouse_x >= 190 && mouse_x <= 285) {
+                tip_text = is_vi ? L"Nhập chiều rộng của đối tượng (mm)" : L"Enter the object's width in millimeters";
+            } else if (mouse_x >= 290 && mouse_x <= 360) {
+                tip_text = is_vi ? L"Khóa hoặc mở tỷ lệ W:H" : L"Lock or unlock the width-to-height ratio";
+            } else if (mouse_x >= 365 && mouse_x <= 460) {
+                tip_text = is_vi ? L"Nhập chiều cao của đối tượng (mm)" : L"Enter the object's height in millimeters";
+            } else if (is_in_isolation_mode()) {
+                if (mouse_x >= 580 && mouse_x <= 670) {
+                    tip_text = is_vi ? L"Thoát chế độ cô lập nhóm (Phím Esc)" : L"Exit group isolation mode (Esc)";
+                }
+            } else {
+                if (selection.size() >= 2) {
+                    const auto buttons = get_multi_object_context_buttons(workflow(), workflow().can_group_selected(), width_ - inspect_w);
+                    for (const auto& button : buttons) {
+                        if (mouse_x < button.left || mouse_x >= button.left + button.width) continue;
+                        switch (button.action) {
+                        case ObjectContextAction::AlignLeft:
+                            tip_text = is_vi ? L"Căn cạnh trái của các đối tượng theo khung chọn" : L"Align selected objects by their left edges"; break;
+                        case ObjectContextAction::AlignCenterHorizontal:
+                            tip_text = is_vi ? L"Căn tâm theo phương ngang" : L"Align object centers horizontally"; break;
+                        case ObjectContextAction::AlignRight:
+                            tip_text = is_vi ? L"Căn cạnh phải của các đối tượng theo khung chọn" : L"Align selected objects by their right edges"; break;
+                        case ObjectContextAction::AlignTop:
+                            tip_text = is_vi ? L"Căn cạnh trên của các đối tượng theo khung chọn" : L"Align selected objects by their top edges"; break;
+                        case ObjectContextAction::AlignCenterVertical:
+                            tip_text = is_vi ? L"Căn tâm theo phương dọc" : L"Align object centers vertically"; break;
+                        case ObjectContextAction::AlignBottom:
+                            tip_text = is_vi ? L"Căn cạnh dưới của các đối tượng theo khung chọn" : L"Align selected objects by their bottom edges"; break;
+                        case ObjectContextAction::CenterPage:
+                            tip_text = is_vi ? L"Căn tâm vùng chọn vào tâm trang (P)" : L"Center the selection on the page (P)"; break;
+                        case ObjectContextAction::DistributeHorizontal:
+                            tip_text = is_vi ? L"Phân bổ khoảng hở ngang đều nhau · cần ít nhất 3 đối tượng" : L"Distribute equal horizontal gaps · requires at least 3 objects"; break;
+                        case ObjectContextAction::DistributeVertical:
+                            tip_text = is_vi ? L"Phân bổ khoảng hở dọc đều nhau · cần ít nhất 3 đối tượng" : L"Distribute equal vertical gaps · requires at least 3 objects"; break;
+                        case ObjectContextAction::Group:
+                            tip_text = is_vi ? L"Nhóm các đối tượng đã chọn (Ctrl+G)" : L"Group selected objects (Ctrl+G)"; break;
+                        case ObjectContextAction::FlipHorizontal:
+                            tip_text = is_vi ? L"Lật ngang đối tượng qua tâm (Ctrl+Shift+H)" : L"Flip selection horizontally (Ctrl+Shift+H)"; break;
+                        case ObjectContextAction::FlipVertical:
+                            tip_text = is_vi ? L"Lật dọc đối tượng qua tâm (Ctrl+Shift+V)" : L"Flip selection vertically (Ctrl+Shift+V)"; break;
+                        case ObjectContextAction::Rotate90CW:
+                            tip_text = is_vi ? L"Xoay 90° thuận chiều kim đồng hồ (Ctrl+])" : L"Rotate 90° clockwise (Ctrl+])"; break;
+                        case ObjectContextAction::Rotate90CCW:
+                            tip_text = is_vi ? L"Xoay 90° ngược chiều kim đồng hồ (Ctrl+[)" : L"Rotate 90° counter-clockwise (Ctrl+[)"; break;
+                        case ObjectContextAction::BooleanUnion:
+                            tip_text = is_vi ? L"Hàn hai path đã chọn thành một kết quả" : L"Weld the two selected paths into one result"; break;
+                        case ObjectContextAction::BooleanDifference:
+                            tip_text = is_vi ? L"Trừ path chọn thứ hai khỏi path chọn thứ nhất" : L"Subtract the second selected path from the first"; break;
+                        case ObjectContextAction::BooleanIntersection:
+                            tip_text = is_vi ? L"Chỉ giữ phần giao của hai path đã chọn" : L"Keep only the intersection of the selected paths"; break;
+                        case ObjectContextAction::BooleanExclude:
+                            tip_text = is_vi ? L"Loại bỏ phần giao; giữ phần không chồng nhau" : L"Exclude the overlap and keep non-overlapping areas"; break;
+                        case ObjectContextAction::BooleanReverseDifference:
+                            tip_text = is_vi ? L"Trừ path chọn thứ nhất khỏi path chọn thứ hai" : L"Subtract the first selected path from the second"; break;
+                        }
+                        break;
+                    }
+                } else if (selection.size() == 1) {
+                    int rx = 580;
+                    if (mouse_x >= rx && mouse_x < rx + 28) {
+                        tip_text = is_vi ? L"Lật ngang đối tượng qua tâm (Ctrl+Shift+H)" : L"Flip selection horizontally (Ctrl+Shift+H)";
+                    } else if (mouse_x >= rx + 32 && mouse_x < rx + 60) {
+                        tip_text = is_vi ? L"Lật dọc đối tượng qua tâm (Ctrl+Shift+V)" : L"Flip selection vertically (Ctrl+Shift+V)";
+                    } else if (mouse_x >= rx + 64 && mouse_x < rx + 92) {
+                        tip_text = is_vi ? L"Xoay 90° thuận chiều kim đồng hồ (Ctrl+])" : L"Rotate 90° clockwise (Ctrl+])";
+                    } else if (mouse_x >= rx + 96 && mouse_x < rx + 124) {
+                        tip_text = is_vi ? L"Xoay 90° ngược chiều kim đồng hồ (Ctrl+[)" : L"Rotate 90° counter-clockwise (Ctrl+[)";
+                    } else {
+                        rx += 130;
+                        if (workflow().is_group(selection.front())) {
+                            if (mouse_x >= rx && mouse_x < rx + 66) {
+                                tip_text = is_vi ? L"Rã nhóm đối tượng (Ungroup · Ctrl+Shift+G)" : L"Ungroup selected group (Ctrl+Shift+G)";
+                            } else if (mouse_x >= rx + 72 && mouse_x < rx + 138) {
+                                tip_text = is_vi ? L"Chui vào trong nhóm để chỉnh sửa hình con (Enter hoặc Nhấp đúp)"
+                                                 : L"Enter group isolation mode to edit children (Enter or Double Click)";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. Tool groups and their flyouts.
+    else if (toolbox_open_group_ > 0 && mouse_x >= 54 && mouse_x <= 242) {
+        const int group_row = toolbox_open_group_ == 1 ? 1
+                            : toolbox_open_group_ == 2 ? 2 : 6;
+        const int flyout_top = content_top + 10 + group_row * 42;
+        const int item = (mouse_y - flyout_top) / 30;
+        if (mouse_y >= flyout_top && item >= 0 && item < 3) {
+            if (toolbox_open_group_ == 1) {
+                if (item == 0)
+                    tip_text = is_vi ? L"Hình chữ nhật · Shift vuông · Ctrl từ tâm"
+                                     : L"Rectangle · Shift for square · Ctrl from center";
+                else if (item == 1)
+                    tip_text = is_vi ? L"Hình elip · Shift hình tròn · Ctrl từ tâm"
+                                     : L"Ellipse · Shift for circle · Ctrl from center";
+                else
+                    tip_text = is_vi ? L"Đa giác đều · đặt số cạnh trên thanh thuộc tính hoặc Properties"
+                                     : L"Regular polygon · set sides in the property bar or Properties";
+            } else if (toolbox_open_group_ == 3) {
+                if (item == 0) {
+                    tip_text = is_vi
+                        ? L"Mở Properties > Style để chỉnh Blend, Opacity và stack hiệu ứng"
+                        : L"Open Properties > Style for Blend, Opacity and the effect stack";
+                } else if (workflow().can_add_selected_effect()) {
+                    tip_text = item == 1
+                        ? (is_vi ? L"Thêm Gaussian Blur cuối stack · Path/Text không khóa · Ctrl+Z hoàn tác"
+                                 : L"Append Gaussian Blur · unlocked Path/Text only · Ctrl+Z undoes")
+                        : (is_vi ? L"Thêm Drop Shadow cuối stack · Path/Text không khóa · Ctrl+Z hoàn tác"
+                                 : L"Append Drop Shadow · unlocked Path/Text only · Ctrl+Z undoes");
+                } else {
+                    tip_text = is_vi
+                        ? L"Đang tắt: chọn Path/Text không khóa và còn chỗ trong stack"
+                        : L"Disabled: select unlocked Path/Text with available stack capacity";
+                }
+            } else if (item == 0) {
+                tip_text = is_vi ? L"Đoạn thẳng · L" : L"Line · L";
+            } else if (item == 1) {
+                tip_text = is_vi ? L"Đường gấp khúc · Shift+L" : L"Polyline · Shift+L";
+            } else {
+                tip_text = is_vi ? L"Pen · nhấp/kéo điểm · Enter kết thúc · Esc kết thúc"
+                                 : L"Pen · click/drag points · Enter finishes · Esc finishes";
+            }
+        }
+    }
+    else if (mouse_x >= 0 && mouse_x <= tool_w && mouse_y >= content_top && mouse_y < h - status_h) {
+        const int tool_idx = (mouse_y - (content_top + 10)) / 42;
+        if (tool_idx == 0) {
+            tip_text = is_vi ? L"Công cụ chọn & biến đổi đối tượng (Pick Tool) · Phím V hoặc Space"
+                             : L"Pick & Select / Transform Tool · Shortcut: V or Space";
+        } else if (tool_idx == 1) {
+            tip_text = is_vi ? L"Hình cơ bản · Hình chữ nhật, elip, đa giác · Alt+↓ mở nhóm"
+                             : L"Quick Shapes · Rectangle, Ellipse, Polygon · Alt+Down opens group";
+        } else if (tool_idx == 2) {
+            tip_text = is_vi ? L"Đường vẽ · Line, Polyline, Pen · Alt+↓ mở nhóm"
+                             : L"Path Drawing · Line, Polyline, Pen · Alt+Down opens group";
+        } else if (tool_idx == 3) {
+            tip_text = is_vi ? L"Kéo trượt vùng làm việc (Pan Hand Tool) · Phím H hoặc Giữ Chuột giữa"
+                             : L"Pan Viewport Hand Tool · Shortcut: H or Middle Drag";
+        } else if (tool_idx == 4) {
+            tip_text = is_vi ? L"Soạn thảo văn bản & Bảng (Text Tool) · Phím F8"
+                             : L"Text Typography & Table Tool · Shortcut: F8";
+        } else if (tool_idx == 5) {
+            tip_text = is_vi ? L"Dao cắt xén đối tượng vector (Knife Tool) · Phím K"
+                             : L"Knife / Slice Tool · Shortcut: K";
+        } else if (tool_idx == 6) {
+            tip_text = mouse_x >= 37
+                ? (is_vi ? L"Appearance · Alt+↓ mở nhóm · ↑/↓ chọn · Enter mở · Esc đóng"
+                         : L"Appearance · Alt+Down opens group · Up/Down select · Enter opens · Esc closes")
+                : (is_vi ? L"Thuộc tính diện mạo · mở Properties > Style để chỉnh Opacity, Blend và hiệu ứng"
+                         : L"Appearance Properties · open Properties > Style for Opacity, Blend and effects");
+        }
+    }
+
+    // 5. Right Inspector & Docker Panel (x: insp_x to w, y: content_top to h - status_h)
+    else if (mouse_x >= insp_x && mouse_x <= w && mouse_y >= content_top && mouse_y < h - status_h) {
+        int tab_w = inspect_w / 3;
+        if (mouse_y >= content_top && mouse_y <= content_top + 28) {
+            int tidx = (mouse_x - insp_x) / tab_w;
+            if (tidx == 0) tip_text = is_vi ? L"Bảng thuộc tính đối tượng" : L"Object Properties";
+            else if (tidx == 1) tip_text = is_vi ? L"Danh sách các lớp & Đối tượng (Layers)" : L"Layers & Objects Hierarchy";
+            else if (tidx == 2) tip_text = is_vi ? L"Lịch sử các thao tác hoàn tác / làm lại (History)" : L"Command History & Undo/Redo Log";
+        } else if (active_dock_tab_ == 0 &&
+                   mouse_y >= AlignPanelMetrics::section_tabs_top &&
+                   mouse_y < AlignPanelMetrics::section_tabs_top + AlignPanelMetrics::section_tabs_height) {
+            const int panel_left = insp_x + AlignPanelMetrics::content_left;
+            const int button_width = (AlignPanelMetrics::content_width - 12) / 3;
+            const int index = (mouse_x - panel_left) / (button_width + 6);
+            if (index == 0) tip_text = is_vi ? L"Xem thông tin đối tượng đang chọn" : L"Show selected object properties";
+            else if (index == 1) tip_text = is_vi ? L"Mở thuộc tính kiểu dáng" : L"Open style properties";
+            else if (index == 2) tip_text = is_vi ? L"Mở bảng Align & Distribute (Ctrl+Shift+A)" : L"Open Align & Distribute (Ctrl+Shift+A)";
+        } else if (active_dock_tab_ == 0 && active_tool_ == 9) {
+            if (mouse_y >= 172 && mouse_y <= 206)
+                tip_text = is_vi ? L"Số cạnh của đa giác tạo tiếp theo · số nguyên 3–256"
+                                 : L"Side count for the next polygon · whole number 3–256";
+            else if (mouse_y >= 216 && mouse_y <= 250)
+                tip_text = is_vi ? L"Góc của đỉnh đầu tiên · độ, −36000 đến 36000"
+                                 : L"First vertex angle · degrees, −36000 to 36000";
+        } else if (active_dock_tab_ == 0 && show_style_inspector_ &&
+                   mouse_y >= 162 + 298 - style_inspector_scroll_ &&
+                   mouse_y <= 162 + 328 - style_inspector_scroll_ &&
+                   mouse_x >= insp_x + 12 && mouse_x <= insp_x + 268) {
+            tip_text = is_vi
+                ? L"Độ mờ đối tượng Path/Text · 0–100% · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
+                : L"Path/Text object opacity · 0–100% · Enter applies · Esc cancels · Ctrl+Z undoes";
+        } else if (active_dock_tab_ == 0 && show_style_inspector_) {
+            const int panel_x = mouse_x - insp_x;
+            const int panel_y = mouse_y - 162 + style_inspector_scroll_;
+            if (panel_y >= kAppearanceBlendTop + 26 &&
+                panel_y < kAppearanceBlendTop + 80) {
+                tip_text = is_vi
+                    ? L"Chọn Blend mode của toàn object; đây là compositing, không phải công cụ Blend hình học"
+                    : L"Choose whole-object compositing; this is not Illustrator's geometric Blend tool";
+            } else if (panel_y >= kAppearanceEffectsTop + 50 &&
+                       panel_y < kAppearanceEffectsTop + 78) {
+                tip_text = is_vi
+                    ? L"Thêm một node cuối stack · Path/Text không khóa · Ctrl+Z hoàn tác"
+                    : L"Append an effect node to the stack · unlocked Path/Text only · Ctrl+Z undoes";
+            } else if (panel_y >= kAppearanceEffectListTop &&
+                       panel_x >= 12 && panel_x < 268) {
+                const auto snapshot = root().document().current_snapshot();
+                const auto summary = selection_appearance(
+                    *snapshot, root().vector_controller().selection().selected_ids());
+                if (summary.effect_stack_compatible) {
+                    int node_top = kAppearanceEffectListTop;
+                    for (size_t index = 0; index < summary.effects.size(); ++index) {
+                        const auto &effect = summary.effects[index];
+                        const bool shadow = std::holds_alternative<document::DropShadowEffect>(effect.parameters);
+                        const int node_height = shadow ? 176 : 118;
+                        if (panel_y >= node_top && panel_y < node_top + node_height) {
+                            if (panel_y < node_top + 45) {
+                                tip_text = panel_x < 96
+                                    ? (is_vi ? L"Bật/tắt node; Mixed sẽ bật tất cả đối tượng đã chọn"
+                                             : L"Enable or disable this node; Mixed enables every selected object")
+                                    : panel_x < 150
+                                        ? (is_vi ? L"Đưa node lên trước · đổi thứ tự làm đổi kết quả"
+                                                 : L"Move node earlier · order changes the result")
+                                        : panel_x < 210
+                                            ? (is_vi ? L"Đưa node xuống sau · đổi thứ tự làm đổi kết quả"
+                                                     : L"Move node later · order changes the result")
+                                            : (is_vi ? L"Xóa node khỏi toàn bộ vùng chọn · Ctrl+Z khôi phục"
+                                                     : L"Remove this node from the complete selection · Ctrl+Z restores it");
+                            } else if (shadow && panel_y < node_top + 136 && panel_x >= 96) {
+                                tip_text = is_vi
+                                    ? L"Màu nguồn của bóng · đổi màu có thể chuyển hệ màu, thông số khác giữ nguyên"
+                                    : L"Shadow source color · changing model may convert color; other parameters stay intact";
+                            } else if (shadow && panel_y >= node_top + 140) {
+                                tip_text = is_vi
+                                    ? L"Độ mờ riêng của bóng · 0–100% · không thay Object Opacity"
+                                    : L"Shadow opacity · 0–100% · separate from Object Opacity";
+                            } else if (shadow && panel_y >= node_top + 78) {
+                                tip_text = is_vi
+                                    ? L"Sigma X/Y theo mm cục bộ · giá trị lớn có thể vượt ngân sách xem trước"
+                                    : L"Local-mm Sigma X/Y · large values may exceed preview budgets";
+                            } else if (shadow) {
+                                tip_text = is_vi
+                                    ? L"Độ lệch X/Y theo trục cục bộ mm; +Y hướng lên"
+                                    : L"Local-mm X/Y offset; positive Y points up";
+                            } else {
+                                tip_text = is_vi
+                                    ? L"Gaussian sigma X/Y theo mm cục bộ · không lưu pixel hoặc zoom"
+                                    : L"Gaussian local-mm Sigma X/Y · pixel radius and zoom are not stored";
+                            }
+                            break;
+                        }
+                        node_top += node_height + 10;
+                    }
+                }
+            }
+        } else if (active_dock_tab_ == 0 && show_align_panel_) {
+            if (mouse_y >= 164 && mouse_y < 185) {
+                tip_text = is_vi
+                    ? L"Căn theo vùng chọn, đối tượng chọn cuối hoặc trang; Giữa trang căn toàn bộ vùng chọn vào trang"
+                    : L"Align to selection bounds, last selected object, or page; Center Page moves the selection as a group";
+            } else if (mouse_y >= AlignPanelMetrics::reference_top &&
+                       mouse_y < AlignPanelMetrics::reference_top + AlignPanelMetrics::reference_height) {
+                tip_text = is_vi ? L"Chọn mốc cho sáu lệnh căn chỉnh" : L"Choose the reference for the six Align commands";
+            } else if (mouse_y >= AlignPanelMetrics::align_top && mouse_y < AlignPanelMetrics::align_top + 58) {
+                tip_text = is_vi ? L"Căn cạnh hoặc tâm đối tượng theo mốc đang chọn" : L"Align object edges or centers to the selected reference";
+            } else if ((mouse_y >= AlignPanelMetrics::horizontal_top && mouse_y < AlignPanelMetrics::horizontal_top + 56) ||
+                       (mouse_y >= AlignPanelMetrics::vertical_top && mouse_y < AlignPanelMetrics::vertical_top + 56)) {
+                tip_text = is_vi
+                    ? L"Phân bổ khoảng hở, tâm hoặc cạnh theo trục; khoảng hở tự động cần ít nhất 3 đối tượng"
+                    : L"Distribute gaps, centers, or edges along an axis; automatic equal gaps need at least 3 objects";
+            } else if (mouse_y >= AlignPanelMetrics::gap_field_top &&
+                       mouse_y < AlignPanelMetrics::gap_field_top + AlignPanelMetrics::gap_field_height) {
+                tip_text = is_vi ? L"Nhấp để nhập khoảng hở cố định (mm); Enter xác nhận, Esc hủy" : L"Enter a fixed gap in mm; Enter applies the value, Esc cancels";
+            } else if (mouse_y >= AlignPanelMetrics::apply_top &&
+                       mouse_y < AlignPanelMetrics::apply_top + AlignPanelMetrics::apply_height) {
+                tip_text = is_vi ? L"Áp dụng khoảng hở nhập ở trên theo chiều ngang hoặc dọc" : L"Apply the entered gap horizontally or vertically";
+            }
+        }
+    }
+
+    // 6. Bottom Status Bar (y: h - status_h to h)
+    else if (mouse_y >= h - status_h && mouse_y <= h) {
+        if (mouse_x >= 16 && mouse_x <= 210) {
+            tip_text = is_vi ? L"Tọa độ con trỏ chuột trên mặt vẽ (mm)" : L"Pointer coordinates on canvas in mm";
+        } else if (mouse_x >= 215 && mouse_x <= 400) {
+            tip_text = is_vi ? L"Chế độ giao diện (Dark / Light Theme)" : L"Current Theme Mode (Dark / Light)";
+        } else if (mouse_x >= w - 210 && mouse_x <= w - 145) {
+            tip_text = is_vi ? L"Thu phóng vừa vặn toàn bộ trang in trong khung nhìn (Fit Page)" : L"Zoom to fit entire page in view";
+        } else if (mouse_x >= w - 120 && mouse_x <= w - 95) {
+            tip_text = is_vi ? L"Thu nhỏ góc nhìn vùng vẽ (-)" : L"Zoom Out (-)";
+        } else if (mouse_x >= w - 45 && mouse_x <= w - 20) {
+            tip_text = is_vi ? L"Phóng to góc nhìn vùng vẽ (+)" : L"Zoom In (+)";
+        }
+    }
+
+    // 7. Canvas Rulers & Origin
+    const RECT c_area = canvas_rect(w, h);
+    if (mouse_x >= 52 && mouse_x < c_area.left && mouse_y >= 102 && mouse_y < c_area.top) {
+        tip_text = is_vi ? L"Gốc tọa độ thước (0,0) · Phím Ctrl+; để Ẩn/Hiện đường gióng"
+                         : L"Ruler Origin (0,0) · Shortcut: Ctrl+; to toggle guidelines";
+    } else if (mouse_x >= c_area.left && mouse_x <= c_area.right && mouse_y >= 102 && mouse_y < c_area.top) {
+        tip_text = is_vi ? L"Thước đo ngang · Nhấp và kéo chuột xuống để tạo đường gióng ngang"
+                         : L"Horizontal Ruler · Drag down to place horizontal guideline";
+    } else if (mouse_x >= 52 && mouse_x < c_area.left && mouse_y >= c_area.top && mouse_y <= c_area.bottom) {
+        tip_text = is_vi ? L"Thước đo dọc · Nhấp và kéo chuột sang phải để tạo đường gióng dọc"
+                         : L"Vertical Ruler · Drag right to place vertical guideline";
+    }
+
+    // Update state
+    std::wstring prev_text = tooltip_.text;
+
+    if (!tip_text.empty()) {
+        tooltip_.visible = true;
+        tooltip_.x = mouse_x;
+        tooltip_.y = mouse_y;
+        tooltip_.text = tip_text;
+    } else {
+        tooltip_.visible = false;
+        tooltip_.text.clear();
+    }
+
+    // Also reflect into status bar for immediate feedback
+    if (tooltip_.visible && !tooltip_.text.empty() && prev_text != tooltip_.text) {
+        status_msg_ = wide_to_utf8(tooltip_.text);
+    }
+}
+
+void NativeWindow::add_guideline(GuidelineOrientation orient, double pos_mm) {
+    guidelines_.push_back({orient, pos_mm, false});
+    std::ostringstream ss;
+    ss << std::fixed << std::setprecision(1) << pos_mm;
+    if (orient == GuidelineOrientation::Horizontal) {
+        status_msg_ = (language_ == UILanguage::Vietnamese)
+            ? "Đã thêm đường gióng ngang: Y = " + ss.str() + " mm"
+            : "Added horizontal guideline: Y = " + ss.str() + " mm";
+    } else {
+        status_msg_ = (language_ == UILanguage::Vietnamese)
+            ? "Đã thêm đường gióng dọc: X = " + ss.str() + " mm"
+            : "Added vertical guideline: X = " + ss.str() + " mm";
+    }
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::toggle_guidelines() noexcept {
+    show_guidelines_ = !show_guidelines_;
+    status_msg_ = (language_ == UILanguage::Vietnamese)
+        ? (show_guidelines_ ? "Đã bật hiển thị đường gióng (Ctrl+;)" : "Đã ẩn đường gióng (Ctrl+;)")
+        : (show_guidelines_ ? "Showing guidelines (Ctrl+;)" : "Guidelines hidden (Ctrl+;)");
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::clear_guidelines() noexcept {
+    size_t count = guidelines_.size();
+    guidelines_.clear();
+    status_msg_ = (language_ == UILanguage::Vietnamese)
+        ? "Đã xóa toàn bộ " + std::to_string(count) + " đường gióng"
+        : "Cleared all " + std::to_string(count) + " guidelines";
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+int NativeWindow::guideline_at(int x, int y) const {
+    if (!show_guidelines_ || guidelines_.empty()) return -1;
+    const RECT area = canvas_rect(width_, height_);
+    if (x < area.left || x > area.right || y < area.top || y > area.bottom)
+        return -1;
+    const auto& camera = root().renderer().camera();
+    for (int i = static_cast<int>(guidelines_.size()) - 1; i >= 0; --i) {
+        const auto& gl = guidelines_[i];
+        if (gl.orientation == GuidelineOrientation::Horizontal) {
+            const auto screen_pos = camera.world_to_screen({0.0, gl.position_mm});
+            const int screen_y = area.top + static_cast<int>(std::round(screen_pos.y));
+            if (std::abs(y - screen_y) <= 5) {
+                return i;
+            }
+        } else {
+            const auto screen_pos = camera.world_to_screen({gl.position_mm, 0.0});
+            const int screen_x = area.left + static_cast<int>(std::round(screen_pos.x));
+            if (std::abs(x - screen_x) <= 5) {
+                return i;
+            }
+        }
+    }
+    return -1;
+}
+} // namespace pikdraw::desktop

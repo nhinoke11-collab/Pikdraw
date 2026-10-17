@@ -1,0 +1,164 @@
+#include "d2d_internal.hpp"
+
+namespace pikdraw::rendering::d2d {
+
+D2DGeometryCache::D2DGeometryCache() = default;
+
+D2DGeometryCache::~D2DGeometryCache() = default;
+
+void D2DGeometryCache::clear() {
+  cache_.clear();
+  last_revision_ = 0;
+}
+
+void D2DGeometryCache::evict_stale(uint64_t current_revision) {
+  if (last_revision_ != current_revision) {
+    if (cache_.size() > 2048) {
+      // Clear whole cache if very large
+      cache_.clear();
+    } else {
+      // Remove elements with older revisions
+      for (auto it = cache_.begin(); it != cache_.end();) {
+        if (it->first.revision < current_revision) {
+          it = cache_.erase(it);
+        } else {
+          ++it;
+        }
+      }
+    }
+    last_revision_ = current_revision;
+  }
+}
+
+ComPtr<ID2D1PathGeometry> D2DGeometryCache::get_or_create_path(
+    ID2D1Factory1 *factory,
+    document::ObjectId id,
+    uint64_t revision,
+    const geometry::Path2D &path,
+    double camera_center_x,
+    double camera_center_y) {
+  if (!factory)
+    return nullptr;
+
+  evict_stale(revision);
+
+  CacheKey key{id, revision, camera_center_x, camera_center_y};
+  auto it = cache_.find(key);
+  if (it != cache_.end()) {
+    return it->second;
+  }
+
+  ComPtr<ID2D1PathGeometry> path_geo;
+  HRESULT hr = factory->CreatePathGeometry(path_geo.ReleaseAndGetAddressOf());
+  if (FAILED(hr))
+    return nullptr;
+
+  ComPtr<ID2D1GeometrySink> sink;
+  hr = path_geo->Open(sink.ReleaseAndGetAddressOf());
+  if (FAILED(hr))
+    return nullptr;
+
+  sink->SetFillMode(path.winding_rule() == geometry::WindingRule::EvenOdd
+                        ? D2D1_FILL_MODE_ALTERNATE
+                        : D2D1_FILL_MODE_WINDING);
+
+  bool figure_open = false;
+
+  for (const auto &el : path.elements()) {
+    switch (el.verb) {
+    case geometry::PathVerb::MoveTo: {
+      if (figure_open) {
+        sink->EndFigure(D2D1_FIGURE_END_OPEN);
+      }
+      D2D1_POINT_2F pt = camera_relative_point(el.pt.x, el.pt.y,
+                                               camera_center_x, camera_center_y);
+      sink->BeginFigure(pt, D2D1_FIGURE_BEGIN_FILLED);
+      figure_open = true;
+      break;
+    }
+    case geometry::PathVerb::LineTo: {
+      if (!figure_open) {
+        D2D1_POINT_2F pt = camera_relative_point(el.pt.x, el.pt.y,
+                                                 camera_center_x, camera_center_y);
+        sink->BeginFigure(pt, D2D1_FIGURE_BEGIN_FILLED);
+        figure_open = true;
+      } else {
+        D2D1_POINT_2F pt = camera_relative_point(el.pt.x, el.pt.y,
+                                                 camera_center_x, camera_center_y);
+        sink->AddLine(pt);
+      }
+      break;
+    }
+    case geometry::PathVerb::QuadTo: {
+      if (!figure_open) {
+        D2D1_POINT_2F pt = camera_relative_point(el.ctrl1.x, el.ctrl1.y,
+                                                 camera_center_x, camera_center_y);
+        sink->BeginFigure(pt, D2D1_FIGURE_BEGIN_FILLED);
+        figure_open = true;
+      }
+      D2D1_QUADRATIC_BEZIER_SEGMENT seg{};
+      seg.point1 = camera_relative_point(el.ctrl1.x, el.ctrl1.y,
+                                         camera_center_x, camera_center_y);
+      seg.point2 = camera_relative_point(el.pt.x, el.pt.y,
+                                         camera_center_x, camera_center_y);
+      sink->AddQuadraticBezier(&seg);
+      break;
+    }
+    case geometry::PathVerb::CubicTo: {
+      if (!figure_open) {
+        D2D1_POINT_2F pt = camera_relative_point(el.ctrl1.x, el.ctrl1.y,
+                                                 camera_center_x, camera_center_y);
+        sink->BeginFigure(pt, D2D1_FIGURE_BEGIN_FILLED);
+        figure_open = true;
+      }
+      D2D1_BEZIER_SEGMENT seg{};
+      seg.point1 = camera_relative_point(el.ctrl1.x, el.ctrl1.y,
+                                         camera_center_x, camera_center_y);
+      seg.point2 = camera_relative_point(el.ctrl2.x, el.ctrl2.y,
+                                         camera_center_x, camera_center_y);
+      seg.point3 = camera_relative_point(el.pt.x, el.pt.y,
+                                         camera_center_x, camera_center_y);
+      sink->AddBezier(&seg);
+      break;
+    }
+    case geometry::PathVerb::ArcTo: {
+      if (!figure_open) {
+        D2D1_POINT_2F pt = camera_relative_point(el.pt.x, el.pt.y,
+                                                 camera_center_x, camera_center_y);
+        sink->BeginFigure(pt, D2D1_FIGURE_BEGIN_FILLED);
+        figure_open = true;
+      }
+      D2D1_ARC_SEGMENT arc{};
+      arc.point = camera_relative_point(el.pt.x, el.pt.y,
+                                        camera_center_x, camera_center_y);
+      arc.size = D2D1::SizeF(static_cast<float>(el.rx), static_cast<float>(el.ry));
+      arc.rotationAngle = static_cast<float>(el.rotation_deg);
+      arc.sweepDirection = el.sweep ? D2D1_SWEEP_DIRECTION_CLOCKWISE
+                                    : D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE;
+      arc.arcSize = el.large_arc ? D2D1_ARC_SIZE_LARGE : D2D1_ARC_SIZE_SMALL;
+      sink->AddArc(&arc);
+      break;
+    }
+    case geometry::PathVerb::Close: {
+      if (figure_open) {
+        sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+        figure_open = false;
+      }
+      break;
+    }
+    }
+  }
+
+  if (figure_open) {
+    sink->EndFigure(D2D1_FIGURE_END_OPEN);
+  }
+
+  hr = sink->Close();
+  if (FAILED(hr))
+    return nullptr;
+
+  cache_[key] = path_geo;
+  return path_geo;
+}
+
+} // namespace pikdraw::rendering::d2d
