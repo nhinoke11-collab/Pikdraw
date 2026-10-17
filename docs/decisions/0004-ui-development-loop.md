@@ -27,3 +27,10 @@ Phát triển ứng dụng desktop C++20 thường gặp trở ngại về tốc
 3. **An toàn trong Bản Release thương mại**:
    - Trong cấu hình Release (`NDEBUG`), tính năng nạp file rời ngoài ổ đĩa bị vô hiệu hóa hoàn toàn bằng cờ tiền xử lý (`#ifndef NDEBUG`).
    - Mọi form `.ui` và stylesheet được biên dịch cứng thành tài nguyên nhị phân Qt (`.rcc`) đã ký duyệt, ngăn chặn việc chèn mã hoặc form độc hại từ bên ngoài.
+
+## Làm rõ phạm vi ngày 16/10/2026
+
+ADR này mô tả hướng phát triển/reload cho Qt, không chứng nhận adapter Win32/GDI hiện tại đã có Qt runtime.
+Nó không khóa visual design Cyber hay menu/panel placement. Phần tổ chức UX/UI theo
+[ADR 0008](0008-editor-ui-organization.md) và [chuẩn UX/UI](../design/ui-ux-standard.md);
+workflow source/build theo ADR 0007. Xem project-state để biết implementation/evidence thực tế.

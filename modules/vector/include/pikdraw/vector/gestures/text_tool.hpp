@@ -1,14 +1,11 @@
 #pragma once
-
+#include "pikdraw/vector/gestures/edit_target.hpp"
 #include "pikdraw/document/commands/command.hpp"
 #include "pikdraw/document/document.hpp"
 #include "pikdraw/typography/layout/text_layout.hpp"
-#include "pikdraw/vector/gestures/edit_target.hpp"
 #include <string>
 #include <algorithm>
-
 namespace pikdraw::vector {
-
 class UpdateTextCommand : public document::DocumentCommand {
   public:
     UpdateTextCommand(document::ObjectId id, std::string text) : id_(id), text_(std::move(text)) {}
@@ -27,13 +24,11 @@ class UpdateTextCommand : public document::DocumentCommand {
     std::optional<typography::FontIdentity> font_;
     std::optional<document::TextObject> before_;
 };
-
 class SetTextFontCommand final : public UpdateTextCommand {
   public:
     SetTextFontCommand(document::ObjectId id, typography::FontIdentity font)
         : UpdateTextCommand(id, std::nullopt, std::move(font)) {}
 };
-
 /// Command for updating text typography style with full undo/redo transaction support
 class UpdateTextStyleCommand : public document::DocumentCommand {
 public:

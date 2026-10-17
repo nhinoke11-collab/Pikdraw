@@ -1,9 +1,9 @@
 #pragma once
 
 #include "pikdraw/typography/shaping/font_identity.hpp"
+#include <cstdint>
 #include <string_view>
 #include <vector>
-#include <cstdint>
 
 namespace pikdraw::typography {
 
@@ -23,8 +23,14 @@ struct ShapedRun {
     double total_advance_mm{0.0};
     double ascent_mm{0.0};
     double descent_mm{0.0};
+    FontIdentity requested_font;
+    bool is_fallback{false};
+    std::string warning_message;
 };
 
-[[nodiscard]] ShapedRun shape_text(std::string_view utf8_text, const FontIdentity& font);
+// Real installed font shaping, LTR single-face runs. font records actual face;
+// editable source retains its requested identity. Invalid input throws invalid_argument;
+// unavailable backend, mixed-font/directional runs throw runtime_error.
+[[nodiscard]] ShapedRun shape_text(std::string_view utf8_text, const FontIdentity &font);
 
 } // namespace pikdraw::typography

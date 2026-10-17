@@ -3,7 +3,9 @@
 #include <cassert>
 #include <cmath>
 #include <iostream>
+#include <string>
 #include <unordered_map>
+#include <utility>
 
 using namespace pikdraw;
 using namespace pikdraw::interop;
@@ -88,6 +90,17 @@ void test_relative_horizontal_vertical_path_commands() {
     assert(elements[4].verb == PathVerb::Close);
 }
 
+void test_arc_path_command_is_preserved() {
+    const std::string svg = R"(<svg width="100mm" height="100mm"><path id="arc" d="M0 0 A2 2 0 0 1 4 4"/></svg>)";
+    const auto result = SvgImporter::import_from_string(svg);
+    assert(result.success && result.objects.size() == 1);
+    const auto& path = std::get<PathObject>(result.objects.front()).path;
+    assert(path.size() == 2);
+    const auto& arc = path.elements()[1];
+    assert(arc.verb == PathVerb::ArcTo);
+    assert(!arc.large_arc && arc.sweep);
+}
+
 void test_nested_groups_and_inkscape_layers_are_preserved() {
     const std::string svg = R"(<svg xmlns="http://www.w3.org/2000/svg"
         xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="100mm" height="80mm">
@@ -132,7 +145,6 @@ void test_rejects_active_external_and_malformed_content() {
         R"(<svg width="10mm" height="10mm"><image href="https://example.invalid/x.png"/></svg>)",
         R"svg(<svg width="10mm" height="10mm"><g transform="translate(1 2)"><rect width="2" height="2"/></g></svg>)svg",
         R"(<svg width="10mm" height="10mm"><g style="opacity:0.5"><rect width="2" height="2"/></g></svg>)",
-        R"(<svg width="10mm" height="10mm"><path d="M 0 0 A 2 2 0 0 1 4 4"/></svg>)",
         R"(<svg width="10mm" height="10mm"><path style="fill:red" d="M0 0L1 1"/></svg>)",
         R"(<svg width="10mm" height="10mm"><path d="M0 0L1"/></svg>)",
         R"(<?xml version="1.0" encoding="UTF-16"?><svg width="10mm" height="10mm"/>)",
@@ -156,6 +168,44 @@ void test_rejects_source_limits_and_bad_utf8() {
     invalid += "</svg>";
     const auto bad_encoding = SvgImporter::import_from_string(invalid);
     assert(!bad_encoding.success && bad_encoding.objects.empty());
+}
+
+void test_unsupported_opacity_attributes_are_rejected_before_import() {
+    // The current SVG import profile does not map opacity into Appearance.
+    // Reject each attribute before returning objects so a caller cannot apply
+    // a visually incomplete proposal as if it were a faithful import.
+    const std::pair<const char*, const char*> cases[] = {
+        {R"(<path d="M0 0 L1 1" opacity="0.5"/>)",
+         "unsupported_path_feature"},
+        {R"(<path d="M0 0 L1 1" fill-opacity="0.5"/>)",
+         "unsupported_path_feature"},
+        {R"(<path d="M0 0 L1 1" stroke-opacity="0.5"/>)",
+         "unsupported_path_feature"},
+        {R"(<rect width="1" height="1" opacity="0.5"/>)",
+         "unsupported_rectangle_feature"},
+        {R"(<rect width="1" height="1" fill-opacity="0.5"/>)",
+         "unsupported_rectangle_feature"},
+        {R"(<rect width="1" height="1" stroke-opacity="0.5"/>)",
+         "unsupported_rectangle_feature"},
+        {R"(<text x="0" y="1" opacity="0.5">x</text>)",
+         "unsupported_text_feature"},
+        {R"(<text x="0" y="1" fill-opacity="0.5">x</text>)",
+         "unsupported_text_feature"},
+    };
+    for (const auto& [element, expected_feature] : cases) {
+        const auto svg = std::string(
+            R"(<svg width="10mm" height="10mm">)") + element + "</svg>";
+        const auto result = SvgImporter::import_from_string(svg);
+        assert(!result.success);
+        assert(result.objects.empty());
+        assert(result.report.has_unsupported());
+        assert(result.report.issue_count() == 1);
+        const auto& issue = result.report.issues().front();
+        assert(issue.severity == FidelitySeverity::Unsupported);
+        assert(issue.feature == expected_feature);
+        assert(issue.description.find("unsupported attributes") !=
+               std::string::npos);
+    }
 }
 
 void test_lossless_curve_path_adapter() {
@@ -203,9 +253,11 @@ int main() {
     test_svg_unsupported_filter_reported();
     test_viewbox_units_and_path_commands();
     test_relative_horizontal_vertical_path_commands();
+    test_arc_path_command_is_preserved();
     test_nested_groups_and_inkscape_layers_are_preserved();
     test_rejects_active_external_and_malformed_content();
     test_rejects_source_limits_and_bad_utf8();
+    test_unsupported_opacity_attributes_are_rejected_before_import();
     test_lossless_curve_path_adapter();
     std::cout << "[test_svg_adapter] All tests passed!\n";
     return 0;

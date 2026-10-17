@@ -1,11 +1,179 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
 #include "native_window_file_menu.hpp"
+#include "native_window_menus.hpp"
 #include "native_window_page_presets.hpp"
+#include <algorithm>
 #include <cmath>
+#include <cwchar>
+#include <string>
 
 namespace pikdraw::desktop {
 
 #ifdef _WIN32
+
+namespace {
+const wchar_t* menu_label(const MenuBarEntry& entry, bool vi) {
+    return vi ? entry.label_vi : entry.label_en;
+}
+
+int menu_item_natural_width(const MenuBarEntry& entry, bool vi) {
+    const int characters = static_cast<int>(std::wcslen(menu_label(entry, vi)));
+    return std::clamp(characters * 6 + 16, 32, 92);
+}
+} // namespace
+
+RECT NativeWindow::get_menu_bar_item_rect(int menu_index, int topbar_h) const noexcept {
+    if (menu_index < 0 || menu_index >= static_cast<int>(kMenuBarEntries.size()))
+        return RECT{};
+    const bool vi = language_ == UILanguage::Vietnamese;
+    int natural_total = 0;
+    for (const auto& entry : kMenuBarEntries)
+        natural_total += menu_item_natural_width(entry, vi);
+    const int available = std::max(1, width_ - 160);
+    const double factor = std::min(1.0, static_cast<double>(available) / natural_total);
+    int left = 148;
+    for (int index = 0; index < menu_index; ++index)
+        left += std::max(24, static_cast<int>(std::lround(
+            menu_item_natural_width(kMenuBarEntries[static_cast<size_t>(index)], vi) * factor)));
+    const int item_width = std::max(24, static_cast<int>(std::lround(
+        menu_item_natural_width(kMenuBarEntries[static_cast<size_t>(menu_index)], vi) * factor)));
+    return RECT{left, 5, left + item_width, topbar_h - 4};
+}
+
+int NativeWindow::get_menu_bar_item_at(int mouse_x, int mouse_y, int topbar_h) const noexcept {
+    for (int index = 0; index < static_cast<int>(kMenuBarEntries.size()); ++index) {
+        const RECT rect = get_menu_bar_item_rect(index, topbar_h);
+        if (mouse_x >= rect.left && mouse_x < rect.right &&
+            mouse_y >= rect.top && mouse_y < rect.bottom)
+            return index;
+    }
+    return -1;
+}
+
+void NativeWindow::paint_main_menu_bar(HDC dc, int width, int topbar_h) {
+    const bool vi = language_ == UILanguage::Vietnamese;
+    const bool dark = theme_ == ThemeMode::CyberDark;
+    HFONT font = CreateFontW(13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    const auto old_font = SelectObject(dc, font);
+    SetBkMode(dc, TRANSPARENT);
+    for (int index = 0; index < static_cast<int>(kMenuBarEntries.size()); ++index) {
+        const RECT rect = get_menu_bar_item_rect(index, topbar_h);
+        if (rect.left >= width) break;
+        const bool active = index == open_menu_id_;
+        const bool hovered = index == hovered_menu_bar_item_;
+        if (active || hovered) {
+            RECT active_rect = rect;
+            InflateRect(&active_rect, -2, -2);
+            const COLORREF background = dark ? RGB(22, 45, 62) : RGB(236, 253, 245);
+            const COLORREF accent = dark ? RGB(0, 242, 195) : RGB(0, 135, 106);
+            const auto brush = CreateSolidBrush(background);
+            const auto pen = CreatePen(PS_SOLID, 1, active ? accent : background);
+            const auto old_pen = SelectObject(dc, pen);
+            const auto old_brush = SelectObject(dc, brush);
+            RoundRect(dc, active_rect.left, active_rect.top, active_rect.right,
+                      active_rect.bottom, 5, 5);
+            SelectObject(dc, old_brush);
+            SelectObject(dc, old_pen);
+            DeleteObject(pen);
+            DeleteObject(brush);
+            SetTextColor(dc, accent);
+        } else {
+            SetTextColor(dc, dark ? RGB(226, 232, 240) : RGB(30, 41, 59));
+        }
+        RECT label_rect = rect;
+        InflateRect(&label_rect, -3, 0);
+        DrawTextW(dc, menu_label(kMenuBarEntries[static_cast<size_t>(index)], vi), -1,
+                  &label_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+    }
+    SelectObject(dc, old_font);
+    DeleteObject(font);
+}
+
+void NativeWindow::paint_dropdown_menu(HDC dc, int menu_id, int x, int y) {
+    if (menu_id < 0 || menu_id >= static_cast<int>(MenuId::Count)) return;
+    const auto items = get_menu_items(static_cast<MenuId>(menu_id));
+    if (items.empty()) return;
+    constexpr int width = 300;
+    const int height = get_menu_height(static_cast<MenuId>(menu_id));
+    x = std::clamp(x, 4, std::max(4, width_ - width - 4));
+    y = std::clamp(y, 4, std::max(4, height_ - height - 4));
+    const bool dark = theme_ == ThemeMode::CyberDark;
+    const bool vi = language_ == UILanguage::Vietnamese;
+    const COLORREF background = dark ? RGB(12, 19, 29) : RGB(255, 255, 255);
+    const COLORREF border = dark ? RGB(45, 58, 73) : RGB(203, 213, 225);
+    const COLORREF normal = dark ? RGB(241, 245, 249) : RGB(15, 23, 42);
+    const COLORREF muted = dark ? RGB(125, 139, 155) : RGB(148, 163, 184);
+    const COLORREF accent = dark ? RGB(0, 242, 195) : RGB(0, 135, 106);
+
+    const auto shadow = CreateSolidBrush(dark ? RGB(2, 4, 8) : RGB(200, 208, 216));
+    RECT shadow_rect{x + 4, y + 4, x + width + 4, y + height + 4};
+    FillRect(dc, &shadow_rect, shadow);
+    DeleteObject(shadow);
+    const auto brush = CreateSolidBrush(background);
+    const auto pen = CreatePen(PS_SOLID, 1, border);
+    const auto old_pen = SelectObject(dc, pen);
+    const auto old_brush = SelectObject(dc, brush);
+    RoundRect(dc, x, y, x + width, y + height, 8, 8);
+    SelectObject(dc, old_brush);
+    SelectObject(dc, old_pen);
+    DeleteObject(pen);
+    DeleteObject(brush);
+
+    HFONT font = CreateFontW(13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    HFONT heading_font = CreateFontW(12, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    const auto previous_font = SelectObject(dc, font);
+    SetBkMode(dc, TRANSPARENT);
+    int row_y = y + kMenuPadding;
+    for (const auto& item : items) {
+        const int row_height = item.is_separator ? kMenuSeparatorHeight : kMenuRowHeight;
+        if (item.is_separator) {
+            const auto separator = CreatePen(PS_SOLID, 1, border);
+            const auto previous = SelectObject(dc, separator);
+            MoveToEx(dc, x + 12, row_y + row_height / 2, nullptr);
+            LineTo(dc, x + width - 12, row_y + row_height / 2);
+            SelectObject(dc, previous);
+            DeleteObject(separator);
+        } else {
+            const bool hovered = static_cast<int>(item.action) == hovered_menu_item_;
+            const bool enabled = !item.is_disabled && is_menu_action_enabled(item.action);
+            const COLORREF label_color = item.is_heading ? muted : (!enabled ? muted : (hovered ? accent : normal));
+            if (hovered && enabled) {
+                RECT row{x + 4, row_y, x + width - 4, row_y + row_height};
+                const auto row_brush = CreateSolidBrush(dark ? RGB(22, 45, 62) : RGB(236, 253, 245));
+                FillRect(dc, &row, row_brush);
+                DeleteObject(row_brush);
+            }
+            RECT label_rect{x + (item.is_checkable ? 34 : 14), row_y, x + width - 110, row_y + row_height};
+            RECT shortcut_rect{x + width - 106, row_y, x + width - 14, row_y + row_height};
+            if (item.is_heading) SelectObject(dc, heading_font);
+            SetTextColor(dc, label_color);
+            DrawTextW(dc, vi ? item.label_vi : item.label_en, -1, &label_rect,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+            if (item.shortcut && *item.shortcut) {
+                SetTextColor(dc, muted);
+                DrawTextW(dc, item.shortcut, -1, &shortcut_rect,
+                          DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            }
+            if (item.is_checkable) {
+                RECT check_rect{x + 12, row_y, x + 30, row_y + row_height};
+                SetTextColor(dc, enabled ? accent : muted);
+                DrawTextW(dc, is_menu_action_checked(item.action) ? L"✓" : L"□", -1, &check_rect,
+                          DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            }
+            if (item.is_heading) SelectObject(dc, font);
+        }
+        row_y += row_height;
+    }
+    SelectObject(dc, previous_font);
+    DeleteObject(heading_font);
+    DeleteObject(font);
+}
 
 void NativeWindow::paint_file_menu(HDC dc, int x, int y, int width, int height) {
     const bool is_dark = theme_ == ThemeMode::CyberDark;

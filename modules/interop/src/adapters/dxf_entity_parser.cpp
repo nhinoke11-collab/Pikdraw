@@ -269,7 +269,7 @@ bool AciColor(int index, color::ColorValue &color, bool &approximate) {
   }
 }
 
-bool EntityStyle(const EntityInfo &entity, const LayerInfo &layer, double scale,
+bool EntityStyle(const EntityInfo &entity, const LayerInfo &layer,
                  document::PathObject &object, int &aci) {
   int color_index = 256, hidden = 0, paper_space = 0;
   double width = 0;

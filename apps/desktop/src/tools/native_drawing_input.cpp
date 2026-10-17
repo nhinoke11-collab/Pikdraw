@@ -44,18 +44,20 @@ bool NativeWindow::handle_drawing_panel_click(int x, int y) {
 }
 
 bool NativeWindow::handle_drawing_click(int x, int y, unsigned modifiers) {
-    if ((active_tool_ != 4 && active_tool_ != 5) || !drawing_tool_ ||
+    if ((active_tool_ != 6 && active_tool_ != 7) || !drawing_tool_ ||
         !drawing_tool_->active() || !is_canvas_point(x, y))
         return false;
-    drawing_tool_->pointer_move(canvas_to_world(x, y), root_.renderer().camera(),
+    drawing_tool_->pointer_move(canvas_to_world(x, y), root().renderer().camera(),
         window_dpi_scale(), (modifiers & MK_SHIFT) != 0,
         (modifiers & MK_CONTROL) != 0);
     const auto result = drawing_tool_->confirm_candidate();
-    if (result.committed() && result.object_id)
-        root_.vector_controller().set_selection({*result.object_id},
-            *root_.document().current_snapshot());
+    if (result.committed() && result.object_id) {
+        const auto snapshot = root().document().current_snapshot();
+        if (snapshot)
+            root().vector_controller().set_selection({*result.object_id}, *snapshot);
+    }
     status_msg_ = drawing_tool_->visual_state().message;
-    workflow_.sync_status_bar();
+    workflow().sync_status_bar();
     InvalidateRect(hwnd_, nullptr, FALSE);
     return true;
 }

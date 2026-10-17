@@ -15,12 +15,9 @@ inline void validate_page(const Page& page) {
         throw std::invalid_argument("Page dimensions must be positive finite millimeters within canvas limits");
 }
 
-inline void validate_path_source(const PathObject& object) {
-    if (!object.fill.is_valid() || !object.stroke.is_valid() ||
-        !std::isfinite(object.stroke_width_mm) || object.stroke_width_mm < 0)
-        throw std::invalid_argument("Invalid source color or stroke width");
+inline void validate_geometry_path(const geometry::Path2D& path) {
     using geometry::GeometryStatus;
-    for (const auto& element : object.path.elements()) {
+    for (const auto& element : path.elements()) {
         if (geometry::validate_point(element.pt) != GeometryStatus::Ok ||
             geometry::validate_point(element.ctrl1) != GeometryStatus::Ok ||
             geometry::validate_point(element.ctrl2) != GeometryStatus::Ok ||
@@ -28,6 +25,13 @@ inline void validate_path_source(const PathObject& object) {
             !std::isfinite(element.rotation_deg) || element.rx < 0 || element.ry < 0)
             throw std::invalid_argument("Invalid or out-of-range source path coordinate");
     }
+}
+
+inline void validate_path_source(const PathObject& object) {
+    if (!object.fill.is_valid() || !object.stroke.is_valid() ||
+        !std::isfinite(object.stroke_width_mm) || object.stroke_width_mm < 0)
+        throw std::invalid_argument("Invalid source color or stroke width");
+    validate_geometry_path(object.path);
     if (object.authoring_source) {
         if (const auto error = object.authoring_source->validation_error())
             throw std::invalid_argument(*error);
@@ -55,6 +59,80 @@ inline void validate_text_source(const TextObject& object) {
         throw std::invalid_argument("Invalid text color, font properties or source position");
 }
 
+inline void validate_appearance(const Appearance& appearance) {
+    const auto normalized = [](double value) {
+        return std::isfinite(value) && value >= 0.0 && value <= 1.0;
+    };
+    if (appearance.schema_version != kAppearanceSchemaVersion ||
+        appearance.schema_minor != kAppearanceSchemaMinor ||
+        !normalized(appearance.object_opacity) ||
+        !normalized(appearance.fill_opacity) ||
+        !normalized(appearance.stroke_opacity) ||
+        static_cast<uint8_t>(appearance.blend_mode) >
+            static_cast<uint8_t>(BlendMode::Lighten) ||
+        appearance.effects.size() > kMaxEffectsPerObject)
+        throw std::invalid_argument("Invalid appearance schema, opacity, blend mode or effect count");
+
+    std::unordered_set<EffectInstanceId> effect_ids;
+    effect_ids.reserve(appearance.effects.size());
+    for (size_t index = 0; index < appearance.effects.size(); ++index) {
+        const auto& node = appearance.effects[index];
+        if (node.id == kInvalidEffectInstanceId ||
+            node.schema_version != kBasicEffectNodeSchemaVersion ||
+            node.schema_minor > kDropShadowBlendSchemaMinor ||
+            !effect_ids.insert(node.id).second)
+            throw std::invalid_argument("Invalid or repeated appearance effect ID/schema");
+        std::visit([&](const auto& effect) {
+            using T = std::decay_t<decltype(effect)>;
+            if constexpr (std::is_same_v<T, GaussianBlurEffect>) {
+                if (node.schema_minor != kBasicEffectNodeSchemaMinor ||
+                    !std::isfinite(effect.sigma_x_mm) ||
+                    !std::isfinite(effect.sigma_y_mm) || effect.sigma_x_mm < 0.0 ||
+                    effect.sigma_y_mm < 0.0 ||
+                    effect.sigma_x_mm > geometry::limits::kCanvasMaxMm ||
+                    effect.sigma_y_mm > geometry::limits::kCanvasMaxMm)
+                    throw std::invalid_argument("Gaussian blur sigma must be finite and within document limits");
+            } else {
+                if (!std::isfinite(effect.dx_mm) || !std::isfinite(effect.dy_mm) ||
+                    std::abs(effect.dx_mm) > geometry::limits::kCanvasMaxMm ||
+                    std::abs(effect.dy_mm) > geometry::limits::kCanvasMaxMm ||
+                    !std::isfinite(effect.sigma_x_mm) ||
+                    !std::isfinite(effect.sigma_y_mm) || effect.sigma_x_mm < 0.0 ||
+                    effect.sigma_y_mm < 0.0 ||
+                    effect.sigma_x_mm > geometry::limits::kCanvasMaxMm ||
+                    effect.sigma_y_mm > geometry::limits::kCanvasMaxMm ||
+                    !effect.color.is_valid() || !normalized(effect.opacity) ||
+                    static_cast<uint8_t>(effect.blend_mode) >
+                        static_cast<uint8_t>(BlendMode::Lighten) ||
+                    (node.schema_minor == kBasicEffectNodeSchemaMinor &&
+                     effect.blend_mode != BlendMode::Normal))
+                    throw std::invalid_argument("Drop shadow parameters are invalid or outside document limits");
+                if (effect.blend_mode != BlendMode::Normal) {
+                    for (size_t later = index + 1;
+                         later < appearance.effects.size(); ++later) {
+                        if (appearance.effects[later].enabled)
+                            throw std::invalid_argument(
+                                "A non-Normal shadow blend must be the last enabled effect");
+                    }
+                }
+            }
+        }, node.parameters);
+    }
+}
+
+inline void validate_image_source(const ImageObject& object) {
+    if (geometry::validate_rect(object.bounds_rect) != geometry::GeometryStatus::Ok ||
+        object.bounds_rect.width <= 0 || object.bounds_rect.height <= 0 ||
+        object.width_px <= 0 || object.height_px <= 0)
+        throw std::invalid_argument("Invalid image dimensions or bounds");
+    const auto expected_pixels = static_cast<uint64_t>(object.width_px) *
+                                 static_cast<uint64_t>(object.height_px);
+    if (expected_pixels != object.pixels_rgba.size())
+        throw std::invalid_argument("Image pixel count does not match its dimensions");
+    if (object.clip_path)
+        validate_geometry_path(*object.clip_path);
+}
+
 inline void validate_object_source(ObjectId key, const ObjectVariant& value) {
     std::visit([&](const auto& object) {
         if (key == kInvalidObjectId || object.id != key)
@@ -62,14 +140,20 @@ inline void validate_object_source(ObjectId key, const ObjectVariant& value) {
         if (geometry::validate_transform(object.transform) != geometry::GeometryStatus::Ok)
             throw std::invalid_argument("Invalid or singular object transform");
         using T = std::decay_t<decltype(object)>;
-        if constexpr (std::is_same_v<T, PathObject>) validate_path_source(object);
-        else if constexpr (std::is_same_v<T, TextObject>) validate_text_source(object);
-        else {
+        if constexpr (std::is_same_v<T, PathObject>) {
+            validate_path_source(object);
+            validate_appearance(object.appearance);
+        }
+        else if constexpr (std::is_same_v<T, TextObject>) {
+            validate_text_source(object);
+            validate_appearance(object.appearance);
+        }
+        else if constexpr (std::is_same_v<T, GroupObject>) {
             std::unordered_set<ObjectId> unique;
             for (auto child : object.children_ids)
                 if (child == kInvalidObjectId || child == key || !unique.insert(child).second)
                     throw std::invalid_argument("Invalid or repeated group child ID");
-        }
+        } else if constexpr (std::is_same_v<T, ImageObject>) validate_image_source(object);
     }, value);
 }
 

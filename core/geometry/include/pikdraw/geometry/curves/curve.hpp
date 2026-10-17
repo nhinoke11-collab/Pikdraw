@@ -96,7 +96,6 @@ struct CubicBezier {
     Point2D p3;
 
     [[nodiscard]] Point2D point_at(double t) const {
-        const double u = 1.0 - t;
         const Point2D p01 = p0 + (p1 - p0) * t;
         const Point2D p12 = p1 + (p2 - p1) * t;
         const Point2D p23 = p2 + (p3 - p2) * t;

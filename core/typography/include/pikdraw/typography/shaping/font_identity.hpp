@@ -1,7 +1,7 @@
 #pragma once
 
-#include <string>
 #include <cstdint>
+#include <string>
 
 namespace pikdraw::typography {
 
@@ -26,11 +26,11 @@ struct FontIdentity {
         return FontIdentity{"JetBrains Mono", "JetBrainsMono-Regular", 400, false, pt};
     }
 
-    bool operator==(const FontIdentity& o) const noexcept {
-        return family_name == o.family_name && weight == o.weight &&
+    bool operator==(const FontIdentity &o) const noexcept {
+        return family_name == o.family_name && postscript_name == o.postscript_name && weight == o.weight &&
                italic == o.italic && size_pt == o.size_pt;
     }
-    bool operator!=(const FontIdentity& o) const noexcept {
+    bool operator!=(const FontIdentity &o) const noexcept {
         return !(*this == o);
     }
 };

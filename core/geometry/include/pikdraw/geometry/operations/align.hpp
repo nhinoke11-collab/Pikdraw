@@ -160,14 +160,26 @@ inline std::vector<AlignmentDelta> compute_distribution(
     std::vector<AlignmentDelta> deltas;
     if (items.size() < 2) return deltas;
 
-    if (mode == DistributeMode::SpacingHorizontal ||
+    const bool horizontal = mode == DistributeMode::SpacingHorizontal ||
         mode == DistributeMode::LeftEdges ||
         mode == DistributeMode::CentersHorizontal ||
-        mode == DistributeMode::RightEdges) {
+        mode == DistributeMode::RightEdges;
 
-        // Sort items by horizontal position (left edge)
-        std::sort(items.begin(), items.end(), [](const auto& a, const auto& b) {
-            return a.bounds.left() < b.bounds.left();
+    if (horizontal) {
+        // The target coordinate defines order for edge/center distribution. Gap
+        // spacing is ordered by the leading edge so it remains a left-to-right
+        // sequence even when object sizes differ.
+        const auto position = [mode](const ObjectAlignmentItem& item) {
+            switch (mode) {
+                case DistributeMode::CentersHorizontal: return item.bounds.center().x;
+                case DistributeMode::RightEdges: return item.bounds.right();
+                default: return item.bounds.left();
+            }
+        };
+        std::sort(items.begin(), items.end(), [&](const auto& a, const auto& b) {
+            const double a_position = position(a);
+            const double b_position = position(b);
+            return a_position == b_position ? a.id < b.id : a_position < b_position;
         });
 
         if (specified_spacing_mm >= 0.0) {
@@ -230,9 +242,19 @@ inline std::vector<AlignmentDelta> compute_distribution(
             }
         }
     } else {
-        // Vertical distribution
-        std::sort(items.begin(), items.end(), [](const auto& a, const auto& b) {
-            return a.bounds.top() < b.bounds.top();
+        // As above, order edge/center modes by the same coordinate being
+        // distributed. Fixed/equal gaps use the leading top edge.
+        const auto position = [mode](const ObjectAlignmentItem& item) {
+            switch (mode) {
+                case DistributeMode::CentersVertical: return item.bounds.center().y;
+                case DistributeMode::BottomEdges: return item.bounds.bottom();
+                default: return item.bounds.top();
+            }
+        };
+        std::sort(items.begin(), items.end(), [&](const auto& a, const auto& b) {
+            const double a_position = position(a);
+            const double b_position = position(b);
+            return a_position == b_position ? a.id < b.id : a_position < b_position;
         });
 
         if (specified_spacing_mm >= 0.0) {

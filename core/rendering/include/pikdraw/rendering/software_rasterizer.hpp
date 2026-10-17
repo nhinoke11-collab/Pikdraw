@@ -20,6 +20,10 @@ public:
     return true;
   }
 
+  [[nodiscard]] color::DeviceRGBA canvas_background() const noexcept {
+    return background_;
+  }
+
   [[nodiscard]] DeviceLossStatus device_status() const noexcept override {
     return loss_status_;
   }

@@ -56,6 +56,8 @@ public:
     [[nodiscard]] bool active() const noexcept { return path_.active(); }
     [[nodiscard]] bool has_numeric_entry() const noexcept { return !numeric_entry_.empty(); }
     [[nodiscard]] bool snap_panel_open() const noexcept { return snap_panel_open_; }
+    [[nodiscard]] bool snap_index_ready() const noexcept { return index_ready_; }
+    [[nodiscard]] size_t path_point_count() const noexcept { return path_.points().size(); }
     void toggle_snap_panel() noexcept { snap_panel_open_ = !snap_panel_open_; }
     [[nodiscard]] bool snap_panel_open_value() const noexcept { return snap_panel_open_; }
     [[nodiscard]] bool snap_pending() const noexcept { return active() && !index_ready_; }

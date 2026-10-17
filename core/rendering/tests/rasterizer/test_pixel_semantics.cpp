@@ -1,9 +1,13 @@
 #include "pikdraw/rendering/renderer.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <set>
 #include <stdexcept>
+#include <utility>
+#include <vector>
 
 using namespace pikdraw;
 using namespace rendering;
@@ -77,6 +81,25 @@ void test_fill_and_holes() {
   require(open.render() && open.channel(12, 40, 1) == 0,
           "open fill must implicitly close");
 }
+void test_thin_clipped_fill_preserves_pixel_centers() {
+  // AC-R1 — Given a small path clipped by the viewport top/right edges, when
+  // the software renderer fills it, then only the intersecting pixel centers
+  // change and the clipped remainder stays white page background.
+  Fixture f;
+  f.add(rectangle(1, {1, 0, 0, 1}, 62, 63, 10, 4));
+  RenderMetric metric;
+  require(f.render(&metric), "thin clipped fill failed");
+  require(metric.rendered_objects == 1 && metric.diagnostics.empty(),
+          "clipped fill did not complete cleanly");
+  for (int x = 62; x < 64; ++x) {
+    require(f.channel(x, 0, 0) == 255 && f.channel(x, 0, 1) == 0 &&
+                f.channel(x, 0, 2) == 0,
+            "visible pixel center of clipped fill has the wrong color");
+  }
+  require(f.channel(61, 0, 0) == 255 && f.channel(61, 0, 1) == 255 &&
+              f.channel(62, 1, 0) == 255 && f.channel(62, 1, 1) == 255,
+          "fill changed pixels outside its clipped pixel-center coverage");
+}
 void test_layers_and_alpha() {
   Fixture f;
   f.add(rectangle(100, {1, 0, 0, 1}));
@@ -128,6 +151,63 @@ void test_stroke_and_culling() {
   require(scaled.render() && scaled.channel(24, 25, 1) == 0 &&
               scaled.channel(24, 22, 1) == 255,
           "nonuniform transform did not transform stroke width");
+
+  // Rotated stroke anti-aliasing verification
+  Fixture rotated;
+  PathObject rot_line;
+  rot_line.id = 2;
+  rot_line.has_fill = false;
+  rot_line.stroke = color::RGBColor{0, 0, 0, 1}; // black stroke on white background
+  rot_line.stroke_width_mm = 4;
+  rot_line.transform = geometry::Transform2D::translation(32, 32) *
+                       geometry::Transform2D::rotation_degrees(45.0) *
+                       geometry::Transform2D::translation(-32, -32);
+  rot_line.path.move_to(8, 32);
+  rot_line.path.line_to(56, 32);
+  rotated.add(rot_line);
+  require(rotated.render(), "rotated stroke render failed");
+  // Center of diagonal line must be solid black (0)
+  require(rotated.channel(32, 32, 0) == 0, "rotated stroke center missing");
+  // Edge pixels must have smooth anti-aliasing (fractional values between 0 and 255)
+  bool found_fractional = false;
+  for (int y = 0; y < 64; ++y) {
+    for (int x = 0; x < 64; ++x) {
+      const int c = rotated.channel(x, y, 0);
+      if (c > 10 && c < 245) {
+        found_fractional = true;
+        break;
+      }
+    }
+    if (found_fractional)
+      break;
+  }
+  require(found_fractional, "rotated stroke missing anti-aliasing edge gradient");
+
+  // Polyline stroke with shallow angle and sharp join anti-aliasing verification
+  Fixture poly;
+  PathObject poly_line;
+  poly_line.id = 3;
+  poly_line.has_fill = false;
+  poly_line.stroke = color::RGBColor{0, 0, 0, 1};
+  poly_line.stroke_width_mm = 3;
+  // Shallow angle line meeting a steep descent with a sharp apex at (40, 20)
+  poly_line.path.move_to(8, 28);
+  poly_line.path.line_to(40, 20);
+  poly_line.path.line_to(56, 52);
+  poly.add(poly_line);
+  require(poly.render(), "polyline stroke render failed");
+  // Subpixel 4x MSAA ensures rich anti-aliasing gradations across shallow-angle segments
+  std::set<int> distinct_alphas;
+  for (int y = 0; y < 64; ++y) {
+    for (int x = 0; x < 64; ++x) {
+      const int c = poly.channel(x, y, 0);
+      if (c > 5 && c < 250) {
+        distinct_alphas.insert(c);
+      }
+    }
+  }
+  require(distinct_alphas.size() >= 8,
+          "polyline stroke missing rich subpixel anti-aliasing gradient");
 }
 void test_clipping_and_failure() {
   Fixture f;
@@ -241,6 +321,137 @@ void test_text_backend() {
   require(!f.render(), "text succeeded without a genuine outline backend");
 #endif
 }
+
+struct InkBounds {
+  bool any{};
+  int min_x{64};
+  int min_y{64};
+  int max_x{-1};
+  int max_y{-1};
+  size_t count{};
+};
+
+InkBounds dark_pixel_bounds(const std::vector<uint8_t> &pixels,
+                            uint8_t threshold) {
+  InkBounds bounds;
+  for (int y = 0; y < 64; ++y) {
+    for (int x = 0; x < 64; ++x) {
+      const auto offset = static_cast<size_t>((y * 64 + x) * 4);
+      if (pixels[offset] >= threshold || pixels[offset + 1] >= threshold ||
+          pixels[offset + 2] >= threshold)
+        continue;
+      bounds.any = true;
+      bounds.min_x = std::min(bounds.min_x, x);
+      bounds.min_y = std::min(bounds.min_y, y);
+      bounds.max_x = std::max(bounds.max_x, x);
+      bounds.max_y = std::max(bounds.max_y, y);
+      ++bounds.count;
+    }
+  }
+  return bounds;
+}
+
+std::vector<uint8_t> render_text_appearance(Appearance appearance) {
+  Fixture f;
+  TextObject text;
+  text.id = 1;
+  text.text = "O";
+  text.font.family_name = "Arial";
+  text.font.size_pt = 80;
+  text.position = {12, 16};
+  text.fill = color::RGBColor{0, 0, 0, 1};
+  text.appearance = std::move(appearance);
+  f.objects = f.objects.set(text.id, text);
+  f.page.layers[0].object_ids = {text.id};
+  RenderMetric metric;
+  require(f.render(&metric), "Text appearance failed with real glyph outlines");
+  require(metric.rendered_objects == 1,
+          "Text appearance did not render one complete object");
+  return f.bytes;
+}
+
+void test_text_appearance_effects_use_glyph_alpha() {
+#ifdef PIKDRAW_TYPOGRAPHY_REAL_OUTLINES
+  // Given real outlined Text glyphs, when Appearance opacity and raster
+  // effects are applied, then they change glyph coverage rather than a text
+  // layout rectangle, while the native renderer still reports a complete frame.
+  const auto baseline = render_text_appearance(Appearance{});
+  const auto baseline_bounds = dark_pixel_bounds(baseline, 250);
+  require(baseline_bounds.any && baseline_bounds.count > 20,
+          "real Text glyph baseline is empty");
+
+  const auto darkest = std::find_if(
+      baseline.begin(), baseline.end(), [](uint8_t value) { return value == 0; });
+  require(darkest != baseline.end(), "Text glyph has no opaque source pixel");
+  const auto anchor = static_cast<size_t>(darkest - baseline.begin()) / 4;
+  const auto require_half_opacity = [anchor](
+      const std::vector<uint8_t> &pixels, const char *message) {
+    const int value = pixels[anchor * 4];
+    require(value >= 110 && value <= 145, message);
+  };
+
+  Appearance fill_half;
+  fill_half.fill_opacity = 0.5;
+  require_half_opacity(render_text_appearance(fill_half),
+                       "Text Fill Opacity did not scale glyph alpha once");
+  Appearance object_half;
+  object_half.object_opacity = 0.5;
+  require_half_opacity(render_text_appearance(object_half),
+                       "Text Object Opacity did not scale glyph alpha once");
+
+  Appearance blurred;
+  EffectNode blur;
+  blur.id = 9201;
+  blur.parameters = GaussianBlurEffect{2.0, 2.0};
+  blurred.effects.push_back(blur);
+  const auto blur_bounds =
+      dark_pixel_bounds(render_text_appearance(blurred), 250);
+  require(blur_bounds.any && blur_bounds.count > baseline_bounds.count &&
+              (blur_bounds.min_x < baseline_bounds.min_x ||
+               blur_bounds.min_y < baseline_bounds.min_y ||
+               blur_bounds.max_x > baseline_bounds.max_x ||
+               blur_bounds.max_y > baseline_bounds.max_y),
+          "Gaussian Blur did not expand the real Text glyph alpha");
+
+  Appearance shadowed;
+  EffectNode shadow;
+  shadow.id = 9202;
+  shadow.parameters = DropShadowEffect{
+      12.0, 8.0, 0.0, 0.0, color::RGBColor{0, 0, 0, 1}, 0.75};
+  shadowed.effects.push_back(shadow);
+  const auto shadow_bounds =
+      dark_pixel_bounds(render_text_appearance(shadowed), 250);
+  require(shadow_bounds.any && shadow_bounds.count > baseline_bounds.count &&
+              (shadow_bounds.min_x < baseline_bounds.min_x ||
+               shadow_bounds.min_y < baseline_bounds.min_y ||
+               shadow_bounds.max_x > baseline_bounds.max_x ||
+               shadow_bounds.max_y > baseline_bounds.max_y),
+          "Drop Shadow did not follow and extend the real Text glyph alpha");
+#else
+  // Given no real outline backend, when a Text appearance is rendered, then
+  // the renderer rejects it instead of substituting a rectangle or claiming
+  // that an effect was applied to actual glyphs.
+  Fixture f;
+  TextObject text;
+  text.id = 1;
+  text.text = "O";
+  text.font.family_name = "Arial";
+  text.font.size_pt = 80;
+  text.position = {12, 16};
+  EffectNode blur;
+  blur.id = 9203;
+  blur.parameters = GaussianBlurEffect{2.0, 2.0};
+  text.appearance.effects.push_back(blur);
+  f.objects = f.objects.set(text.id, text);
+  f.page.layers[0].object_ids = {text.id};
+  RenderMetric metric;
+  require(!f.render(&metric),
+          "Text appearance succeeded without a real outline backend");
+  require(!metric.diagnostics.empty(),
+          "unsupported Text appearance has no render diagnostic");
+#endif
+}
+
 struct ThrowingBackend : IRenderBackend {
   DeviceLossStatus device_status() const noexcept override {
     return DeviceLossStatus::Healthy;
@@ -295,12 +506,14 @@ void test_target_and_camera() {
 int main() {
   try {
     test_fill_and_holes();
+    test_thin_clipped_fill_preserves_pixel_centers();
     test_layers_and_alpha();
     test_stroke_and_culling();
     test_clipping_and_failure();
     test_target_and_camera();
     test_backend_exceptions();
     test_text_backend();
+    test_text_appearance_effects_use_glyph_alpha();
     test_curve_projection_and_source_preservation();
     std::cout << "Pixel semantics, winding, layers, alpha, stroke, clipping "
                  "and validation passed.\n";

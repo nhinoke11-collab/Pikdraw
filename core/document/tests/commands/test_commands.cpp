@@ -1,4 +1,5 @@
 #include "pikdraw/document/document.hpp"
+#include "pikdraw/document/commands/appearance_commands.hpp"
 #include "pikdraw/document/commands/path_commands.hpp"
 #include <cassert>
 #include <cmath>
@@ -125,6 +126,74 @@ void test_transaction_writer() {
     doc.undo();
     assert(doc.current_snapshot()->object_count() == 0);
     assert(doc.revision() == 2);
+}
+
+void test_appearance_command_undo_and_noop_history() {
+    Document doc("doc-appearance-command");
+    PathObject object;
+    object.id = generate_object_id();
+    object.path.move_to({0, 0});
+    object.path.line_to({10, 0});
+    const auto object_id = object.id;
+    assert(doc.execute_command(std::make_unique<AddObjectCommand>(object)).success);
+    assert(doc.revision() == 1);
+
+    auto changed_appearance = object.appearance;
+    changed_appearance.object_opacity = 0.5;
+    auto changed = doc.execute_command(std::make_unique<SetAppearanceCommand>(
+        std::vector<AppearanceReplacement>{{object_id, changed_appearance}}));
+    assert(changed.success && !changed.is_no_change);
+    assert(doc.revision() == 2);
+    const auto current = doc.current_snapshot()->get_object(object_id);
+    assert(current && std::get<PathObject>(*current).appearance.object_opacity == 0.5);
+
+    auto unchanged = doc.execute_command(std::make_unique<SetAppearanceCommand>(
+        std::vector<AppearanceReplacement>{{object_id, changed_appearance}}));
+    assert(unchanged.success && unchanged.is_no_change);
+    assert(doc.revision() == 2);
+
+    // One undo must undo the actual appearance edit, not consume a no-op record.
+    assert(doc.undo());
+    assert(doc.revision() == 3);
+    const auto undone = doc.current_snapshot()->get_object(object_id);
+    assert(undone && std::get<PathObject>(*undone).appearance.object_opacity == 1.0);
+    assert(doc.redo());
+    assert(doc.revision() == 4);
+    const auto redone = doc.current_snapshot()->get_object(object_id);
+    assert(redone && std::get<PathObject>(*redone).appearance.object_opacity == 0.5);
+}
+
+void test_composite_skips_noop_children_for_undo() {
+    Document doc("doc-appearance-composite-noop");
+    PathObject existing;
+    existing.id = generate_object_id();
+    existing.path.move_to({0, 0});
+    existing.path.line_to({10, 0});
+    const auto existing_id = existing.id;
+    assert(doc.execute_command(std::make_unique<AddObjectCommand>(existing)).success);
+
+    PathObject added;
+    added.id = generate_object_id();
+    added.path.move_to({20, 0});
+    added.path.line_to({30, 0});
+    const auto added_id = added.id;
+
+    auto& writer = doc.writer();
+    writer.begin_transaction("No-op appearance and add object");
+    assert(writer.stage_command(std::make_unique<SetAppearanceCommand>(
+        std::vector<AppearanceReplacement>{{existing_id, existing.appearance}})).success);
+    assert(writer.stage_command(std::make_unique<AddObjectCommand>(added)).success);
+    const auto committed = writer.commit_transaction();
+    assert(committed.success && !committed.is_no_change);
+    assert(doc.revision() == 2 && doc.current_snapshot()->object_count() == 2);
+
+    assert(doc.undo());
+    assert(doc.revision() == 3 && doc.current_snapshot()->object_count() == 1);
+    assert(doc.current_snapshot()->get_object(existing_id));
+    assert(!doc.current_snapshot()->get_object(added_id));
+    assert(doc.redo());
+    assert(doc.revision() == 4 && doc.current_snapshot()->object_count() == 2);
+    assert(doc.current_snapshot()->get_object(added_id));
 }
 
 void test_editable_node_move_preserves_identity_and_style() {
@@ -517,6 +586,8 @@ int main() {
     test_add_and_undo_path();
     test_remove_and_transform();
     test_transaction_writer();
+    test_appearance_command_undo_and_noop_history();
+    test_composite_skips_noop_children_for_undo();
     test_editable_node_move_preserves_identity_and_style();
     test_split_line_matches_identity_vector_and_undo();
     test_analytic_arc_split_keeps_arc_source();

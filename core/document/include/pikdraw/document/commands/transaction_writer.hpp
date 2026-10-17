@@ -32,7 +32,7 @@ public:
 private:
     std::string name_;
     std::vector<CommandPtr> commands_;
-    size_t executed_count_{0};
+    std::vector<size_t> executed_indices_;
 };
 
 /// TransactionWriter handles grouping multiple operations into atomic units

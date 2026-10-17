@@ -257,21 +257,42 @@ void TestFormatMatrixAndFixtures() {
     TEST_ASSERT(!matrix.empty(), "Format capability matrix is empty");
 
     bool has_svg = false;
+    bool has_dxf = false;
     bool has_cdr = false;
     bool has_pdf = false;
+    bool has_ai = false;
+    bool has_png = false;
+    bool has_jpeg = false;
     for (const auto& entry : matrix) {
-        if (entry.format_name == "SVG Native Subset") has_svg = true;
-        if (entry.format_name == "CorelDRAW Vector Graphics") has_cdr = true;
-        if (entry.format_name == "PDF Vector Representation") has_pdf = true;
+        if (entry.extension == ".svg") {
+            has_svg = entry.import_status == FormatCapabilityStatus::SupportedPrototype &&
+                entry.export_status == FormatCapabilityStatus::SupportedPrototype;
+        } else if (entry.extension == ".dxf") {
+            has_dxf = entry.import_status == FormatCapabilityStatus::SupportedPrototype &&
+                entry.export_status == FormatCapabilityStatus::UnsupportedReject;
+        } else if (entry.extension == ".cdr") {
+            has_cdr = entry.import_status == FormatCapabilityStatus::UnsupportedReject &&
+                entry.export_status == FormatCapabilityStatus::UnsupportedReject;
+        } else if (entry.extension == ".pdf") {
+            has_pdf = entry.import_status == FormatCapabilityStatus::UnsupportedReject &&
+                entry.export_status == FormatCapabilityStatus::UnsupportedReject;
+        } else if (entry.extension == ".ai") {
+            has_ai = entry.import_status == FormatCapabilityStatus::UnsupportedReject &&
+                entry.export_status == FormatCapabilityStatus::UnsupportedReject;
+        } else if (entry.extension == ".png") {
+            has_png = entry.import_status == FormatCapabilityStatus::UnsupportedReject &&
+                entry.export_status == FormatCapabilityStatus::UnsupportedReject;
+        } else if (entry.extension == ".jpg") {
+            has_jpeg = entry.import_status == FormatCapabilityStatus::UnsupportedReject &&
+                entry.export_status == FormatCapabilityStatus::UnsupportedReject;
+        }
     }
-    TEST_ASSERT(has_svg && has_cdr && has_pdf, "Key formats missing from capability matrix");
+    TEST_ASSERT(has_svg && has_dxf && has_cdr && has_pdf && has_ai && has_png && has_jpeg,
+        "Capability matrix does not match the declared import/export subsets");
 
     TEST_ASSERT(FixtureManifest::Count() == 0, "Unprovisioned corpus cannot contain invented evidence");
-    for (const auto& entry : matrix) {
-        TEST_ASSERT(entry.import_status == FormatCapabilityStatus::UnsupportedReject &&
-            entry.export_status == FormatCapabilityStatus::UnsupportedReject, "Unimplemented adapter must reject");
-    }
-    TEST_ASSERT(!FormatCapabilityRegistry::IsFormatSupported("SVG"), "No SVG parser exists");
+    TEST_ASSERT(FormatCapabilityRegistry::IsFormatSupported("SVG"), "SVG subset must be listed as supported");
+    TEST_ASSERT(FormatCapabilityRegistry::IsFormatSupported(".dxf"), "DXF 2D subset must be listed as supported");
     TEST_ASSERT(!FormatCapabilityRegistry::IsFormatSupported("PIKDRAW_JSON"), "IPC is not a source format");
 
     g_tests_passed++;
@@ -407,12 +428,37 @@ void TestSourceSnapshotBroker() {
     ++g_tests_passed;
     std::cout << "[PASS] TestSourceSnapshotBroker\n";
 }
+void TestWorkerEnvironmentSanitization() {
+    auto worker_path = std::filesystem::current_path() / "spike_worker_test.exe";
+    if (!std::filesystem::exists(worker_path))
+        worker_path = std::filesystem::current_path() / "build" / "win-dev" / "platform" / "workers" / "spike_worker_test.exe";
+    WorkerLaunchConfig config;
+    config.worker_executable_path = worker_path.wstring();
+    config.use_appcontainer = false;
+    config.trusted_test_worker = true;
+    config.arguments = {L"--test-no-secret-env"};
+    TEST_ASSERT(SetEnvironmentVariableW(L"PIKDRAW_TEST_HOST_SECRET", L"SYNTHETIC_SECRET") != FALSE,
+                "Set synthetic parent-only environment variable");
+    WorkerProcessHost host;
+    const bool launched = host.Launch(config);
+    SetEnvironmentVariableW(L"PIKDRAW_TEST_HOST_SECRET", nullptr);
+    TEST_ASSERT(launched, "Launch environment probe worker");
+    IpcHeader ping{};
+    ping.message_type = static_cast<uint16_t>(MessageType::Ping);
+    ping.sequence_id = 921;
+    const auto frame = std::span(reinterpret_cast<const uint8_t*>(&ping), sizeof(ping));
+    TEST_ASSERT(host.TransactBinaryPayload(frame, std::chrono::seconds(2)),
+                "Worker inherited a variable outside the explicit environment allowlist");
+    host.Terminate();
+    ++g_tests_passed;
+}
+
 void TestTrustedWorkerLifecycleAndDeadlines() {
     // Explicitly no AppContainer: this proves transport/lifecycle only.
     WorkerLaunchConfig config;
-    auto worker_path = std::filesystem::current_path() / "spike_worker.exe";
+    auto worker_path = std::filesystem::current_path() / "spike_worker_test.exe";
     if (!std::filesystem::exists(worker_path)) {
-        worker_path = std::filesystem::current_path() / "build" / "win-dev" / "platform" / "workers" / "spike_worker.exe";
+        worker_path = std::filesystem::current_path() / "build" / "win-dev" / "platform" / "workers" / "spike_worker_test.exe";
     }
     config.worker_executable_path = worker_path.wstring();
     config.use_appcontainer = false;
@@ -493,6 +539,7 @@ int main(int argc, char** argv) {
     TestV2ProposalStreams();
     TestSourceSnapshotBroker();
     TestTrustedWorkerLifecycleAndDeadlines();
+    TestWorkerEnvironmentSanitization();
 
     if (run_live) {
         TestAppContainerSecurityCanaries();

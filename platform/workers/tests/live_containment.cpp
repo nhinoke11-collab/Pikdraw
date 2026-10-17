@@ -156,10 +156,10 @@ int RunLiveContainment() {
         ScopedSid sid(derived);
         // Only the newly created bin directory is granted. Never grant a parent/user tree.
         require(AppContainerProfileGuard::GrantDirectoryAccess(bin.wstring(),sid.Get()),"Cannot grant owned bin RX");
-        const auto executable=bin/L"spike_worker.exe";
-        auto worker_src = fs::current_path() / L"spike_worker.exe";
+        const auto executable=bin/L"spike_worker_test.exe";
+        auto worker_src = fs::current_path() / L"spike_worker_test.exe";
         if (!fs::exists(worker_src)) {
-            worker_src = fs::current_path() / L"build/win-dev/platform/workers/spike_worker.exe";
+            worker_src = fs::current_path() / L"build/win-dev/platform/workers/spike_worker_test.exe";
         }
         require(fs::copy_file(worker_src, executable), "Cannot copy own static worker");
         const auto read_probe=scratch/L"ungranted-read.txt";
@@ -300,9 +300,9 @@ int RunLocalSourceCorpusProbe(const fs::path& corpus_root) {
         return 2;
     }
 
-    auto worker_source = fs::absolute("spike_worker.exe", filesystem_error);
+    auto worker_source = fs::absolute("spike_worker_test.exe", filesystem_error);
     if (filesystem_error || !fs::exists(worker_source)) {
-        worker_source = fs::absolute("build/win-dev/platform/workers/spike_worker.exe", filesystem_error);
+        worker_source = fs::absolute("build/win-dev/platform/workers/spike_worker_test.exe", filesystem_error);
     }
     if (filesystem_error || !fs::is_regular_file(worker_source)) {
         std::cerr << "[FAIL] Worker test executable unavailable\n";
@@ -321,7 +321,7 @@ int RunLocalSourceCorpusProbe(const fs::path& corpus_root) {
         std::cerr << "[FAIL] Cannot create worker execution directory\n";
         return 2;
     }
-    const auto worker_executable = worker_bin / L"spike_worker.exe";
+    const auto worker_executable = worker_bin / L"spike_worker_test.exe";
     fs::copy_file(worker_source, worker_executable, fs::copy_options::none, filesystem_error);
     if (filesystem_error) {
         std::cerr << "[FAIL] Cannot prepare worker executable\n";

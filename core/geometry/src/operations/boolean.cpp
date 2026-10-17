@@ -1,130 +1,166 @@
 #include "pikdraw/geometry/operations/boolean.hpp"
 #include <vector>
 #include <algorithm>
+#include <map>
+#include "rectangle_subset.hpp"
 
 namespace pikdraw::geometry {
 
+namespace {
+
+struct GridEdge {
+    size_t x0;
+    size_t y0;
+    size_t x1;
+    size_t y1;
+    bool used{false};
+};
+
+int edge_direction(const GridEdge& edge) noexcept {
+    if (edge.x1 > edge.x0) return 0; // east
+    if (edge.y1 > edge.y0) return 1; // south
+    if (edge.x1 < edge.x0) return 2; // west
+    return 3;                        // north
+}
+
+BooleanResult boolean_rectangle_regions(const Rect2D& subject, const Rect2D& clip, BooleanOp op) {
+    BooleanResult result;
+    result.success = true;
+
+    std::vector<double> xs{subject.x, subject.right(), clip.x, clip.right()};
+    std::vector<double> ys{subject.y, subject.bottom(), clip.y, clip.bottom()};
+    std::sort(xs.begin(), xs.end());
+    std::sort(ys.begin(), ys.end());
+    xs.erase(std::unique(xs.begin(), xs.end()), xs.end());
+    ys.erase(std::unique(ys.begin(), ys.end()), ys.end());
+
+    const size_t columns = xs.size() - 1;
+    const size_t rows = ys.size() - 1;
+    std::vector<bool> filled(columns * rows, false);
+    auto inside = [](const Rect2D& rect, double x, double y) {
+        return x >= rect.left() && x < rect.right() && y >= rect.top() && y < rect.bottom();
+    };
+    auto index = [columns](size_t x, size_t y) { return y * columns + x; };
+
+    for (size_t y = 0; y < rows; ++y) {
+        for (size_t x = 0; x < columns; ++x) {
+            const double mx = (xs[x] + xs[x + 1]) * 0.5;
+            const double my = (ys[y] + ys[y + 1]) * 0.5;
+            const bool in_subject = inside(subject, mx, my);
+            const bool in_clip = inside(clip, mx, my);
+            bool include = false;
+            switch (op) {
+            case BooleanOp::Union: include = in_subject || in_clip; break;
+            case BooleanOp::Intersection: include = in_subject && in_clip; break;
+            case BooleanOp::Difference: include = in_subject && !in_clip; break;
+            case BooleanOp::Xor: include = in_subject != in_clip; break;
+            case BooleanOp::BackMinusFront: include = in_clip && !in_subject; break;
+            default:
+                result.success = false;
+                result.error_message = "Unsupported Boolean operation on rectangles";
+                return result;
+            }
+            filled[index(x, y)] = include;
+            if (include)
+                result.rectangles.push_back({xs[x], ys[y], xs[x + 1] - xs[x], ys[y + 1] - ys[y]});
+        }
+    }
+
+    std::vector<GridEdge> edges;
+    std::map<std::pair<size_t, size_t>, std::vector<size_t>> outgoing;
+    auto add_edge = [&](size_t x0, size_t y0, size_t x1, size_t y1) {
+        const size_t edge_index = edges.size();
+        edges.push_back({x0, y0, x1, y1, false});
+        outgoing[{x0, y0}].push_back(edge_index);
+    };
+    auto is_filled = [&](size_t x, size_t y) {
+        return x < columns && y < rows && filled[index(x, y)];
+    };
+
+    for (size_t y = 0; y < rows; ++y) {
+        for (size_t x = 0; x < columns; ++x) {
+            if (!is_filled(x, y)) continue;
+            if (y == 0 || !is_filled(x, y - 1)) add_edge(x, y, x + 1, y);
+            if (x + 1 == columns || !is_filled(x + 1, y)) add_edge(x + 1, y, x + 1, y + 1);
+            if (y + 1 == rows || !is_filled(x, y + 1)) add_edge(x + 1, y + 1, x, y + 1);
+            if (x == 0 || !is_filled(x - 1, y)) add_edge(x, y + 1, x, y);
+        }
+    }
+
+    Path2D boundary;
+    for (size_t seed = 0; seed < edges.size(); ++seed) {
+        if (edges[seed].used) continue;
+        const size_t start_x = edges[seed].x0;
+        const size_t start_y = edges[seed].y0;
+        boundary.move_to({xs[start_x], ys[start_y]});
+        size_t current = seed;
+        bool closed = false;
+
+        for (size_t steps = 0; steps <= edges.size(); ++steps) {
+            auto& edge = edges[current];
+            if (edge.used) break;
+            edge.used = true;
+            boundary.line_to({xs[edge.x1], ys[edge.y1]});
+            if (edge.x1 == start_x && edge.y1 == start_y) {
+                boundary.close();
+                closed = true;
+                break;
+            }
+
+            const auto next_it = outgoing.find({edge.x1, edge.y1});
+            if (next_it == outgoing.end()) break;
+            const int incoming = edge_direction(edge);
+            size_t next = edges.size();
+            constexpr int turn_preference[]{1, 0, 3, 2}; // right, straight, left, reverse
+            for (const int turn : turn_preference) {
+                const int desired = (incoming + turn) % 4;
+                for (const size_t candidate : next_it->second) {
+                    if (!edges[candidate].used && edge_direction(edges[candidate]) == desired) {
+                        next = candidate;
+                        break;
+                    }
+                }
+                if (next != edges.size()) break;
+            }
+            if (next == edges.size()) break;
+            current = next;
+        }
+        if (!closed) {
+            result.success = false;
+            result.rectangles.clear();
+            result.path = {};
+            result.error_message = "Could not trace Boolean rectangle boundary";
+            return result;
+        }
+    }
+
+    result.path = std::move(boundary);
+    return result;
+}
+
+} // namespace
+
 BooleanResult boolean_rectangles(const Rect2D& subject, const Rect2D& clip, BooleanOp op) {
-    BooleanResult res;
-    res.success = true;
-
-    if (subject.is_empty() && clip.is_empty()) {
+    if (!subject.is_finite() || !clip.is_finite() || subject.width < 0 || subject.height < 0 ||
+        clip.width < 0 || clip.height < 0) {
+        BooleanResult res;
+        res.error_message = "Invalid rectangle bounds";
         return res;
     }
-
-    if (op == BooleanOp::Intersection) {
-        if (subject.intersects(clip)) {
-            const Rect2D r = subject.intersected(clip);
-            res.rectangles.push_back(r);
-            res.path = Path2D::make_rect(r.x, r.y, r.width, r.height);
-        }
-        return res;
-    }
-
-    if (op == BooleanOp::Union) {
-        if (!subject.intersects(clip)) {
-            res.rectangles.push_back(subject);
-            res.rectangles.push_back(clip);
-        } else {
-            // Check if one contains the other
-            if (subject.contains(clip.min_point()) && subject.contains(clip.max_point())) {
-                res.rectangles.push_back(subject);
-            } else if (clip.contains(subject.min_point()) && clip.contains(subject.max_point())) {
-                res.rectangles.push_back(clip);
-            } else {
-                // Decompose union into non-overlapping rectilinear tiles
-                const Rect2D inter = subject.intersected(clip);
-                res.rectangles.push_back(inter);
-
-                // Add remaining non-overlapping parts
-                const auto sub_diff = boolean_rectangles(subject, clip, BooleanOp::Difference);
-                for (const auto& r : sub_diff.rectangles) res.rectangles.push_back(r);
-
-                const auto clip_diff = boolean_rectangles(clip, subject, BooleanOp::Difference);
-                for (const auto& r : clip_diff.rectangles) res.rectangles.push_back(r);
-            }
-        }
-
-        // Build composite path
-        Path2D p;
-        for (const auto& r : res.rectangles) {
-            Path2D rp = Path2D::make_rect(r.x, r.y, r.width, r.height);
-            for (const auto& el : rp.elements()) {
-                if (el.verb == PathVerb::MoveTo) p.move_to(el.pt);
-                else if (el.verb == PathVerb::LineTo) p.line_to(el.pt);
-                else if (el.verb == PathVerb::Close) p.close();
-            }
-        }
-        res.path = p;
-        return res;
-    }
-
-    if (op == BooleanOp::Difference) {
-        if (!subject.intersects(clip)) {
-            res.rectangles.push_back(subject);
-            res.path = Path2D::make_rect(subject.x, subject.y, subject.width, subject.height);
-            return res;
-        }
-
-        const Rect2D inter = subject.intersected(clip);
-        // Slicing subject around inter
-        // Top slice
-        if (subject.y < inter.y) {
-            res.rectangles.push_back(Rect2D{subject.x, subject.y, subject.width, inter.y - subject.y});
-        }
-        // Bottom slice
-        if (subject.bottom() > inter.bottom()) {
-            res.rectangles.push_back(Rect2D{subject.x, inter.bottom(), subject.width, subject.bottom() - inter.bottom()});
-        }
-        // Left slice
-        if (subject.x < inter.x) {
-            res.rectangles.push_back(Rect2D{subject.x, inter.y, inter.x - subject.x, inter.height});
-        }
-        // Right slice
-        if (subject.right() > inter.right()) {
-            res.rectangles.push_back(Rect2D{inter.right(), inter.y, subject.right() - inter.right(), inter.height});
-        }
-
-        Path2D p;
-        for (const auto& r : res.rectangles) {
-            Path2D rp = Path2D::make_rect(r.x, r.y, r.width, r.height);
-            for (const auto& el : rp.elements()) {
-                if (el.verb == PathVerb::MoveTo) p.move_to(el.pt);
-                else if (el.verb == PathVerb::LineTo) p.line_to(el.pt);
-                else if (el.verb == PathVerb::Close) p.close();
-            }
-        }
-        res.path = p;
-        return res;
-    }
-
-    if (op == BooleanOp::BackMinusFront) {
-        return boolean_rectangles(clip, subject, BooleanOp::Difference);
-    }
-
     if (op == BooleanOp::Boundary) {
-        return boolean_rectangles(subject, clip, BooleanOp::Union);
+        BooleanResult res;
+        res.error_message = "Boundary extraction is unsupported";
+        return res;
     }
-
-    if (op == BooleanOp::Xor) {
-        auto sub_diff = boolean_rectangles(subject, clip, BooleanOp::Difference);
-        auto clip_diff = boolean_rectangles(clip, subject, BooleanOp::Difference);
-        for (const auto& r : clip_diff.rectangles) {
-            sub_diff.rectangles.push_back(r);
-        }
-        for (const auto& el : clip_diff.path.elements()) {
-            if (el.verb == PathVerb::MoveTo) sub_diff.path.move_to(el.pt);
-            else if (el.verb == PathVerb::LineTo) sub_diff.path.line_to(el.pt);
-            else if (el.verb == PathVerb::Close) sub_diff.path.close();
-        }
-        return sub_diff;
-    }
-
     if (op == BooleanOp::Simplify) {
         auto inter = boolean_rectangles(subject, clip, BooleanOp::Intersection);
         auto sub_diff = boolean_rectangles(subject, clip, BooleanOp::Difference);
         auto clip_diff = boolean_rectangles(clip, subject, BooleanOp::Difference);
         BooleanResult res;
+        if (!inter.success || !sub_diff.success || !clip_diff.success) {
+            res.error_message = "Could not simplify rectangle paths";
+            return res;
+        }
         res.success = true;
         for (const auto& r : inter.rectangles) res.rectangles.push_back(r);
         for (const auto& r : sub_diff.rectangles) res.rectangles.push_back(r);
@@ -138,16 +174,60 @@ BooleanResult boolean_rectangles(const Rect2D& subject, const Rect2D& clip, Bool
         return res;
     }
 
-    res.success = false;
-    res.error_message = "Unsupported Boolean operation on rectangles";
-    return res;
+    switch (op) {
+    case BooleanOp::Union:
+    case BooleanOp::Intersection:
+    case BooleanOp::Difference:
+    case BooleanOp::Xor:
+    case BooleanOp::BackMinusFront:
+        break;
+    case BooleanOp::Boundary:
+    case BooleanOp::Simplify:
+        break;
+    default: {
+        BooleanResult res;
+        res.error_message = "Unsupported Boolean operation on rectangles";
+        return res;
+    }
+    }
+
+    if (subject.is_empty() || clip.is_empty()) {
+        BooleanResult res;
+        res.success = true;
+        const Rect2D* remaining = nullptr;
+        switch (op) {
+        case BooleanOp::Union:
+        case BooleanOp::Xor:
+            remaining = subject.is_empty() ? &clip : &subject;
+            break;
+        case BooleanOp::Difference:
+            if (!subject.is_empty()) remaining = &subject;
+            break;
+        case BooleanOp::BackMinusFront:
+            if (!clip.is_empty()) remaining = &clip;
+            break;
+        default:
+            break;
+        }
+        if (remaining) {
+            res.rectangles.push_back(*remaining);
+            res.path = Path2D::make_rect(remaining->x, remaining->y, remaining->width, remaining->height);
+        }
+        return res;
+    }
+
+    return boolean_rectangle_regions(subject, clip, op);
 }
 
 BooleanResult boolean_paths(const Path2D& subject, const Path2D& clip, BooleanOp op) {
-    // For M1 baseline, rectangle-backed boolean serves as the core kernel
-    const Rect2D s_bounds = subject.bounds();
-    const Rect2D c_bounds = clip.bounds();
-    return boolean_rectangles(s_bounds, c_bounds, op);
+    const auto subject_rect = detail::axis_aligned_rectangle(subject);
+    const auto clip_rect = detail::axis_aligned_rectangle(clip);
+    if (!subject_rect || !clip_rect) {
+        BooleanResult result;
+        result.error_message = "General path Boolean is unsupported; only exact axis-aligned rectangles are implemented";
+        return result;
+    }
+    return boolean_rectangles(*subject_rect, *clip_rect, op);
 }
 
 std::pair<bool, std::vector<Path2D>> split_rect_by_line(

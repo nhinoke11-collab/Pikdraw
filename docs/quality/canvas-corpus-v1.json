@@ -1,0 +1,1967 @@
+{
+  "corpus_id": "pikdraw-canvas-corpus-v1",
+  "generator": {
+    "default_mode": "metadata-only",
+    "name": "canvas_fixture_manifest.py",
+    "record_streaming": "complete S0-S7 scenes are replayed in bounded record chunks and hashed",
+    "seed": 20261016,
+    "seed_algorithm": "SHAKE256 domain-separated streams; deterministic across platforms",
+    "source_rights": "synthetic geometry/text metadata; no customer assets or bundled fonts",
+    "stream_record_chunk_records": 4096,
+    "version": 1
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "canonicalization": "UTF-8 JSON, sorted keys, compact separators, ensure_ascii=false",
+    "semantic_sha256": "462bfcdfb1bce265444b3e6bc9935fac72b84cf9c1bedb7e0e1ae1b456854501"
+  },
+  "s8_materialization": {
+    "chunk_bytes": 4194304,
+    "default": "disabled",
+    "format_status": "payload stress fixture only; native container/open/save remains a separate gate",
+    "full_disk_gate": "not_measured until a real native reader/writer consumes these bytes",
+    "max_chunk_bytes": 67108864,
+    "native_reader_gate": "not_measured",
+    "offset_probe_min_bytes": 4294967297
+  },
+  "schema_version": 1,
+  "workloads": [
+    {
+      "camera_trace": {
+        "camera_space": "millimeters",
+        "duration_ms": 31000,
+        "page_mm": [
+          2000000,
+          2000000
+        ],
+        "seed": 20261016,
+        "semantic_sha256": "5b7c58de5af8fb376df9150a2026cddee2d33504b5a1fc83cdcabbefc7c4ecbb",
+        "source": "synthetic deterministic replay recipe; not a runtime measurement",
+        "steps": [
+          {
+            "at_ms": 0,
+            "center_mm": [
+              1698099,
+              1937820
+            ],
+            "operation": "set_camera",
+            "zoom_milli": 1000
+          },
+          {
+            "at_ms": 1000,
+            "delta_mm": [
+              10284,
+              129678
+            ],
+            "duration_ms": 10000,
+            "operation": "pan"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 11000,
+            "duration_ms": 10000,
+            "factor_milli": 8000,
+            "operation": "zoom"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 21000,
+            "duration_ms": 10000,
+            "factor_milli": 125,
+            "operation": "zoom"
+          }
+        ],
+        "trace_id": "camera-v1:S0-empty:20261016",
+        "viewport_px": [
+          1920,
+          1080
+        ],
+        "workload_id": "S0-empty"
+      },
+      "description": "Empty document for cold/warm open, DPI resize and tab switch.",
+      "id": "S0-empty",
+      "object_count": 0,
+      "path_element_count": 0,
+      "replay": {
+        "chunk_records": 4096,
+        "generator_version": 1,
+        "mode": "replayable-bounded-stream",
+        "object_path_allocation": "balanced, remainder assigned to lowest stable object indices",
+        "object_stream": {
+          "count": 0,
+          "record_encoding": "little-endian object index, mm bounds, rgba8, path count; v1",
+          "semantic_sha256": "ce178ea03e3fde3f0265e83450674ebe4bdd266eefb2e6768d271a606c6d0e45"
+        },
+        "path_element_stream": {
+          "count": 0,
+          "record_encoding": "little-endian object index, local element index, command, x_mm, y_mm; v1",
+          "semantic_sha256": "77e16a9d69016eb0c9f561a6cc51a0e82eab5d00b9f9f1e9ad48b62732b69313"
+        },
+        "seed": 20261016
+      },
+      "sample_objects": [],
+      "sample_scope": "bounded preview only; replay section hashes the complete scene streams",
+      "scenario_id": "S0"
+    },
+    {
+      "camera_trace": {
+        "camera_space": "millimeters",
+        "duration_ms": 31000,
+        "page_mm": [
+          2000000,
+          2000000
+        ],
+        "seed": 20261016,
+        "semantic_sha256": "08038e7f49ccb6189b00589a4c01525584a21c85c39fec640640305d343609c4",
+        "source": "synthetic deterministic replay recipe; not a runtime measurement",
+        "steps": [
+          {
+            "at_ms": 0,
+            "center_mm": [
+              1188846,
+              1836906
+            ],
+            "operation": "set_camera",
+            "zoom_milli": 1000
+          },
+          {
+            "at_ms": 1000,
+            "delta_mm": [
+              74351,
+              -157996
+            ],
+            "duration_ms": 10000,
+            "operation": "pan"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 11000,
+            "duration_ms": 10000,
+            "factor_milli": 8000,
+            "operation": "zoom"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 21000,
+            "duration_ms": 10000,
+            "factor_milli": 125,
+            "operation": "zoom"
+          }
+        ],
+        "trace_id": "camera-v1:S0-shapes-100:20261016",
+        "viewport_px": [
+          1920,
+          1080
+        ],
+        "workload_id": "S0-shapes-100"
+      },
+      "description": "100 simple synthetic shapes.",
+      "id": "S0-shapes-100",
+      "object_count": 100,
+      "path_element_count": 400,
+      "replay": {
+        "chunk_records": 4096,
+        "generator_version": 1,
+        "mode": "replayable-bounded-stream",
+        "object_path_allocation": "balanced, remainder assigned to lowest stable object indices",
+        "object_stream": {
+          "count": 100,
+          "record_encoding": "little-endian object index, mm bounds, rgba8, path count; v1",
+          "semantic_sha256": "2190d14bec7a631c99f5fff8ce967161df21fbe4d43fd5b79408a3fef7ad8665"
+        },
+        "path_element_stream": {
+          "count": 400,
+          "record_encoding": "little-endian object index, local element index, command, x_mm, y_mm; v1",
+          "semantic_sha256": "be040a452b15b2a84e9953468cdb35cd1b7f9935e4582b50070257e68c6be9f7"
+        },
+        "seed": 20261016
+      },
+      "sample_objects": [
+        {
+          "fill_rgba8": [
+            96,
+            209,
+            139,
+            118
+          ],
+          "height_mm": 464,
+          "id": "S0-shapes-100:object:0000",
+          "kind": "vector",
+          "path_elements": 4,
+          "width_mm": 16,
+          "x_mm": 742761,
+          "y_mm": 987238
+        },
+        {
+          "fill_rgba8": [
+            96,
+            26,
+            47,
+            88
+          ],
+          "height_mm": 411,
+          "id": "S0-shapes-100:object:0001",
+          "kind": "vector",
+          "path_elements": 4,
+          "width_mm": 423,
+          "x_mm": 1913563,
+          "y_mm": 1860489
+        },
+        {
+          "fill_rgba8": [
+            90,
+            95,
+            80,
+            174
+          ],
+          "height_mm": 330,
+          "id": "S0-shapes-100:object:0002",
+          "kind": "vector",
+          "path_elements": 4,
+          "width_mm": 401,
+          "x_mm": 1831172,
+          "y_mm": 707505
+        },
+        {
+          "fill_rgba8": [
+            236,
+            199,
+            226,
+            44
+          ],
+          "height_mm": 484,
+          "id": "S0-shapes-100:object:0003",
+          "kind": "vector",
+          "path_elements": 4,
+          "width_mm": 506,
+          "x_mm": 129492,
+          "y_mm": 1014351
+        },
+        {
+          "fill_rgba8": [
+            164,
+            54,
+            49,
+            92
+          ],
+          "height_mm": 121,
+          "id": "S0-shapes-100:object:0004",
+          "kind": "vector",
+          "path_elements": 4,
+          "width_mm": 166,
+          "x_mm": 1989820,
+          "y_mm": 563428
+        },
+        {
+          "fill_rgba8": [
+            2,
+            5,
+            118,
+            209
+          ],
+          "height_mm": 277,
+          "id": "S0-shapes-100:object:0005",
+          "kind": "vector",
+          "path_elements": 4,
+          "width_mm": 482,
+          "x_mm": 666223,
+          "y_mm": 784314
+        },
+        {
+          "fill_rgba8": [
+            238,
+            117,
+            169,
+            74
+          ],
+          "height_mm": 398,
+          "id": "S0-shapes-100:object:0006",
+          "kind": "vector",
+          "path_elements": 4,
+          "width_mm": 441,
+          "x_mm": 210888,
+          "y_mm": 719194
+        },
+        {
+          "fill_rgba8": [
+            52,
+            52,
+            97,
+            161
+          ],
+          "height_mm": 111,
+          "id": "S0-shapes-100:object:0007",
+          "kind": "vector",
+          "path_elements": 4,
+          "width_mm": 474,
+          "x_mm": 1839546,
+          "y_mm": 1158546
+        }
+      ],
+      "sample_scope": "bounded preview only; replay section hashes the complete scene streams",
+      "scenario_id": "S0"
+    },
+    {
+      "camera_trace": {
+        "camera_space": "millimeters",
+        "duration_ms": 31000,
+        "page_mm": [
+          20000,
+          10000
+        ],
+        "seed": 20261016,
+        "semantic_sha256": "63cf5cbe7036edaeb049423a4d77b27a90276fbb17395e71cd4500ea17fdeecf",
+        "source": "synthetic deterministic replay recipe; not a runtime measurement",
+        "steps": [
+          {
+            "at_ms": 0,
+            "center_mm": [
+              19463,
+              6035
+            ],
+            "operation": "set_camera",
+            "zoom_milli": 1000
+          },
+          {
+            "at_ms": 1000,
+            "delta_mm": [
+              585,
+              -731
+            ],
+            "duration_ms": 10000,
+            "operation": "pan"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 11000,
+            "duration_ms": 10000,
+            "factor_milli": 8000,
+            "operation": "zoom"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 21000,
+            "duration_ms": 10000,
+            "factor_milli": 125,
+            "operation": "zoom"
+          }
+        ],
+        "trace_id": "camera-v1:S1-sparse-10pct:20261016",
+        "viewport_px": [
+          1920,
+          1080
+        ],
+        "workload_id": "S1-sparse-10pct"
+      },
+      "description": "Sparse 10% visible view.",
+      "id": "S1-sparse-10pct",
+      "layers": 1,
+      "object_count": 10000,
+      "page_mm": [
+        20000,
+        10000
+      ],
+      "path_element_count": 100000,
+      "replay": {
+        "chunk_records": 4096,
+        "generator_version": 1,
+        "mode": "replayable-bounded-stream",
+        "object_path_allocation": "balanced, remainder assigned to lowest stable object indices",
+        "object_stream": {
+          "count": 10000,
+          "record_encoding": "little-endian object index, mm bounds, rgba8, path count; v1",
+          "semantic_sha256": "4d6767fafe896e39153c4c192626b03faf1d4ab2b6c2a812cc1bed7464e11125"
+        },
+        "path_element_stream": {
+          "count": 100000,
+          "record_encoding": "little-endian object index, local element index, command, x_mm, y_mm; v1",
+          "semantic_sha256": "d88d26bf1fc3c5ba0b77128cb09c22e73182f0e56c978540db4ab98e012b2abf"
+        },
+        "seed": 20261016
+      },
+      "sample_objects": [
+        {
+          "fill_rgba8": [
+            174,
+            208,
+            151,
+            107
+          ],
+          "height_mm": 458,
+          "id": "S1-sparse-10pct:object:0000",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 479,
+          "x_mm": 121235,
+          "y_mm": 693800
+        },
+        {
+          "fill_rgba8": [
+            59,
+            27,
+            159,
+            33
+          ],
+          "height_mm": 25,
+          "id": "S1-sparse-10pct:object:0001",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 97,
+          "x_mm": 238357,
+          "y_mm": 1684892
+        },
+        {
+          "fill_rgba8": [
+            245,
+            99,
+            103,
+            142
+          ],
+          "height_mm": 164,
+          "id": "S1-sparse-10pct:object:0002",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 443,
+          "x_mm": 1866372,
+          "y_mm": 1727901
+        },
+        {
+          "fill_rgba8": [
+            82,
+            169,
+            147,
+            255
+          ],
+          "height_mm": 349,
+          "id": "S1-sparse-10pct:object:0003",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 159,
+          "x_mm": 140910,
+          "y_mm": 1202559
+        }
+      ],
+      "sample_scope": "bounded preview only; replay section hashes the complete scene streams",
+      "scenario_id": "S1",
+      "stroke_cases": [
+        "miter",
+        "round"
+      ],
+      "visible_object_count": 1000
+    },
+    {
+      "camera_trace": {
+        "camera_space": "millimeters",
+        "duration_ms": 31000,
+        "page_mm": [
+          20000,
+          10000
+        ],
+        "seed": 20261016,
+        "semantic_sha256": "e0b87d566f8fab9042b5387bf0fd4fd44822c4e5492abe85ff8652f37194d866",
+        "source": "synthetic deterministic replay recipe; not a runtime measurement",
+        "steps": [
+          {
+            "at_ms": 0,
+            "center_mm": [
+              14959,
+              4592
+            ],
+            "operation": "set_camera",
+            "zoom_milli": 1000
+          },
+          {
+            "at_ms": 1000,
+            "delta_mm": [
+              -2144,
+              100
+            ],
+            "duration_ms": 10000,
+            "operation": "pan"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 11000,
+            "duration_ms": 10000,
+            "factor_milli": 8000,
+            "operation": "zoom"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 21000,
+            "duration_ms": 10000,
+            "factor_milli": 125,
+            "operation": "zoom"
+          }
+        ],
+        "trace_id": "camera-v1:S1-sparse-100pct:20261016",
+        "viewport_px": [
+          1920,
+          1080
+        ],
+        "workload_id": "S1-sparse-100pct"
+      },
+      "description": "Sparse scene with all objects visible.",
+      "id": "S1-sparse-100pct",
+      "layers": 1,
+      "object_count": 10000,
+      "page_mm": [
+        20000,
+        10000
+      ],
+      "path_element_count": 100000,
+      "replay": {
+        "chunk_records": 4096,
+        "generator_version": 1,
+        "mode": "replayable-bounded-stream",
+        "object_path_allocation": "balanced, remainder assigned to lowest stable object indices",
+        "object_stream": {
+          "count": 10000,
+          "record_encoding": "little-endian object index, mm bounds, rgba8, path count; v1",
+          "semantic_sha256": "00cbc5608b8131bf0b4350c9f1cb820a38da177bb1e5f89dab353c7134c80a27"
+        },
+        "path_element_stream": {
+          "count": 100000,
+          "record_encoding": "little-endian object index, local element index, command, x_mm, y_mm; v1",
+          "semantic_sha256": "c956c4bced891055cf1d330ce192df9785a1740f614a43dfc6cbb2137ffb20b1"
+        },
+        "seed": 20261016
+      },
+      "sample_objects": [
+        {
+          "fill_rgba8": [
+            30,
+            125,
+            18,
+            236
+          ],
+          "height_mm": 302,
+          "id": "S1-sparse-100pct:object:0000",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 232,
+          "x_mm": 618932,
+          "y_mm": 1916086
+        },
+        {
+          "fill_rgba8": [
+            119,
+            189,
+            82,
+            175
+          ],
+          "height_mm": 503,
+          "id": "S1-sparse-100pct:object:0001",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 66,
+          "x_mm": 1259464,
+          "y_mm": 1607763
+        },
+        {
+          "fill_rgba8": [
+            127,
+            226,
+            184,
+            207
+          ],
+          "height_mm": 359,
+          "id": "S1-sparse-100pct:object:0002",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 432,
+          "x_mm": 1899977,
+          "y_mm": 632861
+        },
+        {
+          "fill_rgba8": [
+            119,
+            41,
+            54,
+            207
+          ],
+          "height_mm": 76,
+          "id": "S1-sparse-100pct:object:0003",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 275,
+          "x_mm": 907687,
+          "y_mm": 1633945
+        }
+      ],
+      "sample_scope": "bounded preview only; replay section hashes the complete scene streams",
+      "scenario_id": "S1",
+      "stroke_cases": [
+        "miter",
+        "round"
+      ],
+      "visible_object_count": 10000
+    },
+    {
+      "camera_trace": {
+        "camera_space": "millimeters",
+        "duration_ms": 31000,
+        "page_mm": [
+          20000,
+          10000
+        ],
+        "query_region_mm": [
+          0,
+          0,
+          512,
+          512
+        ],
+        "seed": 20261016,
+        "semantic_sha256": "57ba2f7e3302069679b93a131b660f60ee0ce40449bbd666b3c1f685032e73b3",
+        "source": "synthetic deterministic replay recipe; not a runtime measurement",
+        "steps": [
+          {
+            "at_ms": 0,
+            "center_mm": [
+              16,
+              16
+            ],
+            "operation": "set_camera",
+            "zoom_milli": 1000
+          },
+          {
+            "at_ms": 1000,
+            "delta_mm": [
+              3,
+              -15
+            ],
+            "duration_ms": 10000,
+            "operation": "pan"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 11000,
+            "duration_ms": 10000,
+            "factor_milli": 8000,
+            "operation": "zoom"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 21000,
+            "duration_ms": 10000,
+            "factor_milli": 125,
+            "operation": "zoom"
+          }
+        ],
+        "trace_id": "camera-v1:S1-all-overlap:20261016",
+        "viewport_px": [
+          1920,
+          1080
+        ],
+        "workload_id": "S1-all-overlap"
+      },
+      "description": "All objects overlap the query region.",
+      "id": "S1-all-overlap",
+      "layers": 1,
+      "object_count": 10000,
+      "overlap_query_mm": [
+        0,
+        0,
+        512,
+        512
+      ],
+      "page_mm": [
+        20000,
+        10000
+      ],
+      "path_element_count": 100000,
+      "replay": {
+        "chunk_records": 4096,
+        "generator_version": 1,
+        "mode": "replayable-bounded-stream",
+        "object_path_allocation": "balanced, remainder assigned to lowest stable object indices",
+        "object_stream": {
+          "count": 10000,
+          "record_encoding": "little-endian object index, mm bounds, rgba8, path count; v1",
+          "semantic_sha256": "445a2d467128cb2b860c1cb77b553588eb5fcb7ad5abcb6984ae9ab02f4577df"
+        },
+        "path_element_stream": {
+          "count": 100000,
+          "record_encoding": "little-endian object index, local element index, command, x_mm, y_mm; v1",
+          "semantic_sha256": "cbf2b43b24a616acd562e5bb01ac14f79598dd93bf7881283cc429211bc73d3b"
+        },
+        "seed": 20261016
+      },
+      "sample_objects": [
+        {
+          "fill_rgba8": [
+            62,
+            131,
+            179,
+            106
+          ],
+          "height_mm": 10,
+          "id": "S1-all-overlap:object:0000",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 380,
+          "x_mm": 1,
+          "y_mm": 3
+        },
+        {
+          "fill_rgba8": [
+            180,
+            122,
+            31,
+            152
+          ],
+          "height_mm": 324,
+          "id": "S1-all-overlap:object:0001",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 267,
+          "x_mm": 23,
+          "y_mm": 25
+        },
+        {
+          "fill_rgba8": [
+            84,
+            73,
+            29,
+            189
+          ],
+          "height_mm": 46,
+          "id": "S1-all-overlap:object:0002",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 468,
+          "x_mm": 18,
+          "y_mm": 5
+        },
+        {
+          "fill_rgba8": [
+            170,
+            172,
+            247,
+            122
+          ],
+          "height_mm": 232,
+          "id": "S1-all-overlap:object:0003",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 381,
+          "x_mm": 28,
+          "y_mm": 23
+        }
+      ],
+      "sample_scope": "bounded preview only; replay section hashes the complete scene streams",
+      "scenario_id": "S1",
+      "stroke_cases": [
+        "miter",
+        "round"
+      ],
+      "visible_object_count": 10000
+    },
+    {
+      "camera_trace": {
+        "camera_space": "millimeters",
+        "duration_ms": 31000,
+        "page_mm": [
+          2000000,
+          2000000
+        ],
+        "seed": 20261016,
+        "semantic_sha256": "1ebf098c84b053a973d3a6a13864130e572a9812dcfb3b25b38931079498fe63",
+        "source": "synthetic deterministic replay recipe; not a runtime measurement",
+        "steps": [
+          {
+            "at_ms": 0,
+            "center_mm": [
+              1322815,
+              335838
+            ],
+            "operation": "set_camera",
+            "zoom_milli": 1000
+          },
+          {
+            "at_ms": 1000,
+            "delta_mm": [
+              79253,
+              232908
+            ],
+            "duration_ms": 10000,
+            "operation": "pan"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 11000,
+            "duration_ms": 10000,
+            "factor_milli": 8000,
+            "operation": "zoom"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 21000,
+            "duration_ms": 10000,
+            "factor_milli": 125,
+            "operation": "zoom"
+          }
+        ],
+        "trace_id": "camera-v1:S2-sparse:20261016",
+        "viewport_px": [
+          1920,
+          1080
+        ],
+        "workload_id": "S2-sparse"
+      },
+      "description": "100 layers with sparse visibility and many tiny objects.",
+      "id": "S2-sparse",
+      "layers": 100,
+      "max_group_depth": 8,
+      "object_count": 100000,
+      "path_element_count": 1000000,
+      "replay": {
+        "chunk_records": 4096,
+        "generator_version": 1,
+        "mode": "replayable-bounded-stream",
+        "object_path_allocation": "balanced, remainder assigned to lowest stable object indices",
+        "object_stream": {
+          "count": 100000,
+          "record_encoding": "little-endian object index, mm bounds, rgba8, path count; v1",
+          "semantic_sha256": "5e642b2ac3e28d23aac4c349915f699b6d833a6ca9b1f7cc79f0ec077518762f"
+        },
+        "path_element_stream": {
+          "count": 1000000,
+          "record_encoding": "little-endian object index, local element index, command, x_mm, y_mm; v1",
+          "semantic_sha256": "65a3e4e15a344d7e4549d1caae96947a50309ab740dc537e97485b31296cfa58"
+        },
+        "seed": 20261016
+      },
+      "sample_objects": [
+        {
+          "fill_rgba8": [
+            133,
+            115,
+            215,
+            45
+          ],
+          "height_mm": 214,
+          "id": "S2-sparse:object:0000",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 345,
+          "x_mm": 215593,
+          "y_mm": 73195
+        },
+        {
+          "fill_rgba8": [
+            128,
+            185,
+            6,
+            159
+          ],
+          "height_mm": 395,
+          "id": "S2-sparse:object:0001",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 399,
+          "x_mm": 1802046,
+          "y_mm": 1841171
+        },
+        {
+          "fill_rgba8": [
+            193,
+            197,
+            229,
+            4
+          ],
+          "height_mm": 502,
+          "id": "S2-sparse:object:0002",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 143,
+          "x_mm": 1340838,
+          "y_mm": 187143
+        },
+        {
+          "fill_rgba8": [
+            5,
+            14,
+            224,
+            21
+          ],
+          "height_mm": 232,
+          "id": "S2-sparse:object:0003",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 441,
+          "x_mm": 989681,
+          "y_mm": 1943963
+        }
+      ],
+      "sample_scope": "bounded preview only; replay section hashes the complete scene streams",
+      "scenario_id": "S2",
+      "shape_mix": [
+        "tiny",
+        "large",
+        "path"
+      ],
+      "visible_object_count": 10000
+    },
+    {
+      "camera_trace": {
+        "camera_space": "millimeters",
+        "duration_ms": 31000,
+        "page_mm": [
+          2000000,
+          2000000
+        ],
+        "query_region_mm": [
+          0,
+          0,
+          512,
+          512
+        ],
+        "seed": 20261016,
+        "semantic_sha256": "3aab0ac366a5a301e8f95652780c0894f44089876b02c192cf25963bcc0bd2ea",
+        "source": "synthetic deterministic replay recipe; not a runtime measurement",
+        "steps": [
+          {
+            "at_ms": 0,
+            "center_mm": [
+              16,
+              16
+            ],
+            "operation": "set_camera",
+            "zoom_milli": 1000
+          },
+          {
+            "at_ms": 1000,
+            "delta_mm": [
+              -1,
+              -13
+            ],
+            "duration_ms": 10000,
+            "operation": "pan"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 11000,
+            "duration_ms": 10000,
+            "factor_milli": 8000,
+            "operation": "zoom"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 21000,
+            "duration_ms": 10000,
+            "factor_milli": 125,
+            "operation": "zoom"
+          }
+        ],
+        "trace_id": "camera-v1:S2-all-overlap:20261016",
+        "viewport_px": [
+          1920,
+          1080
+        ],
+        "workload_id": "S2-all-overlap"
+      },
+      "description": "Worst-case all-overlap query.",
+      "id": "S2-all-overlap",
+      "layers": 100,
+      "max_group_depth": 8,
+      "object_count": 100000,
+      "overlap_query_mm": [
+        0,
+        0,
+        512,
+        512
+      ],
+      "path_element_count": 1000000,
+      "replay": {
+        "chunk_records": 4096,
+        "generator_version": 1,
+        "mode": "replayable-bounded-stream",
+        "object_path_allocation": "balanced, remainder assigned to lowest stable object indices",
+        "object_stream": {
+          "count": 100000,
+          "record_encoding": "little-endian object index, mm bounds, rgba8, path count; v1",
+          "semantic_sha256": "2a72fb974c63c8738b210b0ee9866cb36c7cb4cf3287d6ba11c4a046a78c685f"
+        },
+        "path_element_stream": {
+          "count": 1000000,
+          "record_encoding": "little-endian object index, local element index, command, x_mm, y_mm; v1",
+          "semantic_sha256": "d7690a15edac31bf042ff561d4eec0c42b7e52e296d37a99f890c52646a91fdf"
+        },
+        "seed": 20261016
+      },
+      "sample_objects": [
+        {
+          "fill_rgba8": [
+            147,
+            171,
+            183,
+            113
+          ],
+          "height_mm": 86,
+          "id": "S2-all-overlap:object:0000",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 193,
+          "x_mm": 31,
+          "y_mm": 19
+        },
+        {
+          "fill_rgba8": [
+            11,
+            85,
+            242,
+            181
+          ],
+          "height_mm": 289,
+          "id": "S2-all-overlap:object:0001",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 93,
+          "x_mm": 15,
+          "y_mm": 6
+        },
+        {
+          "fill_rgba8": [
+            116,
+            49,
+            147,
+            46
+          ],
+          "height_mm": 311,
+          "id": "S2-all-overlap:object:0002",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 467,
+          "x_mm": 4,
+          "y_mm": 10
+        },
+        {
+          "fill_rgba8": [
+            224,
+            209,
+            4,
+            195
+          ],
+          "height_mm": 85,
+          "id": "S2-all-overlap:object:0003",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 80,
+          "x_mm": 23,
+          "y_mm": 7
+        }
+      ],
+      "sample_scope": "bounded preview only; replay section hashes the complete scene streams",
+      "scenario_id": "S2",
+      "shape_mix": [
+        "tiny",
+        "large",
+        "path"
+      ],
+      "visible_object_count": 100000
+    },
+    {
+      "camera_trace": {
+        "camera_space": "millimeters",
+        "duration_ms": 31000,
+        "page_mm": [
+          2000000,
+          2000000
+        ],
+        "seed": 20261016,
+        "semantic_sha256": "a7609b162e07b57523a1d391888e365efb315a5d90c5101542ab992a089a84a2",
+        "source": "synthetic deterministic replay recipe; not a runtime measurement",
+        "steps": [
+          {
+            "at_ms": 0,
+            "center_mm": [
+              1423177,
+              675260
+            ],
+            "operation": "set_camera",
+            "zoom_milli": 1000
+          },
+          {
+            "at_ms": 1000,
+            "delta_mm": [
+              -82038,
+              54065
+            ],
+            "duration_ms": 10000,
+            "operation": "pan"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 11000,
+            "duration_ms": 10000,
+            "factor_milli": 8000,
+            "operation": "zoom"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 21000,
+            "duration_ms": 10000,
+            "factor_milli": 125,
+            "operation": "zoom"
+          }
+        ],
+        "trace_id": "camera-v1:S3-path-100k:20261016",
+        "viewport_px": [
+          1920,
+          1080
+        ],
+        "workload_id": "S3-path-100k"
+      },
+      "cases": [
+        "holes",
+        "self_intersection",
+        "giant_coordinates",
+        "reflection",
+        "nonuniform_scale"
+      ],
+      "description": "One path with 100,000 segments.",
+      "id": "S3-path-100k",
+      "object_count": 1,
+      "path_count": 1,
+      "path_element_count": 100001,
+      "replay": {
+        "chunk_records": 4096,
+        "generator_version": 1,
+        "mode": "replayable-bounded-stream",
+        "object_path_allocation": "balanced, remainder assigned to lowest stable object indices",
+        "object_stream": {
+          "count": 1,
+          "record_encoding": "little-endian object index, mm bounds, rgba8, path count; v1",
+          "semantic_sha256": "6434f03fdbf42ac6e334d768f255c5559c182d6948b4f555eb211217930857b8"
+        },
+        "path_element_stream": {
+          "count": 100001,
+          "record_encoding": "little-endian object index, local element index, command, x_mm, y_mm; v1",
+          "semantic_sha256": "c61cda931d9c5f1f4ce0b39e3b4402971e62900fb6cd3c6799b3de2c50c397c8"
+        },
+        "seed": 20261016
+      },
+      "sample_objects": [
+        {
+          "fill_rgba8": [
+            80,
+            147,
+            159,
+            116
+          ],
+          "height_mm": 34,
+          "id": "S3-path-100k:object:0000",
+          "kind": "vector",
+          "path_elements": 100001,
+          "width_mm": 444,
+          "x_mm": 1198829,
+          "y_mm": 315203
+        }
+      ],
+      "sample_scope": "bounded preview only; replay section hashes the complete scene streams",
+      "scenario_id": "S3",
+      "segment_count": 100000
+    },
+    {
+      "camera_trace": {
+        "camera_space": "millimeters",
+        "duration_ms": 31000,
+        "page_mm": [
+          2000000,
+          2000000
+        ],
+        "seed": 20261016,
+        "semantic_sha256": "f212bfe86c1234c7fce394a229610c29a1377b0499c7ead407d8e1fd4e274996",
+        "source": "synthetic deterministic replay recipe; not a runtime measurement",
+        "steps": [
+          {
+            "at_ms": 0,
+            "center_mm": [
+              698321,
+              686494
+            ],
+            "operation": "set_camera",
+            "zoom_milli": 1000
+          },
+          {
+            "at_ms": 1000,
+            "delta_mm": [
+              48146,
+              -120820
+            ],
+            "duration_ms": 10000,
+            "operation": "pan"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 11000,
+            "duration_ms": 10000,
+            "factor_milli": 8000,
+            "operation": "zoom"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 21000,
+            "duration_ms": 10000,
+            "factor_milli": 125,
+            "operation": "zoom"
+          }
+        ],
+        "trace_id": "camera-v1:S3-path-1m:20261016",
+        "viewport_px": [
+          1920,
+          1080
+        ],
+        "workload_id": "S3-path-1m"
+      },
+      "cases": [
+        "holes",
+        "self_intersection",
+        "giant_coordinates",
+        "reflection",
+        "nonuniform_scale"
+      ],
+      "description": "Stress path with 1,000,000 segments.",
+      "id": "S3-path-1m",
+      "object_count": 1,
+      "path_count": 1,
+      "path_element_count": 1000001,
+      "replay": {
+        "chunk_records": 4096,
+        "generator_version": 1,
+        "mode": "replayable-bounded-stream",
+        "object_path_allocation": "balanced, remainder assigned to lowest stable object indices",
+        "object_stream": {
+          "count": 1,
+          "record_encoding": "little-endian object index, mm bounds, rgba8, path count; v1",
+          "semantic_sha256": "1f17e638e2cba87b1bbe459902fc56be2b7345fe17e136a82e9a05085b3b09f2"
+        },
+        "path_element_stream": {
+          "count": 1000001,
+          "record_encoding": "little-endian object index, local element index, command, x_mm, y_mm; v1",
+          "semantic_sha256": "9309f4fb6f381092907b9c944a2df8a6e062d6b65530a0f30caf54534354c0c3"
+        },
+        "seed": 20261016
+      },
+      "sample_objects": [
+        {
+          "fill_rgba8": [
+            251,
+            164,
+            78,
+            255
+          ],
+          "height_mm": 104,
+          "id": "S3-path-1m:object:0000",
+          "kind": "vector",
+          "path_elements": 1000001,
+          "width_mm": 371,
+          "x_mm": 844702,
+          "y_mm": 1592000
+        }
+      ],
+      "sample_scope": "bounded preview only; replay section hashes the complete scene streams",
+      "scenario_id": "S3",
+      "segment_count": 1000000
+    },
+    {
+      "camera_trace": {
+        "camera_space": "millimeters",
+        "duration_ms": 31000,
+        "page_mm": [
+          2000000,
+          2000000
+        ],
+        "seed": 20261016,
+        "semantic_sha256": "47e12022f2ca57bb72ce8c6e7864958a3fe4c6a1d204f1dabf1b88f2d503d0df",
+        "source": "synthetic deterministic replay recipe; not a runtime measurement",
+        "steps": [
+          {
+            "at_ms": 0,
+            "center_mm": [
+              1201741,
+              251636
+            ],
+            "operation": "set_camera",
+            "zoom_milli": 1000
+          },
+          {
+            "at_ms": 1000,
+            "delta_mm": [
+              -172843,
+              122170
+            ],
+            "duration_ms": 10000,
+            "operation": "pan"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 11000,
+            "duration_ms": 10000,
+            "factor_milli": 8000,
+            "operation": "zoom"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 21000,
+            "duration_ms": 10000,
+            "factor_milli": 125,
+            "operation": "zoom"
+          }
+        ],
+        "trace_id": "camera-v1:S4-mixed-images:20261016",
+        "viewport_px": [
+          1920,
+          1080
+        ],
+        "workload_id": "S4-mixed-images"
+      },
+      "decoded_rgba8_bytes": 5120000000,
+      "decoded_rgba8_pixels": 1280000000,
+      "description": "Synthetic image metadata; no licensed image/font payload is bundled.",
+      "id": "S4-mixed-images",
+      "image_count": 22,
+      "images_20000x20000": 2,
+      "images_6000x4000": 20,
+      "object_count": 22,
+      "path_element_count": 0,
+      "payload_policy": "synthetic dimensions and asset references only; decoded pixels are not present",
+      "payload_status": "metadata_only_no_bitmap_bytes_materialized",
+      "replay": {
+        "chunk_records": 4096,
+        "generator_version": 1,
+        "mode": "replayable-bounded-stream",
+        "object_path_allocation": "balanced, remainder assigned to lowest stable object indices",
+        "object_stream": {
+          "count": 22,
+          "record_encoding": "little-endian object index, mm bounds, rgba8, path count; v1",
+          "semantic_sha256": "26cd24ab33390f6fb983724b381c153d9cc6784dbcdde9579cf7786a9497bb3d"
+        },
+        "path_element_stream": {
+          "count": 0,
+          "record_encoding": "little-endian object index, local element index, command, x_mm, y_mm; v1",
+          "semantic_sha256": "65350c7d0cfc64e7da3950ff301ec628f1fb6ec9a79c684de25e306568a490f0"
+        },
+        "seed": 20261016
+      },
+      "reuse_same_asset_count": 100,
+      "sample_objects": [],
+      "sample_scope": "bounded preview only; replay section hashes the complete scene streams",
+      "scenario_id": "S4",
+      "variants": [
+        "sparse-visible",
+        "many-visible",
+        "crop",
+        "icc",
+        "orientation"
+      ]
+    },
+    {
+      "blur_count": 50,
+      "camera_trace": {
+        "camera_space": "millimeters",
+        "duration_ms": 31000,
+        "page_mm": [
+          2000000,
+          2000000
+        ],
+        "seed": 20261016,
+        "semantic_sha256": "f5d0fd812f5f5efc429122c16b89f37a12c034742e088bdb61aead15bd7ba7f6",
+        "source": "synthetic deterministic replay recipe; not a runtime measurement",
+        "steps": [
+          {
+            "at_ms": 0,
+            "center_mm": [
+              400970,
+              559817
+            ],
+            "operation": "set_camera",
+            "zoom_milli": 1000
+          },
+          {
+            "at_ms": 1000,
+            "delta_mm": [
+              -161845,
+              48156
+            ],
+            "duration_ms": 10000,
+            "operation": "pan"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 11000,
+            "duration_ms": 10000,
+            "factor_milli": 8000,
+            "operation": "zoom"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 21000,
+            "duration_ms": 10000,
+            "factor_milli": 125,
+            "operation": "zoom"
+          }
+        ],
+        "trace_id": "camera-v1:S5-effects-100:20261016",
+        "viewport_px": [
+          1920,
+          1080
+        ],
+        "workload_id": "S5-effects-100"
+      },
+      "cases": [
+        "tile_boundary",
+        "alpha",
+        "group_clip",
+        "transparent_overlap"
+      ],
+      "description": "S1 plus a deterministic 100-node effect stack.",
+      "effect_node_count": 100,
+      "id": "S5-effects-100",
+      "max_effect_stack_depth": 4,
+      "object_count": 10000,
+      "path_element_count": 100000,
+      "payload_status": "synthetic_effect_graph_metadata_only_no_filtered_pixels_materialized",
+      "replay": {
+        "chunk_records": 4096,
+        "generator_version": 1,
+        "mode": "replayable-bounded-stream",
+        "object_path_allocation": "balanced, remainder assigned to lowest stable object indices",
+        "object_stream": {
+          "count": 10000,
+          "record_encoding": "little-endian object index, mm bounds, rgba8, path count; v1",
+          "semantic_sha256": "624645c57bb63cfadd446c8f625e602463883d4dc1732d4a0c3bc80a26794f8b"
+        },
+        "path_element_stream": {
+          "count": 100000,
+          "record_encoding": "little-endian object index, local element index, command, x_mm, y_mm; v1",
+          "semantic_sha256": "104834565328828b837a0c7f73de1e52da5208c3900fbe00864de57f3b0ed74d"
+        },
+        "seed": 20261016
+      },
+      "sample_objects": [
+        {
+          "fill_rgba8": [
+            198,
+            221,
+            146,
+            84
+          ],
+          "height_mm": 503,
+          "id": "S5-effects-100:object:0000",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 265,
+          "x_mm": 335485,
+          "y_mm": 473430
+        },
+        {
+          "fill_rgba8": [
+            232,
+            208,
+            149,
+            107
+          ],
+          "height_mm": 49,
+          "id": "S5-effects-100:object:0001",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 134,
+          "x_mm": 1359031,
+          "y_mm": 164877
+        },
+        {
+          "fill_rgba8": [
+            6,
+            55,
+            94,
+            126
+          ],
+          "height_mm": 258,
+          "id": "S5-effects-100:object:0002",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 241,
+          "x_mm": 1270731,
+          "y_mm": 214608
+        },
+        {
+          "fill_rgba8": [
+            67,
+            27,
+            195,
+            168
+          ],
+          "height_mm": 246,
+          "id": "S5-effects-100:object:0003",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 477,
+          "x_mm": 1712734,
+          "y_mm": 1857729
+        }
+      ],
+      "sample_scope": "bounded preview only; replay section hashes the complete scene streams",
+      "scenario_id": "S5",
+      "shadow_count": 50,
+      "sigma_reference_px": [
+        2,
+        16,
+        64,
+        256
+      ]
+    },
+    {
+      "camera_trace": {
+        "camera_space": "millimeters",
+        "duration_ms": 31000,
+        "page_mm": [
+          2000000,
+          2000000
+        ],
+        "seed": 20261016,
+        "semantic_sha256": "adbf988debd187e3989ea89a3368ecb995cbe351c75af5ddd82194d938aea0f3",
+        "source": "synthetic deterministic replay recipe; not a runtime measurement",
+        "steps": [
+          {
+            "at_ms": 0,
+            "center_mm": [
+              678620,
+              821785
+            ],
+            "operation": "set_camera",
+            "zoom_milli": 1000
+          },
+          {
+            "at_ms": 1000,
+            "delta_mm": [
+              91800,
+              17372
+            ],
+            "duration_ms": 10000,
+            "operation": "pan"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 11000,
+            "duration_ms": 10000,
+            "factor_milli": 8000,
+            "operation": "zoom"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 21000,
+            "duration_ms": 10000,
+            "factor_milli": 125,
+            "operation": "zoom"
+          }
+        ],
+        "trace_id": "camera-v1:S6-vietnamese-text:20261016",
+        "viewport_px": [
+          1920,
+          1080
+        ],
+        "workload_id": "S6-vietnamese-text"
+      },
+      "cases": [
+        "ligature",
+        "combining_mark",
+        "font_substitution",
+        "icc_switch"
+      ],
+      "description": "Unicode Vietnamese layout and glyph-cache pressure; fonts are not bundled.",
+      "font_policy": "system-font provenance recorded by runner; synthetic text only",
+      "glyph_count": 100000,
+      "id": "S6-vietnamese-text",
+      "object_count": 10000,
+      "path_element_count": 0,
+      "payload_status": "synthetic_text_metadata_only_no_font_or_glyph_atlas_materialized",
+      "replay": {
+        "chunk_records": 4096,
+        "generator_version": 1,
+        "mode": "replayable-bounded-stream",
+        "object_path_allocation": "balanced, remainder assigned to lowest stable object indices",
+        "object_stream": {
+          "count": 10000,
+          "record_encoding": "little-endian object index, mm bounds, rgba8, path count; v1",
+          "semantic_sha256": "d795a38f9356b02710f7fe89aeebd3b5f89d371991a8749003202d90c1b7a6e2"
+        },
+        "path_element_stream": {
+          "count": 0,
+          "record_encoding": "little-endian object index, local element index, command, x_mm, y_mm; v1",
+          "semantic_sha256": "842a98473246659a21a4886912bb6cd582c9f2a94f876b4643bdbeb81adc6038"
+        },
+        "seed": 20261016
+      },
+      "sample_objects": [
+        {
+          "fill_rgba8": [
+            60,
+            167,
+            112,
+            255
+          ],
+          "height_mm": 351,
+          "id": "S6-vietnamese-text:object:0000",
+          "kind": "text-placeholder",
+          "path_elements": 0,
+          "width_mm": 420,
+          "x_mm": 746764,
+          "y_mm": 1735463
+        },
+        {
+          "fill_rgba8": [
+            232,
+            185,
+            133,
+            244
+          ],
+          "height_mm": 16,
+          "id": "S6-vietnamese-text:object:0001",
+          "kind": "text-placeholder",
+          "path_elements": 0,
+          "width_mm": 455,
+          "x_mm": 496729,
+          "y_mm": 499934
+        },
+        {
+          "fill_rgba8": [
+            243,
+            202,
+            16,
+            76
+          ],
+          "height_mm": 207,
+          "id": "S6-vietnamese-text:object:0002",
+          "kind": "text-placeholder",
+          "path_elements": 0,
+          "width_mm": 173,
+          "x_mm": 1905684,
+          "y_mm": 44968
+        },
+        {
+          "fill_rgba8": [
+            132,
+            38,
+            215,
+            29
+          ],
+          "height_mm": 421,
+          "id": "S6-vietnamese-text:object:0003",
+          "kind": "text-placeholder",
+          "path_elements": 0,
+          "width_mm": 100,
+          "x_mm": 1354950,
+          "y_mm": 43579
+        }
+      ],
+      "sample_scope": "bounded preview only; replay section hashes the complete scene streams",
+      "scenario_id": "S6",
+      "text_samples": [
+        "Tiếng Việt: dấu hỏi, dấu ngã, ă â ê ô ơ ư đ.",
+        "Hoà bình và mỹ thuật.",
+        "NFC/NFD: á / á."
+      ]
+    },
+    {
+      "cache_pressure": true,
+      "camera_trace": {
+        "camera_space": "millimeters",
+        "duration_ms": 31000,
+        "page_mm": [
+          2000000,
+          2000000
+        ],
+        "query_region_mm": [
+          0,
+          0,
+          512,
+          512
+        ],
+        "seed": 20261016,
+        "semantic_sha256": "fe014d4192afa2833539cb0b7b8229801be7c1325d4681847cbe73f2822bf0ef",
+        "source": "synthetic deterministic replay recipe; not a runtime measurement",
+        "steps": [
+          {
+            "at_ms": 0,
+            "center_mm": [
+              16,
+              16
+            ],
+            "operation": "set_camera",
+            "zoom_milli": 1000
+          },
+          {
+            "at_ms": 1000,
+            "delta_mm": [
+              8,
+              -12
+            ],
+            "duration_ms": 10000,
+            "operation": "pan"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 11000,
+            "duration_ms": 10000,
+            "factor_milli": 8000,
+            "operation": "zoom"
+          },
+          {
+            "anchor_px": [
+              960,
+              540
+            ],
+            "at_ms": 21000,
+            "duration_ms": 10000,
+            "factor_milli": 125,
+            "operation": "zoom"
+          }
+        ],
+        "trace_id": "camera-v1:S7-mixed-stress:20261016",
+        "viewport_px": [
+          1920,
+          1080
+        ],
+        "workload_id": "S7-mixed-stress"
+      },
+      "decoded_rgba8_pixels": 1280000000,
+      "description": "100k objects combined with S4 image and S5 effect metadata.",
+      "effect_node_count": 100,
+      "id": "S7-mixed-stress",
+      "image_count": 22,
+      "object_count": 100000,
+      "overlap_query_mm": [
+        0,
+        0,
+        512,
+        512
+      ],
+      "path_element_count": 1000000,
+      "payload_status": "synthetic_scene_records_only_image_and_effect_pixel_payloads_absent",
+      "replay": {
+        "chunk_records": 4096,
+        "generator_version": 1,
+        "mode": "replayable-bounded-stream",
+        "object_path_allocation": "balanced, remainder assigned to lowest stable object indices",
+        "object_stream": {
+          "count": 100000,
+          "record_encoding": "little-endian object index, mm bounds, rgba8, path count; v1",
+          "semantic_sha256": "959eb5efe485794c056c1b213bd1467658d194fd0e6bc6e979a631277a3fb399"
+        },
+        "path_element_stream": {
+          "count": 1000000,
+          "record_encoding": "little-endian object index, local element index, command, x_mm, y_mm; v1",
+          "semantic_sha256": "9888595826f84f918c32e7e1c74d332d0e0cda5b9902c7fec69f6e2d54c72e8b"
+        },
+        "seed": 20261016
+      },
+      "sample_objects": [
+        {
+          "fill_rgba8": [
+            191,
+            116,
+            206,
+            64
+          ],
+          "height_mm": 482,
+          "id": "S7-mixed-stress:object:0000",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 158,
+          "x_mm": 2,
+          "y_mm": 9
+        },
+        {
+          "fill_rgba8": [
+            60,
+            169,
+            254,
+            19
+          ],
+          "height_mm": 454,
+          "id": "S7-mixed-stress:object:0001",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 94,
+          "x_mm": 15,
+          "y_mm": 19
+        },
+        {
+          "fill_rgba8": [
+            176,
+            133,
+            179,
+            36
+          ],
+          "height_mm": 367,
+          "id": "S7-mixed-stress:object:0002",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 446,
+          "x_mm": 5,
+          "y_mm": 17
+        },
+        {
+          "fill_rgba8": [
+            139,
+            211,
+            186,
+            41
+          ],
+          "height_mm": 274,
+          "id": "S7-mixed-stress:object:0003",
+          "kind": "vector",
+          "path_elements": 10,
+          "width_mm": 453,
+          "x_mm": 4,
+          "y_mm": 17
+        }
+      ],
+      "sample_scope": "bounded preview only; replay section hashes the complete scene streams",
+      "scenario_id": "S7",
+      "software_forced": true,
+      "tab_switch": true
+    },
+    {
+      "chunk_bytes": 4194304,
+      "chunk_count": 64,
+      "description": "Synthetic dense chunk payload plan; not a PikDraw native-format file.",
+      "id": "S8-256MiB",
+      "layout": "dense sequential writes; never sparse-zero substitute",
+      "materialized_by_default": false,
+      "object_count": 0,
+      "offset_probe_bytes": null,
+      "path_element_count": 0,
+      "payload_algorithm": "SHAKE256 domain-separated deterministic chunks v1",
+      "sample_objects": [],
+      "sample_scope": "bounded preview only; replay section hashes the complete scene streams",
+      "scenario_id": "S8",
+      "source_bytes": 268435456
+    },
+    {
+      "chunk_bytes": 4194304,
+      "chunk_count": 256,
+      "description": "Synthetic dense chunk payload plan; not a PikDraw native-format file.",
+      "id": "S8-1GiB",
+      "layout": "dense sequential writes; never sparse-zero substitute",
+      "materialized_by_default": false,
+      "object_count": 0,
+      "offset_probe_bytes": null,
+      "path_element_count": 0,
+      "payload_algorithm": "SHAKE256 domain-separated deterministic chunks v1",
+      "sample_objects": [],
+      "sample_scope": "bounded preview only; replay section hashes the complete scene streams",
+      "scenario_id": "S8",
+      "source_bytes": 1073741824
+    },
+    {
+      "chunk_bytes": 4194304,
+      "chunk_count": 1024,
+      "description": "Synthetic dense chunk payload plan; not a PikDraw native-format file.",
+      "id": "S8-4GiB",
+      "layout": "dense sequential writes; never sparse-zero substitute",
+      "materialized_by_default": false,
+      "object_count": 0,
+      "offset_probe_bytes": null,
+      "path_element_count": 0,
+      "payload_algorithm": "SHAKE256 domain-separated deterministic chunks v1",
+      "sample_objects": [],
+      "sample_scope": "bounded preview only; replay section hashes the complete scene streams",
+      "scenario_id": "S8",
+      "source_bytes": 4294967296
+    },
+    {
+      "chunk_bytes": 4194304,
+      "chunk_count": 1025,
+      "description": "Synthetic dense chunk payload plan; not a PikDraw native-format file.",
+      "id": "S8-offset-probe-4GiB-plus-1MiB",
+      "layout": "dense sequential writes; never sparse-zero substitute",
+      "materialized_by_default": false,
+      "object_count": 0,
+      "offset_probe_bytes": 4294967296,
+      "path_element_count": 0,
+      "payload_algorithm": "SHAKE256 domain-separated deterministic chunks v1",
+      "sample_objects": [],
+      "sample_scope": "bounded preview only; replay section hashes the complete scene streams",
+      "scenario_id": "S8",
+      "source_bytes": 4296015872
+    }
+  ]
+}

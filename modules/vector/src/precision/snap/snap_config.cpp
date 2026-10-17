@@ -44,7 +44,16 @@ std::array<int, kSnapOptionCount> default_priorities() {
     priorities[index_of(SnapOption::Endpoint)] = 0;
     priorities[index_of(SnapOption::SourceNode)] = 1;
     priorities[index_of(SnapOption::LineMidpoint)] = 2;
-    priorities[index_of(SnapOption::Grid)] = 3;
+    priorities[index_of(SnapOption::Intersection)] = 3;
+    priorities[index_of(SnapOption::AnalyticCenter)] = 4;
+    priorities[index_of(SnapOption::Quadrant)] = 5;
+    priorities[index_of(SnapOption::BezierTMidpoint)] = 6;
+    priorities[index_of(SnapOption::HalfCurveLength)] = 7;
+    priorities[index_of(SnapOption::Perpendicular)] = 8;
+    priorities[index_of(SnapOption::Tangent)] = 9;
+    priorities[index_of(SnapOption::Nearest)] = 10;
+    priorities[index_of(SnapOption::ReferenceTracking)] = 11;
+    priorities[index_of(SnapOption::Grid)] = 12;
     return priorities;
 }
 
@@ -95,13 +104,43 @@ SnapGroup group_for_option(SnapOption option) noexcept {
 }
 
 bool is_supported_snap_candidate(SnapOption option) noexcept {
-    return option == SnapOption::Endpoint || option == SnapOption::SourceNode ||
-           option == SnapOption::LineMidpoint || option == SnapOption::Grid;
+    switch (option) {
+    case SnapOption::Endpoint:
+    case SnapOption::SourceNode:
+    case SnapOption::LineMidpoint:
+    case SnapOption::AnalyticCenter:
+    case SnapOption::Quadrant:
+    case SnapOption::Nearest:
+    case SnapOption::BezierTMidpoint:
+    case SnapOption::HalfCurveLength:
+    case SnapOption::Intersection:
+    case SnapOption::Perpendicular:
+    case SnapOption::Tangent:
+    case SnapOption::ReferenceTracking:
+    case SnapOption::Grid:
+        return true;
+    default:
+        return false;
+    }
 }
 
 bool is_source_geometry_candidate(SnapOption option) noexcept {
-    return option == SnapOption::Endpoint || option == SnapOption::SourceNode ||
-           option == SnapOption::LineMidpoint;
+    switch (option) {
+    case SnapOption::Endpoint:
+    case SnapOption::SourceNode:
+    case SnapOption::LineMidpoint:
+    case SnapOption::AnalyticCenter:
+    case SnapOption::Quadrant:
+    case SnapOption::Nearest:
+    case SnapOption::BezierTMidpoint:
+    case SnapOption::HalfCurveLength:
+    case SnapOption::Intersection:
+    case SnapOption::Perpendicular:
+    case SnapOption::Tangent:
+        return true;
+    default:
+        return false;
+    }
 }
 
 double normalize_angle_degrees(double angle_degrees) noexcept {

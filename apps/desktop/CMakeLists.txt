@@ -20,11 +20,19 @@ add_library(pikdraw_desktop STATIC
     src/development/ui_reload_controller.cpp
     src/runtime/composition_root.cpp
     src/workflows/document_workflow.cpp
+    src/clipboard/native_clipboard.cpp
     src/tools/drawing_preferences.cpp
     src/tools/drawing_tool_controller.cpp
+    src/tools/pen_tool_controller.cpp
+    src/tools/node_tool_controller.cpp
+    src/tools/contour_tool_controller.cpp
     src/tools/native_drawing_input.cpp
     src/tools/snap_index_worker.cpp
+    src/tools/snap_status_controller.cpp
+    src/tools/dimension_tool_controller.cpp
     src/shell/native_window.cpp
+    src/automation/automation_pipe_host.cpp
+    src/automation/native_window_automation.cpp
     src/shell/native_window_events.cpp
     src/shell/native_window_shortcuts.cpp
     src/shell/native_window_canvas.cpp
@@ -54,6 +62,7 @@ target_link_libraries(pikdraw_desktop PUBLIC
     pikdraw_rendering
     pikdraw_vector
     pikdraw_interop
+    pikdraw_automation
 )
 
 if(WIN32)
@@ -81,6 +90,22 @@ if(PIKDRAW_BUILD_TESTS)
         pikdraw_desktop
     )
     add_test(NAME test_pikdraw_desktop_shell COMMAND test_pikdraw_desktop_shell)
+
+    add_executable(test_pikdraw_effect_draft
+        tests/test_effect_draft.cpp
+    )
+    target_link_libraries(test_pikdraw_effect_draft PRIVATE
+        pikdraw_desktop
+    )
+    add_test(NAME test_pikdraw_effect_draft COMMAND test_pikdraw_effect_draft)
+
+    add_executable(test_pikdraw_effect_render_warning
+        tests/test_effect_render_warning.cpp
+    )
+    target_link_libraries(test_pikdraw_effect_render_warning PRIVATE
+        pikdraw_desktop
+    )
+    add_test(NAME test_pikdraw_effect_render_warning COMMAND test_pikdraw_effect_render_warning)
 
     add_executable(test_pikdraw_desktop_actions
         tests/test_desktop_actions.cpp
@@ -134,4 +159,57 @@ if(PIKDRAW_BUILD_TESTS)
     add_executable(test_pikdraw_drawing_tool_ui tests/test_drawing_tool_ui.cpp)
     target_link_libraries(test_pikdraw_drawing_tool_ui PRIVATE pikdraw_desktop)
     add_test(NAME test_pikdraw_drawing_tool_ui COMMAND test_pikdraw_drawing_tool_ui)
+
+    add_executable(test_pikdraw_pen_native_shell tests/test_pen_native_shell.cpp)
+    target_link_libraries(test_pikdraw_pen_native_shell PRIVATE pikdraw_desktop)
+    add_test(NAME test_pikdraw_pen_native_shell COMMAND test_pikdraw_pen_native_shell)
+
+    add_executable(test_pikdraw_node_tool_controller tests/test_node_tool_controller.cpp)
+    target_link_libraries(test_pikdraw_node_tool_controller PRIVATE pikdraw_desktop)
+    add_test(NAME test_pikdraw_node_tool_controller COMMAND test_pikdraw_node_tool_controller)
+
+    add_executable(test_pikdraw_contour_tool_controller
+        tests/test_contour_tool_controller.cpp
+        src/tools/contour_tool_controller.cpp
+    )
+    target_include_directories(test_pikdraw_contour_tool_controller PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(test_pikdraw_contour_tool_controller PRIVATE
+        pikdraw_document
+        pikdraw_vector
+        pikdraw_geometry
+    )
+    add_test(NAME test_pikdraw_contour_tool_controller COMMAND test_pikdraw_contour_tool_controller)
+
+    add_executable(test_pikdraw_snap_status_controller
+        tests/test_snap_status_controller.cpp
+        src/tools/snap_status_controller.cpp
+    )
+    target_include_directories(test_pikdraw_snap_status_controller PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(test_pikdraw_snap_status_controller PRIVATE
+        pikdraw_document
+        pikdraw_vector
+        pikdraw_geometry
+    )
+    add_test(NAME test_pikdraw_snap_status_controller COMMAND test_pikdraw_snap_status_controller)
+
+    add_executable(test_pikdraw_dimension_tool_controller
+        tests/test_dimension_tool_controller.cpp
+        src/tools/dimension_tool_controller.cpp
+    )
+    target_include_directories(test_pikdraw_dimension_tool_controller PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(test_pikdraw_dimension_tool_controller PRIVATE
+        pikdraw_document
+        pikdraw_vector
+        pikdraw_geometry
+    )
+    add_test(NAME test_pikdraw_dimension_tool_controller COMMAND test_pikdraw_dimension_tool_controller)
 endif()

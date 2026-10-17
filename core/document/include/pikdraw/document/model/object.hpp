@@ -1,5 +1,6 @@
 #pragma once
 #include "pikdraw/document/model/path_adapter.hpp"
+#include "pikdraw/document/effects/effect_stack.hpp"
 
 #include "pikdraw/document/model/object_id.hpp"
 #include "pikdraw/geometry/curves/path.hpp"
@@ -11,8 +12,8 @@
 #include <vector>
 #include <memory>
 #include <variant>
-#include <algorithm>
 #include <stdexcept>
+#include <algorithm>
 
 namespace pikdraw::document {
 
@@ -36,8 +37,10 @@ struct PathObject {
     double stroke_width_mm{1.0};
     bool has_fill{true};
     bool has_stroke{true};
+    Appearance appearance;
     bool visible{true};
     bool locked{false};
+    std::string contour_spec;
 
     void set_authoring_source(EditablePath source) {
         if (const auto error = source.validation_error())
@@ -62,6 +65,7 @@ struct TextObject {
     std::string text;
     typography::FontIdentity font{typography::FontIdentity::make_default()};
     color::ColorValue fill{color::RGBColor{0.9, 0.9, 0.9, 1.0}};
+    Appearance appearance;
     typography::TextAlignment alignment{typography::TextAlignment::Left};
     bool underline{false};
     geometry::Point2D position{0.0, 0.0};

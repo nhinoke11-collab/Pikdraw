@@ -1,8 +1,17 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
-#include "native_window_page_presets.hpp"
+#include "../automation/native_window_automation.hpp"
 #include "pikdraw/desktop/actions/action_id.hpp"
+#include "native_window_menus.hpp"
+#include "native_window_page_presets.hpp"
 #include "native_canvas_frame.hpp"
+#ifdef _WIN32
+#include "../clipboard/native_clipboard.hpp"
+#endif
 #include "../tools/drawing_tool_controller.hpp"
+#include "../tools/pen_tool_controller.hpp"
+#include "../tools/node_tool_controller.hpp"
+#include "../tools/contour_tool_controller.hpp"
+#include "pikdraw/vector/tools/shape_tools.hpp"
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -10,10 +19,7 @@
 #include <sstream>
 #include <algorithm>
 #include <cmath>
-
-#ifdef _WIN32
-#include <commctrl.h>
-#endif
+#include <stdexcept>
 
 namespace pikdraw::desktop {
 
@@ -52,10 +58,108 @@ void NativeWindow::initialize_default_tab() {
     tab.unit = "mm";
     tab.root = std::make_unique<CompositionRoot>();
     tab.root->initialize(static_cast<double>(width_), static_cast<double>(height_), 1.0);
+    tab.root->renderer().backend().set_canvas_background(canvas_background_color());
     tab.workflow = std::make_unique<DocumentWorkflow>(*tab.root);
     tab.workflow->new_document(297.0, 210.0);
+    register_drawing_actions(*tab.root);
     tabs_.push_back(std::move(tab));
     active_tab_index_ = 0;
+    bind_drawing_tool_to_active_document();
+}
+
+void NativeWindow::register_drawing_actions(CompositionRoot& document_root) {
+    auto& dispatcher = document_root.window().action_dispatcher();
+    dispatcher.register_action({std::string(actions::ActionId::kToolNodeEdit),
+        "Chỉnh sửa điểm Node", "Node Edit Tool", "F10", [this] { set_active_tool(11); }, nullptr});
+    dispatcher.register_action({std::string(actions::ActionId::kToolLine),
+        "Vẽ đoạn thẳng", "Line Tool", "L", [this] { set_active_tool(6); }, nullptr});
+    dispatcher.register_action({std::string(actions::ActionId::kToolPolyline),
+        "Vẽ đường gấp khúc", "Polyline Tool", "Shift+L",
+        [this] { set_active_tool(7); }, nullptr});
+    dispatcher.register_action({std::string(actions::ActionId::kToolPen),
+        "Công cụ Pen", "Pen Tool", "", [this] { set_active_tool(8); }, nullptr});
+    dispatcher.register_action({std::string(actions::ActionId::kToolContour),
+        "Tạo viền bao (Contour)", "Contour Tool", "", [this] { set_active_tool(12); }, nullptr});
+    dispatcher.register_action({std::string(actions::ActionId::kEffectsContourFocus),
+        "Hiệu ứng viền Contour", "Contour Effect", "", [this] { trigger_effects_contour(); }, nullptr});
+    dispatcher.register_action({std::string(actions::ActionId::kObjectContourBreakApart),
+        "Rã khối viền Contour", "Break Contour Apart", "Ctrl+K", [this] { trigger_break_contour_apart(); }, nullptr});
+    dispatcher.register_action({std::string(actions::ActionId::kToolSnapPanel),
+        "Bắt điểm và hướng", "Snap and Direction", "F3", [this] {
+            if (drawing_tool_) drawing_tool_->toggle_snap_panel();
+#ifdef _WIN32
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+        }, nullptr});
+}
+
+void NativeWindow::bind_drawing_tool_to_active_document() {
+    if (drawing_tool_) {
+        drawing_tool_->cancel();
+        drawing_tool_.reset();
+    }
+    if (pen_tool_) {
+        pen_tool_->cancel();
+        pen_tool_.reset();
+    }
+    if (node_tool_) {
+        node_tool_->deactivate();
+        node_tool_.reset();
+    }
+    if (contour_tool_) {
+        contour_tool_->deactivate();
+        contour_tool_.reset();
+    }
+    if (tabs_.empty() || !active_tab().root)
+        return;
+    if (color_preview_)
+        (void)root().renderer().backend().set_color_preview(color_preview_);
+    const auto mode = active_tool_ == 1 ? vector::ToolMode::Rectangle
+                    : active_tool_ == 2 ? vector::ToolMode::Ellipse
+                    : active_tool_ == 4 ? vector::ToolMode::Text
+                                        : vector::ToolMode::Select;
+    root().vector_controller().set_mode(mode);
+    drawing_tool_ = std::make_unique<tools::DrawingToolController>(root().document());
+    pen_tool_ = std::make_unique<tools::PenToolController>(root().document());
+    node_tool_ = std::make_unique<tools::NodeToolController>(root().document());
+    contour_tool_ = std::make_unique<tools::ContourToolController>(root().document());
+    if (active_tool_ == 6 || active_tool_ == 7) {
+        const auto kind = active_tool_ == 6 ? vector::tools::line::PathDrawingKind::Line
+                                            : vector::tools::line::PathDrawingKind::Polyline;
+        if (!drawing_tool_->activate(kind)) {
+            drawing_tool_.reset();
+            active_tool_ = 0;
+            root().vector_controller().set_mode(vector::ToolMode::Select);
+        }
+    }
+    if (active_tool_ == 8) {
+        // Reuse the existing D09 snap index/configuration as a preview-only adapter.
+        if (drawing_tool_)
+            (void)drawing_tool_->activate(vector::tools::line::PathDrawingKind::Line);
+        const auto result = pen_tool_->activate();
+        if (result.code != vector::tools::pen::PenDrawingResultCode::Applied) {
+            pen_tool_.reset();
+            active_tool_ = 0;
+            root().vector_controller().set_mode(vector::ToolMode::Select);
+        } else {
+            auto preferences = tools::PenGesturePreferences{};
+            preferences.profile = shortcut_profile_ == 0
+                ? tools::PenShortcutProfile::Corel
+                : shortcut_profile_ == 1 ? tools::PenShortcutProfile::Illustrator
+                                         : tools::PenShortcutProfile::PikDraw;
+            (void)pen_tool_->set_gesture_preferences(preferences);
+        }
+    }
+    if (active_tool_ == 11) {
+        const auto& sel = root().vector_controller().selection().selected_ids();
+        const auto target = sel.empty() ? document::kInvalidObjectId : sel.front();
+        (void)node_tool_->activate(target);
+    }
+    if (active_tool_ == 12) {
+        const auto& sel = root().vector_controller().selection().selected_ids();
+        const auto target = sel.empty() ? document::kInvalidObjectId : sel.front();
+        (void)contour_tool_->activate(target);
+    }
 }
 
 NativeWindow::DocumentTab& NativeWindow::active_tab() noexcept {
@@ -83,9 +187,27 @@ const DocumentWorkflow& NativeWindow::workflow() const noexcept {
     return *active_tab().workflow;
 }
 
+bool NativeWindow::drawing_snap_panel_open() const noexcept {
+    return drawing_tool_ && drawing_tool_->snap_panel_open();
+}
+
+bool NativeWindow::drawing_snap_index_ready() const noexcept {
+    return drawing_tool_ && drawing_tool_->snap_index_ready();
+}
+
+bool NativeWindow::drawing_path_active() const noexcept {
+    return drawing_tool_ && drawing_tool_->active();
+}
+
+size_t NativeWindow::drawing_path_point_count() const noexcept {
+    return drawing_tool_ ? drawing_tool_->path_point_count() : 0;
+}
+
 void NativeWindow::switch_to_tab(size_t index) noexcept {
     if (index < tabs_.size() && index != active_tab_index_) {
+        if (drawing_tool_) drawing_tool_->cancel();
         active_tab_index_ = index;
+        bind_drawing_tool_to_active_document();
         fit_page_to_canvas();
 #ifdef _WIN32
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
@@ -96,17 +218,27 @@ void NativeWindow::switch_to_tab(size_t index) noexcept {
 void NativeWindow::close_tab(size_t index) noexcept {
     if (index >= tabs_.size()) return;
     if (tabs_.size() > 1) {
+        const bool closing_active = index == active_tab_index_;
+        if (closing_active && drawing_tool_) {
+            drawing_tool_->cancel();
+            drawing_tool_.reset();
+        }
         if (tabs_[index].root) tabs_[index].root->shutdown();
         tabs_.erase(tabs_.begin() + index);
-        if (active_tab_index_ >= tabs_.size()) {
+        if (index < active_tab_index_) {
+            --active_tab_index_;
+        } else if (active_tab_index_ >= tabs_.size()) {
             active_tab_index_ = tabs_.size() - 1;
         }
+        if (closing_active) bind_drawing_tool_to_active_document();
         fit_page_to_canvas();
 #ifdef _WIN32
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 #endif
     } else {
+        if (drawing_tool_) drawing_tool_->cancel();
         workflow().new_document(297.0, 210.0);
+        bind_drawing_tool_to_active_document();
         active_tab().title = (language_ == UILanguage::Vietnamese) ? "Bản vẽ 1" : "Document 1";
         active_tab().file_path = "";
         active_tab().page_width_mm = 297.0;
@@ -130,10 +262,14 @@ void NativeWindow::create_new_tab(const std::string& title, double w_mm, double 
     tab.unit = "mm";
     tab.root = std::make_unique<CompositionRoot>();
     tab.root->initialize(static_cast<double>(width_), static_cast<double>(height_), 1.0);
+    tab.root->renderer().backend().set_canvas_background(canvas_background_color());
     tab.workflow = std::make_unique<DocumentWorkflow>(*tab.root);
     tab.workflow->new_document(w_mm, h_mm);
+    register_drawing_actions(*tab.root);
+    if (drawing_tool_) drawing_tool_->cancel();
     tabs_.push_back(std::move(tab));
     active_tab_index_ = tabs_.size() - 1;
+    bind_drawing_tool_to_active_document();
     fit_page_to_canvas();
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
@@ -316,6 +452,18 @@ void NativeWindow::apply_stroke_to_selection(const std::string& hex, double widt
 
 bool NativeWindow::trigger_boolean_operation(geometry::BooleanOp op) {
     bool ok = workflow().boolean_operation_selected(op, keep_source_object_, keep_target_object_);
+    if (!ok) {
+        const bool boundary = op == geometry::BooleanOp::Boundary;
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? (boundary ? "Boundary chưa được hỗ trợ; chọn hai path chữ nhật hợp lệ để tạo hình."
+                        : "Lệnh cần đúng hai path chữ nhật được hỗ trợ và kết quả không rỗng.")
+            : (boundary ? "Boundary is unsupported; choose two eligible rectangle paths."
+                        : "This command needs two supported rectangle paths and a non-empty result.");
+#ifdef _WIN32
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+        return false;
+    }
     if (ok) {
         const char* vi_msg = "Thực hiện tạo hình khối thành công";
         const char* en_msg = "Solid operation completed";
@@ -325,8 +473,8 @@ bool NativeWindow::trigger_boolean_operation(geometry::BooleanOp op) {
                 en_msg = "Welded selected objects";
                 break;
             case geometry::BooleanOp::Difference:
-                vi_msg = "Đã xén đối tượng (Trim / Front Minus Back)";
-                en_msg = "Trimmed selected object";
+                vi_msg = "Đã trừ path chọn thứ hai khỏi path chọn thứ nhất";
+                en_msg = "Subtracted the second selected path from the first";
                 break;
             case geometry::BooleanOp::Intersection:
                 vi_msg = "Đã lấy phần giao (Intersect)";
@@ -337,12 +485,12 @@ bool NativeWindow::trigger_boolean_operation(geometry::BooleanOp op) {
                 en_msg = "Excluded overlapping areas";
                 break;
             case geometry::BooleanOp::BackMinusFront:
-                vi_msg = "Đã trừ đối tượng dưới (Back Minus Front)";
-                en_msg = "Subtracted bottom object";
+                vi_msg = "Đã trừ path chọn thứ nhất khỏi path chọn thứ hai";
+                en_msg = "Subtracted the first selected path from the second";
                 break;
             case geometry::BooleanOp::Boundary:
-                vi_msg = "Đã tạo đường viền bao (Boundary)";
-                en_msg = "Created perimeter boundary";
+                vi_msg = "Boundary chưa được hỗ trợ";
+                en_msg = "Boundary is unsupported";
                 break;
             default: break;
         }
@@ -372,30 +520,16 @@ NativeWindow::NativeWindow(int width, int height)
       height_(height),
       shell_(static_cast<double>(width), static_cast<double>(height), 1.0) {
     initialize_default_tab();
-    drawing_tool_ = std::make_unique<tools::DrawingToolController>(root().document());
-    auto& dispatcher = root().window().action_dispatcher();
-    dispatcher.register_action({std::string(actions::ActionId::kToolLine),
-        "Vẽ đoạn thẳng", "Line Tool", "L", [this] { set_active_tool(4); }, nullptr});
-    dispatcher.register_action({std::string(actions::ActionId::kToolPolyline),
-        "Vẽ đường gấp khúc", "Polyline Tool", "Shift+L",
-        [this] { set_active_tool(5); }, nullptr});
-    dispatcher.register_action({std::string(actions::ActionId::kToolSnapPanel),
-        "Bắt điểm và hướng", "Snap and Direction", "F3", [this] {
-            if (drawing_tool_) drawing_tool_->toggle_snap_panel();
-#ifdef _WIN32
-            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
-#endif
-        }, nullptr});
     fit_page_to_canvas();
 }
 
 NativeWindow::~NativeWindow() {
+    mcp_runtime_.reset();
 #ifdef _WIN32
     cleanup_canvas_cache();
     cleanup_backbuffer();
     cleanup_ui_fonts();
     if (hwnd_) {
-        if (tooltip_hwnd_) DestroyWindow(tooltip_hwnd_);
         DestroyWindow(hwnd_);
         hwnd_ = nullptr;
     }
@@ -420,6 +554,8 @@ void NativeWindow::cleanup_canvas_cache() noexcept {
         cached_canvas_bmp_ = nullptr;
     }
     canvas_cache_valid_ = false;
+    cached_canvas_snapshot_.reset();
+    cached_canvas_profile_.reset();
 }
 
 void NativeWindow::cleanup_backbuffer() noexcept {
@@ -482,9 +618,14 @@ void NativeWindow::toggle_language() noexcept {
 
 void NativeWindow::set_theme(ThemeMode mode) noexcept {
     theme_ = mode;
-    (void)root().renderer().backend().set_canvas_background(mode == ThemeMode::CyberDark
-        ? color::DeviceRGBA{18, 20, 26, 255} : color::DeviceRGBA{241, 245, 249, 255});
     settings_theme_choice_ = (mode == ThemeMode::CyberDark) ? 0 : 1;
+    canvas_cache_valid_ = false;
+    const auto canvas_bg = canvas_background_color();
+    for (auto& tab : tabs_) {
+        if (tab.root) {
+            tab.root->renderer().backend().set_canvas_background(canvas_bg);
+        }
+    }
     status_msg_ = (language_ == UILanguage::Vietnamese) ?
         (mode == ThemeMode::CyberDark ? "Đã chuyển sang Chế độ Tối (Dark Mode Obsidian)" : "Đã chuyển sang Chế độ Sáng (Light Mode Silver)") :
         (mode == ThemeMode::CyberDark ? "Switched to Dark Mode (Obsidian Slate)" : "Switched to Light Mode (Silver Tech)");
@@ -493,14 +634,32 @@ void NativeWindow::set_theme(ThemeMode mode) noexcept {
 #endif
 }
 
+color::DeviceRGBA NativeWindow::canvas_background_color() const noexcept {
+    return (theme_ == ThemeMode::CyberDark)
+        ? color::DeviceRGBA{68, 72, 80, 255}    // Neutral gray (màu ghi)
+        : color::DeviceRGBA{255, 255, 255, 255}; // Pure white (màu trắng)
+}
+
+#ifdef _WIN32
+COLORREF NativeWindow::canvas_background_colorref() const noexcept {
+    return (theme_ == ThemeMode::CyberDark)
+        ? RGB(68, 72, 80)
+        : RGB(255, 255, 255);
+}
+#endif
+
 void NativeWindow::toggle_theme() noexcept {
     set_theme(theme_ == ThemeMode::CyberDark ? ThemeMode::Light : ThemeMode::CyberDark);
 }
 
 void NativeWindow::open_settings_modal() noexcept {
 #ifdef _WIN32
-    cancel_canvas_interaction();
+    if (pointer_active_ || is_panning_)
+        cancel_canvas_interaction();
 #endif
+    settings_mcp_enabled_choice_ = mcp_listener_active();
+    settings_mcp_edit_choice_ = mcp_edit_access_active();
+    settings_ai_focus_index_ = 0;
     show_settings_modal_ = true;
     status_msg_ = (language_ == UILanguage::Vietnamese) ?
         "Đã mở Cài đặt hệ thống (PikDraw Preferences)" : "Opened System Preferences (PikDraw Settings)";
@@ -509,10 +668,16 @@ void NativeWindow::open_settings_modal() noexcept {
 #endif
 }
 
+void NativeWindow::open_ai_connections_settings() noexcept {
+    open_settings_modal();
+    set_settings_tab(6);
+}
+
 void NativeWindow::close_settings_modal() noexcept {
+    discard_ai_connections_choices();
     show_settings_modal_ = false;
     status_msg_ = (language_ == UILanguage::Vietnamese) ?
-        "Đã lưu và đóng Cài đặt hệ thống" : "Saved and closed System Preferences";
+        "Đã đóng Cài đặt hệ thống" : "Closed System Preferences";
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
 #endif
@@ -523,15 +688,119 @@ void NativeWindow::toggle_settings_modal() noexcept {
 }
 
 void NativeWindow::set_settings_tab(int tab) noexcept {
-    if (tab < 0 || tab > 5) return;
+    if (tab < 0 || tab > 6) return;
     settings_active_tab_ = tab;
-    const char* vi_tabs[] = { "Chung & Ngôn ngữ", "Giao diện (Theme)", "Đơn vị & Bắt điểm", "Quản lý màu & ICC", "Thi công & CNC", "Hiệu năng & Hệ thống" };
-    const char* en_tabs[] = { "General & Language", "Display & Theme", "Units & Snapping", "Color & ICC", "Production & CAM", "Hardware & System" };
+    const char* vi_tabs[] = { "Chung & Ngôn ngữ", "Giao diện (Theme)", "Đơn vị & Bắt điểm", "Quản lý màu & ICC", "Phím tắt & Thao tác", "Thi công & CNC", "Kết nối AI" };
+    const char* en_tabs[] = { "General & Language", "Display & Theme", "Units & Snapping", "Color & ICC", "Shortcuts & Hotkeys", "Production & CAM", "AI Connections" };
     status_msg_ = (language_ == UILanguage::Vietnamese) ?
         std::string("Tùy chọn: ") + vi_tabs[tab] : std::string("Options: ") + en_tabs[tab];
+    if (tab == 6) settings_ai_focus_index_ = 0;
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
 #endif
+}
+
+void NativeWindow::discard_ai_connections_choices() noexcept {
+    settings_mcp_enabled_choice_ = mcp_listener_active();
+    settings_mcp_edit_choice_ = mcp_edit_access_active();
+}
+
+void NativeWindow::toggle_ai_connections_read_choice() noexcept {
+    settings_mcp_enabled_choice_ = !settings_mcp_enabled_choice_;
+    if (!settings_mcp_enabled_choice_) settings_mcp_edit_choice_ = false;
+    status_msg_ = language_ == UILanguage::Vietnamese
+        ? "Quyền MCP đang là bản nháp · chọn Áp dụng để xác nhận"
+        : "MCP access is a draft · choose Apply to confirm";
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::toggle_ai_connections_edit_choice() noexcept {
+    if (!settings_mcp_enabled_choice_) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Bật Cho phép MCP trước khi cấp quyền sửa"
+            : "Enable MCP access before granting edit permission";
+    } else {
+        settings_mcp_edit_choice_ = !settings_mcp_edit_choice_;
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Quyền MCP đang là bản nháp · chọn Áp dụng để xác nhận"
+            : "MCP access is a draft · choose Apply to confirm";
+    }
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::reset_ai_connections_choices() noexcept {
+    settings_mcp_enabled_choice_ = false;
+    settings_mcp_edit_choice_ = false;
+    status_msg_ = language_ == UILanguage::Vietnamese
+        ? "MCP đang tắt trong bản nháp · chọn Áp dụng để thu hồi"
+        : "MCP is off in this draft · choose Apply to revoke";
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+bool NativeWindow::apply_ai_connections_choices() noexcept {
+    if (!set_mcp_access(settings_mcp_enabled_choice_, settings_mcp_edit_choice_)) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? std::string("Không thể khởi động MCP: ") + mcp_error_message()
+            : std::string("Could not start MCP: ") + mcp_error_message();
+#ifdef _WIN32
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+        return false;
+    }
+    discard_ai_connections_choices();
+    status_msg_ = language_ == UILanguage::Vietnamese
+        ? (mcp_listener_active() ? "Đã áp dụng quyền MCP" : "Đã thu hồi quyền MCP")
+        : (mcp_listener_active() ? "MCP access applied" : "MCP access revoked");
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+    return true;
+}
+
+void NativeWindow::activate_ai_connections_focus() noexcept {
+    const auto copy_value = [this](bool access_key) {
+#ifdef _WIN32
+        if (!mcp_listener_active() || !mcp_runtime_) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Bật và áp dụng MCP trước khi chép thông tin kết nối"
+                : "Enable and apply MCP before copying connection details";
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        const auto value = access_key ? mcp_runtime_->http.access_token()
+                                      : mcp_runtime_->http.endpoint();
+        const bool copied = !value.empty() && NativeClipboard::write(hwnd_, {}, {}, value);
+        status_msg_ = copied
+            ? (language_ == UILanguage::Vietnamese
+                ? (access_key ? "Đã chép khóa MCP vào clipboard" : "Đã chép URL MCP vào clipboard")
+                : (access_key ? "MCP access key copied to clipboard" : "MCP URL copied to clipboard"))
+            : (language_ == UILanguage::Vietnamese
+                ? "Không thể chép thông tin MCP vào clipboard"
+                : "Could not copy MCP connection details to the clipboard");
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#else
+        (void)access_key;
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "MCP clipboard chỉ dùng trên Windows" : "MCP clipboard is available on Windows";
+#endif
+    };
+
+    switch (settings_ai_focus_index_) {
+    case 0: toggle_ai_connections_read_choice(); return;
+    case 1: toggle_ai_connections_edit_choice(); return;
+    case 2: copy_value(false); return;
+    case 3: copy_value(true); return;
+    case 4: reset_ai_connections_choices(); return;
+    case 5: close_settings_modal(); return;
+    case 6: (void)apply_ai_connections_choices(); return;
+    default: settings_ai_focus_index_ = 0; return;
+    }
 }
 
 void NativeWindow::set_settings_theme_choice(int theme) noexcept {
@@ -560,59 +829,183 @@ void NativeWindow::set_settings_unit_choice(int unit) noexcept {
 }
 
 void NativeWindow::set_active_tool(int tool_index) noexcept {
-    if (tool_index < 0 || tool_index > 7)
+    if (tool_index < 0 || (tool_index > 9 && tool_index != 11 && tool_index != 12))
         return;
+    const bool path_tool = tool_index == 6 || tool_index == 7;
+    const bool pen_tool = tool_index == 8;
+    const bool node_tool = tool_index == 11;
+    const bool contour_tool = tool_index == 12;
     if (tool_index == active_tool_ &&
-        ((tool_index < 4) || (drawing_tool_ && drawing_tool_->active())))
+        ((!path_tool || (drawing_tool_ && drawing_tool_->active())) &&
+         (!pen_tool || (pen_tool_ && pen_tool_->active())) &&
+         (!node_tool || (node_tool_ && node_tool_->active())) &&
+         (!contour_tool || (contour_tool_ && contour_tool_->active()))))
         return;
+    if (active_num_field_ != NumericFieldId::None &&
+        active_num_field_ != NumericFieldId::PenExpression) {
+        commit_numeric_field();
+        if (active_num_field_ != NumericFieldId::None)
+            return;
+    }
+    if (active_tool_ == 8 && tool_index != 8 && pen_tool_ && pen_tool_->active()) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Hãy nhấn Enter/Esc để kết thúc Pen hoặc Shift+Esc để hủy trước khi đổi công cụ"
+            : "Press Enter/Esc to finish Pen or Shift+Esc to cancel before switching tools";
+#ifdef _WIN32
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+        return;
+    }
     if (drawing_tool_) drawing_tool_->cancel();
+    if (pen_tool_) pen_tool_->cancel();
+    if (node_tool_) node_tool_->deactivate();
+    if (contour_tool_) contour_tool_->deactivate();
+    pen_numeric_buffer_.clear();
+    if (active_num_field_ == NumericFieldId::PenExpression) {
+        active_num_field_ = NumericFieldId::None;
+        num_input_buffer_.clear();
+    }
 #ifdef _WIN32
     cancel_canvas_interaction();
     if (hwnd_) KillTimer(hwnd_, 9);
 #endif
     active_tool_ = tool_index;
+    if (tool_index == 1 || tool_index == 2 || tool_index == 9)
+        quick_shapes_last_tool_ = tool_index;
+    if (tool_index == 6 || tool_index == 7 || tool_index == 8)
+        path_drawing_last_tool_ = tool_index;
+    toolbox_open_group_ = 0;
     const auto mode = tool_index == 1 ? vector::ToolMode::Rectangle
                     : tool_index == 2 ? vector::ToolMode::Ellipse
+                    : tool_index == 4 ? vector::ToolMode::Text
                                       : vector::ToolMode::Select;
     root().vector_controller().set_mode(mode);
-    if (tool_index == 4 || tool_index == 5) {
-        const auto kind = tool_index == 4 ? vector::tools::line::PathDrawingKind::Line
+    if (path_tool) {
+        const auto kind = tool_index == 6 ? vector::tools::line::PathDrawingKind::Line
                                           : vector::tools::line::PathDrawingKind::Polyline;
         if (!drawing_tool_ || !drawing_tool_->activate(kind)) {
             active_tool_ = 0;
             status_msg_ = language_ == UILanguage::Vietnamese
                 ? "Không thể bắt đầu công cụ vẽ đường" : "Could not start the path tool";
-        } else {
-#ifdef _WIN32
-            if (hwnd_) SetTimer(hwnd_, 9, 33, nullptr);
-#endif
+            return;
         }
+#ifdef _WIN32
+        if (hwnd_) SetTimer(hwnd_, 9, 33, nullptr);
+#endif
     }
-    const char* vi_tools[] = {
-        "Chọn và di chuyển · V",
-        "Vẽ hình chữ nhật · R",
-        "Vẽ hình elip · E",
-        "Di chuyển khung nhìn · Space/chuột giữa",
-        "Vẽ đoạn thẳng · L",
-        "Vẽ đường gấp khúc · Shift+L",
-        "Văn bản tiếng Việt · A/T",
-        "Dao cắt đối tượng (Knife) · K/C"
-    };
-    const char* en_tools[] = {
-        "Select and move · V",
-        "Draw rectangle · R",
-        "Draw ellipse · E",
-        "Pan view · Space/middle mouse",
-        "Draw Line · L",
-        "Draw Polyline · Shift+L",
-        "Vietnamese text · A/T",
-        "Knife cutting tool · K/C"
-    };
-    status_msg_ = language_ == UILanguage::Vietnamese ? vi_tools[active_tool_]
-                                                        : en_tools[active_tool_];
+    if (pen_tool) {
+        if (!pen_tool_) {
+            try {
+                pen_tool_ = std::make_unique<tools::PenToolController>(root().document());
+            } catch (...) {
+                active_tool_ = 0;
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Không đủ bộ nhớ để bắt đầu công cụ Pen"
+                    : "Not enough memory to start the Pen tool";
+                return;
+            }
+        }
+        if (drawing_tool_)
+            (void)drawing_tool_->activate(vector::tools::line::PathDrawingKind::Line);
+        const auto result = pen_tool_->activate();
+        if (result.code != vector::tools::pen::PenDrawingResultCode::Applied) {
+            active_tool_ = 0;
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Không thể bắt đầu công cụ Pen" : "Could not start the Pen tool";
+            return;
+        }
+        auto preferences = tools::PenGesturePreferences{};
+        preferences.profile = shortcut_profile_ == 0
+            ? tools::PenShortcutProfile::Corel
+            : shortcut_profile_ == 1 ? tools::PenShortcutProfile::Illustrator
+                                     : tools::PenShortcutProfile::PikDraw;
+        (void)pen_tool_->set_gesture_preferences(preferences);
+    }
+    if (node_tool) {
+        if (!node_tool_) {
+            try {
+                node_tool_ = std::make_unique<tools::NodeToolController>(root().document());
+            } catch (...) {
+                active_tool_ = 0;
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Không đủ bộ nhớ để bắt đầu công cụ Node"
+                    : "Not enough memory to start the Node tool";
+                return;
+            }
+        }
+        const auto& sel = root().vector_controller().selection().selected_ids();
+        const auto target = sel.empty() ? document::kInvalidObjectId : sel.front();
+        (void)node_tool_->activate(target);
+    }
+    if (contour_tool) {
+        if (!contour_tool_) {
+            try {
+                contour_tool_ = std::make_unique<tools::ContourToolController>(root().document());
+            } catch (...) {
+                active_tool_ = 0;
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Không đủ bộ nhớ để bắt đầu công cụ Contour"
+                    : "Not enough memory to start the Contour tool";
+                return;
+            }
+        }
+        const auto& sel = root().vector_controller().selection().selected_ids();
+        const auto target = sel.empty() ? document::kInvalidObjectId : sel.front();
+        (void)contour_tool_->activate(target);
+    }
+    if (tool_index == 11) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Chỉnh sửa điểm Node · F10 · Kéo chọn điểm · Chỉnh tiếp tuyến Bézier"
+            : "Node Edit Tool · F10 · Marquee select nodes · Edit Bézier handles";
+    } else if (tool_index == 12) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Contour / Offset · Tạo viền có tham số · Ctrl+K để rã khối viền"
+            : "Contour / Offset · Parametric contour offset · Ctrl+K to break apart";
+    } else {
+        const char* vi_tools[] = { "Chọn và di chuyển · V", "Kéo vẽ chữ nhật · Shift vuông · Ctrl từ tâm",
+            "Kéo vẽ elip · Shift tròn · Ctrl từ tâm", "Di chuyển khung nhìn · Space/chuột giữa",
+            "Văn bản tiếng Việt · A/T", "Dao cắt · K", "Vẽ đoạn thẳng · L",
+            "Vẽ đường gấp khúc · Shift+L",
+            "Pen: nhấp/ kéo · @L<góc hoặc #X;Y · Enter kết thúc · Shift+Esc hủy",
+            "Đa giác đều · chỉnh số cạnh trong thanh thuộc tính · Shift khóa góc 15° · Ctrl từ tâm" };
+        const char* en_tools[] = { "Select and move · V", "Drag rectangle · Shift square · Ctrl from center",
+            "Drag ellipse · Shift circle · Ctrl from center", "Pan view · Space/middle mouse", "Vietnamese text · A/T",
+            "Knife tool · K", "Draw Line · L", "Draw Polyline · Shift+L",
+            "Pen: click/drag · @L<angle or #X;Y · Enter finishes · Shift+Esc cancels",
+            "Regular polygon · set sides in the property bar · Shift snaps 15° · Ctrl from center" };
+        status_msg_ = language_ == UILanguage::Vietnamese ? vi_tools[tool_index] : en_tools[tool_index];
+    }
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
 #endif
+}
+
+void NativeWindow::trigger_effects_contour() {
+    set_active_tool(12);
+}
+
+void NativeWindow::trigger_break_contour_apart() {
+    if (!contour_tool_) {
+        try {
+            contour_tool_ = std::make_unique<tools::ContourToolController>(root().document());
+        } catch (...) {
+            return;
+        }
+    }
+    if (!contour_tool_->active()) {
+        const auto& sel = root().vector_controller().selection().selected_ids();
+        if (!sel.empty()) {
+            contour_tool_->activate(sel.front());
+        }
+    }
+    if (contour_tool_->break_apart()) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đã rã khối viền Contour thành các đối tượng độc lập (Ctrl+K)"
+            : "Broke contour apart into independent objects (Ctrl+K)";
+#ifdef _WIN32
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+    }
 }
 
 void NativeWindow::set_active_workspace(int ws_index) noexcept {
@@ -678,11 +1071,37 @@ void NativeWindow::fit_page_to_canvas() noexcept {
 #endif
 }
 
-void NativeWindow::open_file_menu() noexcept {
+void NativeWindow::open_menu(int menu_id) noexcept {
+    if (menu_id < 0 || menu_id >= static_cast<int>(MenuId::Count)) return;
+    open_menu_id_ = menu_id;
+    hovered_menu_bar_item_ = menu_id;
+    hovered_menu_item_ = -1;
+    show_file_menu_ = false;
+    close_page_preset_dropdown();
 #ifdef _WIN32
-    cancel_canvas_interaction();
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 #endif
-    show_file_menu_ = true;
+}
+
+void NativeWindow::close_menu() noexcept {
+    const bool was_open = open_menu_id_ >= 0;
+    open_menu_id_ = -1;
+    hovered_menu_bar_item_ = -1;
+    hovered_menu_item_ = -1;
+    if (was_open) {
+#ifdef _WIN32
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+    }
+}
+
+void NativeWindow::toggle_menu(int menu_id) noexcept {
+    if (open_menu_id_ == menu_id) close_menu();
+    else open_menu(menu_id);
+}
+
+void NativeWindow::open_file_menu() noexcept {
+    open_menu(static_cast<int>(MenuId::File));
     status_msg_ = (language_ == UILanguage::Vietnamese) ?
         "Đã mở menu Tệp" : "File menu opened";
 #ifdef _WIN32
@@ -691,8 +1110,9 @@ void NativeWindow::open_file_menu() noexcept {
 }
 
 void NativeWindow::close_file_menu() noexcept {
-    if (show_file_menu_) {
+    if (show_file_menu_ || open_menu_id_ >= 0) {
         show_file_menu_ = false;
+        close_menu();
 #ifdef _WIN32
         if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
 #endif
@@ -700,13 +1120,10 @@ void NativeWindow::close_file_menu() noexcept {
 }
 
 void NativeWindow::toggle_file_menu() noexcept {
-    if (show_file_menu_) close_file_menu(); else open_file_menu();
+    toggle_menu(static_cast<int>(MenuId::File));
 }
 
 void NativeWindow::open_home_screen() noexcept {
-#ifdef _WIN32
-    cancel_canvas_interaction();
-#endif
     show_home_screen_ = true;
     close_file_menu();
     status_msg_ = (language_ == UILanguage::Vietnamese) ?
@@ -889,9 +1306,54 @@ void NativeWindow::handle_double_click(int x, int y) {
     if (!is_canvas_point(x, y))
         return;
 
+    if (active_tool_ == 8 && pen_tool_ && pen_tool_->active()) {
+        (void)finish_pen_session(false);
+        return;
+    }
+
     const auto pt_world = canvas_to_world(x, y);
     const auto snapshot = root().document().current_snapshot();
     auto hit_id = vector::SelectionModel::hit_test(pt_world, *snapshot);
+
+    if (active_tool_ == 0) {
+        if (hit_id) {
+            auto obj_opt = snapshot->objects().get(*hit_id);
+            if (obj_opt && std::holds_alternative<document::TextObject>(*obj_opt)) {
+                start_inline_text_editing(pt_world, *hit_id);
+                return;
+            }
+        }
+
+        const auto bounds = root().vector_controller().selection().bounds(*snapshot);
+        const bool hit_selection = (hit_id && root().vector_controller().selection().is_selected(*hit_id)) ||
+                                   (bounds && bounds->contains(pt_world));
+        if (hit_selection) {
+            toggle_rotate_mode();
+            if (is_rotate_mode_) {
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Chế độ xoay: kéo 4 góc để xoay quanh tâm, kéo tâm để dời vị trí"
+                    : "Rotate mode: drag 4 corners to rotate, drag pivot to reposition";
+            } else {
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Chế độ biến đổi: kéo tay nắm để đổi kích thước"
+                    : "Transform mode: drag handles to scale";
+            }
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+
+        if (!hit_id) {
+            if (is_rotate_mode_) {
+                is_rotate_mode_ = false;
+                custom_pivot_world_.reset();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            }
+            if (is_in_isolation_mode()) {
+                exit_group_isolation();
+            }
+            return;
+        }
+    }
 
     if (is_in_isolation_mode()) {
         if (!hit_id) {
@@ -915,11 +1377,6 @@ void NativeWindow::handle_double_click(int x, int y) {
         }
     } else {
         if (hit_id) {
-            auto obj_opt = snapshot->objects().get(*hit_id);
-            if (obj_opt && std::holds_alternative<document::TextObject>(*obj_opt)) {
-                start_inline_text_editing(pt_world, *hit_id);
-                return;
-            }
             auto parent = workflow().find_parent_group(*hit_id);
             auto target_group = workflow().is_group(*hit_id) ? *hit_id : (parent ? *parent : document::kInvalidObjectId);
             if (target_group != document::kInvalidObjectId) {
@@ -936,7 +1393,8 @@ void NativeWindow::handle_double_click(int x, int y) {
 bool NativeWindow::initialize(const std::string& title) {
     hinstance_ = GetModuleHandleW(NULL);
 
-    WNDCLASSEXW wc = { sizeof(WNDCLASSEXW) };
+    WNDCLASSEXW wc{};
+    wc.cbSize = sizeof(WNDCLASSEXW);
     wc.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
     wc.lpfnWndProc = NativeWindow::window_proc;
     wc.hInstance = hinstance_;
@@ -960,7 +1418,7 @@ bool NativeWindow::initialize(const std::string& title) {
     if (!hwnd_) return false;
 
     SetWindowLongPtrW(hwnd_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
-    RECT client_rc{};
+    RECT client_rc;
     if (GetClientRect(hwnd_, &client_rc)) {
         width_ = client_rc.right - client_rc.left;
         height_ = client_rc.bottom - client_rc.top;
@@ -969,34 +1427,10 @@ bool NativeWindow::initialize(const std::string& title) {
         root().renderer().camera().set_viewport_size(
             area.right - area.left, area.bottom - area.top);
     }
-    fit_page_to_canvas();
-    load_color_preferences();
-    INITCOMMONCONTROLSEX common_controls{sizeof(common_controls), ICC_WIN95_CLASSES};
-    InitCommonControlsEx(&common_controls);
-    tooltip_hwnd_ = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr,
-        WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, CW_USEDEFAULT, CW_USEDEFAULT,
-        CW_USEDEFAULT, CW_USEDEFAULT, hwnd_, nullptr, hinstance_, nullptr);
-    if (tooltip_hwnd_) {
-        const wchar_t* labels[] = {
-            L"Select objects and edit selection (V)",
-            L"Draw rectangle (R)",
-            L"Draw ellipse (E)",
-            L"Pan the canvas (H / Space)",
-            L"Draw a connected Line (L)",
-            L"Draw a continuous Polyline (Shift+L)",
-            L"Vietnamese text typography (A / T)",
-            L"Knife cutting tool (K / C)"
-        };
-        for (int i = 0; i < 8; ++i) {
-            TOOLINFOW tool{sizeof(TOOLINFOW)};
-            tool.uFlags = TTF_SUBCLASS;
-            tool.hwnd = hwnd_;
-            tool.uId = static_cast<UINT_PTR>(i + 1);
-            tool.rect = RECT{6, 82 + i * 42, 46, 118 + i * 42};
-            tool.lpszText = const_cast<LPWSTR>(labels[i]);
-            SendMessageW(tooltip_hwnd_, TTM_ADDTOOLW, 0,
-                         reinterpret_cast<LPARAM>(&tool));
-        }
+    if (mcp_enabled_ && !start_mcp_gateway()) {
+        DestroyWindow(hwnd_);
+        hwnd_ = nullptr;
+        return false;
     }
     ShowWindow(hwnd_, SW_SHOW);
     UpdateWindow(hwnd_);
@@ -1255,11 +1689,11 @@ void NativeWindow::align_selected_objects(geometry::AlignMode mode) {
     if (ok) {
         std::string mode_str = "";
         switch (mode) {
-            case geometry::AlignMode::Left: mode_str = "Căn trái (Align Left · L)"; break;
-            case geometry::AlignMode::CenterHorizontal: mode_str = "Căn giữa đứng (Align Centers Horizontally · C)"; break;
+            case geometry::AlignMode::Left: mode_str = "Căn trái (Align Left · Shift+L)"; break;
+            case geometry::AlignMode::CenterHorizontal: mode_str = "Căn tâm theo phương ngang (Align Center Horizontally · C)"; break;
             case geometry::AlignMode::Right: mode_str = "Căn phải (Align Right · R)"; break;
             case geometry::AlignMode::Top: mode_str = "Căn trên (Align Top · T)"; break;
-            case geometry::AlignMode::CenterVertical: mode_str = "Căn giữa ngang (Align Centers Vertically · E)"; break;
+            case geometry::AlignMode::CenterVertical: mode_str = "Căn tâm theo phương dọc (Align Center Vertically · E)"; break;
             case geometry::AlignMode::Bottom: mode_str = "Căn dưới (Align Bottom · B)"; break;
             case geometry::AlignMode::CenterPage: mode_str = "Căn giữa trang in (Center to Page · P)"; break;
             case geometry::AlignMode::CenterPageHorizontal: mode_str = "Căn giữa trang theo chiều ngang (Center Page X)"; break;
@@ -1301,9 +1735,36 @@ void NativeWindow::apply_specified_spacing(bool horizontal) {
 
 void NativeWindow::open_inspector_properties_panel() noexcept {
     active_dock_tab_ = 0; // 0: Inspector & Properties
+    show_style_inspector_ = false;
+    show_align_panel_ = false;
     status_msg_ = (language_ == UILanguage::Vietnamese)
-        ? "Đã mở Bảng Thuộc tính & Căn chỉnh Tổng quát (Inspector & Align · Ctrl+Shift+A)"
-        : "Opened Inspector & Align Properties Panel (Ctrl+Shift+A)";
+        ? "Đã mở bảng thuộc tính đối tượng"
+        : "Opened object Properties";
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::open_object_properties_panel() noexcept {
+    active_dock_tab_ = 0;
+    show_style_inspector_ = true;
+    show_align_panel_ = false;
+    style_inspector_scroll_ = 0;
+    status_msg_ = language_ == UILanguage::Vietnamese
+        ? "Appearance · Opacity, Blend, Gaussian Blur, Drop Shadow · Enter áp dụng · Ctrl+Z hoàn tác"
+        : "Appearance · Opacity, Blend, Gaussian Blur, Drop Shadow · Enter applies · Ctrl+Z undoes";
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::open_align_distribute_panel() noexcept {
+    active_dock_tab_ = 0;
+    show_style_inspector_ = false;
+    show_align_panel_ = true;
+    status_msg_ = language_ == UILanguage::Vietnamese
+        ? "Bảng Căn chỉnh & Phân bổ · chọn mốc rồi chọn lệnh · Ctrl+Z để hoàn tác"
+        : "Align & Distribute · choose a reference and operation · Ctrl+Z to undo";
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 #endif
@@ -1319,29 +1780,16 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
 
     std::wstring tip_text;
 
-    // 1. Top Bar Elements (y: 6 to 32)
+    // 1. Main menu groups (y: 5 to 34)
     if (mouse_y >= 6 && mouse_y <= 32) {
-        if (mouse_x >= 10 && mouse_x <= 36) {
+        const int menu_index = get_menu_bar_item_at(mouse_x, mouse_y, 38);
+        if (menu_index >= 0) {
+            const auto& entry = kMenuBarEntries[static_cast<size_t>(menu_index)];
+            tip_text = is_vi ? std::wstring(entry.label_vi) + L" · menu"
+                             : std::wstring(entry.label_en) + L" menu";
+        } else if (mouse_x >= 10 && mouse_x <= 36) {
             tip_text = is_vi ? L"PikDraw Pro · Phần mềm thiết kế đồ họa vector chuyên nghiệp"
                              : L"PikDraw Pro · Professional Vector & Manufacturing Editor";
-        } else if (mouse_x >= 148 && mouse_x < 198) {
-            tip_text = is_vi ? L"Tạo tài liệu mới (Ctrl+N)" : L"Create new vector document (Ctrl+N)";
-        } else if (mouse_x >= 198 && mouse_x < 248) {
-            tip_text = is_vi ? L"Mở tệp tài liệu vector (Ctrl+O)" : L"Open vector document (Ctrl+O)";
-        } else if (mouse_x >= 248 && mouse_x < 298) {
-            tip_text = is_vi ? L"Lưu tài liệu hiện tại (Ctrl+S)" : L"Save active document (Ctrl+S)";
-        } else if (mouse_x >= 298 && mouse_x < 350) {
-            tip_text = is_vi ? L"Hoàn tác thao tác vừa thực hiện (Ctrl+Z)" : L"Undo last action (Ctrl+Z)";
-        } else if (mouse_x >= 350 && mouse_x < 402) {
-            tip_text = is_vi ? L"Làm lại thao tác vừa hoàn tác (Ctrl+Y)" : L"Redo action (Ctrl+Y)";
-        } else if (mouse_x >= 402 && mouse_x <= 456) {
-            tip_text = is_vi ? L"Trình đơn Tệp (File Menu)" : L"File Menu (Open, Save, Export...)";
-        } else if (mouse_x >= 520 && mouse_x <= 620) {
-            tip_text = is_vi ? L"Không gian làm việc Vector 2D" : L"Vector 2D Workspace";
-        } else if (mouse_x >= w - 215 && mouse_x <= w - 105) {
-            tip_text = is_vi ? L"Cài đặt hệ thống & Phím tắt (Ctrl+J)" : L"Preferences & Shortcuts (Ctrl+J)";
-        } else if (mouse_x >= w - 95 && mouse_x <= w - 12) {
-            tip_text = is_vi ? L"Xuất file đồ họa vector SVG (Ctrl+E)" : L"Export SVG vector graphics (Ctrl+E)";
         }
     }
 
@@ -1370,7 +1818,25 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
         const auto& selection = root().vector_controller().selection().selected_ids();
         bool is_text_mode = (active_tool_ == 4 || is_inline_text_editing_ || is_text_object_selected());
 
-        if (is_text_mode) {
+        if (active_tool_ == 8) {
+            if (mouse_x >= 52 && mouse_x <= 390)
+                tip_text = is_vi
+                    ? L"Nhập @L<góc, @ΔX;ΔY hoặc #X;Y; Enter đặt điểm, Tab cũng áp dụng"
+                    : L"Enter @L<angle, @dX;dY or #X;Y; Enter places a point; Tab applies";
+            else if (mouse_x >= 402 && mouse_x <= 480)
+                tip_text = is_vi ? L"Hoàn tất đường đang vẽ · Enter" : L"Finish the current path · Enter";
+            else if (mouse_x >= 490 && mouse_x <= 560)
+                tip_text = is_vi ? L"Hủy toàn bộ bản nháp Pen · Shift+Esc" : L"Cancel the whole Pen draft · Shift+Esc";
+        } else if (active_tool_ == 9) {
+            if (mouse_x >= 58 && mouse_x <= 164)
+                tip_text = is_vi
+                    ? L"Số cạnh đa giác đều · nhập số nguyên 3–256 · Enter áp dụng"
+                    : L"Regular polygon sides · enter a whole number from 3 to 256 · Enter applies";
+            else if (mouse_x >= 174 && mouse_x <= 780)
+                tip_text = is_vi
+                    ? L"Shift khóa hướng theo bước 15° · Ctrl lấy điểm đầu làm tâm"
+                    : L"Shift snaps direction to 15° · Ctrl uses the start point as center";
+        } else if (is_text_mode) {
             if (mouse_x >= 52 && mouse_x <= 192) {
                 tip_text = is_vi ? L"Chọn kiểu phông chữ văn bản (Font Family)" : L"Select Font Family";
             } else if (mouse_x >= 220 && mouse_x <= 240) {
@@ -1397,6 +1863,11 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
                                  : L"Insert 3×3 Text Table (CorelDRAW Style)";
             } else if (!selection.empty() && mouse_x >= 698 && mouse_x <= 748) {
                 tip_text = is_vi ? L"Xóa văn bản đang chọn (Delete)" : L"Delete selected text (Delete)";
+            } else if (selection.size() == 1 && workflow().can_set_selected_object_opacity() &&
+                       mouse_x >= 920 && mouse_x <= 1044 && mouse_x + 124 <= w - inspect_w) {
+                tip_text = is_vi
+                    ? L"Độ mờ toàn đối tượng 0–100% · nhập số · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
+                    : L"Object opacity 0–100% · type a value · Enter applies · Esc cancels · Ctrl+Z undoes";
             } else {
                 int color_start_x = (!selection.empty()) ? 754 : 698;
                 if (mouse_x >= color_start_x && mouse_x <= color_start_x + 160) {
@@ -1419,64 +1890,91 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
             }
         } else {
             // Object Selection Mode
-            if (mouse_x >= 25 && mouse_x <= 43) {
-                tip_text = is_vi ? L"Dịch chuyển đối tượng sang trái (-5 mm)" : L"Move object Left (-5 mm)";
-            } else if (mouse_x >= 97 && mouse_x <= 115) {
-                tip_text = is_vi ? L"Dịch chuyển đối tượng sang phải (+5 mm)" : L"Move object Right (+5 mm)";
-            } else if (mouse_x >= 141 && mouse_x <= 159) {
-                tip_text = is_vi ? L"Dịch chuyển đối tượng lên trên (-5 mm)" : L"Move object Up (-5 mm)";
-            } else if (mouse_x >= 213 && mouse_x <= 231) {
-                tip_text = is_vi ? L"Dịch chuyển đối tượng xuống dưới (+5 mm)" : L"Move object Down (+5 mm)";
-            } else if (mouse_x >= 259 && mouse_x <= 277) {
-                tip_text = is_vi ? L"Thu nhỏ chiều rộng (-10 mm)" : L"Decrease width (-10 mm)";
-            } else if (mouse_x >= 337 && mouse_x <= 355) {
-                tip_text = is_vi ? L"Mở rộng chiều rộng (+10 mm)" : L"Increase width (+10 mm)";
-            } else if (mouse_x >= 362 && mouse_x <= 412) {
-                tip_text = is_vi ? L"Khóa / Mở tỷ lệ kích thước W:H (Lock Proportions)" : L"Lock / Unlock Aspect Ratio";
-            } else if (mouse_x >= 420 && mouse_x <= 438) {
-                tip_text = is_vi ? L"Thu nhỏ chiều cao (-10 mm)" : L"Decrease height (-10 mm)";
-            } else if (mouse_x >= 498 && mouse_x <= 516) {
-                tip_text = is_vi ? L"Mở rộng chiều cao (+10 mm)" : L"Increase height (+10 mm)";
-            } else if (mouse_x >= 522 && mouse_x <= 566) {
-                tip_text = is_vi ? L"Xóa các đối tượng đang chọn (Delete)" : L"Delete selected object(s) (Delete)";
-            } else if (mouse_x >= 570 && mouse_x <= 616) {
-                tip_text = is_vi ? L"Nhân đôi đối tượng (Duplicate · Ctrl+D)" : L"Duplicate object(s) (Ctrl+D)";
+            if (selection.size() == 1 && workflow().can_set_selected_object_opacity() &&
+                mouse_x >= 818 && mouse_x <= 944 && mouse_x + 126 <= w - inspect_w) {
+                tip_text = is_vi
+                    ? L"Độ mờ toàn đối tượng 0–100% · nhập số · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
+                    : L"Object opacity 0–100% · type a value · Enter applies · Esc cancels · Ctrl+Z undoes";
+            } else if (mouse_x >= 10 && mouse_x <= 95) {
+                tip_text = is_vi ? L"Nhập vị trí X của đối tượng (mm)" : L"Enter the object's X position in millimeters";
+            } else if (mouse_x >= 100 && mouse_x <= 185) {
+                tip_text = is_vi ? L"Nhập vị trí Y của đối tượng (mm)" : L"Enter the object's Y position in millimeters";
+            } else if (mouse_x >= 190 && mouse_x <= 285) {
+                tip_text = is_vi ? L"Nhập chiều rộng của đối tượng (mm)" : L"Enter the object's width in millimeters";
+            } else if (mouse_x >= 290 && mouse_x <= 360) {
+                tip_text = is_vi ? L"Khóa hoặc mở tỷ lệ W:H" : L"Lock or unlock the width-to-height ratio";
+            } else if (mouse_x >= 365 && mouse_x <= 460) {
+                tip_text = is_vi ? L"Nhập chiều cao của đối tượng (mm)" : L"Enter the object's height in millimeters";
             } else if (is_in_isolation_mode()) {
-                if (mouse_x >= 622 && mouse_x <= 712) {
+                if (mouse_x >= 580 && mouse_x <= 670) {
                     tip_text = is_vi ? L"Thoát chế độ cô lập nhóm (Phím Esc)" : L"Exit group isolation mode (Esc)";
                 }
             } else {
                 if (selection.size() >= 2) {
-                    if (mouse_x >= 622 && mouse_x <= 662) {
-                        tip_text = is_vi ? L"Căn lề trái đối tượng (Align Left · Phím L)" : L"Align Left edges (Shortcut: L)";
-                    } else if (mouse_x >= 666 && mouse_x <= 706) {
-                        tip_text = is_vi ? L"Căn giữa theo trục đứng (Align Centers Vertically · Phím C)" : L"Align Centers Vertically (Shortcut: C)";
-                    } else if (mouse_x >= 710 && mouse_x <= 750) {
-                        tip_text = is_vi ? L"Căn lề phải đối tượng (Align Right · Phím R)" : L"Align Right edges (Shortcut: R)";
-                    } else if (mouse_x >= 754 && mouse_x <= 794) {
-                        tip_text = is_vi ? L"Căn đỉnh trên đối tượng (Align Top · Phím T)" : L"Align Top edges (Shortcut: T)";
-                    } else if (mouse_x >= 798 && mouse_x <= 838) {
-                        tip_text = is_vi ? L"Căn giữa theo trục ngang (Align Centers Horizontally · Phím E)" : L"Align Centers Horizontally (Shortcut: E)";
-                    } else if (mouse_x >= 842 && mouse_x <= 882) {
-                        tip_text = is_vi ? L"Căn đáy dưới đối tượng (Align Bottom · Phím B)" : L"Align Bottom edges (Shortcut: B)";
-                    } else if (mouse_x >= 886 && mouse_x <= 946) {
-                        tip_text = is_vi ? L"Căn giữa toàn bộ vào trang in (Center to Page · Phím P)" : L"Center to Page bounds (Shortcut: P)";
-                    } else if (mouse_x >= 950 && mouse_x <= 1010) {
-                        tip_text = is_vi ? L"Nhóm các đối tượng lại (Group · Ctrl+G)" : L"Group selected objects (Ctrl+G)";
-                    } else if (mouse_x >= 1014 && mouse_x <= 1068) {
-                        tip_text = is_vi ? L"Hàn gộp các đối tượng thành 1 hình (Weld Shapes)" : L"Weld / Union selected shapes";
-                    } else if (mouse_x >= 1072 && mouse_x <= 1126) {
-                        tip_text = is_vi ? L"Cắt xén hình bằng đối tượng trên cùng (Trim Shapes)" : L"Trim underlying shape using top shape";
+                    const auto buttons = get_multi_object_context_buttons(workflow(), workflow().can_group_selected(), width_ - inspect_w);
+                    for (const auto& button : buttons) {
+                        if (mouse_x < button.left || mouse_x >= button.left + button.width) continue;
+                        switch (button.action) {
+                        case ObjectContextAction::AlignLeft:
+                            tip_text = is_vi ? L"Căn cạnh trái của các đối tượng theo khung chọn" : L"Align selected objects by their left edges"; break;
+                        case ObjectContextAction::AlignCenterHorizontal:
+                            tip_text = is_vi ? L"Căn tâm theo phương ngang" : L"Align object centers horizontally"; break;
+                        case ObjectContextAction::AlignRight:
+                            tip_text = is_vi ? L"Căn cạnh phải của các đối tượng theo khung chọn" : L"Align selected objects by their right edges"; break;
+                        case ObjectContextAction::AlignTop:
+                            tip_text = is_vi ? L"Căn cạnh trên của các đối tượng theo khung chọn" : L"Align selected objects by their top edges"; break;
+                        case ObjectContextAction::AlignCenterVertical:
+                            tip_text = is_vi ? L"Căn tâm theo phương dọc" : L"Align object centers vertically"; break;
+                        case ObjectContextAction::AlignBottom:
+                            tip_text = is_vi ? L"Căn cạnh dưới của các đối tượng theo khung chọn" : L"Align selected objects by their bottom edges"; break;
+                        case ObjectContextAction::CenterPage:
+                            tip_text = is_vi ? L"Căn tâm vùng chọn vào tâm trang (P)" : L"Center the selection on the page (P)"; break;
+                        case ObjectContextAction::DistributeHorizontal:
+                            tip_text = is_vi ? L"Phân bổ khoảng hở ngang đều nhau · cần ít nhất 3 đối tượng" : L"Distribute equal horizontal gaps · requires at least 3 objects"; break;
+                        case ObjectContextAction::DistributeVertical:
+                            tip_text = is_vi ? L"Phân bổ khoảng hở dọc đều nhau · cần ít nhất 3 đối tượng" : L"Distribute equal vertical gaps · requires at least 3 objects"; break;
+                        case ObjectContextAction::Group:
+                            tip_text = is_vi ? L"Nhóm các đối tượng đã chọn (Ctrl+G)" : L"Group selected objects (Ctrl+G)"; break;
+                        case ObjectContextAction::FlipHorizontal:
+                            tip_text = is_vi ? L"Lật ngang đối tượng qua tâm (Ctrl+Shift+H)" : L"Flip selection horizontally (Ctrl+Shift+H)"; break;
+                        case ObjectContextAction::FlipVertical:
+                            tip_text = is_vi ? L"Lật dọc đối tượng qua tâm (Ctrl+Shift+V)" : L"Flip selection vertically (Ctrl+Shift+V)"; break;
+                        case ObjectContextAction::Rotate90CW:
+                            tip_text = is_vi ? L"Xoay 90° thuận chiều kim đồng hồ (Ctrl+])" : L"Rotate 90° clockwise (Ctrl+])"; break;
+                        case ObjectContextAction::Rotate90CCW:
+                            tip_text = is_vi ? L"Xoay 90° ngược chiều kim đồng hồ (Ctrl+[)" : L"Rotate 90° counter-clockwise (Ctrl+[)"; break;
+                        case ObjectContextAction::BooleanUnion:
+                            tip_text = is_vi ? L"Hàn hai path đã chọn thành một kết quả" : L"Weld the two selected paths into one result"; break;
+                        case ObjectContextAction::BooleanDifference:
+                            tip_text = is_vi ? L"Trừ path chọn thứ hai khỏi path chọn thứ nhất" : L"Subtract the second selected path from the first"; break;
+                        case ObjectContextAction::BooleanIntersection:
+                            tip_text = is_vi ? L"Chỉ giữ phần giao của hai path đã chọn" : L"Keep only the intersection of the selected paths"; break;
+                        case ObjectContextAction::BooleanExclude:
+                            tip_text = is_vi ? L"Loại bỏ phần giao; giữ phần không chồng nhau" : L"Exclude the overlap and keep non-overlapping areas"; break;
+                        case ObjectContextAction::BooleanReverseDifference:
+                            tip_text = is_vi ? L"Trừ path chọn thứ nhất khỏi path chọn thứ hai" : L"Subtract the first selected path from the second"; break;
+                        }
+                        break;
                     }
                 } else if (selection.size() == 1) {
-                    if (mouse_x >= 622 && mouse_x <= 682) {
-                        tip_text = is_vi ? L"Căn giữa đối tượng vào trang in (Center Page · Phím P)" : L"Center to Page bounds (Shortcut: P)";
-                    } else if (workflow().is_group(selection.front())) {
-                        if (mouse_x >= 688 && mouse_x <= 758) {
-                            tip_text = is_vi ? L"Rã nhóm đối tượng (Ungroup · Ctrl+Shift+G)" : L"Ungroup selected group (Ctrl+Shift+G)";
-                        } else if (mouse_x >= 764 && mouse_x <= 834) {
-                            tip_text = is_vi ? L"Chui vào trong nhóm để chỉnh sửa hình con (Enter hoặc Nhấp đúp)"
-                                             : L"Enter group isolation mode to edit children (Enter or Double Click)";
+                    int rx = 580;
+                    if (mouse_x >= rx && mouse_x < rx + 28) {
+                        tip_text = is_vi ? L"Lật ngang đối tượng qua tâm (Ctrl+Shift+H)" : L"Flip selection horizontally (Ctrl+Shift+H)";
+                    } else if (mouse_x >= rx + 32 && mouse_x < rx + 60) {
+                        tip_text = is_vi ? L"Lật dọc đối tượng qua tâm (Ctrl+Shift+V)" : L"Flip selection vertically (Ctrl+Shift+V)";
+                    } else if (mouse_x >= rx + 64 && mouse_x < rx + 92) {
+                        tip_text = is_vi ? L"Xoay 90° thuận chiều kim đồng hồ (Ctrl+])" : L"Rotate 90° clockwise (Ctrl+])";
+                    } else if (mouse_x >= rx + 96 && mouse_x < rx + 124) {
+                        tip_text = is_vi ? L"Xoay 90° ngược chiều kim đồng hồ (Ctrl+[)" : L"Rotate 90° counter-clockwise (Ctrl+[)";
+                    } else {
+                        rx += 130;
+                        if (workflow().is_group(selection.front())) {
+                            if (mouse_x >= rx && mouse_x < rx + 66) {
+                                tip_text = is_vi ? L"Rã nhóm đối tượng (Ungroup · Ctrl+Shift+G)" : L"Ungroup selected group (Ctrl+Shift+G)";
+                            } else if (mouse_x >= rx + 72 && mouse_x < rx + 138) {
+                                tip_text = is_vi ? L"Chui vào trong nhóm để chỉnh sửa hình con (Enter hoặc Nhấp đúp)"
+                                                 : L"Enter group isolation mode to edit children (Enter or Double Click)";
+                            }
                         }
                     }
                 }
@@ -1484,33 +1982,75 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
         }
     }
 
-    // 4. Left Tool Strip (x: 0 to tool_w, y: content_top to h - status_h)
+    // 4. Tool groups and their flyouts.
+    else if (toolbox_open_group_ > 0 && mouse_x >= 54 && mouse_x <= 242) {
+        const int group_row = toolbox_open_group_ == 1 ? 1
+                            : toolbox_open_group_ == 2 ? 2 : 6;
+        const int flyout_top = content_top + 10 + group_row * 42;
+        const int item = (mouse_y - flyout_top) / 30;
+        if (mouse_y >= flyout_top && item >= 0 && item < 3) {
+            if (toolbox_open_group_ == 1) {
+                if (item == 0)
+                    tip_text = is_vi ? L"Hình chữ nhật · Shift vuông · Ctrl từ tâm"
+                                     : L"Rectangle · Shift for square · Ctrl from center";
+                else if (item == 1)
+                    tip_text = is_vi ? L"Hình elip · Shift hình tròn · Ctrl từ tâm"
+                                     : L"Ellipse · Shift for circle · Ctrl from center";
+                else
+                    tip_text = is_vi ? L"Đa giác đều · đặt số cạnh trên thanh thuộc tính hoặc Properties"
+                                     : L"Regular polygon · set sides in the property bar or Properties";
+            } else if (toolbox_open_group_ == 3) {
+                if (item == 0) {
+                    tip_text = is_vi
+                        ? L"Mở Properties > Style để chỉnh Blend, Opacity và stack hiệu ứng"
+                        : L"Open Properties > Style for Blend, Opacity and the effect stack";
+                } else if (workflow().can_add_selected_effect()) {
+                    tip_text = item == 1
+                        ? (is_vi ? L"Thêm Gaussian Blur cuối stack · Path/Text không khóa · Ctrl+Z hoàn tác"
+                                 : L"Append Gaussian Blur · unlocked Path/Text only · Ctrl+Z undoes")
+                        : (is_vi ? L"Thêm Drop Shadow cuối stack · Path/Text không khóa · Ctrl+Z hoàn tác"
+                                 : L"Append Drop Shadow · unlocked Path/Text only · Ctrl+Z undoes");
+                } else {
+                    tip_text = is_vi
+                        ? L"Đang tắt: chọn Path/Text không khóa và còn chỗ trong stack"
+                        : L"Disabled: select unlocked Path/Text with available stack capacity";
+                }
+            } else if (item == 0) {
+                tip_text = is_vi ? L"Đoạn thẳng · L" : L"Line · L";
+            } else if (item == 1) {
+                tip_text = is_vi ? L"Đường gấp khúc · Shift+L" : L"Polyline · Shift+L";
+            } else {
+                tip_text = is_vi ? L"Pen · nhấp/kéo điểm · Enter kết thúc · Esc kết thúc"
+                                 : L"Pen · click/drag points · Enter finishes · Esc finishes";
+            }
+        }
+    }
     else if (mouse_x >= 0 && mouse_x <= tool_w && mouse_y >= content_top && mouse_y < h - status_h) {
-        int tool_idx = (mouse_y - (content_top + 10)) / 42;
+        const int tool_idx = (mouse_y - (content_top + 10)) / 42;
         if (tool_idx == 0) {
             tip_text = is_vi ? L"Công cụ chọn & biến đổi đối tượng (Pick Tool) · Phím V hoặc Space"
                              : L"Pick & Select / Transform Tool · Shortcut: V or Space";
         } else if (tool_idx == 1) {
-            tip_text = is_vi ? L"Vẽ hình chữ nhật / hình vuông (Rectangle Tool) · Phím F6"
-                             : L"Rectangle & Square Tool · Shortcut: F6";
+            tip_text = is_vi ? L"Hình cơ bản · Hình chữ nhật, elip, đa giác · Alt+↓ mở nhóm"
+                             : L"Quick Shapes · Rectangle, Ellipse, Polygon · Alt+Down opens group";
         } else if (tool_idx == 2) {
-            tip_text = is_vi ? L"Vẽ hình elip / hình tròn (Ellipse Tool) · Phím F7"
-                             : L"Ellipse & Circle Tool · Shortcut: F7";
+            tip_text = is_vi ? L"Đường vẽ · Line, Polyline, Pen · Alt+↓ mở nhóm"
+                             : L"Path Drawing · Line, Polyline, Pen · Alt+Down opens group";
         } else if (tool_idx == 3) {
             tip_text = is_vi ? L"Kéo trượt vùng làm việc (Pan Hand Tool) · Phím H hoặc Giữ Chuột giữa"
                              : L"Pan Viewport Hand Tool · Shortcut: H or Middle Drag";
         } else if (tool_idx == 4) {
-            tip_text = is_vi ? L"Vẽ đoạn thẳng (Line Tool) · Phím L"
-                             : L"Line Drawing Tool · Shortcut: L";
-        } else if (tool_idx == 5) {
-            tip_text = is_vi ? L"Vẽ đường gấp khúc (Polyline Tool) · Phím Shift+L"
-                             : L"Polyline Drawing Tool · Shortcut: Shift+L";
-        } else if (tool_idx == 6) {
             tip_text = is_vi ? L"Soạn thảo văn bản & Bảng (Text Tool) · Phím F8"
                              : L"Text Typography & Table Tool · Shortcut: F8";
-        } else if (tool_idx == 7) {
+        } else if (tool_idx == 5) {
             tip_text = is_vi ? L"Dao cắt xén đối tượng vector (Knife Tool) · Phím K"
                              : L"Knife / Slice Tool · Shortcut: K";
+        } else if (tool_idx == 6) {
+            tip_text = mouse_x >= 37
+                ? (is_vi ? L"Appearance · Alt+↓ mở nhóm · ↑/↓ chọn · Enter mở · Esc đóng"
+                         : L"Appearance · Alt+Down opens group · Up/Down select · Enter opens · Esc closes")
+                : (is_vi ? L"Thuộc tính diện mạo · mở Properties > Style để chỉnh Opacity, Blend và hiệu ứng"
+                         : L"Appearance Properties · open Properties > Style for Opacity, Blend and effects");
         }
     }
 
@@ -1519,103 +2059,117 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
         int tab_w = inspect_w / 3;
         if (mouse_y >= content_top && mouse_y <= content_top + 28) {
             int tidx = (mouse_x - insp_x) / tab_w;
-            if (tidx == 0) tip_text = is_vi ? L"Bảng thuộc tính đối tượng & Căn chỉnh (Ctrl+Shift+A)" : L"Object Inspector & Align Panel (Ctrl+Shift+A)";
+            if (tidx == 0) tip_text = is_vi ? L"Bảng thuộc tính đối tượng" : L"Object Properties";
             else if (tidx == 1) tip_text = is_vi ? L"Danh sách các lớp & Đối tượng (Layers)" : L"Layers & Objects Hierarchy";
             else if (tidx == 2) tip_text = is_vi ? L"Lịch sử các thao tác hoàn tác / làm lại (History)" : L"Command History & Undo/Redo Log";
-        } else if (active_dock_tab_ == 0) {
-            int content_y = content_top + 36;
-            // Checkboxes: Keep source / Keep target
-            if (mouse_y >= content_y + 222 && mouse_y <= content_y + 244) {
-                if (mouse_x >= insp_x + 14 && mouse_x <= insp_x + 135) {
-                    tip_text = is_vi ? L"Giữ lại đối tượng gốc làm khuôn mẫu sau khi cắt/hàn"
-                                     : L"Keep source objects intact as template after boolean operation";
-                } else if (mouse_x >= insp_x + 140 && mouse_x <= w - 14) {
-                    tip_text = is_vi ? L"Giữ lại đối tượng đích sau khi thao tác tạo hình"
-                                     : L"Keep target shapes intact after operation";
+        } else if (active_dock_tab_ == 0 &&
+                   mouse_y >= AlignPanelMetrics::section_tabs_top &&
+                   mouse_y < AlignPanelMetrics::section_tabs_top + AlignPanelMetrics::section_tabs_height) {
+            const int panel_left = insp_x + AlignPanelMetrics::content_left;
+            const int button_width = (AlignPanelMetrics::content_width - 12) / 3;
+            const int index = (mouse_x - panel_left) / (button_width + 6);
+            if (index == 0) tip_text = is_vi ? L"Xem thông tin đối tượng đang chọn" : L"Show selected object properties";
+            else if (index == 1) tip_text = is_vi ? L"Mở thuộc tính kiểu dáng" : L"Open style properties";
+            else if (index == 2) tip_text = is_vi ? L"Mở bảng Align & Distribute (Ctrl+Shift+A)" : L"Open Align & Distribute (Ctrl+Shift+A)";
+        } else if (active_dock_tab_ == 0 && active_tool_ == 9) {
+            if (mouse_y >= 172 && mouse_y <= 206)
+                tip_text = is_vi ? L"Số cạnh của đa giác tạo tiếp theo · số nguyên 3–256"
+                                 : L"Side count for the next polygon · whole number 3–256";
+            else if (mouse_y >= 216 && mouse_y <= 250)
+                tip_text = is_vi ? L"Góc của đỉnh đầu tiên · độ, −36000 đến 36000"
+                                 : L"First vertex angle · degrees, −36000 to 36000";
+        } else if (active_dock_tab_ == 0 && show_style_inspector_ &&
+                   mouse_y >= 162 + 298 - style_inspector_scroll_ &&
+                   mouse_y <= 162 + 328 - style_inspector_scroll_ &&
+                   mouse_x >= insp_x + 12 && mouse_x <= insp_x + 268) {
+            tip_text = is_vi
+                ? L"Độ mờ đối tượng Path/Text · 0–100% · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
+                : L"Path/Text object opacity · 0–100% · Enter applies · Esc cancels · Ctrl+Z undoes";
+        } else if (active_dock_tab_ == 0 && show_style_inspector_) {
+            const int panel_x = mouse_x - insp_x;
+            const int panel_y = mouse_y - 162 + style_inspector_scroll_;
+            if (panel_y >= kAppearanceBlendTop + 26 &&
+                panel_y < kAppearanceBlendTop + 80) {
+                tip_text = is_vi
+                    ? L"Chọn Blend mode của toàn object; đây là compositing, không phải công cụ Blend hình học"
+                    : L"Choose whole-object compositing; this is not Illustrator's geometric Blend tool";
+            } else if (panel_y >= kAppearanceEffectsTop + 50 &&
+                       panel_y < kAppearanceEffectsTop + 78) {
+                tip_text = is_vi
+                    ? L"Thêm một node cuối stack · Path/Text không khóa · Ctrl+Z hoàn tác"
+                    : L"Append an effect node to the stack · unlocked Path/Text only · Ctrl+Z undoes";
+            } else if (panel_y >= kAppearanceEffectListTop &&
+                       panel_x >= 12 && panel_x < 268) {
+                const auto snapshot = root().document().current_snapshot();
+                const auto summary = selection_appearance(
+                    *snapshot, root().vector_controller().selection().selected_ids());
+                if (summary.effect_stack_compatible) {
+                    int node_top = kAppearanceEffectListTop;
+                    for (size_t index = 0; index < summary.effects.size(); ++index) {
+                        const auto &effect = summary.effects[index];
+                        const bool shadow = std::holds_alternative<document::DropShadowEffect>(effect.parameters);
+                        const int node_height = shadow ? 176 : 118;
+                        if (panel_y >= node_top && panel_y < node_top + node_height) {
+                            if (panel_y < node_top + 45) {
+                                tip_text = panel_x < 96
+                                    ? (is_vi ? L"Bật/tắt node; Mixed sẽ bật tất cả đối tượng đã chọn"
+                                             : L"Enable or disable this node; Mixed enables every selected object")
+                                    : panel_x < 150
+                                        ? (is_vi ? L"Đưa node lên trước · đổi thứ tự làm đổi kết quả"
+                                                 : L"Move node earlier · order changes the result")
+                                        : panel_x < 210
+                                            ? (is_vi ? L"Đưa node xuống sau · đổi thứ tự làm đổi kết quả"
+                                                     : L"Move node later · order changes the result")
+                                            : (is_vi ? L"Xóa node khỏi toàn bộ vùng chọn · Ctrl+Z khôi phục"
+                                                     : L"Remove this node from the complete selection · Ctrl+Z restores it");
+                            } else if (shadow && panel_y < node_top + 136 && panel_x >= 96) {
+                                tip_text = is_vi
+                                    ? L"Màu nguồn của bóng · đổi màu có thể chuyển hệ màu, thông số khác giữ nguyên"
+                                    : L"Shadow source color · changing model may convert color; other parameters stay intact";
+                            } else if (shadow && panel_y >= node_top + 140) {
+                                tip_text = is_vi
+                                    ? L"Độ mờ riêng của bóng · 0–100% · không thay Object Opacity"
+                                    : L"Shadow opacity · 0–100% · separate from Object Opacity";
+                            } else if (shadow && panel_y >= node_top + 78) {
+                                tip_text = is_vi
+                                    ? L"Sigma X/Y theo mm cục bộ · giá trị lớn có thể vượt ngân sách xem trước"
+                                    : L"Local-mm Sigma X/Y · large values may exceed preview budgets";
+                            } else if (shadow) {
+                                tip_text = is_vi
+                                    ? L"Độ lệch X/Y theo trục cục bộ mm; +Y hướng lên"
+                                    : L"Local-mm X/Y offset; positive Y points up";
+                            } else {
+                                tip_text = is_vi
+                                    ? L"Gaussian sigma X/Y theo mm cục bộ · không lưu pixel hoặc zoom"
+                                    : L"Gaussian local-mm Sigma X/Y · pixel radius and zoom are not stored";
+                            }
+                            break;
+                        }
+                        node_top += node_height + 10;
+                    }
                 }
             }
-            int btn_w = (inspect_w - 38) / 3;
-            int by1 = content_y + 248;
-            int by2 = by1 + 30;
-            if (mouse_y >= by1 && mouse_y <= by1 + 26) {
-                if (mouse_x >= insp_x + 14 && mouse_x <= insp_x + 14 + btn_w) {
-                    tip_text = is_vi ? L"Hợp nhất các đối tượng thành một hình kín (Weld / Union)"
-                                     : L"Weld multiple shapes into a single boundary";
-                } else if (mouse_x >= insp_x + 14 + btn_w + 5 && mouse_x <= insp_x + 14 + 2 * btn_w + 5) {
-                    tip_text = is_vi ? L"Cắt xén đối tượng bên dưới bằng đối tượng bên trên (Trim)"
-                                     : L"Trim underlying shape using top shape";
-                } else if (mouse_x >= insp_x + 14 + (btn_w + 5) * 2 && mouse_x <= insp_x + 14 + 3 * btn_w + 10) {
-                    tip_text = is_vi ? L"Lấy phần diện tích giao nhau giữa các hình (Intersect)"
-                                     : L"Keep only overlapping intersection region";
-                }
-            } else if (mouse_y >= by2 && mouse_y <= by2 + 26) {
-                if (mouse_x >= insp_x + 14 && mouse_x <= insp_x + 14 + btn_w) {
-                    tip_text = is_vi ? L"Loại trừ phần giao nhau (XOR Exclude)" : L"Exclude overlapping areas (XOR)";
-                } else if (mouse_x >= insp_x + 14 + btn_w + 5 && mouse_x <= insp_x + 14 + 2 * btn_w + 5) {
-                    tip_text = is_vi ? L"Lấy hình đáy trừ đi hình đỉnh (Back Minus Front)" : L"Subtract front shapes from back shape";
-                } else if (mouse_x >= insp_x + 14 + (btn_w + 5) * 2 && mouse_x <= insp_x + 14 + 3 * btn_w + 10) {
-                    tip_text = is_vi ? L"Tạo đường bao viền ngoài toàn bộ cụm hình (Boundary)" : L"Create outer boundary contour";
-                }
-            }
-            int by3 = by2 + 32;
-            if (mouse_y >= by3 && mouse_y <= by3 + 28 && mouse_x >= insp_x + 14 && mouse_x <= w - 14) {
-                tip_text = is_vi ? L"Tự động tìm kiếm và hàn phẳng mọi điểm giao cắt (Chuẩn bị file cắt CNC/Laser)"
-                                 : L"Auto-detect and weld all overlapping vector paths (Ready for CNC/Laser)";
-            }
-            // Align & Distribute in Docker
-            int by_align_hdr = by3 + 36;
-            int by_a1 = by_align_hdr + 24;
-            int by_a2 = by_a1 + 30;
-            int by_a3 = by_a2 + 30;
-            int by_a4 = by_a3 + 32;
-            int by_a5 = by_a4 + 30;
-
-            if (mouse_y >= by_a1 && mouse_y <= by_a1 + 26) {
-                if (mouse_x >= insp_x + 14 && mouse_x <= insp_x + 14 + btn_w) {
-                    tip_text = is_vi ? L"Căn lề trái các đối tượng đã chọn (Align Left · Phím L)"
-                                     : L"Align selected objects to Left edges (Shortcut: L)";
-                } else if (mouse_x >= insp_x + 14 + btn_w + 5 && mouse_x <= insp_x + 14 + 2 * btn_w + 5) {
-                    tip_text = is_vi ? L"Căn giữa theo trục đứng (Align Centers Vertically · Phím C)"
-                                     : L"Align Centers Vertically (Shortcut: C)";
-                } else if (mouse_x >= insp_x + 14 + 2 * (btn_w + 5) && mouse_x <= insp_x + 14 + 3 * btn_w + 10) {
-                    tip_text = is_vi ? L"Căn lề phải các đối tượng đã chọn (Align Right · Phím R)"
-                                     : L"Align selected objects to Right edges (Shortcut: R)";
-                }
-            } else if (mouse_y >= by_a2 && mouse_y <= by_a2 + 26) {
-                if (mouse_x >= insp_x + 14 && mouse_x <= insp_x + 14 + btn_w) {
-                    tip_text = is_vi ? L"Căn đỉnh trên các đối tượng đã chọn (Align Top · Phím T)"
-                                     : L"Align selected objects to Top edges (Shortcut: T)";
-                } else if (mouse_x >= insp_x + 14 + btn_w + 5 && mouse_x <= insp_x + 14 + 2 * btn_w + 5) {
-                    tip_text = is_vi ? L"Căn giữa theo trục ngang (Align Centers Horizontally · Phím E)"
-                                     : L"Align Centers Horizontally (Shortcut: E)";
-                } else if (mouse_x >= insp_x + 14 + 2 * (btn_w + 5) && mouse_x <= insp_x + 14 + 3 * btn_w + 10) {
-                    tip_text = is_vi ? L"Căn đáy dưới các đối tượng đã chọn (Align Bottom · Phím B)"
-                                     : L"Align selected objects to Bottom edges (Shortcut: B)";
-                }
-            } else if (mouse_y >= by_a3 && mouse_y <= by_a3 + 26 && mouse_x >= insp_x + 14 && mouse_x <= w - 14) {
-                tip_text = is_vi ? L"Căn giữa tuyệt đối vào trang in (Center Page · Phím P) · Shift+P: Trục đứng · Alt+P: Trục ngang"
-                                 : L"Center to Page bounds (Shortcut: P) · Shift+P: Horizontal · Alt+P: Vertical";
-            } else if (mouse_y >= by_a4 - 2 && mouse_y <= by_a4 + 22) {
-                int ref_w = (inspect_w - 85) / 3;
-                if (mouse_x >= insp_x + 72 && mouse_x <= insp_x + 72 + ref_w) {
-                    tip_text = is_vi ? L"Quy chiếu căn chỉnh: Theo khung bao tổng của vùng chọn (Selection Bounds)"
-                                     : L"Align Reference: Selection Bounding Box";
-                } else if (mouse_x >= insp_x + 72 + ref_w + 3 && mouse_x <= insp_x + 72 + 2 * ref_w + 3) {
-                    tip_text = is_vi ? L"Quy chiếu căn chỉnh: Cố định theo Đối tượng chủ / Neo (Key Object)"
-                                     : L"Align Reference: Key Object (Anchor)";
-                } else if (mouse_x >= insp_x + 72 + 2 * (ref_w + 3) && mouse_x <= insp_x + 72 + 3 * ref_w + 6) {
-                    tip_text = is_vi ? L"Quy chiếu căn chỉnh: Căn thẳng theo Trang in (Page Margins)"
-                                     : L"Align Reference: Page Margins";
-                }
-            } else if (mouse_y >= by_a5 - 2 && mouse_y <= by_a5 + 24) {
-                int gap_half = (inspect_w - 90) / 2;
-                if (mouse_x >= insp_x + 72 && mouse_x <= insp_x + 72 + gap_half) {
-                    tip_text = is_vi ? L"Phân bố khoảng cách ngang đều nhau 10mm giữa các đối tượng"
-                                     : L"Distribute equal 10mm horizontal spacing between objects";
-                } else if (mouse_x >= insp_x + 72 + gap_half + 4 && mouse_x <= insp_x + 72 + 2 * gap_half + 4) {
-                    tip_text = is_vi ? L"Phân bố khoảng cách dọc đều nhau 10mm giữa các đối tượng"
-                                     : L"Distribute equal 10mm vertical spacing between objects";
-                }
+        } else if (active_dock_tab_ == 0 && show_align_panel_) {
+            if (mouse_y >= 164 && mouse_y < 185) {
+                tip_text = is_vi
+                    ? L"Căn theo vùng chọn, đối tượng chọn cuối hoặc trang; Giữa trang căn toàn bộ vùng chọn vào trang"
+                    : L"Align to selection bounds, last selected object, or page; Center Page moves the selection as a group";
+            } else if (mouse_y >= AlignPanelMetrics::reference_top &&
+                       mouse_y < AlignPanelMetrics::reference_top + AlignPanelMetrics::reference_height) {
+                tip_text = is_vi ? L"Chọn mốc cho sáu lệnh căn chỉnh" : L"Choose the reference for the six Align commands";
+            } else if (mouse_y >= AlignPanelMetrics::align_top && mouse_y < AlignPanelMetrics::align_top + 58) {
+                tip_text = is_vi ? L"Căn cạnh hoặc tâm đối tượng theo mốc đang chọn" : L"Align object edges or centers to the selected reference";
+            } else if ((mouse_y >= AlignPanelMetrics::horizontal_top && mouse_y < AlignPanelMetrics::horizontal_top + 56) ||
+                       (mouse_y >= AlignPanelMetrics::vertical_top && mouse_y < AlignPanelMetrics::vertical_top + 56)) {
+                tip_text = is_vi
+                    ? L"Phân bổ khoảng hở, tâm hoặc cạnh theo trục; khoảng hở tự động cần ít nhất 3 đối tượng"
+                    : L"Distribute gaps, centers, or edges along an axis; automatic equal gaps need at least 3 objects";
+            } else if (mouse_y >= AlignPanelMetrics::gap_field_top &&
+                       mouse_y < AlignPanelMetrics::gap_field_top + AlignPanelMetrics::gap_field_height) {
+                tip_text = is_vi ? L"Nhấp để nhập khoảng hở cố định (mm); Enter xác nhận, Esc hủy" : L"Enter a fixed gap in mm; Enter applies the value, Esc cancels";
+            } else if (mouse_y >= AlignPanelMetrics::apply_top &&
+                       mouse_y < AlignPanelMetrics::apply_top + AlignPanelMetrics::apply_height) {
+                tip_text = is_vi ? L"Áp dụng khoảng hở nhập ở trên theo chiều ngang hoặc dọc" : L"Apply the entered gap horizontally or vertically";
             }
         }
     }
@@ -1706,12 +2260,118 @@ void NativeWindow::clear_guidelines() noexcept {
 #endif
 }
 
+int NativeWindow::guideline_at(int x, int y) const {
+    if (!show_guidelines_ || guidelines_.empty()) return -1;
+    const RECT area = canvas_rect(width_, height_);
+    if (x < area.left || x > area.right || y < area.top || y > area.bottom)
+        return -1;
+    const auto& camera = root().renderer().camera();
+    for (int i = static_cast<int>(guidelines_.size()) - 1; i >= 0; --i) {
+        const auto& gl = guidelines_[i];
+        if (gl.orientation == GuidelineOrientation::Horizontal) {
+            const auto screen_pos = camera.world_to_screen({0.0, gl.position_mm});
+            const int screen_y = area.top + static_cast<int>(std::round(screen_pos.y));
+            if (std::abs(y - screen_y) <= 5) {
+                return i;
+            }
+        } else {
+            const auto screen_pos = camera.world_to_screen({gl.position_mm, 0.0});
+            const int screen_x = area.left + static_cast<int>(std::round(screen_pos.x));
+            if (std::abs(x - screen_x) <= 5) {
+                return i;
+            }
+        }
+    }
+    return -1;
+}
+
 void NativeWindow::start_numeric_input(NumericFieldId field) {
+    if (active_num_field_ == field)
+        return;
     if (active_num_field_ != NumericFieldId::None && active_num_field_ != field) {
         commit_numeric_field();
+        if (active_num_field_ != NumericFieldId::None)
+            return;
+    }
+    if (field == NumericFieldId::ObjectOpacity && !workflow().can_set_selected_object_opacity()) {
+        const auto snapshot = root().document().current_snapshot();
+        const auto appearance = snapshot
+            ? selection_appearance(*snapshot, root().vector_controller().selection().selected_ids())
+            : SelectionAppearance{};
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? (appearance.selected_count == 0
+                ? "Chọn Path hoặc Text để sửa độ mờ"
+                : appearance.contains_locked
+                    ? "Không thể sửa Opacity: vùng chọn có đối tượng bị khóa"
+                    : "Không thể sửa Opacity: chỉ hỗ trợ Path/Text trong toàn bộ vùng chọn")
+            : (appearance.selected_count == 0
+                ? "Select a Path or Text object to edit opacity"
+                : appearance.contains_locked
+                    ? "Opacity is unavailable because the selection contains a locked object"
+                    : "Opacity requires the entire selection to contain editable Path/Text objects");
+#ifdef _WIN32
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+        return;
+    }
+    if ((field == NumericFieldId::FillOpacity &&
+         !workflow().can_set_selected_fill_opacity()) ||
+        (field == NumericFieldId::StrokeOpacity &&
+         !workflow().can_set_selected_stroke_opacity())) {
+        const auto snapshot = root().document().current_snapshot();
+        const auto summary = snapshot
+            ? selection_appearance(*snapshot, root().vector_controller().selection().selected_ids())
+            : SelectionAppearance{};
+        const bool stroke = field == NumericFieldId::StrokeOpacity;
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? (summary.selected_count == 0
+                ? "Chọn đối tượng để sửa độ mờ màu tô hoặc viền"
+                : summary.contains_locked
+                    ? "Vùng chọn có đối tượng khóa · không cập nhật một phần"
+                    : stroke
+                        ? "Độ mờ viền chỉ hỗ trợ Path không khóa; Text không có viền được render"
+                        : "Độ mờ màu tô chỉ hỗ trợ Path/Text không khóa")
+            : (summary.selected_count == 0
+                ? "Select an object to edit fill or stroke opacity"
+                : summary.contains_locked
+                    ? "Selection contains a locked object · partial updates are disabled"
+                    : stroke
+                        ? "Stroke opacity supports unlocked Paths only; Text stroke is not rendered"
+                        : "Fill opacity supports unlocked Path/Text objects only");
+#ifdef _WIN32
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+        return;
+    }
+    const bool effect_numeric = field == NumericFieldId::EffectSigmaX ||
+        field == NumericFieldId::EffectSigmaY || field == NumericFieldId::EffectOffsetX ||
+        field == NumericFieldId::EffectOffsetY || field == NumericFieldId::EffectOpacity;
+    if (effect_numeric) {
+        const auto snapshot = root().document().current_snapshot();
+        const auto selection = root().vector_controller().selection().selected_ids();
+        const auto appearance = snapshot
+            ? selection_appearance(*snapshot, selection) : SelectionAppearance{};
+        const bool shadow_field = field == NumericFieldId::EffectOffsetX ||
+            field == NumericFieldId::EffectOffsetY || field == NumericFieldId::EffectOpacity;
+        const auto *shadow = appearance.can_edit_effect(property_effect_index_)
+            ? std::get_if<document::DropShadowEffect>(
+                &appearance.effects[property_effect_index_].parameters) : nullptr;
+        if (!workflow().can_edit_selected_effect(property_effect_index_) ||
+            (shadow_field && !shadow)) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Hiệu ứng đã đổi hoặc vùng chọn không đồng nhất · chưa áp dụng"
+                : "Effect stack changed or selection is mixed · no value was applied";
+#ifdef _WIN32
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+            return;
+        }
     }
     active_num_field_ = field;
     num_input_buffer_.clear();
+    numeric_object_opacity_targets_.clear();
+    numeric_paint_opacity_targets_.clear();
+    numeric_effect_targets_.clear();
 
     std::ostringstream ss;
     ss << std::fixed << std::setprecision(1);
@@ -1722,12 +2382,69 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
     } else if (field == NumericFieldId::PageHeight) {
         ss << active_tab().page_height_mm;
         num_input_buffer_ = ss.str();
+    } else if (field == NumericFieldId::PolygonSides) {
+        num_input_buffer_ = std::to_string(polygon_sides_);
+    } else if (field == NumericFieldId::PolygonRotation) {
+        ss << polygon_rotation_degrees_;
+        num_input_buffer_ = ss.str();
     } else if (field == NumericFieldId::ModalWidth) {
         ss << new_doc_w_;
         num_input_buffer_ = ss.str();
     } else if (field == NumericFieldId::ModalHeight) {
         ss << new_doc_h_;
         num_input_buffer_ = ss.str();
+    } else if (field == NumericFieldId::DistributeSpacing) {
+        ss << distribute_spacing_mm_;
+        num_input_buffer_ = ss.str();
+    } else if (field == NumericFieldId::PenExpression) {
+        num_input_buffer_ = pen_numeric_buffer_;
+    } else if (field == NumericFieldId::PenLength) {
+        num_input_buffer_ = pen_numeric_length_;
+    } else if (field == NumericFieldId::PenAngle) {
+        num_input_buffer_ = pen_numeric_angle_;
+    } else if (field == NumericFieldId::ObjectOpacity) {
+        numeric_object_opacity_targets_ =
+            root().vector_controller().selection().selected_ids();
+    } else if (field == NumericFieldId::FillOpacity ||
+               field == NumericFieldId::StrokeOpacity) {
+        numeric_paint_opacity_targets_ =
+            root().vector_controller().selection().selected_ids();
+    } else if (effect_numeric) {
+        numeric_effect_index_ = property_effect_index_;
+        numeric_effect_targets_ = root().vector_controller().selection().selected_ids();
+        const auto snapshot = root().document().current_snapshot();
+        const auto summary = selection_appearance(
+            *snapshot, root().vector_controller().selection().selected_ids());
+        const auto &effect = summary.effects[numeric_effect_index_];
+        const bool is_blur = std::holds_alternative<document::GaussianBlurEffect>(effect.parameters);
+        bool mixed = false;
+        double value = 0.0;
+        if (field == NumericFieldId::EffectSigmaX) {
+            mixed = effect.mixed_sigma_x;
+            value = is_blur ? std::get<document::GaussianBlurEffect>(effect.parameters).sigma_x_mm
+                            : std::get<document::DropShadowEffect>(effect.parameters).sigma_x_mm;
+        } else if (field == NumericFieldId::EffectSigmaY) {
+            mixed = effect.mixed_sigma_y;
+            value = is_blur ? std::get<document::GaussianBlurEffect>(effect.parameters).sigma_y_mm
+                            : std::get<document::DropShadowEffect>(effect.parameters).sigma_y_mm;
+        } else if (field == NumericFieldId::EffectOffsetX) {
+            const auto &shadow = std::get<document::DropShadowEffect>(effect.parameters);
+            mixed = effect.mixed_offset_x;
+            value = shadow.dx_mm;
+        } else if (field == NumericFieldId::EffectOffsetY) {
+            const auto &shadow = std::get<document::DropShadowEffect>(effect.parameters);
+            mixed = effect.mixed_offset_y;
+            value = shadow.dy_mm;
+        } else {
+            const auto &shadow = std::get<document::DropShadowEffect>(effect.parameters);
+            mixed = effect.mixed_opacity;
+            value = shadow.opacity * 100.0;
+        }
+        if (!mixed) {
+            std::ostringstream effect_value;
+            effect_value << std::setprecision(10) << value;
+            num_input_buffer_ = effect_value.str();
+        }
     } else {
         const auto ids = root().vector_controller().selection().selected_ids();
         if (!ids.empty()) {
@@ -1754,17 +2471,363 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
         num_input_buffer_.erase(num_input_buffer_.size() - 2);
     }
 
-    status_msg_ = (language_ == UILanguage::Vietnamese)
-        ? "Đang nhập số: gõ phím số, Enter để áp dụng, Tab chuyển ô, Esc để hủy"
-        : "Numeric input: type value, Enter to apply, Tab to next field, Esc to cancel";
+    if (field == NumericFieldId::ObjectOpacity) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Nhập Opacity 0–100% (dấu phẩy hoặc chấm) · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
+            : "Enter Opacity from 0–100% · comma or dot decimals · Enter applies · Esc cancels · Ctrl+Z undoes";
+    } else if (field == NumericFieldId::PenLength) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Nhập chiều dài đoạn thẳng (mm) · Enter tạo đoạn · Tab nhập góc (°)"
+            : "Enter line length (mm) · Enter creates line · Tab sets angle (°)";
+    } else if (field == NumericFieldId::PenAngle) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Nhập góc theo trục X (°) · Enter tạo đoạn · Tab nhập chiều dài"
+            : "Enter angle from X axis (°) · Enter creates line · Tab sets length";
+    } else if (field == NumericFieldId::FillOpacity ||
+               field == NumericFieldId::StrokeOpacity) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Độ mờ 0–100% · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
+            : "Opacity 0–100% · Enter applies · Esc cancels · Ctrl+Z undoes";
+    } else if (effect_numeric) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Nhập mm (σ ≥ 0, lệch ±1.000.000) hoặc Opacity 0–100% · Enter áp dụng · Tab ô kế · Esc hủy · Ctrl+Z hoàn tác"
+            : "Enter mm values (σ ≥ 0, offset ±1,000,000) or Opacity 0–100% · Enter applies · Tab next field · Esc cancels · Ctrl+Z undoes";
+    } else {
+        status_msg_ = (language_ == UILanguage::Vietnamese)
+            ? "Đang nhập số: gõ phím số, Enter để áp dụng, Tab chuyển ô, Esc để hủy"
+            : "Numeric input: type value, Enter to apply, Tab to next field, Esc to cancel";
+    }
 
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 #endif
 }
 
+void NativeWindow::start_effect_numeric_input(NumericFieldId field, size_t effect_index) {
+    if (active_num_field_ == field && numeric_effect_index_ == effect_index)
+        return;
+    if (active_num_field_ != NumericFieldId::None) {
+        commit_numeric_field();
+        if (active_num_field_ != NumericFieldId::None)
+            return;
+    }
+    property_effect_index_ = effect_index;
+    start_numeric_input(field);
+}
+
 void NativeWindow::commit_numeric_field() {
     if (active_num_field_ == NumericFieldId::None) return;
+
+    if (active_num_field_ == NumericFieldId::PenLength || active_num_field_ == NumericFieldId::PenAngle) {
+        if (active_num_field_ == NumericFieldId::PenLength) {
+            pen_numeric_length_ = num_input_buffer_;
+        } else {
+            pen_numeric_angle_ = num_input_buffer_;
+        }
+        update_pen_dimension_candidate();
+
+        if (active_tool_ == 8 && pen_tool_ && pen_tool_->active()) {
+            const auto placed = pen_tool_->confirm_candidate();
+            if (placed.code != vector::tools::pen::PenDrawingResultCode::Applied &&
+                placed.code != vector::tools::pen::PenDrawingResultCode::PreviewUpdated) {
+                status_msg_ = placed.message;
+                if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
+            active_num_field_ = NumericFieldId::None;
+            pen_numeric_length_.clear();
+            pen_numeric_angle_.clear();
+            num_input_buffer_.clear();
+            (void)pen_tool_->pointer_move(pen_last_pointer_world_, false);
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Đã tạo đoạn thẳng · Phím L nhập tiếp · Enter để kết thúc"
+                : "Segment created · Press L for next · Enter to finish";
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        } else if ((active_tool_ == 6 || active_tool_ == 7) && drawing_tool_ && drawing_tool_->active()) {
+            const auto result = drawing_tool_->confirm_candidate();
+            if (result.committed() && result.object_id) {
+                const auto snapshot = root().document().current_snapshot();
+                if (snapshot)
+                    root().vector_controller().set_selection({*result.object_id}, *snapshot);
+            }
+            active_num_field_ = NumericFieldId::None;
+            pen_numeric_length_.clear();
+            pen_numeric_angle_.clear();
+            num_input_buffer_.clear();
+            status_msg_ = drawing_tool_->visual_state().message;
+            if (!drawing_tool_->active()) finish_drawing_tool(true);
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+    }
+
+    if (active_num_field_ == NumericFieldId::PenExpression) {
+        if (!pen_tool_ || !pen_tool_->active() || num_input_buffer_.empty()) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Nhập @L<góc, @ΔX;ΔY hoặc #X;Y trước khi đặt điểm"
+                : "Enter @L<angle, @dX;dY or #X;Y before placing a point";
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        const auto preview = pen_tool_->update_numeric_candidate(num_input_buffer_);
+        if (preview.code == vector::tools::pen::PenDrawingResultCode::InvalidInput ||
+            preview.code == vector::tools::pen::PenDrawingResultCode::Stale ||
+            preview.code == vector::tools::pen::PenDrawingResultCode::BudgetExceeded) {
+            status_msg_ = preview.message;
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        const auto placed = pen_tool_->confirm_candidate();
+        if (placed.code != vector::tools::pen::PenDrawingResultCode::Applied &&
+            placed.code != vector::tools::pen::PenDrawingResultCode::PreviewUpdated) {
+            status_msg_ = placed.message;
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        active_num_field_ = NumericFieldId::None;
+        pen_numeric_buffer_.clear();
+        num_input_buffer_.clear();
+        (void)pen_tool_->pointer_move(pen_last_pointer_world_, false);
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đã đặt điểm theo kích thước · Enter để kết thúc"
+            : "Point placed from dimensions · Enter finishes";
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+
+    if (active_num_field_ == NumericFieldId::PolygonSides) {
+        try {
+            size_t parsed = 0;
+            const int value = std::stoi(num_input_buffer_, &parsed);
+            if (parsed != num_input_buffer_.size() ||
+                value < vector::ShapeFactory::kMinimumPolygonSides ||
+                value > vector::ShapeFactory::kMaximumPolygonSides) {
+                throw std::out_of_range("polygon sides");
+            }
+            polygon_sides_ = value;
+        } catch (...) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Số cạnh phải là số nguyên từ 3 đến 256"
+                : "Sides must be a whole number from 3 to 256";
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        active_num_field_ = NumericFieldId::None;
+        num_input_buffer_.clear();
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đã cập nhật số cạnh đa giác · chỉ áp dụng cho hình tạo tiếp theo"
+            : "Polygon sides updated · applies to the next shape";
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+
+    if (active_num_field_ == NumericFieldId::PolygonRotation) {
+        try {
+            size_t parsed = 0;
+            const double value = std::stod(num_input_buffer_, &parsed);
+            if (parsed != num_input_buffer_.size() || !std::isfinite(value) ||
+                value < -36000.0 || value > 36000.0) {
+                throw std::out_of_range("polygon rotation");
+            }
+            polygon_rotation_degrees_ = value;
+        } catch (...) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Góc xoay phải nằm trong khoảng −36000° đến 36000°"
+                : "Rotation must be between −36000° and 36000°";
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        active_num_field_ = NumericFieldId::None;
+        num_input_buffer_.clear();
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đã cập nhật góc xoay đa giác · chỉ áp dụng cho hình tạo tiếp theo"
+            : "Polygon rotation updated · applies to the next shape";
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+
+    if (active_num_field_ == NumericFieldId::DistributeSpacing) {
+        try {
+            std::string normalized = num_input_buffer_;
+            std::replace(normalized.begin(), normalized.end(), ',', '.');
+            const double value = std::stod(normalized);
+            if (!std::isfinite(value) || value < 0.0 || value > geometry::kMaxCanvasDimensionMm) {
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Khoảng hở phải từ 0 đến giới hạn kích thước bản vẽ (mm)"
+                    : "Gap must be between 0 and the maximum canvas dimension (mm)";
+                if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
+            distribute_spacing_mm_ = value;
+        } catch (...) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Nhập khoảng hở hợp lệ theo mm"
+                : "Enter a valid gap in mm";
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        active_num_field_ = NumericFieldId::None;
+        num_input_buffer_.clear();
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đã cập nhật khoảng hở cố định (mm)"
+            : "Updated fixed gap (mm)";
+#ifdef _WIN32
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+        return;
+    }
+
+    if (active_num_field_ == NumericFieldId::EffectSigmaX ||
+        active_num_field_ == NumericFieldId::EffectSigmaY ||
+        active_num_field_ == NumericFieldId::EffectOffsetX ||
+        active_num_field_ == NumericFieldId::EffectOffsetY ||
+        active_num_field_ == NumericFieldId::EffectOpacity) {
+        const auto field = active_num_field_;
+        try {
+            std::string normalized = num_input_buffer_;
+            std::replace(normalized.begin(), normalized.end(), ',', '.');
+            size_t parsed = 0;
+            const double value = std::stod(normalized, &parsed);
+            if (parsed != normalized.size() || !std::isfinite(value))
+                throw std::out_of_range("appearance parameter");
+
+            const bool opacity = field == NumericFieldId::EffectOpacity;
+            const bool offset = field == NumericFieldId::EffectOffsetX ||
+                                field == NumericFieldId::EffectOffsetY;
+            const bool in_range = opacity ? value >= 0.0 && value <= 100.0
+                : offset ? std::abs(value) <= geometry::limits::kCanvasMaxMm
+                         : value >= 0.0 && value <= geometry::limits::kCanvasMaxMm;
+            if (!in_range)
+                throw std::out_of_range("appearance parameter range");
+
+            const auto &current_targets = root().vector_controller().selection().selected_ids();
+            bool applied = current_targets == numeric_effect_targets_ &&
+                workflow().can_edit_selected_effect(numeric_effect_index_);
+            if (applied) {
+                if (field == NumericFieldId::EffectSigmaX)
+                    applied = workflow().set_selected_effect_sigma(numeric_effect_index_, true, value);
+                else if (field == NumericFieldId::EffectSigmaY)
+                    applied = workflow().set_selected_effect_sigma(numeric_effect_index_, false, value);
+                else if (field == NumericFieldId::EffectOffsetX)
+                    applied = workflow().set_selected_effect_offset(numeric_effect_index_, true, value);
+                else if (field == NumericFieldId::EffectOffsetY)
+                    applied = workflow().set_selected_effect_offset(numeric_effect_index_, false, value);
+                else
+                    applied = workflow().set_selected_effect_opacity(numeric_effect_index_, value / 100.0);
+            }
+            if (!applied) {
+                active_num_field_ = NumericFieldId::None;
+                num_input_buffer_.clear();
+                numeric_effect_targets_.clear();
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Vùng chọn hoặc thứ tự hiệu ứng đã đổi · thông số chưa áp dụng"
+                    : "Selection or effect order changed · parameter was not applied";
+                if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
+        } catch (...) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Giá trị không hợp lệ · Sigma: 0–1.000.000 mm; lệch: ±1.000.000 mm; Opacity: 0–100%"
+                : "Invalid value · Sigma: 0–1,000,000 mm; offset: ±1,000,000 mm; opacity: 0–100%";
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        active_num_field_ = NumericFieldId::None;
+        num_input_buffer_.clear();
+        numeric_effect_targets_.clear();
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đã cập nhật thông số Appearance · Ctrl+Z để hoàn tác"
+            : "Updated Appearance parameter · Ctrl+Z to undo";
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+
+    if (active_num_field_ == NumericFieldId::ObjectOpacity) {
+        std::string normalized = num_input_buffer_;
+        std::replace(normalized.begin(), normalized.end(), ',', '.');
+        try {
+            size_t parsed = 0;
+            const double percent = std::stod(normalized, &parsed);
+            if (parsed != normalized.size() || !std::isfinite(percent) ||
+                percent < 0.0 || percent > 100.0) {
+                throw std::out_of_range("object opacity percent");
+            }
+            const auto& current_targets = root().vector_controller().selection().selected_ids();
+            if (current_targets != numeric_object_opacity_targets_ ||
+                !workflow().set_selected_object_opacity(percent / 100.0)) {
+                active_num_field_ = NumericFieldId::None;
+                num_input_buffer_.clear();
+                numeric_object_opacity_targets_.clear();
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Vùng chọn đã đổi hoặc không còn sửa được · Opacity chưa áp dụng"
+                    : "Selection changed or is no longer editable · opacity was not applied";
+                if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
+        } catch (...) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Opacity phải là số hữu hạn từ 0 đến 100% · giá trị chưa được áp dụng"
+                : "Opacity must be a finite number from 0 to 100% · value was not applied";
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        active_num_field_ = NumericFieldId::None;
+        num_input_buffer_.clear();
+        numeric_object_opacity_targets_.clear();
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đã cập nhật Opacity cho toàn bộ vùng chọn · Ctrl+Z để hoàn tác"
+            : "Updated opacity for the entire selection · Ctrl+Z to undo";
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+
+    if (active_num_field_ == NumericFieldId::FillOpacity ||
+        active_num_field_ == NumericFieldId::StrokeOpacity) {
+        const auto field = active_num_field_;
+        std::string normalized = num_input_buffer_;
+        std::replace(normalized.begin(), normalized.end(), ',', '.');
+        try {
+            size_t parsed = 0;
+            const double percent = std::stod(normalized, &parsed);
+            if (parsed != normalized.size() || !std::isfinite(percent) ||
+                percent < 0.0 || percent > 100.0)
+                throw std::out_of_range("paint opacity percent");
+            const auto &current_targets = root().vector_controller().selection().selected_ids();
+            const bool applied = current_targets == numeric_paint_opacity_targets_ &&
+                (field == NumericFieldId::FillOpacity
+                    ? workflow().set_selected_fill_opacity(percent / 100.0)
+                    : workflow().set_selected_stroke_opacity(percent / 100.0));
+            if (!applied) {
+                active_num_field_ = NumericFieldId::None;
+                num_input_buffer_.clear();
+                numeric_paint_opacity_targets_.clear();
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Vùng chọn đã đổi hoặc không còn hỗ trợ · độ mờ chưa áp dụng"
+                    : "Selection changed or no longer supports this paint · opacity was not applied";
+                if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
+        } catch (...) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Độ mờ phải là số hữu hạn từ 0 đến 100% · giá trị chưa được áp dụng"
+                : "Opacity must be a finite number from 0 to 100% · value was not applied";
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        active_num_field_ = NumericFieldId::None;
+        num_input_buffer_.clear();
+        numeric_paint_opacity_targets_.clear();
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? (field == NumericFieldId::FillOpacity
+                ? "Đã cập nhật độ mờ màu tô cho toàn bộ vùng chọn · Ctrl+Z hoàn tác"
+                : "Đã cập nhật độ mờ viền cho toàn bộ vùng chọn · Ctrl+Z hoàn tác")
+            : (field == NumericFieldId::FillOpacity
+                ? "Updated fill opacity for the complete selection · Ctrl+Z undoes"
+                : "Updated stroke opacity for the complete selection · Ctrl+Z undoes");
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
 
     if (!num_input_buffer_.empty()) {
         try {
@@ -1831,8 +2894,28 @@ void NativeWindow::commit_numeric_field() {
 }
 
 void NativeWindow::cancel_numeric_field() {
+    const bool cancel_pen_expression = active_num_field_ == NumericFieldId::PenExpression;
+    const bool cancel_pen_dimension = (active_num_field_ == NumericFieldId::PenLength ||
+                                       active_num_field_ == NumericFieldId::PenAngle);
     active_num_field_ = NumericFieldId::None;
     num_input_buffer_.clear();
+    numeric_object_opacity_targets_.clear();
+    numeric_paint_opacity_targets_.clear();
+    numeric_effect_targets_.clear();
+    if (cancel_pen_expression) {
+        pen_numeric_buffer_.clear();
+        if (pen_tool_ && pen_tool_->active())
+            (void)pen_tool_->pointer_move(pen_last_pointer_world_, false);
+    }
+    if (cancel_pen_dimension) {
+        pen_numeric_length_.clear();
+        pen_numeric_angle_.clear();
+        if (pen_tool_ && pen_tool_->active())
+            (void)pen_tool_->pointer_move(pen_last_pointer_world_, false);
+        else if ((active_tool_ == 6 || active_tool_ == 7) && drawing_tool_ && drawing_tool_->active())
+            drawing_tool_->pointer_move(pen_last_pointer_world_, root().renderer().camera(),
+                window_dpi_scale(), false, false);
+    }
     status_msg_ = (language_ == UILanguage::Vietnamese) ? "Đã hủy nhập số" : "Cancelled numeric input";
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
@@ -1841,6 +2924,85 @@ void NativeWindow::cancel_numeric_field() {
 
 void NativeWindow::handle_numeric_char_input(wchar_t ch) {
     if (active_num_field_ == NumericFieldId::None) return;
+
+    if (active_num_field_ == NumericFieldId::PenLength || active_num_field_ == NumericFieldId::PenAngle) {
+        if (ch == 8) {
+            if (!num_input_buffer_.empty()) num_input_buffer_.pop_back();
+        } else if (ch == 13) {
+            commit_numeric_field();
+            return;
+        } else if (ch == 27) {
+            cancel_numeric_field();
+            return;
+        } else if (ch == 9) { // Tab: toggle between Length and Angle
+            if (active_num_field_ == NumericFieldId::PenLength) {
+                pen_numeric_length_ = num_input_buffer_;
+                active_num_field_ = NumericFieldId::PenAngle;
+                num_input_buffer_ = pen_numeric_angle_;
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Nhập góc theo trục X (°) · Enter tạo đoạn · Tab nhập chiều dài"
+                    : "Enter angle from X axis (°) · Enter creates line · Tab sets length";
+            } else {
+                pen_numeric_angle_ = num_input_buffer_;
+                active_num_field_ = NumericFieldId::PenLength;
+                num_input_buffer_ = pen_numeric_length_;
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Nhập chiều dài đoạn thẳng (mm) · Enter tạo đoạn · Tab nhập góc (°)"
+                    : "Enter line length (mm) · Enter creates line · Tab sets angle (°)";
+            }
+            update_pen_dimension_candidate();
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        } else if ((ch >= L'0' && ch <= L'9') || ch == L'.' || ch == L',' ||
+                   (active_num_field_ == NumericFieldId::PenAngle && ch == L'-')) {
+            if ((ch == L'.' || ch == L',') &&
+                (num_input_buffer_.find('.') != std::string::npos || num_input_buffer_.find(',') != std::string::npos)) {
+                return;
+            }
+            if (ch == L'-' && !num_input_buffer_.empty()) {
+                return;
+            }
+            if (num_input_buffer_.size() < 12) {
+                num_input_buffer_.push_back(static_cast<char>(ch));
+            }
+        }
+        if (active_num_field_ == NumericFieldId::PenLength) {
+            pen_numeric_length_ = num_input_buffer_;
+        } else {
+            pen_numeric_angle_ = num_input_buffer_;
+        }
+        update_pen_dimension_candidate();
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+
+    if (active_num_field_ == NumericFieldId::PenExpression) {
+        if (ch == 8) {
+            if (!num_input_buffer_.empty()) num_input_buffer_.pop_back();
+        } else if (ch == 13 || ch == 9) {
+            commit_numeric_field();
+            return;
+        } else if (ch == 27) {
+            cancel_numeric_field();
+            return;
+        } else if (ch >= 0x20 && ch <= 0x7e && num_input_buffer_.size() < 256) {
+            num_input_buffer_.push_back(static_cast<char>(ch));
+        }
+        pen_numeric_buffer_ = num_input_buffer_;
+        if (pen_tool_ && pen_tool_->active() && !pen_numeric_buffer_.empty()) {
+            const auto result = pen_tool_->update_numeric_candidate(pen_numeric_buffer_);
+            if (result.code == vector::tools::pen::PenDrawingResultCode::InvalidInput)
+                status_msg_ = result.message;
+            else
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Xem trước số · Enter đặt điểm · Esc khôi phục"
+                    : "Numeric preview · Enter places point · Esc restores";
+        }
+#ifdef _WIN32
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+        return;
+    }
 
     if (ch == 8) { // Backspace
         if (!num_input_buffer_.empty()) {
@@ -1857,21 +3019,51 @@ void NativeWindow::handle_numeric_char_input(wchar_t ch) {
         switch (active_num_field_) {
             case NumericFieldId::PageWidth: next = NumericFieldId::PageHeight; break;
             case NumericFieldId::PageHeight: next = NumericFieldId::PageWidth; break;
+            case NumericFieldId::PolygonSides: next = NumericFieldId::PolygonRotation; break;
+            case NumericFieldId::PolygonRotation: next = NumericFieldId::PolygonSides; break;
             case NumericFieldId::ModalWidth: next = NumericFieldId::ModalHeight; break;
             case NumericFieldId::ModalHeight: next = NumericFieldId::ModalWidth; break;
             case NumericFieldId::ObjectX: next = NumericFieldId::ObjectY; break;
             case NumericFieldId::ObjectY: next = NumericFieldId::ObjectWidth; break;
             case NumericFieldId::ObjectWidth: next = NumericFieldId::ObjectHeight; break;
             case NumericFieldId::ObjectHeight: next = NumericFieldId::ObjectX; break;
+            case NumericFieldId::EffectOffsetX: next = NumericFieldId::EffectOffsetY; break;
+            case NumericFieldId::EffectOffsetY: next = NumericFieldId::EffectSigmaX; break;
+            case NumericFieldId::EffectSigmaX: next = NumericFieldId::EffectSigmaY; break;
+            case NumericFieldId::EffectSigmaY: {
+                const auto snapshot = root().document().current_snapshot();
+                const auto appearance = selection_appearance(
+                    *snapshot, root().vector_controller().selection().selected_ids());
+                const bool shadow = appearance.can_edit_effect(numeric_effect_index_) &&
+                    std::holds_alternative<document::DropShadowEffect>(
+                        appearance.effects[numeric_effect_index_].parameters);
+                next = shadow ? NumericFieldId::EffectOpacity : NumericFieldId::EffectSigmaX;
+                break;
+            }
+            case NumericFieldId::EffectOpacity: next = NumericFieldId::EffectOffsetX; break;
             default: break;
         }
         commit_numeric_field();
+        if (active_num_field_ != NumericFieldId::None)
+            return;
         if (next != NumericFieldId::None) {
             start_numeric_input(next);
         }
         return;
-    } else if ((ch >= L'0' && ch <= L'9') || ch == L'.' || ch == L'-') {
-        if (ch == L'.' && num_input_buffer_.find('.') != std::string::npos) {
+    } else if ((ch >= L'0' && ch <= L'9') ||
+               (active_num_field_ != NumericFieldId::PolygonSides && ch == L'.') ||
+               (ch == L',' && active_num_field_ == NumericFieldId::DistributeSpacing) ||
+               (ch == L',' && active_num_field_ == NumericFieldId::ObjectOpacity) ||
+               (ch == L',' && (active_num_field_ == NumericFieldId::FillOpacity ||
+                               active_num_field_ == NumericFieldId::StrokeOpacity)) ||
+               (ch == L',' && (active_num_field_ == NumericFieldId::EffectSigmaX ||
+                               active_num_field_ == NumericFieldId::EffectSigmaY ||
+                               active_num_field_ == NumericFieldId::EffectOffsetX ||
+                               active_num_field_ == NumericFieldId::EffectOffsetY ||
+                               active_num_field_ == NumericFieldId::EffectOpacity)) ||
+               (active_num_field_ != NumericFieldId::PolygonSides && ch == L'-')) {
+        if ((ch == L'.' || ch == L',') &&
+            (num_input_buffer_.find('.') != std::string::npos || num_input_buffer_.find(',') != std::string::npos)) {
             return;
         }
         if (ch == L'-' && !num_input_buffer_.empty()) {
@@ -1918,41 +3110,63 @@ void NativeWindow::capture_screenshot_bmp(const std::string& path) {
     ReleaseDC(NULL, screen_dc);
 }
 
-void NativeWindow::finish_drawing_tool(bool select_tool) {
-    if (drawing_tool_) drawing_tool_->cancel();
-#ifdef _WIN32
-    if (hwnd_) KillTimer(hwnd_, 9);
-#endif
-    if (select_tool) {
-        active_tool_ = 0;
-        root().vector_controller().set_mode(vector::ToolMode::Select);
+void NativeWindow::handle_array_char(char c) {
+    if (!workflow().is_array_session_active()) return;
+    if (array_input_buffer_.size() < 16) {
+        array_input_buffer_ += c;
+        status_msg_ = (language_ == UILanguage::Vietnamese)
+            ? "Mảng sao chép: " + array_input_buffer_ + " (Nhấn Enter áp dụng, Esc kết thúc)"
+            : "Array: " + array_input_buffer_ + " (Press Enter to apply, Esc to finish)";
     }
 }
 
-bool NativeWindow::drawing_snap_panel_open() const noexcept {
-    return drawing_tool_ && drawing_tool_->snap_panel_open_value();
+void NativeWindow::handle_array_backspace() {
+    if (!array_input_buffer_.empty()) {
+        array_input_buffer_.pop_back();
+        status_msg_ = (language_ == UILanguage::Vietnamese)
+            ? "Mảng sao chép: " + array_input_buffer_ + " (Nhấn Enter áp dụng, Esc kết thúc)"
+            : "Array: " + array_input_buffer_ + " (Press Enter to apply, Esc to finish)";
+    }
 }
 
-bool NativeWindow::drawing_snap_index_ready() const noexcept {
-    return drawing_tool_ && drawing_tool_->visual_state().snap_index_ready;
-}
+void NativeWindow::commit_array_input() {
+    if (!workflow().is_array_session_active() || array_input_buffer_.empty()) return;
+    std::string buf = array_input_buffer_;
+    array_input_buffer_.clear();
 
-bool NativeWindow::drawing_path_active() const noexcept {
-    return drawing_tool_ && drawing_tool_->active();
-}
+    bool is_div = false;
+    int count = 0;
+    if (buf[0] == '/') {
+        is_div = true;
+        try { count = std::stoi(buf.substr(1)); } catch (...) { return; }
+    } else if (buf[0] == '*' || buf[0] == 'x' || buf[0] == 'X') {
+        is_div = false;
+        try { count = std::stoi(buf.substr(1)); } catch (...) { return; }
+    } else {
+        try { count = std::stoi(buf); } catch (...) { return; }
+    }
 
-size_t NativeWindow::drawing_path_point_count() const noexcept {
-    return drawing_tool_ ? drawing_tool_->visual_state().points.size() : 0;
+    if (count <= 0) return;
+
+    if (is_div) {
+        if (workflow().apply_array_divider(count)) {
+            status_msg_ = (language_ == UILanguage::Vietnamese)
+                ? "Đã chia đều " + std::to_string(count) + " khoảng (/" + std::to_string(count) + ") · Gõ tiếp để đổi hoặc Esc để chốt"
+                : "Divided by /" + std::to_string(count) + " · Type to change or Esc to finish";
+        }
+    } else {
+        if (workflow().apply_array_multiplier(count)) {
+            status_msg_ = (language_ == UILanguage::Vietnamese)
+                ? "Đã nhân " + std::to_string(count) + " bản sao (*" + std::to_string(count) + ") · Gõ tiếp để đổi hoặc Esc để chốt"
+                : "Multiplied by *" + std::to_string(count) + " · Type to change or Esc to finish";
+        }
+    }
 }
 
 #else
 bool NativeWindow::initialize(const std::string&) { return true; }
 int NativeWindow::run() { return 0; }
 void NativeWindow::capture_screenshot_bmp(const std::string&) {}
-bool NativeWindow::drawing_snap_panel_open() const noexcept { return false; }
-bool NativeWindow::drawing_snap_index_ready() const noexcept { return false; }
-bool NativeWindow::drawing_path_active() const noexcept { return false; }
-size_t NativeWindow::drawing_path_point_count() const noexcept { return 0; }
 #endif
 
 } // namespace pikdraw::desktop

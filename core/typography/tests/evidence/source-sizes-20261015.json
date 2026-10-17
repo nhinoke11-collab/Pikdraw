@@ -1,0 +1,102 @@
+[
+  {
+    "Path": "core\\typography\\CMakeLists.txt",
+    "Physical": 55,
+    "Nonblank": 47
+  },
+  {
+    "Path": "core\\typography\\include\\pikdraw\\typography\\typography.hpp",
+    "Physical": 8,
+    "Nonblank": 7
+  },
+  {
+    "Path": "core\\typography\\include\\pikdraw\\typography\\layout\\caret_navigation.hpp",
+    "Physical": 25,
+    "Nonblank": 19
+  },
+  {
+    "Path": "core\\typography\\include\\pikdraw\\typography\\layout\\glyph_outline.hpp",
+    "Physical": 11,
+    "Nonblank": 7
+  },
+  {
+    "Path": "core\\typography\\include\\pikdraw\\typography\\layout\\text_layout.hpp",
+    "Physical": 49,
+    "Nonblank": 38
+  },
+  {
+    "Path": "core\\typography\\include\\pikdraw\\typography\\shaping\\font_identity.hpp",
+    "Physical": 38,
+    "Nonblank": 30
+  },
+  {
+    "Path": "core\\typography\\include\\pikdraw\\typography\\shaping\\font_resolver.hpp",
+    "Physical": 28,
+    "Nonblank": 20
+  },
+  {
+    "Path": "core\\typography\\include\\pikdraw\\typography\\shaping\\shaper.hpp",
+    "Physical": 36,
+    "Nonblank": 30
+  },
+  {
+    "Path": "core\\typography\\src\\layout\\caret_navigation.cpp",
+    "Physical": 108,
+    "Nonblank": 108
+  },
+  {
+    "Path": "core\\typography\\src\\layout\\glyph_outline.cpp",
+    "Physical": 125,
+    "Nonblank": 124
+  },
+  {
+    "Path": "core\\typography\\src\\layout\\text_layout.cpp",
+    "Physical": 82,
+    "Nonblank": 82
+  },
+  {
+    "Path": "core\\typography\\src\\shaping\\font_identity.cpp",
+    "Physical": 7,
+    "Nonblank": 4
+  },
+  {
+    "Path": "core\\typography\\src\\shaping\\font_resolver.cpp",
+    "Physical": 59,
+    "Nonblank": 59
+  },
+  {
+    "Path": "core\\typography\\src\\shaping\\shaper.cpp",
+    "Physical": 160,
+    "Nonblank": 159
+  },
+  {
+    "Path": "core\\typography\\src\\shaping\\system_font.cpp",
+    "Physical": 123,
+    "Nonblank": 123
+  },
+  {
+    "Path": "core\\typography\\src\\shaping\\system_font.hpp",
+    "Physical": 44,
+    "Nonblank": 43
+  },
+  {
+    "Path": "core\\typography\\tests\\test_harness.hpp",
+    "Physical": 41,
+    "Nonblank": 33
+  },
+  {
+    "Path": "core\\typography\\tests\\test_main.cpp",
+    "Physical": 47,
+    "Nonblank": 38
+  },
+  {
+    "Path": "core\\typography\\tests\\layout\\test_layout.cpp",
+    "Physical": 90,
+    "Nonblank": 90
+  },
+  {
+    "Path": "core\\typography\\tests\\shaping\\test_shaping.cpp",
+    "Physical": 68,
+    "Nonblank": 68
+  }
+]

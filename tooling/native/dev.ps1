@@ -1,116 +1,29 @@
-# PikDraw Native Developer Runner
-# Launches the Qt shell preview or full editor across configurations.
-
+# Launch the one shared native application.
 param(
-    [ValidateSet('Preview', 'Editor')]
-    [string]$Mode = 'Preview',
-
-    [ValidateSet('Debug', 'Release')]
-    [string]$Configuration = 'Debug',
-
+    [ValidateSet('Preview', 'Editor')][string]$Mode = 'Editor',
+    [ValidateSet('Debug', 'Release')][string]$Configuration = 'Debug',
     [string]$Scenario = 'basic',
-
     [switch]$ForceSoftware,
-
     [switch]$Build,
-
     [switch]$Clean,
-
     [string]$Target = ''
 )
-
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'env.ps1')
-$tools = Get-PikDrawToolchain
-
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$presetName = if ($Configuration -eq 'Release') { 'win-msvc-release' } else { 'win-dev' }
-$buildDir = Join-Path $repoRoot "build\$presetName"
-
-Write-Host "=== PikDraw Native Developer Runner ===" -ForegroundColor Cyan
-Write-Host "Mode: $Mode | Configuration: $Configuration | Scenario: $Scenario" -ForegroundColor Gray
-if ($ForceSoftware) {
-    Write-Host "Graphics: Forced Software 2D Fallback" -ForegroundColor Yellow
-}
-
-# Optional Clean
-if ($Clean) {
-    if (Test-Path -LiteralPath $buildDir) {
-        Write-Host "Cleaning build directory: $buildDir" -ForegroundColor Yellow
-        Remove-Item -Recurse -Force -LiteralPath $buildDir
-    }
-}
-
-# Optional Build
+Assert-PikDrawPrimarySource $repoRoot
+if ($Clean -and -not $Build) { throw '-Clean requires -Build.' }
 if ($Build) {
-    if (-not $tools.CMake) {
-        throw "Cannot build: cmake executable was not found."
-    }
-    Write-Host "Configuring and building preset '$presetName'..." -ForegroundColor Yellow
-    & $tools.CMake --preset $presetName
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-    $buildArgs = @("--build", "--preset", $presetName)
-    if ($Target) {
-        $buildArgs += @("--target", $Target)
-    }
-    & $tools.CMake @buildArgs
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-    # Ensure toolchain runtime DLLs are copied next to executables for direct Explorer launches
-    if ($tools.Clang) {
-        $toolchainBin = Split-Path $tools.Clang -Parent
-        $runtimeDlls = Get-ChildItem -Path $toolchainBin -Filter "*.dll" -ErrorAction SilentlyContinue
-        if ($runtimeDlls) {
-            $destDirs = @(
-                (Join-Path $buildDir "apps\desktop"),
-                (Join-Path $buildDir "bin")
-            )
-            foreach ($d in $destDirs) {
-                if (Test-Path -LiteralPath $d) {
-                    $runtimeDlls | Copy-Item -Destination $d -Force -ErrorAction SilentlyContinue
-                }
-            }
-        }
-    }
-
-    if ($Target) {
-        exit 0
-    }
+    $buildArgs = @{ Configuration = $Configuration; Clean = $Clean }
+    if ($Target) { $buildArgs.Target = @($Target) }
+    & (Join-Path $PSScriptRoot 'build.ps1') @buildArgs
+    if ($Target) { return }
 }
-
-# Locate Desktop executable
-$candidateExes = @(
-    (Join-Path $buildDir "bin\pikdraw-desktop.exe"),
-    (Join-Path $buildDir "bin\pikdraw.exe"),
-    (Join-Path $buildDir "apps\desktop\pikdraw-desktop.exe"),
-    (Join-Path $buildDir "apps\desktop\pikdraw.exe")
-)
-
-$appExe = $null
-foreach ($cand in $candidateExes) {
-    if (Test-Path -LiteralPath $cand -PathType Leaf) {
-        $appExe = $cand
-        break
-    }
+$appExe = Join-Path $repoRoot 'build\win-dev\apps\desktop\pikdraw.exe'
+if (-not (Test-Path -LiteralPath $appExe -PathType Leaf)) {
+    throw 'Canonical pikdraw.exe is missing. Run tooling/native/build.ps1.'
 }
-
-if (-not $appExe) {
-    Write-Host "Error: Native executable not found in $buildDir." -ForegroundColor Red
-    Write-Host "In Milestone M0 (Foundation Lock), the C++ desktop shell is not yet compiled." -ForegroundColor Yellow
-    Write-Host "Desktop preview will be available in Milestone M1 (ps05-native-preview / ps13-vertical-slice)." -ForegroundColor Yellow
-    Write-Host "Use 'cmake --preset win-dev' and 'cmake --build --preset win-dev' once native targets are registered." -ForegroundColor Gray
-    exit 1
-}
-
-# Launch executable with arguments
-$exeArgs = @(
-    "--mode", $Mode.ToLower(),
-    "--scenario", $Scenario
-)
-if ($ForceSoftware) {
-    $exeArgs += "--force-software"
-}
-
-Write-Host "Launching $appExe $($exeArgs -join ' ')..." -ForegroundColor Green
+$exeArgs = @('--mode', $Mode.ToLower(), '--scenario', $Scenario)
+if ($ForceSoftware) { $exeArgs += '--force-software' }
 & $appExe @exeArgs
-exit $LASTEXITCODE
+if ($LASTEXITCODE -ne 0) { throw "PikDraw exited with code $LASTEXITCODE." }

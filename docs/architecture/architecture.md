@@ -1,6 +1,6 @@
 # Kiến trúc PikDraw
 
-Trạng thái: **đặc tả, chưa có engine thực thi**. [ADR 0001](../decisions/0001-foundation.md) và [ADR 0002](../decisions/0002-runtime-and-hardware.md) chấp nhận ranh giới/ownership/resilience; stack/backend/budgets vẫn Proposed. C++20/Qt/Skia là baseline cho [ba spike](../roadmap/foundation-spikes.md), không phải năng lực đã triển khai. Runtime và precision có đặc tả chi tiết ở [document/runtime](document-runtime.md).
+Đây là kiến trúc đích và ranh giới thiết kế, không phải bản kê đầy đủ các năng lực hiện có. Runtime desktop hiện tại là C++20/Win32/GDI; Qt/Skia cùng một số workspace vẫn là phương án nghiên cứu. Xem [README](../../README.md), [project state](../project-state.json) và [sơ đồ source](../development/code-organization.md) để biết phần đã có; ADR giữ quyết định và giả thuyết theo thời điểm.
 
 ## Nguyên tắc
 
@@ -114,14 +114,8 @@ Main/UI, logical writer, render owner, compute/I/O executors và worker processe
 
 Undo/snapshot/assets/caches/workers có budget và lifecycle; cleanup lớn không chặn input/frame. Save/export chốt một revision và giữ assets nhất quán. Save r hoàn tất không làm sạch edits r+1. Journal/checkpoint/replace có durability policy và fault injection; atomic rename không tự chứng minh chịu mất điện. Autosave không phải backup vĩnh viễn.
 
-Interop chốt version/feature matrix và tách visual/editable/export reports. PDF-compatible AI đọc phần PDF không bảo đảm authoring semantics; CDR import nghiên cứu với libcdr. CDR export/AI native round-trip ngoài MVP; PDF/SVG/tập DXF là output candidates có fixture. EPS/AI non-PDF/SKP cần khảo sát riêng. Plugin/worker output coi là untrusted, validate quyền/limits/revision trước atomic commit.
+Interop chốt version/feature matrix và tách visual/editable/export reports. PDF-compatible AI đọc phần PDF không bảo đảm authoring semantics; CDR import nghiên cứu với libcdr. CDR export/AI native round-trip ngoài MVP; PDF/SVG/tập DXF là output candidates có fixture. EPS/AI non-PDF/SKP cần khảo sát riêng. Kế hoạch feature đọc/chỉnh sửa/render tài nguyên vector phải theo [hướng dẫn tương thích tài nguyên vector](vector-resource-interoperability.md): adapter theo định dạng đưa dữ liệu vào một document model và semantic renderer chung, còn capability được gate theo từng version/representation/feature. Plugin/worker output coi là untrusted, validate quyền/limits/revision trước atomic commit.
 
-## Phát triển bởi nhiều agent
+## Làm việc và kiểm chứng
 
-- **Phân công động (Dynamic Claim Model):** Provider AI (Claude, Gemini, Codex...) là nhãn nhận dạng phiên làm việc (Session Metadata), không gán cứng cố định cho từng module. Bất kỳ subagent nào cũng có thể nhận bất kỳ tác vụ nào dựa trên yêu cầu thực tế từ người điều phối (Coordinator).
-- **Worktree và phạm vi:** Mỗi implementation task có checkout riêng và owned paths. Harness từ chối lease chồng lấn và committed diff ngoài scope khi handoff; chưa có OS write sandbox chặn mọi ghi file. Không lấy merge sạch làm evidence semantics đúng.
-- **Contract semantics:** Shared schemas/API có task riêng và consumer review. Khóa units/axes, transform composition, fill/winding/tolerance, IDs/revisions/cancel/atomic errors và text/color bằng vectors có oracle; producer/consumer chạy cùng vectors. Shape hợp schema không đủ.
-- **Tiêu chuẩn kiểm thử bằng chứng (Evidence-Based):** Mọi bàn giao task/handoff phải đi kèm bằng chứng kiểm thử thực tế (Unit tests, doctor checks), không dùng báo cáo suông. Chi tiết xem tại [ADR 0002](../decisions/0002-runtime-and-hardware.md), [worktree workflow](../agents/WORKTREES.md) và [giao thức agent](../agents/PROTOCOL.md).
-- **Gate tích hợp:** Kiểm tra actual diff/dependencies/consumers trên merged revision; bảo vệ gate/oracle chung khỏi task feature. Code scanner, semantic runner và hardware performance CI là gates cần triển khai, không là tính năng harness hiện có.
-
-Một owner integration hợp nhất các worktree sau kiểm tra và review. Sửa contract chung phải công bố impact rồi cập nhật consumers liên quan trong cùng chuỗi thay đổi. Chi tiết worktree/gateway nằm ở [worktree workflow](../agents/WORKTREES.md), [giao thức agent](../agents/PROTOCOL.md) và tooling của kho mã, tránh mô tả hai quy trình khác nhau tại đây.
+Các task dùng source gốc, task board và lease để tránh ghi đè lẫn nhau; xem [START](../START.md) và [protocol](../agents/PROTOCOL.md). Contract/API dùng chung cần review từ consumer liên quan. Chọn kiểm tra theo thay đổi, ghi đúng revision và bằng chứng; harness hoặc build không tự chứng minh fidelity, hiệu năng hay an toàn sandbox. Các giả thuyết kiến trúc nằm trong ADR và roadmap, không tự coi là runtime.

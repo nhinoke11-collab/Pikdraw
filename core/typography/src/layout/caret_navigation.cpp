@@ -1,89 +1,108 @@
 #include "pikdraw/typography/layout/caret_navigation.hpp"
-
+#include "../shaping/system_font.hpp"
+#include <algorithm>
+#include <cmath>
+#include <limits>
 namespace pikdraw::typography {
-
 namespace {
-
-bool is_utf8_continuation_byte(uint8_t b) noexcept {
-    return (b & 0xC0) == 0x80;
-}
-
-} // namespace
-
-size_t next_grapheme_cluster(std::string_view text, size_t current_byte_offset) {
-    if (current_byte_offset >= text.size()) return text.size();
-
-    size_t next = current_byte_offset + 1;
-    // Skip continuation bytes of current code point
-    while (next < text.size() && is_utf8_continuation_byte(static_cast<uint8_t>(text[next]))) {
-        next++;
+struct Scalar {
+    uint32_t value;
+    size_t byte;
+    size_t end;
+};
+std::vector<Scalar> scalars(std::string_view text) {
+#ifdef _WIN32
+    (void)system_font::wide(text);
+#else
+    throw std::runtime_error("Unicode backend unavailable");
+#endif
+    std::vector<Scalar> result;
+    for (size_t i = 0; i < text.size();) {
+        const size_t begin = i;
+        const auto lead = static_cast<uint8_t>(text[i++]);
+        const int count = lead < 0x80 ? 0 : lead < 0xe0 ? 1 : lead < 0xf0 ? 2 : 3;
+        uint32_t value = lead & (count == 0 ? 0x7fu : count == 1 ? 0x1fu : count == 2 ? 0x0fu : 0x07u);
+        for (int j = 0; j < count; ++j)
+            value = (value << 6) | (static_cast<uint8_t>(text[i++]) & 0x3fu);
+        result.push_back({value, begin, i});
     }
-
-    // Check if next character is a combining mark (0xCC..0xCD in UTF-8), if so consume it too
-    while (next < text.size()) {
-        const auto c = static_cast<uint8_t>(text[next]);
-        if (c == 0xCC || c == 0xCD) {
-            next += 2; // Combining mark is 2 bytes in UTF-8
-        } else {
-            break;
-        }
-    }
-    return std::min(next, text.size());
-}
-
-size_t prev_grapheme_cluster(std::string_view text, size_t current_byte_offset) {
-    if (current_byte_offset == 0) return 0;
-
-    size_t prev = current_byte_offset - 1;
-    while (prev > 0 && is_utf8_continuation_byte(static_cast<uint8_t>(text[prev]))) {
-        prev--;
-    }
-    return prev;
-}
-
-CaretHitResult hit_test_caret(
-    const TextLayout& layout,
-    const geometry::Point2D& local_point_mm
-) {
-    CaretHitResult result;
-    if (layout.lines().empty()) return result;
-
-    // Find closest line vertically
-    const auto& lines = layout.lines();
-    size_t best_line_idx = 0;
-    double min_y_dist = 1e9;
-
-    for (size_t i = 0; i < lines.size(); ++i) {
-        const double line_center_y = lines[i].line_bounds.center().y;
-        const double dist = std::abs(local_point_mm.y - line_center_y);
-        if (dist < min_y_dist) {
-            min_y_dist = dist;
-            best_line_idx = i;
-        }
-    }
-
-    const auto& target_line = lines[best_line_idx];
-    result.caret_height_mm = target_line.line_bounds.height;
-
-    // Scan glyph positions horizontally
-    double current_x = target_line.baseline_origin.x;
-    size_t best_byte = 0;
-    double best_x_pos = current_x;
-    double min_x_dist = std::abs(local_point_mm.x - current_x);
-
-    for (const auto& g : target_line.run.glyphs) {
-        current_x += g.x_advance_mm;
-        const double dist = std::abs(local_point_mm.x - current_x);
-        if (dist < min_x_dist) {
-            min_x_dist = dist;
-            best_x_pos = current_x;
-            best_byte = g.cluster_byte_offset;
-        }
-    }
-
-    result.byte_index = best_byte;
-    result.caret_position = geometry::Point2D{best_x_pos, target_line.line_bounds.y};
     return result;
 }
-
+bool extend(uint32_t cp) {
+    if ((cp >= 0xfe00 && cp <= 0xfe0f) || (cp >= 0xe0100 && cp <= 0xe01ef) ||
+        (cp >= 0x1f3fb && cp <= 0x1f3ff))
+        return true;
+#ifdef _WIN32
+    if (cp <= 0xffff) {
+        WORD type = 0;
+        const wchar_t unit = static_cast<wchar_t>(cp);
+        if (GetStringTypeW(CT_CTYPE3, &unit, 1, &type))
+            return (type & (C3_NONSPACING | C3_VOWELMARK)) != 0;
+    }
+#endif
+    return false;
+}
+std::vector<size_t> boundaries(std::string_view text) {
+    const auto chars = scalars(text);
+    std::vector<size_t> result{0};
+    size_t regional_count = 0;
+    for (size_t i = 0; i < chars.size(); ++i) {
+        const auto cp = chars[i].value;
+        const bool regional = cp >= 0x1f1e6 && cp <= 0x1f1ff;
+        bool join =
+            i > 0 && (extend(cp) || cp == 0x200d || chars[i - 1].value == 0x200d ||
+                      (chars[i - 1].value == '\r' && cp == '\n') || (regional && regional_count % 2 == 1));
+        if (!join && chars[i].byte != 0)
+            result.push_back(chars[i].byte);
+        regional_count = regional ? regional_count + 1 : 0;
+    }
+    if (!text.empty())
+        result.push_back(text.size());
+    return result;
+}
+} // namespace
+size_t next_grapheme_cluster(std::string_view text, size_t current) {
+    const auto limits = boundaries(text);
+    const auto next = std::upper_bound(limits.begin(), limits.end(), current);
+    return next == limits.end() ? text.size() : *next;
+}
+size_t prev_grapheme_cluster(std::string_view text, size_t current) {
+    const auto limits = boundaries(text);
+    const auto previous = std::lower_bound(limits.begin(), limits.end(), std::min(current, text.size()));
+    return previous == limits.begin() ? 0 : *std::prev(previous);
+}
+CaretHitResult hit_test_caret(const TextLayout &layout, const geometry::Point2D &point) {
+    if (!std::isfinite(point.x) || !std::isfinite(point.y))
+        throw std::invalid_argument("Invalid caret coordinate");
+    CaretHitResult result;
+    if (layout.lines().empty())
+        return result;
+    const LayoutLine *target = &layout.lines().front();
+    double closest = std::numeric_limits<double>::infinity();
+    for (const auto &line : layout.lines()) {
+        const double distance = std::abs(point.y - line.line_bounds.center().y);
+        if (distance < closest) {
+            target = &line;
+            closest = distance;
+        }
+    }
+    double x = target->baseline_origin.x;
+    double best = std::abs(point.x - x);
+    result = {target->source_byte_offset, {x, target->line_bounds.y}, target->line_bounds.height};
+    for (size_t i = 0; i < target->run.glyphs.size(); ++i) {
+        const auto &glyph = target->run.glyphs[i];
+        x += glyph.x_advance_mm;
+        if (i + 1 < target->run.glyphs.size() &&
+            target->run.glyphs[i + 1].cluster_byte_offset == glyph.cluster_byte_offset)
+            continue;
+        const size_t end = i + 1 < target->run.glyphs.size() ? target->run.glyphs[i + 1].cluster_byte_offset
+                                                             : target->run.text_utf8.size();
+        if (std::abs(point.x - x) < best) {
+            best = std::abs(point.x - x);
+            result.byte_index = target->source_byte_offset + end;
+            result.caret_position.x = x;
+        }
+    }
+    return result;
+}
 } // namespace pikdraw::typography

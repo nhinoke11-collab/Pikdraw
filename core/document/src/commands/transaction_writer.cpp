@@ -7,31 +7,32 @@ namespace pikdraw::document {
 // --- CompositeCommand ---
 
 CommandResult CompositeCommand::execute(Document& doc) {
-    executed_count_ = 0;
+    executed_indices_.clear();
     for (size_t i = 0; i < commands_.size(); ++i) {
         auto res = commands_[i]->execute(doc);
         if (!res.success) {
             // Rollback previously executed commands in reverse
-            for (size_t j = executed_count_; j > 0; --j) {
-                commands_[j - 1]->undo(doc);
+            for (auto it = executed_indices_.rbegin(); it != executed_indices_.rend(); ++it) {
+                commands_[*it]->undo(doc);
             }
-            executed_count_ = 0;
+            executed_indices_.clear();
             return CommandResult::fail("Transaction step failed: " + res.error_message);
         }
-        ++executed_count_;
+        if (!res.is_no_change) executed_indices_.push_back(i);
     }
-    return CommandResult::ok();
+    return executed_indices_.empty() ? CommandResult::no_change() : CommandResult::ok();
 }
 
 CommandResult CompositeCommand::undo(Document& doc) {
-    for (size_t i = executed_count_; i > 0; --i) {
-        auto res = commands_[i - 1]->undo(doc);
+    for (auto it = executed_indices_.rbegin(); it != executed_indices_.rend(); ++it) {
+        auto res = commands_[*it]->undo(doc);
         if (!res.success) {
             return CommandResult::fail("Transaction undo step failed: " + res.error_message);
         }
     }
-    executed_count_ = 0;
-    return CommandResult::ok();
+    const bool had_changes = !executed_indices_.empty();
+    executed_indices_.clear();
+    return had_changes ? CommandResult::ok() : CommandResult::no_change();
 }
 
 // --- TransactionWriter ---
@@ -62,7 +63,7 @@ CommandResult TransactionWriter::commit_transaction() {
     auto tx = std::move(active_transaction_);
     active_transaction_ = nullptr;
     if (tx->command_count() == 0) {
-        return CommandResult::ok();
+        return CommandResult::no_change();
     }
     return doc_.execute_command(std::move(tx));
 }

@@ -300,7 +300,6 @@ SegmentIntersectionResult intersect_line_segments(
         const bool use_x = std::abs(r.x) >= std::abs(r.y);
         const double direction = use_x ? r.x : r.y;
         const double first_coordinate = use_x ? first.p0.x : first.p0.y;
-        const double second_coordinate = use_x ? first.p1.x : first.p1.y;
         const double other_start = use_x ? second.p0.x : second.p0.y;
         const double other_end = use_x ? second.p1.x : second.p1.y;
         if (direction == 0.0) return result;

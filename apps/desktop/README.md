@@ -4,6 +4,17 @@ Adapter đang chạy là **Win32/GDI**, dùng ViewportRenderer software và docu
 Canvas hiển thị snapshot thật; chỉnh sửa đi qua command của document. Qt/QSS và bốn workspace
 là kế hoạch kiến trúc; không suy ra các workflow đó đã chạy từ bản vẽ UI tham chiếu.
 
+## Quy tắc thiết kế cho thay đổi tiếp theo
+
+Đọc [chuẩn UX/UI](../../docs/design/ui-ux-standard.md), [workspace](../../docs/architecture/workspace-layout.md)
+và hoàn thiện [phiếu UI](../../docs/design/feature-ui-template.md) trước khi code tính năng.
+Chốt menu chính, các thuộc tính trên property bar/Properties, icon SVG, label ngắn và tooltip/status/help.
+Agent triển khai tự phân tích yêu cầu và UI hiện có, tự điền phiếu, tự quyết định các lựa chọn thiết kế
+trong scope, ghi lý do ngắn và tự kiểm rồi tiếp tục code. Không giao mẫu trống cho người dùng hoặc
+chờ người dùng/coordinator duyệt từng lựa chọn thường lệ. Review chất lượng khi bàn giao và quyền scope/contract vẫn giữ.
+Tái dùng các bề mặt và action/value hiện có; không thêm bar/panel hoặc button dài theo từng feature.
+Đây là quy tắc đích, không tuyên bố bản native hiện tại đã đúng toàn bộ thiết kế.
+
 ## Thao tác hiện có
 
 - Pick V: hover, khung tương phản, tám tay nắm resize và dấu tâm. Kéo thân để di chuyển;
@@ -37,18 +48,23 @@ là kế hoạch kiến trúc; không suy ra các workflow đó đã chạy từ
 
 ## Build và xác minh
 
-Chạy trong terminal đã nạp MSVC x64/Windows SDK. Các literal nguồn và test tiếng Việt
-cần UTF-8; giữ cả các cờ MSVC mặc định khi đặt CMAKE_CXX_FLAGS:
+Mọi phiên dùng source gốc và output duy nhất theo [native build](../../docs/development/native-build.md).
+Không dùng preset/build folder cũ theo cấu hình riêng:
 
-    cmake --preset win-msvc-debug "-DCMAKE_CXX_FLAGS=/DWIN32 /D_WINDOWS /EHsc /utf-8"
-    cmake --build --preset win-msvc-debug --parallel 2
-    ctest --test-dir build/win-msvc-debug --output-on-failure
+```powershell
+.\tooling\native\build.ps1
+.\tooling\native\build.ps1 -Test
+.\tooling\native\build.ps1 -Configuration Release
+```
+
+Giữ môi trường/toolchain và encoding UTF-8 nhất quán; thêm/sửa compiler flags cần task build có scope,
+không thay đường output để né lỗi. Các lệnh ở đây là hướng dẫn; task tài liệu hiện tại không chạy build app.
 
 test_pikdraw_editor_tools.exe [evidence-directory] gửi mouse/keyboard messages tới cửa sổ
 native, mở và thao tác hộp màu thật, kiểm tra source/Undo/ICC pixels/native reopen rồi
 chụp canvas bằng chính code paint của app. Cửa sổ test ẩn; đây không phải đo input-to-present.
 
-Build Release theo win-msvc-release với cùng cờ UTF-8. Các test mới dùng điều kiện có hiệu lực
+Release cũng ghi đè build/win-dev qua runner, không tạo preset/output khác. Các test mới dùng điều kiện có hiệu lực
 khi NDEBUG bật. benchmark_pikdraw_editor_tools.exe xuất JSON cho corpus 1.000 path /
 101.000 path elements: redraw CPU, point pick, Window/Crossing và cached native CPU paint.
 Không lấy số đo cửa sổ ẩn làm FPS/present hoặc chứng nhận GPU/min-spec.

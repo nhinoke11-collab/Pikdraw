@@ -4,6 +4,7 @@
 #include <atomic>
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 #include "pikdraw/interop/payload_validator.hpp"
 
 namespace pikdraw::workers {
@@ -69,14 +70,31 @@ bool Transfer(HANDLE pipe, HANDLE process, uint8_t* bytes, size_t count, bool wr
 
 bool WorkerProcessHost::Launch(const WorkerLaunchConfig& config) {
     Terminate();
+#ifndef PIKDRAW_WORKER_TEST_HOOKS
+    // The shipping host cannot disable the sandbox, inherit test handles, or select a test worker.
+    if (!config.use_appcontainer || config.trusted_test_worker ||
+        config.test_inherited_handle != INVALID_HANDLE_VALUE) return false;
+#endif
     bool committed=false;
     struct FailedLaunchCleanup {
         WorkerProcessHost* host; bool& committed;
         ~FailedLaunchCleanup() { if (!committed) host->Terminate(); }
     } cleanup{this,committed};
-    if (config.worker_executable_path.empty() ||
+    const auto valid_text = [](const std::wstring& value) {
+        return value.size() < 32767 && value.find(L'\0') == std::wstring::npos;
+    };
+    if (!valid_text(config.worker_executable_path) ||
+        !valid_text(config.working_directory) ||
+        !valid_text(config.appcontainer_profile_name) || config.arguments.size() > 64 ||
+        !std::filesystem::path(config.worker_executable_path).is_absolute() ||
+        (!config.working_directory.empty() &&
+         !std::filesystem::path(config.working_directory).is_absolute()) ||
         (!config.use_appcontainer && !config.trusted_test_worker) ||
         (config.use_appcontainer && config.appcontainer_profile_name.empty()) ||
+        (config.use_appcontainer &&
+         (!config.job_limits.kill_on_job_close || !config.job_limits.prevent_child_processes ||
+          config.job_limits.active_process_limit != 1 || config.job_limits.max_memory_bytes == 0 ||
+          config.job_limits.max_memory_bytes > 512ull * 1024 * 1024)) ||
         (config.source_snapshot != nullptr && !config.source_snapshot->IsValid()) ||
         (config.source_snapshot != nullptr && !config.use_appcontainer && !config.trusted_test_worker)) return false;
 
@@ -163,14 +181,69 @@ bool WorkerProcessHost::Launch(const WorkerLaunchConfig& config) {
         )) { DeleteProcThreadAttributeList(siex.lpAttributeList); return false; }
     }
 
+    std::wstring effective_working_directory = config.working_directory;
+    if (effective_working_directory.empty()) {
+        std::wstring current_directory(32768, L'\0');
+        const DWORD current_size = GetCurrentDirectoryW(
+            static_cast<DWORD>(current_directory.size()), current_directory.data());
+        if (!current_size || current_size >= current_directory.size()) return false;
+        current_directory.resize(current_size);
+        effective_working_directory = std::move(current_directory);
+    }
+    wchar_t windows_buffer[32768]{};
+    const UINT windows_size = GetWindowsDirectoryW(windows_buffer, 32768);
+    if (!windows_size || windows_size >= 32768) return false;
+    const std::wstring windows(windows_buffer, windows_size);
+    // Give the AppContainer only runtime/profile paths it needs; never copy the
+    // host environment wholesale (which may contain credentials or test secrets).
+    std::wstring environment;
+    if (effective_working_directory.size() >= 3 &&
+        effective_working_directory[1] == L':' &&
+        (effective_working_directory[2] == L'\\' || effective_working_directory[2] == L'/')) {
+        environment = L"=" + effective_working_directory.substr(0, 2) + L"=" +
+            effective_working_directory;
+        environment.push_back(L'\0');
+    }
+    const auto append_environment_value = [&](const wchar_t* name) {
+        std::wstring value(32768, L'\0');
+        const DWORD size = GetEnvironmentVariableW(name, value.data(),
+                                                    static_cast<DWORD>(value.size()));
+        if (size && size < value.size()) {
+            value.resize(size);
+            environment += name;
+            environment.push_back(L'=');
+            environment += value;
+            environment.push_back(L'\0');
+        }
+    };
+    append_environment_value(L"APPDATA");
+    append_environment_value(L"HOMEDRIVE");
+    append_environment_value(L"HOMEPATH");
+    append_environment_value(L"LOCALAPPDATA");
+    environment += L"PATH=" + windows + L"\\System32";
+    environment.push_back(L'\0');
+    append_environment_value(L"SystemDrive");
+    environment += L"SystemRoot=" + windows;
+    environment.push_back(L'\0');
+    append_environment_value(L"TEMP");
+    append_environment_value(L"TMP");
+    append_environment_value(L"USERPROFILE");
+    environment += L"WINDIR=" + windows;
+    environment.push_back(L'\0');
+    environment.push_back(L'\0');
+
     std::wstring cmd = QuoteCommandLineArgument(config.worker_executable_path);
-    for (const auto& argument : config.arguments) cmd += L" " + QuoteCommandLineArgument(argument);
+    for (const auto& argument : config.arguments) {
+        if (!valid_text(argument)) return false;
+        cmd += L" " + QuoteCommandLineArgument(argument);
+        if (cmd.size() >= 32767) return false;
+    }
     if (inherited_source.IsValid()) {
         const auto value = reinterpret_cast<uintptr_t>(inherited_source.Get());
         cmd += L" --pikdraw-source-handle " + QuoteCommandLineArgument(std::to_wstring(value));
     }
     PROCESS_INFORMATION pi{};
-    DWORD creation_flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_NO_WINDOW;
+    DWORD creation_flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT;
 
     BOOL ok = CreateProcessW(
         config.worker_executable_path.c_str(),
@@ -178,8 +251,8 @@ bool WorkerProcessHost::Launch(const WorkerLaunchConfig& config) {
         nullptr, nullptr,
         TRUE, // inherit handles in whitelist
         creation_flags,
-        nullptr,
-        config.working_directory.empty() ? nullptr : config.working_directory.c_str(),
+        environment.data(),
+        effective_working_directory.c_str(),
         &siex.StartupInfo,
         &pi
     );
@@ -327,7 +400,12 @@ std::optional<std::vector<uint8_t>> WorkerProcessHost::TransactBinaryPayload(
     switch (static_cast<MessageType>(request.message_type)) {
         case MessageType::Ping: expected=static_cast<uint16_t>(MessageType::Pong); break;
         case MessageType::ImportRequest: expected=static_cast<uint16_t>(MessageType::ImportResponse); break;
-        case MessageType::CanaryRequest: expected=static_cast<uint16_t>(MessageType::CanaryResponse); break;
+        case MessageType::CanaryRequest:
+#ifndef PIKDRAW_WORKER_TEST_HOOKS
+            return reject("test-only canary requests disabled");
+#else
+            expected=static_cast<uint16_t>(MessageType::CanaryResponse); break;
+#endif
         default: return reject("unknown request type");
     }
     const auto deadline=std::chrono::steady_clock::now()+timeout;

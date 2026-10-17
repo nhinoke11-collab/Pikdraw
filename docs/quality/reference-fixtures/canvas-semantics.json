@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "oracle_id": "pikdraw-canvas-semantics-v1",
+  "scope": [
+    "analytic point-in-path fill rules away from boundaries",
+    "straight-alpha RGBA8 source-over with half-up integer rounding",
+    "ordered visible group traversal with ancestor opacity and depth limit",
+    "synthetic RGBA8 bitmap pixels with independent source-over expectations",
+    "unsupported feature outcome requires a diagnostic and forbids silent flattening"
+  ],
+  "geometry": {
+    "fill_rule_vectors": [
+      {
+        "id": "same_orientation_inner_contour",
+        "contours": [
+          [[0, 0], [10, 0], [10, 10], [0, 10]],
+          [[3, 3], [7, 3], [7, 7], [3, 7]]
+        ],
+        "probes": [
+          {"point": [1, 1], "evenodd": true, "nonzero": true},
+          {"point": [5, 5], "evenodd": false, "nonzero": true},
+          {"point": [12, 5], "evenodd": false, "nonzero": false}
+        ]
+      },
+      {
+        "id": "opposite_orientation_hole",
+        "contours": [
+          [[0, 0], [10, 0], [10, 10], [0, 10]],
+          [[3, 3], [3, 7], [7, 7], [7, 3]]
+        ],
+        "probes": [
+          {"point": [1, 1], "evenodd": true, "nonzero": true},
+          {"point": [5, 5], "evenodd": false, "nonzero": false}
+        ]
+      }
+    ],
+    "boundary_policy": "probes on an edge are excluded; boundary tolerance is a separate contract"
+  },
+  "color": {
+    "policy": "straight-alpha source-over, integer channels 0..255, round half up",
+    "vectors": [
+      {
+        "id": "half-red-over-opaque-blue",
+        "source_rgba8": [255, 0, 0, 128],
+        "destination_rgba8": [0, 0, 255, 255],
+        "expected_rgba8": [128, 0, 127, 255]
+      },
+      {
+        "id": "half-red-over-half-blue",
+        "source_rgba8": [255, 0, 0, 128],
+        "destination_rgba8": [0, 0, 255, 128],
+        "expected_rgba8": [170, 0, 85, 192]
+      },
+      {
+        "id": "transparent-source-is-identity",
+        "source_rgba8": [240, 120, 20, 0],
+        "destination_rgba8": [30, 60, 90, 128],
+        "expected_rgba8": [30, 60, 90, 128]
+      },
+      {
+        "id": "both-transparent-canonical-zero",
+        "source_rgba8": [100, 20, 200, 0],
+        "destination_rgba8": [12, 80, 40, 0],
+        "expected_rgba8": [0, 0, 0, 0]
+      }
+    ]
+  },
+  "bitmap_rgba8": {
+    "pixel_format": "RGBA8_STRAIGHT",
+    "sampling": "nearest_identity_one_source_pixel_per_output_pixel",
+    "vectors": [
+      {
+        "id": "synthetic-2x2-rgba8-over-background",
+        "width": 2,
+        "height": 2,
+        "source_pixels_rgba8": [
+          [[255, 0, 0, 255], [0, 255, 0, 128]],
+          [[0, 0, 255, 0], [255, 255, 0, 64]]
+        ],
+        "background_pixels_rgba8": [
+          [[0, 0, 0, 255], [0, 0, 255, 255]],
+          [[50, 60, 70, 128], [0, 0, 0, 255]]
+        ],
+        "expected_pixels_rgba8": [
+          [[255, 0, 0, 255], [0, 128, 127, 255]],
+          [[50, 60, 70, 128], [64, 64, 0, 255]]
+        ],
+        "expectation_basis": "hand-calculated source-over; identity pixel mapping, no interpolation or color conversion"
+      }
+    ],
+    "runtime_capability": {
+      "software_renderer_status": "unsupported",
+      "runtime_validation": "not_measured",
+      "source_evidence": "core/rendering/src/software_rasterizer.cpp returns false for ImageObject; this reference vector is not runtime bitmap proof"
+    }
+  },
+  "unsupported_feature_scenarios": [
+    {
+      "id": "image-object-software-raster-unsupported",
+      "feature": "ImageObject software rasterization",
+      "object": {
+        "id": "bitmap-unsupported-01",
+        "type": "ImageObject",
+        "pixel_format": "RGBA8_STRAIGHT",
+        "width": 2,
+        "height": 2
+      },
+      "current_implementation": {
+        "status": "unsupported",
+        "runtime_validation": "not_measured",
+        "source_evidence": "core/rendering/src/software_rasterizer.cpp: unsupported ObjectVariant alternatives return false; the render loop records an error diagnostic with the object id and marks rendering unsuccessful"
+      },
+      "expected_outcome": {
+        "render_success": false,
+        "accepted_as_complete_frame": false,
+        "source_preserved": true,
+        "flattened": false,
+        "diagnostic": {
+          "object_id": "bitmap-unsupported-01",
+          "error": true,
+          "message_contains": "Object cannot be rendered"
+        }
+      },
+      "policy": "Do not silently skip, flatten, or accept a partial frame as complete when this feature is unsupported; surface the object diagnostic and preserve the source object."
+    }
+  ],
+  "hierarchy": {
+    "max_group_depth": 8,
+    "roots": [
+      {
+        "id": "group-a",
+        "type": "group",
+        "opacity": 0.5,
+        "children": [
+          {"id": "shape-a", "type": "shape"},
+          {
+            "id": "group-b",
+            "type": "group",
+            "opacity": 0.5,
+            "children": [
+              {"id": "shape-b", "type": "shape"},
+              {
+                "id": "hidden-group",
+                "type": "group",
+                "visible": false,
+                "children": [{"id": "hidden-shape", "type": "shape"}]
+              }
+            ]
+          }
+        ]
+      },
+      {"id": "shape-c", "type": "shape", "opacity": 0.75}
+    ],
+    "expected_leaves": [
+      {"id": "shape-a", "order": 0, "effective_opacity": 0.5, "ancestors": ["group-a"]},
+      {"id": "shape-b", "order": 1, "effective_opacity": 0.25, "ancestors": ["group-a", "group-b"]},
+      {"id": "shape-c", "order": 2, "effective_opacity": 0.75, "ancestors": []}
+    ],
+    "depth_policy": "a root group is depth 1; depth greater than max_group_depth is rejected",
+    "limitations": [
+      "no transform, clipping, isolation, blend-mode or renderer-specific semantics",
+      "not a replacement for independent raster goldens"
+    ]
+  }
+}
+

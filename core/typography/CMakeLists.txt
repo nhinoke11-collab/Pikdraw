@@ -9,6 +9,7 @@ add_library(pikdraw_typography STATIC
     src/shaping/font_identity.cpp
     src/shaping/font_resolver.cpp
     src/shaping/shaper.cpp
+    src/shaping/system_font.cpp
     src/layout/text_layout.cpp
     src/layout/caret_navigation.cpp
     src/layout/glyph_outline.cpp
@@ -22,6 +23,13 @@ target_include_directories(pikdraw_typography PUBLIC
 target_link_libraries(pikdraw_typography PUBLIC
     pikdraw_geometry
 )
+if(WIN32)
+    target_link_libraries(pikdraw_typography PRIVATE dwrite)
+    target_compile_definitions(pikdraw_typography PUBLIC PIKDRAW_TYPOGRAPHY_REAL_OUTLINES=1)
+endif()
+if(MSVC)
+    target_compile_options(pikdraw_typography PRIVATE /utf-8)
+endif()
 
 if(PIKDRAW_BUILD_TESTS)
     add_executable(test_pikdraw_typography
@@ -39,6 +47,9 @@ if(PIKDRAW_BUILD_TESTS)
         pikdraw_typography
         pikdraw_geometry
     )
+    if(MSVC)
+        target_compile_options(test_pikdraw_typography PRIVATE /utf-8)
+    endif()
 
     add_test(NAME pikdraw_typography_tests COMMAND test_pikdraw_typography)
 endif()

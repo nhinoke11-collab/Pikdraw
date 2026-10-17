@@ -17,6 +17,8 @@ std::optional<geometry::Transform2D> selection_resize_transform(const geometry::
     double sx = hx == 0 ? 1 : 1 + drag_delta.x / (hx * bounds.width);
     double sy = hy == 0 ? 1 : 1 + drag_delta.y / (hy * bounds.height);
     if (preserve_aspect && hx != 0 && hy != 0) {
+        if (bounds.width <= 1e-9 || bounds.height <= 1e-9)
+            return std::nullopt;
         const double magnitude = std::abs(sx - 1) > std::abs(sy - 1) ? std::abs(sx) : std::abs(sy);
         sx = std::copysign(magnitude, sx);
         sy = std::copysign(magnitude, sy);

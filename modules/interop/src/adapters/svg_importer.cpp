@@ -21,9 +21,6 @@ namespace {
 
 constexpr double kPxToMm = 25.4 / 96.0;
 constexpr size_t kMaxTotalPathElements = 100000;
-constexpr size_t kMaxTextBytes = 256 * 1024;
-constexpr size_t kMaxTagBytes = 64 * 1024;
-constexpr size_t kMaxAttributesPerTag = 64;
 constexpr size_t kMaxSvgGroupDepth = 128;
 
 struct SvgLength { double value{0}; std::string_view unit; };

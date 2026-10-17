@@ -1,5 +1,8 @@
 #include "pikdraw/vector/precision/snap/snap_index.hpp"
 #include "snap_math.hpp"
+#include "pikdraw/document/model/path_adapter.hpp"
+#include "pikdraw/geometry/curves/curve.hpp"
+#include "pikdraw/geometry/queries/curve_intersections.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -69,11 +72,14 @@ bool candidate_less(const SnapCandidate& first, const SnapCandidate& second) noe
     const auto stable_key = [](const SnapCandidate& candidate) {
         const auto object = candidate.key.source_object_id.value_or(0);
         const auto element = candidate.key.source_node_or_segment_id.value_or(0);
+        const auto sec_object = candidate.key.secondary_object_id.value_or(0);
+        const auto sec_element = candidate.key.secondary_element_id.value_or(0);
         const auto cell_x = candidate.key.grid_cell ? candidate.key.grid_cell->x : 0;
         const auto cell_y = candidate.key.grid_cell ? candidate.key.grid_cell->y : 0;
-        return std::tuple{object, element, static_cast<uint8_t>(candidate.key.kind),
+        return std::tuple{object, element, sec_object, sec_element,
+                          static_cast<uint8_t>(candidate.key.kind),
                           candidate.key.grid_cell.has_value(), cell_x, cell_y,
-                          candidate.parameter_t};
+                          candidate.parameter_t, candidate.secondary_parameter_t};
     };
     return stable_key(first) < stable_key(second);
 }
@@ -111,6 +117,17 @@ struct SnapSourceIndex::Impl {
         size_t root{kNoNode};
         size_t entry_count{0};
     };
+    struct IndexedCurve {
+        document::ObjectId object_id{document::kInvalidObjectId};
+        uint64_t segment_id{0};
+        geometry::CurveSegment world_curve;
+        SnapWorldBounds bounds;
+        size_t layer_index{0};
+        bool object_visible{true};
+        bool object_locked{false};
+        bool layer_visible{true};
+        bool layer_locked{false};
+    };
 
     std::string document_id;
     uint64_t epoch{0};
@@ -118,6 +135,7 @@ struct SnapSourceIndex::Impl {
     size_t layers_count{0};
     size_t entry_count{0};
     std::array<Tree, kSnapOptionCount> trees;
+    std::vector<IndexedCurve> curves;
 };
 
 namespace {
@@ -186,12 +204,57 @@ void append_source_point(std::array<std::vector<IndexedPoint>, kSnapOptionCount>
     ++entry_count;
 }
 
+void append_source_point_world(std::array<std::vector<IndexedPoint>, kSnapOptionCount>& points,
+                               document::ObjectId object_id, const LayerInfo& layer,
+                               SnapOption kind, uint64_t element_id, double parameter_t,
+                               geometry::Point2D world_point, bool object_visible, bool object_locked,
+                               size_t max_entries, size_t& entry_count,
+                               bool& limit_exceeded, bool& invalid) {
+    if (element_id == 0 || !finite_point(world_point)) {
+        invalid = true;
+        return;
+    }
+    if (entry_count >= max_entries) {
+        limit_exceeded = true;
+        return;
+    }
+    points[index_of(kind)].push_back({kind, object_id, element_id, parameter_t, world_point,
+                                      layer.index, object_visible, object_locked,
+                                      layer.visible, layer.locked});
+    ++entry_count;
+}
+
+geometry::CurveSegment map_curve_to_world(
+    const geometry::CurveSegment& local, const geometry::Transform2D& xform) {
+    return std::visit([&xform](const auto& seg) -> geometry::CurveSegment {
+        using T = std::decay_t<decltype(seg)>;
+        if constexpr (std::is_same_v<T, geometry::LineSegment>) {
+            return geometry::LineSegment{xform.map_point(seg.p0), xform.map_point(seg.p1)};
+        } else if constexpr (std::is_same_v<T, geometry::QuadraticBezier>) {
+            return geometry::QuadraticBezier{xform.map_point(seg.p0), xform.map_point(seg.p1), xform.map_point(seg.p2)};
+        } else if constexpr (std::is_same_v<T, geometry::CubicBezier>) {
+            return geometry::CubicBezier{xform.map_point(seg.p0), xform.map_point(seg.p1), xform.map_point(seg.p2), xform.map_point(seg.p3)};
+        } else {
+            return seg.transformed(xform);
+        }
+    }, local);
+}
+
 } // namespace
 
 SnapCapabilities::SnapCapabilities() noexcept {
     enabled[index_of(SnapOption::Endpoint)] = true;
     enabled[index_of(SnapOption::SourceNode)] = true;
     enabled[index_of(SnapOption::LineMidpoint)] = true;
+    enabled[index_of(SnapOption::AnalyticCenter)] = true;
+    enabled[index_of(SnapOption::Quadrant)] = true;
+    enabled[index_of(SnapOption::Nearest)] = true;
+    enabled[index_of(SnapOption::BezierTMidpoint)] = true;
+    enabled[index_of(SnapOption::HalfCurveLength)] = true;
+    enabled[index_of(SnapOption::Intersection)] = true;
+    enabled[index_of(SnapOption::Perpendicular)] = true;
+    enabled[index_of(SnapOption::Tangent)] = true;
+    enabled[index_of(SnapOption::ReferenceTracking)] = true;
     enabled[index_of(SnapOption::Grid)] = true;
 }
 
@@ -213,6 +276,7 @@ SnapIndexBuildResult SnapSourceIndex::build(const document::DocumentSnapshot& so
     }
 
     std::array<std::vector<IndexedPoint>, kSnapOptionCount> points;
+    std::vector<SnapSourceIndex::Impl::IndexedCurve> indexed_curves;
     size_t entry_count = 0;
     bool limit_exceeded = false;
     bool invalid = false;
@@ -246,14 +310,78 @@ SnapIndexBuildResult SnapSourceIndex::build(const document::DocumentSnapshot& so
             if (limit_exceeded || invalid) break;
             for (size_t i = 0; i < subpath.segments.size(); ++i) {
                 const auto& segment = subpath.segments[i];
-                if (segment.kind != document::PathSegmentKind::Line) continue;
                 const auto& start = subpath.nodes[i].anchor;
                 const auto& end = subpath.nodes[(i + 1) % subpath.nodes.size()].anchor;
-                const geometry::Point2D midpoint{start.x + (end.x - start.x) * 0.5,
-                                                 start.y + (end.y - start.y) * 0.5};
-                append_source_point(points, *object, layer->second, SnapOption::LineMidpoint,
-                    segment.id.value(), 0.5, midpoint, limits.max_entries,
-                    entry_count, limit_exceeded, invalid);
+
+                geometry::CurveSegment local_curve = geometry::LineSegment{start, end};
+                if (segment.kind == document::PathSegmentKind::Line) {
+                    local_curve = geometry::LineSegment{start, end};
+                    const geometry::Point2D midpoint{start.x + (end.x - start.x) * 0.5,
+                                                     start.y + (end.y - start.y) * 0.5};
+                    append_source_point(points, *object, layer->second, SnapOption::LineMidpoint,
+                        segment.id.value(), 0.5, midpoint, limits.max_entries,
+                        entry_count, limit_exceeded, invalid);
+                } else if (segment.kind == document::PathSegmentKind::QuadraticBezier) {
+                    local_curve = geometry::QuadraticBezier{start, segment.quadratic_control, end};
+                    const auto quad = std::get<geometry::QuadraticBezier>(local_curve);
+                    append_source_point(points, *object, layer->second, SnapOption::BezierTMidpoint,
+                        segment.id.value(), 0.5, quad.point_at(0.5), limits.max_entries,
+                        entry_count, limit_exceeded, invalid);
+                } else if (segment.kind == document::PathSegmentKind::CubicBezier) {
+                    const auto [start_in, start_out] = document::editable_path_handles_for(subpath, i);
+                    const auto [end_in, end_out] = document::editable_path_handles_for(subpath, (i + 1) % subpath.nodes.size());
+                    (void)start_in; (void)end_out;
+                    local_curve = geometry::CubicBezier{start, start_out, end_in, end};
+                    const auto cubic = std::get<geometry::CubicBezier>(local_curve);
+                    append_source_point(points, *object, layer->second, SnapOption::BezierTMidpoint,
+                        segment.id.value(), 0.5, cubic.point_at(0.5), limits.max_entries,
+                        entry_count, limit_exceeded, invalid);
+                } else if (segment.kind == document::PathSegmentKind::EllipticArc) {
+                    local_curve = segment.arc;
+                }
+
+                if (limit_exceeded || invalid) break;
+
+                const auto world_curve = map_curve_to_world(local_curve, object->transform);
+                const auto cb = geometry::curve_bounds(world_curve);
+                indexed_curves.push_back({
+                    object->id, segment.id.value(), world_curve,
+                    SnapWorldBounds{cb.left(), cb.top(), cb.right(), cb.bottom()},
+                    layer->second.index, object->visible, object->locked,
+                    layer->second.visible, layer->second.locked
+                });
+
+                if (segment.kind != document::PathSegmentKind::Line) {
+                    const auto half_res = geometry::find_half_curve_length(world_curve);
+                    if (half_res.status == geometry::CurveQueryStatus::BoundedApproximation ||
+                        half_res.status == geometry::CurveQueryStatus::ExactForPrimitive) {
+                        append_source_point_world(points, object->id, layer->second,
+                            SnapOption::HalfCurveLength, segment.id.value(),
+                            half_res.parameter, half_res.point, object->visible, object->locked,
+                            limits.max_entries, entry_count, limit_exceeded, invalid);
+                    }
+                }
+
+                if (segment.kind == document::PathSegmentKind::EllipticArc) {
+                    const auto* world_arc = std::get_if<geometry::EllipticArc>(&world_curve);
+                    if (world_arc) {
+                        append_source_point_world(points, object->id, layer->second,
+                            SnapOption::AnalyticCenter, segment.id.value(), 0.0,
+                            world_arc->center, object->visible, object->locked,
+                            limits.max_entries, entry_count, limit_exceeded, invalid);
+
+                        const auto q_res = geometry::find_quadrant_points(*world_arc);
+                        if (q_res.status == geometry::CurveQueryStatus::ExactForPrimitive) {
+                            for (const auto& qp : q_res.points) {
+                                append_source_point_world(points, object->id, layer->second,
+                                    SnapOption::Quadrant, segment.id.value(), qp.parameter,
+                                    qp.point, object->visible, object->locked,
+                                    limits.max_entries, entry_count, limit_exceeded, invalid);
+                                if (limit_exceeded || invalid) break;
+                            }
+                        }
+                    }
+                }
                 if (limit_exceeded || invalid) break;
             }
             if (limit_exceeded || invalid) break;
@@ -273,6 +401,7 @@ SnapIndexBuildResult SnapSourceIndex::build(const document::DocumentSnapshot& so
     impl->revision = source.revision();
     impl->layers_count = source.page().layers.size();
     impl->entry_count = entry_count;
+    impl->curves = std::move(indexed_curves);
     for (size_t kind = 0; kind < kSnapOptionCount; ++kind) {
         auto& source_points = points[kind];
         if (source_points.empty()) continue;
@@ -401,13 +530,21 @@ SnapQueryResult SnapSourceIndex::query(
         if (!self_path_enabled && context.current_source_object_id == point.object_id) return false;
         return true;
     };
+    const auto eligible_curve = [&](const SnapSourceIndex::Impl::IndexedCurve& curve) {
+        if ((!curve.object_visible || !curve.layer_visible) && !hidden_layers_enabled) return false;
+        if ((curve.object_locked || curve.layer_locked) && !locked_as_reference) return false;
+        if (current_layer_only && curve.layer_index != *context.active_layer_index) return false;
+        if (!self_path_enabled && context.current_source_object_id == curve.object_id) return false;
+        return true;
+    };
     const auto add_candidate = [&](SnapCandidateKey key, double parameter_t,
+                                   double secondary_parameter_t,
                                    geometry::Point2D world_point, SnapOption kind,
                                    double distance, uint64_t source_revision) {
         const bool retained = previous_valid && context.previous_acquisition->key == key;
         const double threshold = retained ? config.release_radius_dip : config.acquire_radius_dip;
         if (distance > threshold) return;
-        result.candidates.push_back({std::move(key), parameter_t, world_point, source_revision,
+        result.candidates.push_back({std::move(key), parameter_t, secondary_parameter_t, world_point, source_revision,
             distance, effective_tool_priority(config, stamp.tool_context, kind),
             effective_kind_priority(config, kind), stamp});
         if (result.candidates.size() > context.max_results) budget_exceeded = true;
@@ -437,8 +574,8 @@ SnapQueryResult SnapSourceIndex::query(
                 const auto candidate_dip = camera.world_to_dip(node.point.world_point);
                 const double distance = distance_dip(pointer_dip, candidate_dip);
                 if (std::isfinite(distance)) {
-                    SnapCandidateKey key{kind, node.point.object_id, node.point.element_id, {}};
-                    add_candidate(std::move(key), node.point.parameter_t, node.point.world_point,
+                    SnapCandidateKey key{kind, node.point.object_id, node.point.element_id, {}, {}, {}};
+                    add_candidate(std::move(key), node.point.parameter_t, 0.0, node.point.world_point,
                                   kind, distance, impl_->revision);
                 }
             }
@@ -446,6 +583,92 @@ SnapQueryResult SnapSourceIndex::query(
                 stack.push_back(node.left);
             if (node.right != kNoNode && intersects(tree.nodes[node.right].bounds, *world_bounds))
                 stack.push_back(node.right);
+        }
+    }
+
+    if (active[index_of(SnapOption::Nearest)] && !budget_exceeded) {
+        for (const auto& curve : impl_->curves) {
+            if (!eligible_curve(curve)) continue;
+            if (!intersects(curve.bounds, *world_bounds)) continue;
+            const auto n_res = geometry::nearest_point_on_curve(curve.world_curve, pointer_world);
+            if (n_res.status == geometry::GeometryOperationStatus::Success) {
+                const auto n_dip = camera.world_to_dip(n_res.point);
+                const double distance = distance_dip(pointer_dip, n_dip);
+                if (std::isfinite(distance)) {
+                    SnapCandidateKey key{SnapOption::Nearest, curve.object_id, curve.segment_id, {}, {}, {}};
+                    add_candidate(std::move(key), n_res.parameter, 0.0, n_res.point,
+                                  SnapOption::Nearest, distance, impl_->revision);
+                    if (budget_exceeded) break;
+                }
+            }
+        }
+    }
+
+    if (active[index_of(SnapOption::Intersection)] && !budget_exceeded) {
+        std::vector<const SnapSourceIndex::Impl::IndexedCurve*> aperture_curves;
+        for (const auto& curve : impl_->curves) {
+            if (!eligible_curve(curve)) continue;
+            if (intersects(curve.bounds, *world_bounds)) {
+                aperture_curves.push_back(&curve);
+            }
+        }
+        for (size_t i = 0; i < aperture_curves.size() && !budget_exceeded; ++i) {
+            for (size_t j = i + 1; j < aperture_curves.size() && !budget_exceeded; ++j) {
+                const auto* c1 = aperture_curves[i];
+                const auto* c2 = aperture_curves[j];
+                if (!intersects(c1->bounds, c2->bounds)) continue;
+
+                const auto int_res = geometry::find_curve_intersections(c1->world_curve, c2->world_curve);
+                for (const auto& ip : int_res.points) {
+                    const auto ip_dip = camera.world_to_dip(ip.point);
+                    const double distance = distance_dip(pointer_dip, ip_dip);
+                    if (std::isfinite(distance)) {
+                        SnapCandidateKey key{SnapOption::Intersection,
+                                             c1->object_id, c1->segment_id,
+                                             c2->object_id, c2->segment_id, {}};
+                        add_candidate(std::move(key), ip.first_parameter, ip.second_parameter,
+                                      ip.point, SnapOption::Intersection, distance, impl_->revision);
+                        if (budget_exceeded) break;
+                    }
+                }
+            }
+        }
+    }
+
+    if (context.external_anchor && !budget_exceeded) {
+        const bool do_perp = active[index_of(SnapOption::Perpendicular)];
+        const bool do_tan = active[index_of(SnapOption::Tangent)];
+        if (do_perp || do_tan) {
+            for (const auto& curve : impl_->curves) {
+                if (!eligible_curve(curve)) continue;
+                if (!intersects(curve.bounds, *world_bounds)) continue;
+                if (do_perp) {
+                    const auto perp_res = geometry::find_perpendicular_points(curve.world_curve, *context.external_anchor);
+                    for (const auto& pp : perp_res.points) {
+                        const auto pp_dip = camera.world_to_dip(pp.point);
+                        const double distance = distance_dip(pointer_dip, pp_dip);
+                        if (std::isfinite(distance)) {
+                            SnapCandidateKey key{SnapOption::Perpendicular, curve.object_id, curve.segment_id, {}, {}, {}};
+                            add_candidate(std::move(key), pp.parameter, 0.0, pp.point,
+                                          SnapOption::Perpendicular, distance, impl_->revision);
+                            if (budget_exceeded) break;
+                        }
+                    }
+                }
+                if (do_tan && !budget_exceeded) {
+                    const auto tan_res = geometry::find_tangent_points(curve.world_curve, *context.external_anchor);
+                    for (const auto& tp : tan_res.points) {
+                        const auto tp_dip = camera.world_to_dip(tp.point);
+                        const double distance = distance_dip(pointer_dip, tp_dip);
+                        if (std::isfinite(distance)) {
+                            SnapCandidateKey key{SnapOption::Tangent, curve.object_id, curve.segment_id, {}, {}, {}};
+                            add_candidate(std::move(key), tp.parameter, 0.0, tp.point,
+                                          SnapOption::Tangent, distance, impl_->revision);
+                            if (budget_exceeded) break;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -476,8 +699,8 @@ SnapQueryResult SnapSourceIndex::query(
                             ++result.stats.distance_evaluations;
                             const double distance = distance_dip(pointer_dip, camera.world_to_dip(world));
                             if (std::isfinite(distance)) {
-                                SnapCandidateKey key{SnapOption::Grid, {}, {}, GridCellKey{cell_x, cell_y}};
-                                add_candidate(std::move(key), 0.0, world, SnapOption::Grid,
+                                SnapCandidateKey key{SnapOption::Grid, {}, {}, {}, {}, GridCellKey{cell_x, cell_y}};
+                                add_candidate(std::move(key), 0.0, 0.0, world, SnapOption::Grid,
                                               distance, impl_->revision);
                             }
                         }

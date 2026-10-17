@@ -1,98 +1,69 @@
-# Hướng dẫn Build Native và Cấu trúc CMake Presets
+# Build native dùng chung cho mọi phiên
 
-Tài liệu này hướng dẫn cách cấu hình, biên dịch tăng dần và chạy kiểm thử hệ thống native của PikDraw trên Windows.
+## Đường dẫn duy nhất
 
----
+Source: `C:/Users/CK ART STAGE/Downloads/PikDraw`.
+Build/cache: `build/win-dev`.
+App: `build/win-dev/apps/desktop/pikdraw.exe`.
 
-## 1. Yêu cầu Môi trường & Toolchain
+Từ 16/10/2026 chỉ có preset `win-dev`. Mọi phiên build ghi đè đúng app này;
+không tạo `pikdraw_app.exe`, `pikdraw-latest.exe`, app có ngày giờ hoặc build tree khác.
+CMake từ chối linked worktree và thư mục build khác. Test/worker executable là công cụ
+kiểm thử/runtime riêng, không phải phiên bản app để người dùng mở.
 
-PikDraw là ứng dụng đồ họa vector C++20 chuyên nghiệp. Hệ thống build native yêu cầu các công cụ sau:
-
-1. **Trình biên dịch C++20**:
-   - **MSVC**: Visual Studio 2022 (MSVC 19.44+) hỗ trợ đầy đủ `/std:c++20`.
-   - **Clang**: LLVM/Clang 18+ (hoặc bộ toolchain LLVM-MinGW UCRT được ghim trong repo).
-2. **CMake**: Phiên bản 3.25 trở lên.
-3. **Ninja**: Phiên bản 1.11 trở lên làm build generator.
-4. **Python**: Phiên bản 3.10 trở lên dùng cho harness, architecture gates scanner và contract validator.
-
-> [!NOTE]
-> Script `tooling/native/env.ps1` tự động phát hiện Python, CMake, Ninja, MSVC và Clang từ cả PATH hệ thống lẫn thư mục `.agent/toolchains` cục bộ của dự án.
-
----
-
-## 2. Danh sách CMake Presets (`CMakePresets.json`)
-
-PikDraw sử dụng chuẩn `CMakePresets.json` (schema version 6) với thư mục build và cache tách biệt hoàn toàn theo từng worktree và cấu hình:
-
-| Preset Name | Trình biên dịch | Build Type | Thư mục Build | Mục đích |
-|---|---|---|---|---|
-| `win-dev` | Clang / MSVC | Debug | `build/win-dev` | Cấu hình mặc định cho dev, bật CTest architecture & contract gates |
-| `win-msvc-debug` | MSVC | Debug | `build/win-msvc-debug` | Kiểm tra tính tương thích và chẩn đoán với MSVC STL |
-| `win-msvc-release` | MSVC | Release | `build/win-msvc-release` | Bản build tối ưu hóa hiệu năng release bằng MSVC |
-| `win-clang-debug` | Clang | Debug | `build/win-clang-debug` | Kiểm tra với Clang UCRT |
-| `win-clang-release` | Clang | Release | `build/win-clang-release` | Bản build tối ưu hóa hiệu năng release bằng Clang |
-
----
-
-## 3. Quy trình Biên dịch và Chạy Kiểm thử
-
-### 3.1. Cấu hình và Build bằng CMake / Ninja
+## Lệnh cho agent
 
 ```powershell
-# Cấu hình preset win-dev (Debug)
-cmake --preset win-dev
-
-# Biên dịch toàn bộ các target đang hoạt động
-cmake --build --preset win-dev
-
-# Chạy toàn bộ test suites được đăng ký trong CTest
-ctest --preset win-dev --output-on-failure
+# App tăng dần, dùng chung output:
+.\tooling\native\build.ps1
+# Release ghi đè cùng output, không tạo thư mục khác:
+.\tooling\native\build.ps1 -Configuration Release
+# Toàn bộ targets và CTest (khi nguồn test có mặt):
+.\tooling\native\build.ps1 -Test
+# Chỉ chạy CTest đã build, giữ cùng lock (khi nguồn test có mặt):
+.\tooling\native\check.ps1 -Suite unit
+# Mở đúng app canonical:
+.\tooling\native\dev.ps1 -Mode Editor
 ```
 
-### 3.2. Sử dụng Bộ Công cụ Runner Dòng lệnh
+Runner giữ khóa độc quyền `.agent/native-build.lock` qua configure/build/test;
+phiên thứ hai phải chờ phiên trước xong rồi chạy lại. Không xóa khóa của owner đang chạy.
+Sau crash, xác minh owner đã dừng trước khi phục hồi khóa. Không đổi tên hoặc copy exe
+để né app đang mở; đóng app theo yêu cầu của phiên đang dùng rồi build lại cùng path.
+Runner fail khi configure/build/test lỗi và giải phóng khóa; không báo pass khi không có test.
+Direct CMake có thể bỏ qua khóa nên agent phải dùng runner.
 
-PikDraw cung cấp các script PowerShell chuyên dụng tại `tooling/native/`:
+## Build tăng dần và phạm vi rebuild
 
-#### Chạy kiểm tra kiến trúc và hợp đồng (`check.ps1`):
-```powershell
-# Chạy suite kiểm tra kiến trúc (cấm module-to-UI, cấm vòng, cấm path escape)
-.\tooling\native\check.ps1 -Suite architecture
+Lệnh mặc định cấu hình preset `win-dev`, sau đó gọi `cmake --build` cho target `pikdraw`;
+nó không chạy `clean` hay `--clean-first`. Ninja so sánh input, lệnh build và dependency graph:
+source/header mới hoặc thay đổi được biên dịch lại cùng những consumer phụ thuộc thực sự bị ảnh
+hưởng; output còn hợp lệ được tái sử dụng. Đổi header dùng chung, compiler/flags/preset, thiếu output
+hoặc thay dependency có thể khiến nhiều target phải build lại. `-Clean` là lựa chọn có chủ ý, không
+dùng cho mỗi feature/fix.
 
-# Chạy suite kiểm tra hợp đồng C1-C7 và oracles
-.\tooling\native\check.ps1 -Suite contract
+Sau một build thành công, nếu không đổi source, cấu hình hay toolchain, lần chạy tiếp theo phải báo
+không có việc build hoặc không chạy compile/link edge. Nếu vẫn chạy nhiều target, kiểm tra input,
+timestamp và dependency log trước khi lặp lại. Đặc biệt, `ninja: warning: premature end of file;
+recovering` báo dependency log bị phục hồi; ở Ninja 1.13.2 tình trạng này có thể làm build lặp lại
+nhiều target dù source không đổi. Khi thấy cảnh báo này, ghi lại phiên bản Ninja/CMake và output,
+đánh dấu lượt build là recovery chứ không phải bằng chứng incremental, rồi coordinator xử lý metadata
+dưới shared lock trước khi xác nhận no-op. Không xóa cả build tree hoặc xóa app để né vấn đề.
+Xem [Ninja issue #2703](https://github.com/ninja-build/ninja/issues/2703) về deps-log recovery.
 
-# Chạy toàn bộ các suites
-.\tooling\native\check.ps1 -Suite all
-```
+`-Clean` dùng target clean trong cùng build tree. Không tự xóa/copy sang build tree mới.
+Đổi compiler cần được coordinator xử lý tuần tự trong cùng cache/output sau kiểm kê;
+không trộn cache toolchain khác hoặc tự tạo preset phụ. Debug không là evidence FPS Release.
 
-#### Chạy dev preview (`dev.ps1`):
-```powershell
-# Chạy shell preview trong giai đoạn phát triển UI
-.\tooling\native\dev.ps1 -Mode Preview -Configuration Debug -Scenario basic
+## Môi trường và giới hạn
 
-# Buộc dùng software rendering fallback để kiểm thử
-.\tooling\native\dev.ps1 -Mode Preview -Configuration Debug -ForceSoftware
-```
+C++20, CMake >= 3.25, Ninja và Python >= 3.10. `tooling/native/env.ps1` dò công cụ
+cục bộ/PATH và `.agent/toolchains`; không tự cài dependency. Giữ toolchain/checksum/license
+trong evidence. Runner dùng compiler đã cấu hình trong cache, không tự chuyển backend.
 
-> [!IMPORTANT]
-> Tại mốc M0 (Foundation Lock), ứng dụng shell C++ chưa được biên dịch (sẽ hoàn thiện tại M1 `ps05-native-preview` và `ps13-vertical-slice`). `dev.ps1` sẽ thông báo chẩn đoán rõ ràng và trả về mã lỗi 1 khi binary chưa có sẵn, tuyệt đối không dùng fake stub.
+Đã có editor Win32/GDI; Qt preview vẫn là kế hoạch. Build pass không nghiệm thu fidelity,
+editability, graphics performance hoặc OS containment. Module chỉ đăng ký khi có implementation;
+không dùng stub để vượt gate. Xem `docs/project-state.json` để biết giới hạn thực tế.
 
----
-
-## 4. Cơ chế Đăng ký Module Tăng Dần (`cmake/PikDrawModules.cmake`)
-
-Hệ thống build tuân thủ nghiêm ngặt nguyên tắc:
-- Chỉ đăng ký module CMake khi module đó **thực sự có implementation** (`CMakeLists.txt` tồn tại trong thư mục module).
-- Khi chuyển sang mốc M1+, cờ `PIKDRAW_REQUIRE_M1_TARGETS` được bật; nếu thiếu bất kỳ target bắt buộc nào (`pikdraw_geometry`, `pikdraw_color`, `pikdraw_document`, `pikdraw_rendering`, `pikdraw_desktop`), CMake sẽ báo lỗi dừng ngay lập tức.
-- Tuyệt đối không dùng stub trả thành công giả để vượt qua gate.
-
----
-
-## 5. Xử lý Lỗi Biên dịch Thường Gặp
-
-1. **Không tìm thấy CMAKE_CXX_COMPILER**:
-   - Chạy môi trường developer prompt của Visual Studio hoặc bảo đảm `tooling/native/env.ps1` có thể phát hiện Clang/MSVC.
-2. **Lỗi cảnh báo compiler biến thành lỗi**:
-   - `PIKDRAW_ENABLE_WARNINGS_AS_ERRORS` mặc định bật (`/WX` trên MSVC, `-Werror` trên Clang). Mã nguồn mới phải sửa triệt để cảnh báo trước khi commit.
-3. **Lỗi phụ thuộc ngược vào UI**:
-   - Nếu một class trong `core/` hoặc `modules/` include header từ `apps/desktop` hoặc Qt Widgets, `check.ps1 -Suite architecture` sẽ chặn lại ngay lập tức.
+Sau lượt kiểm cuối ngày 16/10/2026, theo yêu cầu người dùng mã nguồn test đã được xóa;
+CTest không khả dụng cho tới khi mã test được khôi phục. Build mặc định chỉ tạo app.

@@ -1,18 +1,22 @@
 ---
 name: pikdraw-module-change
-description: Implement a scoped PikDraw module change while preserving document invariants, dependency direction and shared-contract compatibility.
+description: Make a scoped PikDraw change while preserving document data and module boundaries.
 ---
 
 # PikDraw module change
 
-Use the assigned task packet and module AGENTS.md. `registry/modules.json` defines the allowed dependency direction and default owned paths. Keep feature code in its module; UI routes commands and shows state.
+Use the assigned task and module README/AGENTS.md. registry/modules.json defines module dependencies. Keep feature code with the module that owns its behavior; UI routes commands rather than owning core logic.
 
-Before editing source, read [code organization](../../docs/development/code-organization.md) and record a bounded file map. Group model/commands/history/storage/UI responsibilities by feature; follow file-size limits without minifying or splitting into artificial parts. New feature code cannot change the shared size checker/policy/exceptions to make itself pass. Handoff includes actual feature/API/test paths, size metrics and reviewed exceptions. A small unrelated legacy fix does not authorize a repository-wide refactor.
+Work in the primary source after claiming exact paths. Preserve existing local edits. Use the shared build runner when a build is relevant, and hand off the task snapshot with checks and limits.
 
-For M1, select only the assigned parent and checkpoints from [M1 plan](../../docs/roadmap/m1-implementation.md) and [checkpoint catalog](../../docs/roadmap/m1-task-packages.json). Checkpoints run serially under the parent lease unless the coordinator explicitly creates disjoint replacement tasks.
+Group code by responsibility and consumer. A file around 1,000 lines or longer can be appropriate when it remains coherent. Split or combine based on real behavior and reviewability, not a fixed file count or LOC cap. See docs/development/code-organization.md.
 
-Document writes use commands/transactions; rendering consumes snapshots. Preserve stable IDs, source data, units, color metadata and non-destructive parameters when the changed feature touches them.
+For UI changes, read docs/design/ui-ux-standard.md and review docs/architecture/workspace-layout.md. Record the menu path, shared action IDs, toolbox/toolbar, contextual property bar/Properties, field scopes/states, SVG icons, short labels, tooltip/focus help, status hints and usage help in the feature spec or equivalent. Mark irrelevant items as not applicable. The implementing agent makes routine design decisions and continues within scope.
 
-For shared contract changes, agree on a scoped contract task and consumer review. Record an ADR for a new backend, dependency direction, persistence format or breaking API. Do not silently widen task ownership.
+Document changes use commands/transactions and preserve IDs, units, source curves, color metadata and undo/redo. Async proposals must reject stale revisions/generations. Changes to shared schemas, persistence or public APIs need consumer review and migration notes.
 
-Run relevant checks and update task evidence. A core/library prototype is not a finished editor feature. Read [architecture](../../docs/architecture/architecture.md) for boundary changes and [quality gates](../../docs/quality/gates.md) for release-affecting behavior.
+For a behavior change or feature, add or update acceptance tests for the real user or consumer workflow. Use the shared Given/When/Then case structure and select only the relevant test layers for the change's risk; do not run a large default suite for every task. Reuse suitable tests instead of duplicating them. See [feature acceptance](../../docs/quality/feature-acceptance.md).
+
+After verification, delete one-off test sources and temporary fixtures, outputs and logs. Keep useful regression tests and reusable fixtures in the owning module's suite; remove an old test only when equivalent coverage remains and the handoff explains why.
+
+Run checks that cover the changed behavior. A core prototype is not a complete editor feature. Record actual evidence and unresolved limits; do not claim planned capabilities as implemented.

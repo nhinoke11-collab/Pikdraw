@@ -12,9 +12,11 @@ class Document;
 struct CommandResult {
     bool success{false};
     std::string error_message;
+    bool is_no_change{false};
 
-    static CommandResult ok() { return {true, ""}; }
-    static CommandResult fail(std::string msg) { return {false, std::move(msg)}; }
+    static CommandResult ok() { return {true, "", false}; }
+    static CommandResult no_change() { return {true, "", true}; }
+    static CommandResult fail(std::string msg) { return {false, std::move(msg), false}; }
 };
 
 /// Abstract base class for transactional document commands

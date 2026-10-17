@@ -8,6 +8,7 @@ set(PIKDRAW_MODULE_PATHS
     "core/document"
     "core/rendering"
     "modules/vector"
+    "modules/automation"
     "modules/raster"
     "modules/production"
     "modules/scene3d"
@@ -15,6 +16,8 @@ set(PIKDRAW_MODULE_PATHS
     "packages/plugin-sdk"
     "platform/workers"
     "apps/desktop"
+    "apps/mcp-server"
+    "apps/com-server"
 )
 
 foreach(mod_path IN LISTS PIKDRAW_MODULE_PATHS)
@@ -41,6 +44,15 @@ if(PIKDRAW_REQUIRE_M1_TARGETS)
         endif()
     endforeach()
 endif()
+
+# Run the M1 regression cases against the already-registered root targets.
+# This avoids recursively configuring another copy of the product.
+if(PIKDRAW_BUILD_TESTS AND EXISTS "${CMAKE_SOURCE_DIR}/tests/integration/m1-audit/CMakeLists.txt")
+    add_subdirectory("${CMAKE_SOURCE_DIR}/tests/integration/m1-audit" "tests/integration/m1-audit")
+endif()
+
+# Compiler policy must be applied after all modules and test targets exist.
+pikdraw_apply_directory_flags("${CMAKE_CURRENT_SOURCE_DIR}")
 
 # Register Foundation Architecture & Contract Gates in CTest
 if(PIKDRAW_BUILD_TESTS)

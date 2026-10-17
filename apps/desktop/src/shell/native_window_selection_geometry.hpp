@@ -24,6 +24,14 @@ inline std::array<POINT, 8> handles(const RECT &r) {
              {r.left, r.bottom},
              {r.left, y}}};
 }
+inline POINT rotation_handle(const RECT &r) {
+    return {(r.left + r.right) / 2, r.top - 24};
+}
+inline POINT pivot_point(const rendering::Camera2D &camera, const geometry::Point2D &pivot, const RECT &canvas) {
+    const auto screen = camera.world_to_screen({pivot.x, pivot.y});
+    const auto pixel = [](float v) { return static_cast<int>(std::lround(std::clamp(v, -1e7f, 1e7f))); };
+    return {canvas.left + pixel(screen.x), canvas.top + pixel(screen.y)};
+}
 #endif
 inline geometry::Rect2D between(geometry::Point2D a, geometry::Point2D b) {
     return {std::min(a.x, b.x), std::min(a.y, b.y), std::abs(a.x - b.x), std::abs(a.y - b.y)};

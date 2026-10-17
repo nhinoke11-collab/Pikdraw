@@ -13,7 +13,8 @@ enum class FormatType {
     Png,
     Jpeg,
     Cdr,
-    Ai
+    Ai,
+    Eps
 };
 
 enum class FidelitySeverity {
@@ -59,13 +60,14 @@ public:
     [[nodiscard]] static bool is_import_supported(FormatType type) noexcept {
         switch (type) {
             case FormatType::Svg:
-            case FormatType::Png:
-            case FormatType::Jpeg:
+            case FormatType::Dxf:
                 return true;
             case FormatType::Pdf:
-            case FormatType::Dxf:
+            case FormatType::Png:
+            case FormatType::Jpeg:
             case FormatType::Cdr:
             case FormatType::Ai:
+            case FormatType::Eps:
                 return false; // Reported as unsupported without silent flattening
         }
         return false;
@@ -83,6 +85,7 @@ public:
             case FormatType::Jpeg:
             case FormatType::Cdr:
             case FormatType::Ai:
+            case FormatType::Eps:
                 return false;
         }
         return false;
@@ -91,10 +94,14 @@ public:
     [[nodiscard]] static bool is_export_supported(FormatType type) noexcept {
         switch (type) {
             case FormatType::Svg:
-            case FormatType::Pdf:
-            case FormatType::Png:
                 return true;
-            default:
+            case FormatType::Pdf:
+            case FormatType::Dxf:
+            case FormatType::Png:
+            case FormatType::Jpeg:
+            case FormatType::Cdr:
+            case FormatType::Ai:
+            case FormatType::Eps:
                 return false;
         }
     }

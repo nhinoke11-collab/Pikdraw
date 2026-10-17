@@ -40,10 +40,10 @@ struct TemporarySource final {
 };
 
 WorkerLaunchConfig ConfigFor(const SourceSnapshot& source, std::wstring mode) {
-    auto executable = std::filesystem::current_path() / "spike_worker.exe";
+    auto executable = std::filesystem::current_path() / "spike_worker_test.exe";
     if (!std::filesystem::exists(executable)) {
         executable = std::filesystem::current_path() / "build" / "win-dev" /
-            "platform" / "workers" / "spike_worker.exe";
+            "platform" / "workers" / "spike_worker_test.exe";
     }
     WorkerLaunchConfig config;
     config.worker_executable_path = executable.wstring();

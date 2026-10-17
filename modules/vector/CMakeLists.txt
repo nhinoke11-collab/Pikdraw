@@ -25,6 +25,9 @@ add_library(pikdraw_vector STATIC
     src/tools/line/path_drawing_tool.cpp
     src/tools/line/path_drawing_tool_commit.cpp
     src/tools/line/path_object_builder.cpp
+    src/tools/pen/pen_drawing_tool.cpp
+    src/tools/node/node_tool.cpp
+    src/tools/contour/contour_tool.cpp
 )
 
 target_include_directories(pikdraw_vector PUBLIC
@@ -65,4 +68,6 @@ if(PIKDRAW_BUILD_TESTS)
     add_vector_test(test_pikdraw_vector_snap tests/precision/snap/test_snap.cpp)
     add_vector_test(test_pikdraw_vector_direction_snap tests/precision/snap/test_direction_snap.cpp)
     add_vector_test(test_pikdraw_vector_line_polyline tests/tools/line/test_path_drawing_tool.cpp)
+    add_vector_test(test_pikdraw_vector_node tests/tools/node/test_node_tool.cpp)
+    add_vector_test(test_pikdraw_vector_contour tests/tools/contour/test_contour_tool.cpp)
 endif()

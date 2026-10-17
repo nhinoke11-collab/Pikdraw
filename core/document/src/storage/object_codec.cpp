@@ -1,4 +1,5 @@
 #include "byte_codec.hpp"
+#include <limits>
 
 namespace pikdraw::document::storage_detail {
 namespace {
@@ -77,7 +78,8 @@ template <class T> void read_common(Reader &reader, T &object) {
 
 void write_object(Writer &writer, const ObjectVariant &value,
                   bool include_authoring_source,
-                  const EditablePath *source_override) {
+                  const EditablePath *source_override,
+                  bool include_appearance) {
   writer.u8(static_cast<uint8_t>(value.index()));
   std::visit(
       [&](const auto &object) {
@@ -101,9 +103,11 @@ void write_object(Writer &writer, const ObjectVariant &value,
             if (!source)
               throw std::invalid_argument(
                   "Path object " + std::to_string(object.id) +
-                  " has no stable authoring source for native v3");
+                  " has no stable authoring source for native v4");
             write_editable_path(writer, *source);
           }
+          if (include_appearance)
+            write_appearance(writer, object.appearance);
         } else if constexpr (std::is_same_v<T, TextObject>) {
           writer.str(object.text);
           writer.str(object.font.family_name);
@@ -114,10 +118,29 @@ void write_object(Writer &writer, const ObjectVariant &value,
           writer.f64(object.position.x);
           writer.f64(object.position.y);
           write_color(writer, object.fill);
-        } else {
+          if (include_appearance)
+            write_appearance(writer, object.appearance);
+        } else if constexpr (std::is_same_v<T, GroupObject>) {
           writer.count(object.children_ids.size(), max_objects);
           for (auto id : object.children_ids)
             writer.u64(id);
+        } else if constexpr (std::is_same_v<T, ImageObject>) {
+          if (object.width_px <= 0 || object.height_px <= 0 ||
+              static_cast<uint64_t>(object.width_px) * object.height_px !=
+                  object.pixels_rgba.size())
+            throw std::invalid_argument("Invalid native image pixel dimensions or count");
+          writer.f64(object.bounds_rect.x);
+          writer.f64(object.bounds_rect.y);
+          writer.f64(object.bounds_rect.width);
+          writer.f64(object.bounds_rect.height);
+          writer.u32(static_cast<uint32_t>(object.width_px));
+          writer.u32(static_cast<uint32_t>(object.height_px));
+          writer.count(object.pixels_rgba.size(), max_image_pixels);
+          for (auto px : object.pixels_rgba)
+            writer.u32(px);
+          writer.flag(object.clip_path.has_value());
+          if (object.clip_path)
+            write_path(writer, *object.clip_path);
         }
       },
       value);
@@ -140,7 +163,7 @@ ObjectVariant read_object(Reader &reader, uint32_t &remaining_elements,
       auto source = read_editable_path(reader, authoring_budget);
       if (!editable_path_matches_adapter(source, object.path))
         throw std::invalid_argument(
-            "Native v3 authoring source disagrees with its derived path adapter");
+            "Native authoring source disagrees with its derived path adapter");
       object.set_authoring_source(std::move(source));
     }
     return object;
@@ -168,6 +191,32 @@ ObjectVariant read_object(Reader &reader, uint32_t &remaining_elements,
     object.children_ids.reserve(count);
     for (uint32_t i = 0; i < count; ++i)
       object.children_ids.push_back(reader.u64());
+    return object;
+  }
+  if (type == 3) {
+    ImageObject object;
+    read_common(reader, object);
+    object.bounds_rect.x = reader.f64();
+    object.bounds_rect.y = reader.f64();
+    object.bounds_rect.width = reader.f64();
+    object.bounds_rect.height = reader.f64();
+    const auto width_px = reader.u32();
+    const auto height_px = reader.u32();
+    if (width_px == 0 || height_px == 0 ||
+        width_px > static_cast<uint32_t>(std::numeric_limits<int32_t>::max()) ||
+        height_px > static_cast<uint32_t>(std::numeric_limits<int32_t>::max()))
+      throw std::invalid_argument("Invalid native image pixel dimensions");
+    object.width_px = static_cast<int32_t>(width_px);
+    object.height_px = static_cast<int32_t>(height_px);
+    const auto count = reader.count(max_image_pixels, sizeof(uint32_t));
+    const auto expected_pixels = static_cast<uint64_t>(width_px) * height_px;
+    if (count != expected_pixels)
+      throw std::invalid_argument("Native image pixel count does not match dimensions");
+    object.pixels_rgba.reserve(count);
+    for (uint32_t i = 0; i < count; ++i)
+      object.pixels_rgba.push_back(reader.u32());
+    if (reader.flag())
+      object.clip_path = read_path(reader, remaining_elements);
     return object;
   }
   throw std::invalid_argument("Unknown native object tag");

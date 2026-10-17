@@ -136,4 +136,31 @@ private:
     std::optional<NodeId> merge_to_start_;
 };
 
+/// Appends newly drawn nodes to one of an open subpath's endpoints.
+/// When extending from its first endpoint, the existing subpath traversal is
+/// reversed first so its source geometry remains unchanged and IDs are kept.
+/// Extension nodes are supplied in drawing order and must have invalid IDs;
+/// this command allocates their stable IDs atomically on first execution.
+class ExtendPathEndpointCommand final : public PathTopologyCommand {
+public:
+    ExtendPathEndpointCommand(ObjectId object_id, SubpathId subpath_id,
+                              NodeId endpoint_id,
+                              std::vector<PathNode> extension_nodes,
+                              std::vector<PathSegmentKind> segment_kinds,
+                              std::shared_ptr<PathTopologyMapping> mapping_result = {}) noexcept;
+    [[nodiscard]] std::string_view name() const noexcept override {
+        return "Extend Path Endpoint";
+    }
+
+protected:
+    bool apply_edit(EditablePath& path, PathTopologyMapping& mapping,
+                    std::string& error) override;
+
+private:
+    SubpathId subpath_id_{};
+    NodeId endpoint_id_{};
+    std::vector<PathNode> extension_nodes_;
+    std::vector<PathSegmentKind> segment_kinds_;
+};
+
 } // namespace pikdraw::document

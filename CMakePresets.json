@@ -8,58 +8,14 @@
   "configurePresets": [
     {
       "name": "win-dev",
-      "displayName": "Windows Developer Debug (Ninja)",
-      "description": "Default developer preset with Debug symbols and test runner enabled",
+      "displayName": "PikDraw shared Windows build",
+      "description": "One source and build tree; use tooling/native/build.ps1 for the shared lock",
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/win-dev",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "PIKDRAW_BUILD_TESTS": "ON",
+        "PIKDRAW_BUILD_TESTS": "OFF",
         "PIKDRAW_ENABLE_WARNINGS_AS_ERRORS": "ON"
-      }
-    },
-    {
-      "name": "win-msvc-debug",
-      "displayName": "MSVC Debug (Ninja)",
-      "description": "MSVC Debug build with test gates",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/win-msvc-debug",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "PIKDRAW_BUILD_TESTS": "ON"
-      }
-    },
-    {
-      "name": "win-msvc-release",
-      "displayName": "MSVC Release (Ninja)",
-      "description": "MSVC optimized Release build",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/win-msvc-release",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "PIKDRAW_BUILD_TESTS": "ON"
-      }
-    },
-    {
-      "name": "win-clang-debug",
-      "displayName": "Clang Debug (Ninja)",
-      "description": "Clang toolchain Debug build",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/win-clang-debug",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "PIKDRAW_BUILD_TESTS": "ON"
-      }
-    },
-    {
-      "name": "win-clang-release",
-      "displayName": "Clang Release (Ninja)",
-      "description": "Clang optimized Release build",
-      "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/win-clang-release",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "PIKDRAW_BUILD_TESTS": "ON"
       }
     }
   ],
@@ -68,52 +24,12 @@
       "name": "win-dev",
       "configurePreset": "win-dev",
       "jobs": 4
-    },
-    {
-      "name": "win-msvc-debug",
-      "configurePreset": "win-msvc-debug",
-      "jobs": 4
-    },
-    {
-      "name": "win-msvc-release",
-      "configurePreset": "win-msvc-release",
-      "jobs": 4
-    },
-    {
-      "name": "win-clang-debug",
-      "configurePreset": "win-clang-debug",
-      "jobs": 4
-    },
-    {
-      "name": "win-clang-release",
-      "configurePreset": "win-clang-release",
-      "jobs": 4
     }
   ],
   "testPresets": [
     {
       "name": "win-dev",
       "configurePreset": "win-dev",
-      "output": {
-        "outputOnFailure": true
-      },
-      "execution": {
-        "noTestsAction": "error"
-      }
-    },
-    {
-      "name": "win-msvc-debug",
-      "configurePreset": "win-msvc-debug",
-      "output": {
-        "outputOnFailure": true
-      },
-      "execution": {
-        "noTestsAction": "error"
-      }
-    },
-    {
-      "name": "win-clang-debug",
-      "configurePreset": "win-clang-debug",
       "output": {
         "outputOnFailure": true
       },

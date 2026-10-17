@@ -5,10 +5,12 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 
 SOURCE = Path(__file__).resolve().parents[2] / "tooling/agent_harness.py"
+sys.path.insert(0, str(SOURCE.parent))
 SPEC = importlib.util.spec_from_file_location("pikdraw_agent_harness", SOURCE)
 h = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(h)
@@ -64,10 +66,10 @@ class HarnessTests(unittest.TestCase):
 
     def create(self, identifier="doc-task", module="document", paths=None):
         return self.harness.create_task(identifier, "Implement document command", module,
-                                        "Make undo predictable", "provider-a", "main", paths)
+                                        "Make undo predictable", "codex", "main", paths)
 
-    def claim(self, identifier="doc-task", owner="provider-a:session-1"):
-        return self.harness.claim(identifier, owner, "provider-a")
+    def claim(self, identifier="doc-task", owner="codex:session-1"):
+        return self.harness.claim(identifier, owner, "codex")
 
     def commit_change(self, path="modules/document/command.txt"):
         self.write(path, "A new tracked command\n")
@@ -76,7 +78,7 @@ class HarnessTests(unittest.TestCase):
         return self.git("rev-parse", "HEAD")
 
     def handoff(self, head="main", **overrides):
-        arguments = dict(task_id="doc-task", owner="provider-a:session-1", head=head,
+        arguments = dict(task_id="doc-task", owner="codex:session-1", head=head,
                          summary="Implemented document command", changed_paths=[],
                          decisions=["Keep the document API provider-neutral"],
                          tests=["Document command regression passed"], questions=[],
@@ -145,8 +147,8 @@ class HarnessTests(unittest.TestCase):
         again = self.claim()
         self.assertEqual(first["lease"]["acquired_at"], again["lease"]["acquired_at"])
         with self.assertRaisesRegex(h.HarnessError, "already leased"):
-            self.claim(owner="provider-a:session-2")
-        with self.assertRaisesRegex(h.HarnessError, "Provider differs"):
+            self.claim(owner="codex:session-2")
+        with self.assertRaisesRegex(h.HarnessError, "Single-source|Provider differs"):
             self.harness.claim("doc-task", "provider-b:session-1", "provider-b")
 
     def test_claim_rejects_overlapping_paths_across_different_tasks(self):
@@ -154,7 +156,7 @@ class HarnessTests(unittest.TestCase):
         self.create("second", paths=["modules/document/nested"])
         self.claim()
         with self.assertRaisesRegex(h.HarnessError, "Ownership conflict"):
-            self.claim("second", "provider-a:session-2")
+            self.claim("second", "codex:session-2")
         self.assertIsNone(self.harness.task("second")["lease"])
 
     def test_overlap_comparison_is_conservative_for_windows(self):
@@ -165,7 +167,7 @@ class HarnessTests(unittest.TestCase):
         self.create()
         self.create("render-task", "rendering")
         self.claim()
-        self.claim("render-task", "provider-a:session-2")
+        self.claim("render-task", "codex:session-2")
         self.assertTrue(self.harness.doctor()["ok"])
 
     def test_board_lock_refuses_writer_without_timeout_stealing(self):
@@ -182,8 +184,8 @@ class HarnessTests(unittest.TestCase):
         with self.assertRaisesRegex(h.HarnessError, "not leased"):
             self.harness.update("doc-task", "someone-else", "done", "Done", [], ["Passed"])
         with self.assertRaisesRegex(h.HarnessError, "validation evidence"):
-            self.harness.update("doc-task", "provider-a:session-1", "done", "Done", [], [])
-        completed = self.harness.update("doc-task", "provider-a:session-1", "done", "Done", [], ["Regression passed"])
+            self.harness.update("doc-task", "codex:session-1", "done", "Done", [], [])
+        completed = self.harness.update("doc-task", "codex:session-1", "done", "Done", [], ["Regression passed"])
         self.assertIsNone(completed["lease"])
         with self.assertRaisesRegex(h.HarnessError, "cannot be claimed"):
             self.claim()
@@ -192,8 +194,8 @@ class HarnessTests(unittest.TestCase):
         self.create()
         self.create("next-task")
         self.claim()
-        self.harness.release("doc-task", "provider-a:session-1", "Handing off to another session")
-        self.assertIsNotNone(self.claim("next-task", "provider-a:session-2")["lease"])
+        self.harness.release("doc-task", "codex:session-1", "Handing off to another session")
+        self.assertIsNotNone(self.claim("next-task", "codex:session-2")["lease"])
 
     def test_context_is_bounded_and_selectively_routes_references(self):
         self.create()
@@ -205,46 +207,89 @@ class HarnessTests(unittest.TestCase):
         self.assertIn("modules/document/README.md", full)
         self.assertIn("excerpt", full)
 
-    def test_worktree_shares_primary_task_board(self):
-        self.create()
-        self.claim()
-        created = self.harness.create_worktree("doc-task", "provider-a", "main", "provider-a:session-1")
-        linked = h.Harness(Path(created["path"]))
-        self.assertEqual(linked.root, self.repo.resolve())
-        self.assertEqual(linked.task("doc-task")["lease"]["owner"], "provider-a:session-1")
-        self.assertTrue(any(row["worktree"].replace("\\", "/") == created["path"].replace("\\", "/")
-                            for row in linked.worktrees()))
+    def legacy_checkout(self):
+        target = self.repo / '.worktrees/legacy'
+        self.git('worktree', 'add', '-b', 'legacy', str(target), 'main')
+        return target
 
-    def test_context_reads_invocation_checkout_documents(self):
+    def test_new_worktree_rejected_without_mutation(self):
         self.create()
         self.claim()
-        created = self.harness.create_worktree("doc-task", "provider-a", "main", "provider-a:session-1")
-        checkout = Path(created["path"])
-        (checkout / "docs/START.md").write_text("TASK_CHECKOUT_CONTEXT_SENTINEL\n", encoding="utf-8")
-        linked = h.Harness(checkout)
-        packet = linked.context("doc-task")
-        self.assertIn("TASK_CHECKOUT_CONTEXT_SENTINEL", packet)
-        self.assertNotIn("TASK_CHECKOUT_CONTEXT_SENTINEL", self.harness.context("doc-task"))
+        before = self.git('show-ref')
+        with self.assertRaisesRegex(h.HarnessError, 'worktree create is disabled'):
+            self.harness.create_worktree('doc-task', 'codex', 'main', 'codex:session-1')
+        self.assertEqual(before, self.git('show-ref'))
+        self.assertFalse((self.repo / '.worktrees').exists())
+        self.assertIsNone(self.harness.task('doc-task')['worktree'])
 
-    def test_worktree_collision_does_not_create_branch(self):
+    def test_legacy_checkout_can_read_board_but_cannot_write(self):
         self.create()
-        self.claim()
-        target = self.repo / ".worktrees/provider-a-doc-task"
-        target.mkdir(parents=True)
-        (target / "keep.txt").write_text("Preserve me", encoding="utf-8")
-        with self.assertRaisesRegex(h.HarnessError, "existing worktree path"):
-            self.harness.create_worktree("doc-task", "provider-a", "main", "provider-a:session-1")
-        self.assertTrue((target / "keep.txt").is_file())
-        result = h.git(self.repo, "show-ref", "--verify", "refs/heads/agent/provider-a/doc-task", check=False)
-        self.assertNotEqual(result.returncode, 0)
+        linked = h.Harness(self.legacy_checkout())
+        self.assertEqual(linked.task('doc-task')['id'], 'doc-task')
+        with self.assertRaisesRegex(h.HarnessError, 'primary source'):
+            linked.claim('doc-task', 'codex:session-1', 'codex')
+        self.assertIsNone(self.harness.task('doc-task')['lease'])
 
-    def test_worktree_requires_matching_assignment_and_owner(self):
+    def test_other_agent_system_cannot_create_tasks(self):
+        with self.assertRaisesRegex(h.HarnessError, 'Single agent system'):
+            self.harness.create_task('foreign', 'Foreign task', 'document', 'Goal', 'claude', 'HEAD')
+        self.assertFalse(self.harness.task_path('foreign').exists())
+
+    def test_handoff_preserves_inherited_dirty_and_reports_owned_source_changes(self):
+        self.write('modules/document/README.md', 'Inherited user edit\n')
+        self.write('modules/rendering/README.md', 'Unrelated user edit\n')
+        self.write('modules/document/inherited.txt', 'Inherited untracked\n')
         self.create()
-        with self.assertRaisesRegex(h.HarnessError, "not leased"):
-            self.harness.create_worktree("doc-task", "provider-a", "main", "provider-a:session-1")
         self.claim()
-        with self.assertRaisesRegex(h.HarnessError, "provider/base"):
-            self.harness.create_worktree("doc-task", "provider-b", "main", "provider-a:session-1")
+        self.write('modules/document/new.txt', 'Task addition\n')
+        self.write('modules/document/README.md', 'Inherited user edit plus fix\n')
+        packet = self.handoff(head='HEAD')
+        self.assertEqual(packet['changed_paths'], ['modules/document/README.md', 'modules/document/new.txt'])
+        self.assertTrue(packet['uncommitted'])
+        baseline = h.read_json(self.repo / packet['source_baseline'])
+        self.assertIn('modules/document/inherited.txt', baseline['files'])
+        self.assertNotIn('modules/rendering/README.md', baseline['files'])
+        self.assertEqual(self.git('diff', '--cached'), '')
+        self.assertEqual((self.repo / 'modules/rendering/README.md').read_text(), 'Unrelated user edit\n')
+        before = (self.repo / packet['source_baseline']).parent / baseline['files_directory'] / 'modules/document/README.md'
+        self.assertEqual(before.read_text(), 'Inherited user edit\n')
+        self.assertEqual(h.read_json(self.repo / packet['source_snapshot'])['head_oid'], self.git('rev-parse','HEAD'))
+
+    def test_source_handoff_detects_deletions_and_staged_renames(self):
+        self.create()
+        self.claim()
+        self.git('mv', 'modules/document/README.md', 'modules/document/renamed.md')
+        packet = self.handoff(head='HEAD')
+        self.assertEqual(packet['changed_paths'], ['modules/document/README.md', 'modules/document/renamed.md'])
+        self.assertFalse((self.repo / 'modules/document/README.md').exists())
+        self.assertIn('modules/document/renamed.md', self.git('diff','--cached','--name-only'))
+
+    def test_stale_task_base_cannot_claim(self):
+        self.create()
+        self.commit_change()
+        with self.assertRaisesRegex(h.HarnessError, 'base is stale'):
+            self.claim()
+        self.assertIsNone(self.harness.task('doc-task')['lease'])
+
+    def test_root_manifest_source_copy_cannot_collide_with_snapshot_metadata(self):
+        self.write('manifest.json', 'Original source bytes')
+        self.create(paths=['manifest.json'])
+        self.claim()
+        baseline_path = self.repo / self.harness.task('doc-task')['source_baseline']
+        baseline = h.read_json(baseline_path)
+        preserved = baseline_path.parent / baseline['files_directory'] / 'manifest.json'
+        self.assertEqual(preserved.read_text(), 'Original source bytes')
+        self.write('manifest.json', 'Task source bytes')
+        self.assertEqual(self.handoff(head='HEAD')['changed_paths'], ['manifest.json'])
+
+    def test_context_from_legacy_checkout_uses_current_primary_instructions(self):
+        self.create()
+        checkout = self.legacy_checkout()
+        (checkout / 'docs/START.md').write_text('STALE_WORKTREE_SENTINEL', encoding='utf-8')
+        self.write('docs/START.md', 'CURRENT_PRIMARY_SENTINEL')
+        context = h.Harness(checkout).context('doc-task')
+        self.assertIn('CURRENT_PRIMARY_SENTINEL', context)
+        self.assertNotIn('STALE_WORKTREE_SENTINEL', context)
 
     def test_handoff_uses_committed_diff_and_releases_for_review(self):
         self.create()
@@ -275,42 +320,26 @@ class HarnessTests(unittest.TestCase):
         with self.assertRaisesRegex(h.HarnessError, "needs --test"):
             self.handoff(tests=[])
 
-    def test_handoff_requires_clean_registered_worktree_and_matching_head(self):
+    def test_handoff_rejects_non_current_head(self):
         self.create()
         self.claim()
-        created = self.harness.create_worktree("doc-task", "provider-a", "main", "provider-a:session-1")
-        checkout = Path(created["path"])
-        changed = checkout / "modules/document/command.txt"
-        changed.write_text("An owned change\n", encoding="utf-8")
-        with self.assertRaisesRegex(h.HarnessError, "worktree is dirty"):
-            self.handoff()
-        self.git("add", "--", "modules/document/command.txt", root=checkout)
-        self.git("commit", "-m", "Implement task in its worktree", root=checkout)
-        with self.assertRaisesRegex(h.HarnessError, "match the task worktree HEAD"):
-            self.handoff()
-        packet = self.handoff(head=created["branch"])
-        self.assertEqual(packet["changed_paths"], ["modules/document/command.txt"])
+        base = self.git('rev-parse', 'HEAD')
+        self.commit_change()
+        with self.assertRaisesRegex(h.HarnessError, 'match primary HEAD'):
+            self.handoff(head=base)
 
-    def test_cli_handoff_head_resolves_in_task_checkout(self):
+    def test_cli_rejects_legacy_checkout_writes(self):
         self.create()
-        self.claim()
-        created = self.harness.create_worktree("doc-task", "provider-a", "main", "provider-a:session-1")
-        checkout = Path(created["path"])
-        (checkout / "modules/document/command.txt").write_text("Task-only commit\n", encoding="utf-8")
-        self.git("add", "--", "modules/document/command.txt", root=checkout)
-        self.git("commit", "-m", "Implement in linked checkout", root=checkout)
-        expected = self.git("rev-parse", "HEAD", root=checkout)
-        self.assertNotEqual(expected, self.git("rev-parse", "HEAD"))
-        result = subprocess.run([sys_executable(), str(SOURCE), "handoff", "--task-id", "doc-task",
-                                 "--owner", "provider-a:session-1", "--head", "HEAD",
-                                 "--summary", "Task implemented", "--test", "Regression passed"],
-                                cwd=checkout, capture_output=True, text=True, encoding="utf-8", timeout=30)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)["head"]["oid"], expected)
+        checkout = self.legacy_checkout()
+        result = subprocess.run([sys_executable(), str(SOURCE), 'task', 'claim', 'doc-task',
+                                 '--owner', 'codex:session-1', '--provider', 'codex'],
+                                cwd=checkout, capture_output=True, text=True, encoding='utf-8', timeout=30)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn('primary source', result.stderr)
 
     def test_doctor_rejects_corrupt_worktree_assignment(self):
         task = self.create()
-        task["worktree"] = {"path": "../escaped", "branch": "agent/provider-a/doc-task",
+        task["worktree"] = {"path": "../escaped", "branch": "agent/codex/doc-task",
                             "base_oid": task["base"]["oid"]}
         self.write_json(".agent/tasks/doc-task.json", task)
         self.assertIn("worktree path differs", self.harness.doctor()["issues"][0])

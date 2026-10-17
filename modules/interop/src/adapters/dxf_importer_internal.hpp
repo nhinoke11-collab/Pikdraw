@@ -49,7 +49,7 @@ bool ParseSections(std::span<const Pair> pairs, std::optional<int> &units,
 bool ParseEntity(const EntityInfo &entity, double scale,
                  geometry::Path2D &path);
 bool EntityStyle(const EntityInfo &entity, const LayerInfo &layer,
-                 double scale, document::PathObject &object, int &aci);
+                 document::PathObject &object, int &aci);
 bool EntityName(const EntityInfo &entity, size_t ordinal,
                 std::string &source_id);
 

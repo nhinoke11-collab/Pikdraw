@@ -101,6 +101,33 @@
       "purpose": "Vector tools, contour/Boolean, shapes, text operations and editable effects."
     },
     {
+      "id": "automation",
+      "path": "modules/automation",
+      "status": "implemented",
+      "dependencies": ["document", "vector"],
+      "context": ["modules/automation/README.md"],
+      "owned_paths": ["modules/automation"],
+      "purpose": "Typed application service for automation adapters: capability discovery, snapshot inspection, object queries and validated semantic commands. MCP/COM transports and authorization are separate adapters."
+    },
+    {
+      "id": "mcp-server",
+      "path": "apps/mcp-server",
+      "status": "implemented",
+      "dependencies": ["automation"],
+      "context": ["apps/mcp-server/CMakeLists.txt", "apps/mcp-server/README.md"],
+      "owned_paths": ["apps/mcp-server"],
+      "purpose": "MCP stdio sidecar for explicit local PikDraw instance discovery, scoped sessions and semantic document tools."
+    },
+    {
+      "id": "com-server",
+      "path": "apps/com-server",
+      "status": "implemented",
+      "dependencies": ["mcp-server"],
+      "context": ["apps/com-server/CMakeLists.txt", "apps/com-server/README.md"],
+      "owned_paths": ["apps/com-server"],
+      "purpose": "Per-user Windows COM local server exposing late-bound IDispatch methods over the same MCP semantic tools, application sessions and authorization policy."
+    },
+    {
       "id": "raster",
       "path": "modules/raster",
       "status": "planned",
@@ -217,6 +244,7 @@
         "scene3d",
         "interop",
         "plugin-sdk",
+        "automation",
         "workers"
       ],
       "context": [
@@ -241,7 +269,7 @@
         "tooling",
         "tests/harness"
       ],
-      "purpose": "Provider-neutral task board, worktree coordination, context routing and evidence handoffs."
+      "purpose": "Single-source Codex task board, lease coordination, bounded context and source-snapshot handoffs."
     },
     {
       "id": "contracts",

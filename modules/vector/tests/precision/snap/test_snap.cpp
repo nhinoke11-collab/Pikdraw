@@ -1,5 +1,6 @@
 #include "../../test_support.hpp"
 #include "pikdraw/vector/precision/snap/direction_snap.hpp"
+#include "pikdraw/geometry/queries/curve_intersections.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -35,6 +36,79 @@ document::PathObject make_line_object(document::ObjectId object_id,
         segment.kind = document::PathSegmentKind::Line;
         subpath.segments.push_back(segment);
     }
+    path.subpaths.push_back(std::move(subpath));
+    document::PathObject object;
+    object.id = object_id;
+    object.set_authoring_source(std::move(path));
+    return object;
+}
+
+document::PathObject make_arc_circle_object(
+    document::ObjectId object_id, uint64_t id_base,
+    geometry::Point2D center, double radius) {
+    document::EditablePath path;
+    document::EditableSubpath subpath;
+    subpath.id = document::SubpathId{id_base};
+    subpath.closed = true;
+
+    document::PathNode n0;
+    n0.id = document::NodeId{id_base + 1};
+    n0.anchor = {center.x + radius, center.y};
+    subpath.nodes.push_back(n0);
+
+    document::PathNode n1;
+    n1.id = document::NodeId{id_base + 2};
+    n1.anchor = {center.x - radius, center.y};
+    subpath.nodes.push_back(n1);
+
+    document::EditableSegment seg0;
+    seg0.id = document::SegmentId{id_base + 3};
+    seg0.kind = document::PathSegmentKind::EllipticArc;
+    seg0.arc = geometry::EllipticArc{center, {radius, 0.0}, {0.0, radius}, 0.0, 3.141592653589793};
+    subpath.segments.push_back(seg0);
+
+    document::EditableSegment seg1;
+    seg1.id = document::SegmentId{id_base + 4};
+    seg1.kind = document::PathSegmentKind::EllipticArc;
+    seg1.arc = geometry::EllipticArc{center, {radius, 0.0}, {0.0, radius}, 3.141592653589793, 3.141592653589793};
+    subpath.segments.push_back(seg1);
+
+    path.subpaths.push_back(std::move(subpath));
+    document::PathObject object;
+    object.id = object_id;
+    object.set_authoring_source(std::move(path));
+    return object;
+}
+
+document::PathObject make_cubic_object(
+    document::ObjectId object_id, uint64_t id_base,
+    geometry::Point2D p0, geometry::Point2D h0, geometry::Point2D h1, geometry::Point2D p1) {
+    document::EditablePath path;
+    document::EditableSubpath subpath;
+    subpath.id = document::SubpathId{id_base};
+    subpath.closed = false;
+
+    document::PathNode n0;
+    n0.id = document::NodeId{id_base + 1};
+    n0.anchor = p0;
+    n0.mode = document::PathNodeMode::Cusp;
+    n0.has_outgoing_handle = true;
+    n0.outgoing_handle = h0;
+    subpath.nodes.push_back(n0);
+
+    document::PathNode n1;
+    n1.id = document::NodeId{id_base + 2};
+    n1.anchor = p1;
+    n1.mode = document::PathNodeMode::Cusp;
+    n1.has_incoming_handle = true;
+    n1.incoming_handle = h1;
+    subpath.nodes.push_back(n1);
+
+    document::EditableSegment seg;
+    seg.id = document::SegmentId{id_base + 3};
+    seg.kind = document::PathSegmentKind::CubicBezier;
+    subpath.segments.push_back(seg);
+
     path.subpaths.push_back(std::move(subpath));
     document::PathObject object;
     object.id = object_id;
@@ -369,11 +443,131 @@ void large_source_index_benchmark() {
               << " (single run; no percentile claim)\n";
 }
 
+void advanced_osnap_features() {
+    // 1. AnalyticCenter & Quadrant
+    const auto circle_obj = make_arc_circle_object(10, 1000, {100.0, 100.0}, 50.0);
+    auto snapshot_circle = make_snapshot({circle_obj}, 1, 1, "doc-circle");
+    const auto built_circle = SnapSourceIndex::build(snapshot_circle);
+    CHECK(built_circle.status == SnapIndexBuildStatus::Success);
+
+    SnapConfiguration configuration;
+    CHECK(configuration.set_option_enabled(SnapOption::AnalyticCenter, true));
+    CHECK(configuration.set_option_enabled(SnapOption::Quadrant, true));
+    CHECK(configuration.set_option_enabled(SnapOption::Endpoint, false));
+    CHECK(configuration.set_option_enabled(SnapOption::SourceNode, false));
+    auto config = configuration.snapshot();
+    SnapCapabilities capabilities;
+    const auto view = camera(2.0, 2.0, 1);
+    auto stamp = stamp_for(snapshot_circle, view, config, capabilities, 1, "pen");
+
+    // Center query: hover near center (100, 100)
+    auto res_center = built_circle.index->query(stamp, {100.0, 100.5}, view, config, capabilities, active_layer_zero());
+    CHECK(res_center.status == SnapQueryStatus::Success);
+    CHECK(res_center.chosen.has_value());
+    CHECK(res_center.chosen->key.kind == SnapOption::AnalyticCenter);
+    CHECK(res_center.chosen->world_point.x == 100.0);
+    CHECK(res_center.chosen->world_point.y == 100.0);
+
+    // Quadrant query: hover near (100, 150)
+    stamp.query_generation = 2;
+    auto res_quad = built_circle.index->query(stamp, {100.0, 149.0}, view, config, capabilities, active_layer_zero());
+    CHECK(res_quad.status == SnapQueryStatus::Success);
+    CHECK(res_quad.chosen.has_value());
+    CHECK(res_quad.chosen->key.kind == SnapOption::Quadrant);
+    CHECK(std::abs(res_quad.chosen->world_point.x - 100.0) < 1e-3);
+    CHECK(std::abs(res_quad.chosen->world_point.y - 150.0) < 1e-3);
+
+    // 2. BezierTMidpoint & HalfCurveLength
+    const auto cubic_obj = make_cubic_object(20, 2000, {0.0, 0.0}, {5.0, 0.0}, {10.0, 0.0}, {100.0, 60.0});
+    auto snapshot_cubic = make_snapshot({cubic_obj}, 1, 1, "doc-cubic");
+    const auto built_cubic = SnapSourceIndex::build(snapshot_cubic);
+    CHECK(built_cubic.status == SnapIndexBuildStatus::Success);
+
+    // TMid query
+    CHECK(configuration.set_option_enabled(SnapOption::BezierTMidpoint, true));
+    CHECK(configuration.set_option_enabled(SnapOption::HalfCurveLength, false));
+    config = configuration.snapshot();
+    stamp = stamp_for(snapshot_cubic, view, config, capabilities, 10, "pen");
+    // t=0.5 point of the cubic
+    geometry::CubicBezier cb{geometry::Point2D{0.0, 0.0}, geometry::Point2D{5.0, 0.0}, geometry::Point2D{10.0, 0.0}, geometry::Point2D{100.0, 60.0}};
+    geometry::Point2D tmid_pt = cb.point_at(0.5);
+    auto res_tmid = built_cubic.index->query(stamp, {tmid_pt.x, tmid_pt.y + 0.5}, view, config, capabilities, active_layer_zero());
+    CHECK(res_tmid.chosen.has_value());
+    CHECK(res_tmid.chosen->key.kind == SnapOption::BezierTMidpoint);
+    CHECK(std::abs(res_tmid.chosen->world_point.x - tmid_pt.x) < 1e-3);
+    CHECK(std::abs(res_tmid.chosen->world_point.y - tmid_pt.y) < 1e-3);
+
+    // Half length query
+    CHECK(configuration.set_option_enabled(SnapOption::BezierTMidpoint, false));
+    CHECK(configuration.set_option_enabled(SnapOption::HalfCurveLength, true));
+    config = configuration.snapshot();
+    stamp = stamp_for(snapshot_cubic, view, config, capabilities, 11, "pen");
+    auto half_eval = geometry::find_half_curve_length(cb);
+    auto res_half = built_cubic.index->query(stamp, {half_eval.point.x, half_eval.point.y + 0.5}, view, config, capabilities, active_layer_zero());
+    CHECK(res_half.chosen.has_value());
+    CHECK(res_half.chosen->key.kind == SnapOption::HalfCurveLength);
+    CHECK(std::abs(res_half.chosen->world_point.x - half_eval.point.x) < 1e-3);
+    CHECK(std::abs(res_half.chosen->world_point.y - half_eval.point.y) < 1e-3);
+
+    // 3. Nearest
+    CHECK(configuration.set_option_enabled(SnapOption::HalfCurveLength, false));
+    CHECK(configuration.set_option_enabled(SnapOption::Nearest, true));
+    config = configuration.snapshot();
+    stamp = stamp_for(snapshot_cubic, view, config, capabilities, 12, "pen");
+    geometry::Point2D near_target = cb.point_at(0.75);
+    auto res_nearest = built_cubic.index->query(stamp, {near_target.x, near_target.y + 1.0}, view, config, capabilities, active_layer_zero());
+    CHECK(res_nearest.chosen.has_value());
+    CHECK(res_nearest.chosen->key.kind == SnapOption::Nearest);
+    CHECK(std::abs(res_nearest.chosen->parameter_t - 0.75) < 0.1);
+
+    // 4. Intersection
+    auto l1 = make_line_object(30, 3000, {{0.0, 0.0}, {100.0, 100.0}});
+    auto l2 = make_line_object(40, 4000, {{0.0, 30.0}, {100.0, 30.0}});
+    auto snapshot_intersect = make_snapshot({l1, l2}, 1, 1, "doc-intersect");
+    const auto built_intersect = SnapSourceIndex::build(snapshot_intersect);
+    CHECK(configuration.set_option_enabled(SnapOption::Nearest, false));
+    CHECK(configuration.set_option_enabled(SnapOption::Intersection, true));
+    config = configuration.snapshot();
+    stamp = stamp_for(snapshot_intersect, view, config, capabilities, 20, "pen");
+    auto res_int = built_intersect.index->query(stamp, {30.0, 30.5}, view, config, capabilities, active_layer_zero());
+    CHECK(res_int.chosen.has_value());
+    CHECK(res_int.chosen->key.kind == SnapOption::Intersection);
+    CHECK(std::abs(res_int.chosen->world_point.x - 30.0) < 1e-3);
+    CHECK(std::abs(res_int.chosen->world_point.y - 30.0) < 1e-3);
+    CHECK(res_int.chosen->key.source_object_id == 30);
+    CHECK(res_int.chosen->key.secondary_object_id == 40);
+
+    // 5. Perpendicular & Tangent from anchor
+    CHECK(configuration.set_option_enabled(SnapOption::Intersection, false));
+    CHECK(configuration.set_option_enabled(SnapOption::Quadrant, false));
+    CHECK(configuration.set_option_enabled(SnapOption::AnalyticCenter, false));
+    CHECK(configuration.set_option_enabled(SnapOption::Perpendicular, true));
+    config = configuration.snapshot();
+    stamp = stamp_for(snapshot_circle, view, config, capabilities, 30, "pen");
+    auto perp_ctx = active_layer_zero();
+    perp_ctx.external_anchor = geometry::Point2D{100.0, 200.0};
+    auto res_perp = built_circle.index->query(stamp, {100.0, 150.5}, view, config, capabilities, perp_ctx);
+    CHECK(res_perp.chosen.has_value());
+    CHECK(res_perp.chosen->key.kind == SnapOption::Perpendicular);
+    CHECK(std::abs(res_perp.chosen->world_point.x - 100.0) < 1e-3);
+    CHECK(std::abs(res_perp.chosen->world_point.y - 150.0) < 1e-3);
+
+    CHECK(configuration.set_option_enabled(SnapOption::Perpendicular, false));
+    CHECK(configuration.set_option_enabled(SnapOption::Tangent, true));
+    config = configuration.snapshot();
+    stamp = stamp_for(snapshot_circle, view, config, capabilities, 31, "pen");
+    auto res_tan = built_circle.index->query(stamp, {56.7, 125.0}, view, config, capabilities, perp_ctx);
+    CHECK(res_tan.chosen.has_value());
+    CHECK(res_tan.chosen->key.kind == SnapOption::Tangent);
+    CHECK(std::abs(res_tan.chosen->world_point.y - 125.0) < 1.0);
+}
+
 int main() {
     return run([] {
         config_masks_and_presets();
         source_candidates_dip_ties_and_hysteresis();
         grid_stale_and_unsupported_filtering();
         large_source_index_benchmark();
+        advanced_osnap_features();
     });
 }

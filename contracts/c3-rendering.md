@@ -1,7 +1,7 @@
 # Contract C3: Viewport State and Rendering Projection
 
-Version: 1.1.0
-Status: M0 projection invariants remain locked; tool-preview extension proposed pending consumer review
+Version: 1.3.0
+Status: M0 projection invariants remain locked; native Path/Text appearance v1 is implemented with the limits below; broader scopes remain proposed
 Producers: `core/rendering`
 Consumers: `modules/desktop`, `core/document`
 
@@ -58,3 +58,18 @@ The viewport snapshot provides:
 - Snap candidates and anchors remain world/local binary64 values until the renderer subtracts the camera anchor. Screen markers, handles, hit radii, and acquisition/release radii are expressed in DIP and converted using the current device-pixel ratio; they are not model-space tolerances.
 - Preview overlays, tracking lines, snap markers, numeric HUDs, and selection handles are transient. They may be cached only with keys that include their source generations and camera/viewport state; they must never replace source curves or persist as document geometry.
 - A result stamped with an old document, tool, gesture, camera, configuration, or capability generation is discarded before display. UI must not show it as a confirmed snap.
+
+## 6. Native appearance effects (implementation status, extension 1.3)
+
+This section records the renderer contract and current implementation boundary for C9's native basic appearance profile. The software renderer applies it to Path and Text objects with real glyph outlines. It does not certify vendor equivalence or support for group, image, layer, mask, isolation, pass-through, knockout, or source clipping semantics; those remain outside this extension.
+
+- Rendering consumes an immutable document snapshot. Filter evaluation creates transient surfaces and never writes pixels, bounds, caches, or normalized parameters back into the document.
+- The authored pipeline is source fill/stroke on transparent pixels, with their own opacity factors; ordered effect nodes in object-local millimeters; the object affine transform; object opacity once over the entire premultiplied result; the object blend mode against the painter-order backdrop; then viewport clipping. Effect bounds do not replace source geometry bounds used by selection, hit-testing, or production geometry.
+- A Drop Shadow node with a non-Normal shadow blend is backdrop-dependent. It is evaluated as the final enabled effect: blend the tinted shadow branch with the actual painter-order target beneath the object, place the source graphic above that result using the object blend mode, then apply object opacity once to the complete source/shadow composite. Any later enabled node makes that graph invalid; later disabled nodes are ignored. The source order is retained and invalid stacks are rejected rather than silently reordered or flattened.
+- Maintain separate source-geometry, effect-output, and target-clipped bounds. Propagate output bounds through each node in order. Gaussian Blur expands by its declared finite support on each local filter axis. Drop Shadow unions the input with the blurred alpha branch translated by the authored local offset. Convert the actual rounded pixel support and resampling footprint back through the view/object transform conservatively; a broad world cull bound must not omit an output pixel.
+- Culling tests effect-output bounds against the viewport. Thus an object whose source geometry is outside the viewport must still render when its blur or shadow intersects it. An effect is not clipped to the source geometry bounds; transparent samples outside the source are part of the declared input.
+- Damage after an appearance edit is the union of old and new visual-output bounds, clipped only to the render target. Reordering, disabling, deleting, changing a parameter, or changing the object transform invalidates every affected downstream node and target tile. Source-geometry damage remains available separately.
+- Reverse ROI evaluation starts from the requested output region and walks the graph backward: apply inverse object transform, inflate by the blur support, and translate the shadow branch by the negative authored offset before inflating its blur support. Checked arithmetic and conservative rounding are required at every step.
+- A transient surface or cache key includes the document ID/epoch/revision, object and node IDs, node type/schema, enabled state, parameters, order, object transform, viewport scale/DPI, color profile, sampling quality, and job generation wherever those values affect output. A result with an old revision, selection, camera, profile, or job generation is discarded.
+- Compute dimensions, halo, pixel count, byte count, and estimated filter work with checked 64-bit arithmetic before reservation. The software target limits remain 16,384 pixels per side and 8,388,608 pixels total. The Gaussian CPU reference enforces 8,192 pixels per side, 4,194,304 pixels, 256 px maximum sigma, 268,435,456 pixel-taps and 160 MiB scratch; Drop Shadow caps its own peak scratch at 224 MiB. The compositor also preflights cumulative filter work and bounds its reusable output cache to 262,144 pixels. These are per-render request limits, not an aggregate scheduler or a measured RSS guarantee. The current software render path is synchronous; concurrent-job reservation, tiled seam proof, peak process memory and pressure behavior remain unverified.
+- Budget refusal, unsupported transforms, allocation failure, or cancellation returns an explicit incomplete/budget diagnostic. The renderer must not report a fully rendered frame after silently dropping an effect. A downsampled preview carries a preview-quality state and is never reused as final output.

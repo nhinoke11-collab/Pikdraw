@@ -1,10 +1,13 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
-#include "native_canvas_frame.hpp"
 #include "../tools/drawing_tool_controller.hpp"
+#include "../tools/pen_tool_controller.hpp"
+#include "../tools/node_tool_controller.hpp"
+#include "../tools/contour_tool_controller.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
+#include <numbers>
 #include <sstream>
 #include <type_traits>
 #include <utility>
@@ -42,12 +45,6 @@ void draw_outline(HDC dc, const rendering::Camera2D& camera,
     DeleteObject(pen);
 }
 
-geometry::Rect2D bounds_between(const geometry::Point2D& first,
-                                const geometry::Point2D& second) {
-    return {std::min(first.x, second.x), std::min(first.y, second.y),
-            std::abs(second.x - first.x), std::abs(second.y - first.y)};
-}
-
 } // namespace
 
 RECT NativeWindow::canvas_rect(int width, int height) const noexcept {
@@ -76,13 +73,15 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
         return;
 
     auto& camera = root().renderer().camera();
-    const auto snapshot = root().document().current_snapshot();
+    const auto snapshot = workflow().snapshot_for_canvas();
 
     // Check if the canvas bitmap cache needs to be regenerated
     const bool cache_needs_rebuild = !canvas_cache_valid_
         || !cached_canvas_dc_
         || canvas_width != cached_canvas_w_
         || canvas_height != cached_canvas_h_
+        || snapshot != cached_canvas_snapshot_
+        || color_preview_ != cached_canvas_profile_
         || snapshot->revision() != cached_revision_
         || camera.zoom() != cached_zoom_
         || camera.center().x != cached_camera_x_
@@ -104,10 +103,12 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
             cached_canvas_old_bmp_ = SelectObject(cached_canvas_dc_, cached_canvas_bmp_);
         }
 
+        // Ensure backend rasterizer clears with active theme's pasteboard color
+        root().renderer().backend().set_canvas_background(canvas_background_color());
+
         // Fill background of cached canvas
         RECT local_area{0, 0, canvas_width, canvas_height};
-        HBRUSH background = CreateSolidBrush(theme_ == ThemeMode::CyberDark
-            ? RGB(18, 20, 26) : RGB(241, 245, 249));
+        HBRUSH background = CreateSolidBrush(canvas_background_colorref());
         FillRect(cached_canvas_dc_, &local_area, background);
         DeleteObject(background);
 
@@ -153,15 +154,27 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
         const int page_right = static_cast<int>(std::ceil(page_bottom_right.x));
         const int page_bottom = static_cast<int>(std::ceil(page_bottom_right.y));
         HBRUSH shadow = CreateSolidBrush(theme_ == ThemeMode::CyberDark
-            ? RGB(4, 7, 12) : RGB(148, 163, 184));
-        RECT shadow_right{page_right, page_top + 7, page_right + 7, page_bottom + 7};
-        RECT shadow_bottom{page_left + 7, page_bottom, page_right + 7, page_bottom + 7};
+            ? RGB(24, 28, 36) : RGB(148, 163, 184));
+        RECT shadow_right{page_right, page_top + 6, page_right + 6, page_bottom + 6};
+        RECT shadow_bottom{page_left + 6, page_bottom, page_right + 6, page_bottom + 6};
         FillRect(cached_canvas_dc_, &shadow_right, shadow);
         FillRect(cached_canvas_dc_, &shadow_bottom, shadow);
         DeleteObject(shadow);
 
+        // Draw crisp 1px page border so white paper sheet is clearly delimited
+        HPEN page_border = CreatePen(PS_SOLID, 1, theme_ == ThemeMode::CyberDark
+            ? RGB(50, 56, 68) : RGB(203, 213, 225));
+        HGDIOBJ old_pen = SelectObject(cached_canvas_dc_, page_border);
+        HGDIOBJ old_brush = SelectObject(cached_canvas_dc_, GetStockObject(NULL_BRUSH));
+        Rectangle(cached_canvas_dc_, page_left, page_top, page_right + 1, page_bottom + 1);
+        SelectObject(cached_canvas_dc_, old_brush);
+        SelectObject(cached_canvas_dc_, old_pen);
+        DeleteObject(page_border);
+
         // Update cached parameters
         cached_revision_ = snapshot->revision();
+        cached_canvas_snapshot_ = snapshot;
+        cached_canvas_profile_ = color_preview_;
         cached_zoom_ = camera.zoom();
         cached_camera_x_ = camera.center().x;
         cached_camera_y_ = camera.center().y;
@@ -196,7 +209,7 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
                         HDC mem_wash = CreateCompatibleDC(dc);
                         HBITMAP mem_bmp = CreateCompatibleBitmap(dc, 1, 1);
                         HGDIOBJ old_bmp = SelectObject(mem_wash, mem_bmp);
-                        COLORREF wash_col = (theme_ == ThemeMode::CyberDark) ? RGB(18, 20, 26) : RGB(255, 255, 255);
+                        COLORREF wash_col = (theme_ == ThemeMode::CyberDark) ? RGB(68, 72, 80) : RGB(255, 255, 255);
                         SetPixel(mem_wash, 0, 0, wash_col);
                         BLENDFUNCTION bf{};
                         bf.BlendOp = AC_SRC_OVER;
@@ -227,10 +240,32 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
     }
 
     if (is_creating_shape_) {
-        const auto preview = bounds_between(pointer_down_world_, pointer_current_world_);
-        const bool ellipse = active_tool_ == 2;
-        draw_outline(dc, camera, preview, area.left, area.top,
-                     RGB(0, 242, 195), PS_DASH, ellipse);
+        const auto preview = shape_drag_bounds(shape_drag_modifiers_);
+        if (active_tool_ == 9) {
+            const auto center = preview.center();
+            const double radius = std::min(preview.width, preview.height) * 0.5;
+            const double rotation = shape_drag_polygon_rotation(shape_drag_modifiers_) *
+                                    std::numbers::pi / 180.0;
+            std::vector<POINT> vertices;
+            vertices.reserve(static_cast<size_t>(polygon_sides_));
+            for (int side = 0; side < polygon_sides_; ++side) {
+                const double angle = rotation + 2.0 * std::numbers::pi * side / polygon_sides_;
+                const auto screen = camera.world_to_screen({
+                    center.x + radius * std::cos(angle), center.y + radius * std::sin(angle)});
+                vertices.push_back({area.left + static_cast<LONG>(std::lround(screen.x)),
+                                     area.top + static_cast<LONG>(std::lround(screen.y))});
+            }
+            HPEN pen = CreatePen(PS_DASH, 1, RGB(0, 242, 195));
+            const HGDIOBJ old_pen = SelectObject(dc, pen);
+            const HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+            ::Polygon(dc, vertices.data(), static_cast<int>(vertices.size()));
+            SelectObject(dc, old_brush);
+            SelectObject(dc, old_pen);
+            DeleteObject(pen);
+        } else {
+            draw_outline(dc, camera, preview, area.left, area.top,
+                         RGB(0, 242, 195), PS_DASH, active_tool_ == 2);
+        }
     }
 
     if (is_knife_cutting_) {
@@ -403,12 +438,41 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
     }
 
     paint_drawing_overlay(dc);
-    const auto &diagnostics = root().renderer().last_metric().diagnostics;
+    const auto& diagnostics = root().renderer().last_metric().diagnostics;
     const auto errors = std::count_if(diagnostics.begin(), diagnostics.end(),
-        [](const auto &item) { return item.error; });
+        [](const auto& item) { return item.error; });
+    const auto draft = workflow().effect_draft();
+    const auto& selected_ids = root().vector_controller().selection().selected_ids();
+    const bool draft_preview_error = draft && draft->preview_enabled &&
+        std::any_of(diagnostics.begin(), diagnostics.end(), [&](const auto& item) {
+            return item.error &&
+                (item.object_id == document::kInvalidObjectId ||
+                 std::find(selected_ids.begin(), selected_ids.end(), item.object_id) != selected_ids.end());
+        });
+    const bool authored_effect_error = snapshot && std::any_of(
+        diagnostics.begin(), diagnostics.end(), [&](const auto& item) {
+            if (!item.error || item.object_id == document::kInvalidObjectId) return false;
+            const auto object = snapshot->objects().get(item.object_id);
+            if (!object) return false;
+            return std::visit([](const auto &value) {
+                using T = std::decay_t<decltype(value)>;
+                if constexpr (std::is_same_v<T, document::PathObject> ||
+                              std::is_same_v<T, document::TextObject>)
+                    return !value.appearance.effects.empty();
+                return false;
+            }, *object);
+        });
+    const bool effect_render_error = draft_preview_error || authored_effect_error;
     const bool icc_error = color_preview_ && color_preview_->conversion_failure_count() > 0;
     if (errors > 0 || icc_error) {
-        const auto warning = icc_error ? (language_ == UILanguage::Vietnamese
+        const wchar_t* warning = effect_render_error ? (language_ == UILanguage::Vietnamese
+            ? (draft_preview_error
+                ? L"Xem trước hiệu ứng vượt giới hạn dựng hiện tại. Giảm Sigma/lệch hoặc zoom rồi thử lại; bản nguồn chưa đổi."
+                : L"Không thể dựng hiệu ứng trong giới hạn hiện tại. Giảm Sigma/lệch hoặc zoom; dữ liệu nguồn vẫn được giữ.")
+            : (draft_preview_error
+                ? L"Effect preview exceeds current render limits. Reduce Sigma/offset or zoom and retry; source is unchanged."
+                : L"An effect exceeds current render limits. Reduce Sigma/offset or zoom; source data is preserved."))
+            : icc_error ? (language_ == UILanguage::Vietnamese
             ? L"ICC preview có lỗi; một số màu đang được hiển thị gần đúng."
             : L"ICC preview failed for some colors; approximate preview is active.")
             : language_ == UILanguage::Vietnamese
@@ -416,8 +480,18 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
             : L"Some objects could not be displayed. Source data is preserved.";
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, RGB(205, 125, 45));
-        TextOutW(dc, area.left + 12, area.bottom - 24, warning, static_cast<int>(wcslen(warning)));
+        TextOutW(dc, area.left + 12, area.bottom - 24, warning,
+                 static_cast<int>(wcslen(warning)));
+        if (effect_render_error)
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? (draft_preview_error
+                    ? "Preview vượt giới hạn render · giảm Sigma/lệch hoặc zoom · tài liệu chưa đổi"
+                    : "Hiệu ứng vượt giới hạn render · giảm Sigma/lệch hoặc zoom · nguồn được giữ")
+                : (draft_preview_error
+                    ? "Preview exceeds render limits · reduce Sigma/offset or zoom · document unchanged"
+                    : "Effect exceeds render limits · reduce Sigma/offset or zoom · source preserved");
     }
+
     RestoreDC(dc, saved);
 
     // Paint Breadcrumb Bar at the top of canvas when in isolation mode
@@ -492,6 +566,658 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
 
     paint_canvas_guidelines(dc, width, height);
     paint_canvas_rulers(dc, width, height);
+    paint_selection_overlay(dc);
+}
+
+void NativeWindow::paint_drawing_overlay(HDC dc) {
+    if (active_tool_ == 8 && pen_tool_ && pen_tool_->active())
+        paint_pen_overlay(dc);
+    if (active_tool_ == 11 && node_tool_ && node_tool_->active())
+        paint_node_canvas_overlay(dc, width_, height_);
+    if (active_tool_ == 12 && contour_tool_ && contour_tool_->active())
+        paint_contour_canvas_overlay(dc, canvas_rect(width_, height_));
+    if (!drawing_tool_) return;
+    const auto state = drawing_tool_->visual_state();
+    const RECT area = canvas_rect(width_, height_);
+    const auto& camera = root().renderer().camera();
+    const auto screen = [&](geometry::Point2D point) {
+        const auto local = camera.world_to_screen(point);
+        return POINT{area.left + static_cast<LONG>(std::lround(local.x)),
+                     area.top + static_cast<LONG>(std::lround(local.y))};
+    };
+    if (state.active && active_tool_ != 8) {
+        HPEN source_pen = CreatePen(PS_SOLID, 2, RGB(0, 242, 195));
+        HGDIOBJ old_pen = SelectObject(dc, source_pen);
+        for (size_t index = 1; index < state.points.size(); ++index) {
+            const auto first = screen(state.points[index - 1]);
+            const auto second = screen(state.points[index]);
+            MoveToEx(dc, first.x, first.y, nullptr);
+            LineTo(dc, second.x, second.y);
+        }
+        if (state.candidate && !state.points.empty()) {
+            HPEN preview_pen = CreatePen(PS_DASH, 1, RGB(0, 196, 255));
+            SelectObject(dc, preview_pen);
+            const auto start = screen(state.points.back());
+            const auto end = screen(*state.candidate);
+            MoveToEx(dc, start.x, start.y, nullptr);
+            LineTo(dc, end.x, end.y);
+            SelectObject(dc, source_pen);
+            DeleteObject(preview_pen);
+        }
+        SelectObject(dc, old_pen);
+        DeleteObject(source_pen);
+        HBRUSH anchor_brush = CreateSolidBrush(RGB(0, 242, 195));
+        HGDIOBJ old_brush = SelectObject(dc, anchor_brush);
+        for (const auto point : state.points) {
+            const auto marker = screen(point);
+            Ellipse(dc, marker.x - 3, marker.y - 3, marker.x + 4, marker.y + 4);
+        }
+        SelectObject(dc, old_brush);
+        DeleteObject(anchor_brush);
+        if (state.candidate) {
+            const auto marker = screen(*state.candidate);
+            HPEN marker_pen = CreatePen(PS_SOLID, 2,
+                state.snap_kind ? RGB(255, 190, 70) : RGB(0, 196, 255));
+            HGDIOBJ previous_pen = SelectObject(dc, marker_pen);
+            HGDIOBJ previous_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+            Ellipse(dc, marker.x - 6, marker.y - 6, marker.x + 7, marker.y + 7);
+            MoveToEx(dc, marker.x - 9, marker.y, nullptr);
+            LineTo(dc, marker.x + 10, marker.y);
+            MoveToEx(dc, marker.x, marker.y - 9, nullptr);
+            LineTo(dc, marker.x, marker.y + 10);
+            SelectObject(dc, previous_brush);
+            SelectObject(dc, previous_pen);
+            DeleteObject(marker_pen);
+        }
+
+        if (state.candidate && !state.points.empty()) {
+            const auto base_pt = state.points.back();
+            const auto cand_pt = *state.candidate;
+            const double delta_x = cand_pt.x - base_pt.x;
+            const double delta_y = cand_pt.y - base_pt.y;
+            const double cand_dist = std::hypot(delta_x, delta_y);
+            if (cand_dist > 0.1) {
+                constexpr double kRadToDeg = 180.0 / 3.14159265358979323846;
+                constexpr double kDegToRad = 3.14159265358979323846 / 180.0;
+                double raw_deg = std::atan2(delta_y, delta_x) * kRadToDeg;
+                if (raw_deg < 0.0) raw_deg += 360.0;
+                double snap_deg = std::round(raw_deg / 15.0) * 15.0;
+                if (snap_deg >= 360.0) snap_deg -= 360.0;
+                double diff = std::abs(raw_deg - snap_deg);
+                if (diff > 180.0) diff = 360.0 - diff;
+                const bool is_snapped = (diff <= 0.5) || (active_num_field_ == NumericFieldId::PenAngle) || !pen_numeric_angle_.empty();
+
+                if (is_snapped) {
+                    const double ray_deg = (active_num_field_ == NumericFieldId::PenAngle || !pen_numeric_angle_.empty()) ? raw_deg : snap_deg;
+                    const double rad = ray_deg * kDegToRad;
+                    const geometry::Point2D ray_dir{std::cos(rad), std::sin(rad)};
+                    const auto ray_s_world = base_pt - geometry::Point2D{ray_dir.x * 200.0, ray_dir.y * 200.0};
+                    const auto ray_e_world = base_pt + geometry::Point2D{ray_dir.x * 3000.0, ray_dir.y * 3000.0};
+                    const POINT rs = screen(ray_s_world);
+                    const POINT re = screen(ray_e_world);
+                    HPEN track_pen = CreatePen(PS_DOT, 1, theme_ == ThemeMode::CyberDark ? RGB(56, 189, 248) : RGB(14, 165, 233));
+                    HGDIOBJ old_p = SelectObject(dc, track_pen);
+                    MoveToEx(dc, rs.x, rs.y, nullptr);
+                    LineTo(dc, re.x, re.y);
+                    SelectObject(dc, old_p);
+                    DeleteObject(track_pen);
+                }
+
+                const POINT end = screen(cand_pt);
+                const int hud_w = 176;
+                const int hud_h = 24;
+                int bx = end.x + 16;
+                int by = end.y - 28;
+                if (bx + hud_w > area.right - 8) bx = end.x - hud_w - 16;
+                if (bx < area.left + 8) bx = area.left + 8;
+                if (by < area.top + 8) by = end.y + 16;
+                if (by + hud_h > area.bottom - 8) by = area.bottom - hud_h - 8;
+
+                RECT badge_rc{bx, by, bx + hud_w, by + hud_h};
+                HBRUSH badge_bg = CreateSolidBrush(theme_ == ThemeMode::CyberDark ? RGB(15, 23, 42) : RGB(248, 250, 252));
+                HPEN badge_pen = CreatePen(PS_SOLID, 1, theme_ == ThemeMode::CyberDark ? RGB(56, 189, 248) : RGB(14, 165, 233));
+                HGDIOBJ old_bg = SelectObject(dc, badge_bg);
+                HGDIOBJ old_pn = SelectObject(dc, badge_pen);
+                RoundRect(dc, badge_rc.left, badge_rc.top, badge_rc.right, badge_rc.bottom, 4, 4);
+                SelectObject(dc, old_bg);
+                SelectObject(dc, old_pn);
+                DeleteObject(badge_bg);
+                DeleteObject(badge_pen);
+
+                const bool focus_len = (active_num_field_ == NumericFieldId::PenLength);
+                const bool focus_ang = (active_num_field_ == NumericFieldId::PenAngle);
+
+                RECT rc_len{bx + 3, by + 2, bx + 85, by + hud_h - 2};
+                RECT rc_ang{bx + 89, by + 2, bx + hud_w - 3, by + hud_h - 2};
+
+                if (focus_len || focus_ang) {
+                    RECT focused_rc = focus_len ? rc_len : rc_ang;
+                    HPEN focus_pen = CreatePen(PS_SOLID, 1, RGB(0, 242, 195));
+                    HGDIOBJ p = SelectObject(dc, focus_pen);
+                    HGDIOBJ b = SelectObject(dc, GetStockObject(NULL_BRUSH));
+                    RoundRect(dc, focused_rc.left, focused_rc.top, focused_rc.right, focused_rc.bottom, 2, 2);
+                    SelectObject(dc, b);
+                    SelectObject(dc, p);
+                    DeleteObject(focus_pen);
+                }
+
+                std::wostringstream wlen, wang;
+                if (focus_len) {
+                    wlen << L"L: " << utf8_to_wide(num_input_buffer_) << L"|";
+                } else if (!pen_numeric_length_.empty()) {
+                    wlen << L"L: " << utf8_to_wide(pen_numeric_length_);
+                } else {
+                    wlen << L"L: " << std::fixed << std::setprecision(1) << cand_dist;
+                }
+
+                if (focus_ang) {
+                    wang << L"∠ " << utf8_to_wide(num_input_buffer_) << L"°|";
+                } else if (!pen_numeric_angle_.empty()) {
+                    wang << L"∠ " << utf8_to_wide(pen_numeric_angle_) << L"°";
+                } else {
+                    wang << L"∠ " << std::fixed << std::setprecision(0) << (is_snapped ? snap_deg : raw_deg) << L"°";
+                }
+
+                HFONT hud_font = font_secondary_ ? font_secondary_ : font_be_vietnam_;
+                HGDIOBJ old_f = SelectObject(dc, hud_font);
+                SetBkMode(dc, TRANSPARENT);
+
+                SetTextColor(dc, focus_len ? RGB(0, 242, 195) : (theme_ == ThemeMode::CyberDark ? RGB(226, 232, 240) : RGB(15, 23, 42)));
+                const auto slen = wlen.str();
+                DrawTextW(dc, slen.c_str(), -1, &rc_len, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+                SetTextColor(dc, focus_ang ? RGB(0, 242, 195) : (theme_ == ThemeMode::CyberDark ? RGB(226, 232, 240) : RGB(15, 23, 42)));
+                const auto sang = wang.str();
+                DrawTextW(dc, sang.c_str(), -1, &rc_ang, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+                SelectObject(dc, old_f);
+            }
+        }
+
+        std::wostringstream hud;
+        const auto kind = state.kind == vector::tools::line::PathDrawingKind::Line
+            ? L"LINE" : L"POLYLINE";
+        hud << kind << L"  ·  " << state.points.size() << L" nodes";
+        if (state.candidate) {
+            hud << L"  ·  X " << std::fixed << std::setprecision(2)
+                << state.candidate->x << L" mm  Y " << state.candidate->y << L" mm";
+            if (!state.points.empty()) {
+                const auto delta = *state.candidate - state.points.back();
+                hud << L"  ·  L " << std::hypot(delta.x, delta.y) << L" mm"
+                    << L"  ∠ " << std::atan2(delta.y, delta.x) *
+                        180.0 / 3.14159265358979323846 << L"°";
+            }
+        }
+        if (!state.numeric_entry.empty())
+            hud << L"  ·  = " << NativeWindow::utf8_to_wide(state.numeric_entry);
+        const auto config = state.snap_config;
+        hud << L"  ·  Snap " << (config.master_enabled ? L"ON" : L"OFF")
+            << L"  ·  " << (config.direction.mode == vector::precision::snap::DirectionMode::Free
+                ? L"Free" : config.direction.mode == vector::precision::snap::DirectionMode::Ortho
+                ? L"Ortho" : L"Polar");
+        if (state.snap_index_failed) hud << L"  ·  Snap unavailable; raw input active";
+        else if (!state.snap_index_ready) hud << L"  ·  Index building";
+        RECT text{area.left + 264, area.top + 10, area.right - 12, area.top + 36};
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, RGB(0, 242, 195));
+        const auto line = hud.str();
+        DrawTextW(dc, line.c_str(), -1, &text,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        const wchar_t* hint = language_ == UILanguage::Vietnamese
+            ? L"Nhấp: đặt điểm   Enter: kết thúc Polyline   Backspace: lùi điểm   Esc: hoàn tất/hủy"
+            : L"Click: place point   Enter: finish Polyline   Backspace: undo point   Esc: finish/cancel";
+        RECT hint_rect{area.left + 264, area.top + 34, area.right - 12, area.top + 54};
+        SetTextColor(dc, RGB(150, 170, 190));
+        DrawTextW(dc, hint, -1, &hint_rect,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+    }
+
+    if (drawing_tool_->snap_panel_open_value()) {
+        const int left = area.left + 12, top = area.top + 12;
+        RECT panel{left, top, left + 250, top + 264};
+        HBRUSH panel_brush = CreateSolidBrush(theme_ == ThemeMode::CyberDark
+            ? RGB(13, 22, 34) : RGB(250, 252, 255));
+        HPEN panel_pen = CreatePen(PS_SOLID, 1, RGB(0, 196, 170));
+        HGDIOBJ previous_brush = SelectObject(dc, panel_brush);
+        HGDIOBJ previous_pen = SelectObject(dc, panel_pen);
+        RoundRect(dc, panel.left, panel.top, panel.right, panel.bottom, 8, 8);
+        SelectObject(dc, previous_brush);
+        SelectObject(dc, previous_pen);
+        DeleteObject(panel_brush);
+        DeleteObject(panel_pen);
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, theme_ == ThemeMode::CyberDark ? RGB(0, 242, 195) : RGB(0, 120, 95));
+        RECT title{left + 12, top + 5, left + 238, top + 27};
+        DrawTextW(dc, language_ == UILanguage::Vietnamese ? L"BẮT ĐIỂM & HƯỚNG"
+                                                          : L"SNAP & DIRECTION",
+                  -1, &title, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        const auto config = state.snap_config;
+        const COLORREF text_color = theme_ == ThemeMode::CyberDark
+            ? RGB(220, 230, 240) : RGB(30, 41, 59);
+        SetTextColor(dc, text_color);
+        const auto option = [&](int y, const wchar_t* label, bool enabled) {
+            RECT row{left + 10, top + y, left + 240, top + y + 22};
+            HBRUSH row_brush = CreateSolidBrush(enabled ? RGB(18, 55, 60)
+                : (theme_ == ThemeMode::CyberDark ? RGB(20, 31, 45) : RGB(235, 240, 246)));
+            FillRect(dc, &row, row_brush);
+            DeleteObject(row_brush);
+            SetTextColor(dc, enabled ? RGB(0, 242, 195) : text_color);
+            DrawTextW(dc, label, -1, &row, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
+                      DT_NOPREFIX | DT_LEFT);
+        };
+        option(32, language_ == UILanguage::Vietnamese ? L"Bắt điểm tổng" : L"Master snapping",
+               config.master_enabled);
+        option(58, L"Endpoint", config.options[static_cast<size_t>(vector::precision::snap::SnapOption::Endpoint)]);
+        option(82, L"Source node", config.options[static_cast<size_t>(vector::precision::snap::SnapOption::SourceNode)]);
+        option(106, L"Line midpoint", config.options[static_cast<size_t>(vector::precision::snap::SnapOption::LineMidpoint)]);
+        option(130, L"Grid", config.options[static_cast<size_t>(vector::precision::snap::SnapOption::Grid)]);
+        const wchar_t* modes[] = {L"Free", L"Ortho", L"Polar"};
+        for (int index = 0; index < 3; ++index) {
+            RECT mode{left + 10 + index * 78, top + 156, left + 84 + index * 78, top + 178};
+            const auto selected = static_cast<int>(config.direction.mode) == index;
+            HBRUSH mode_brush = CreateSolidBrush(selected ? RGB(0, 125, 112)
+                : (theme_ == ThemeMode::CyberDark ? RGB(20, 31, 45) : RGB(235, 240, 246)));
+            FillRect(dc, &mode, mode_brush);
+            DeleteObject(mode_brush);
+            SetTextColor(dc, selected ? RGB(255, 255, 255) : text_color);
+            DrawTextW(dc, modes[index], -1, &mode, DT_CENTER | DT_VCENTER |
+                      DT_SINGLELINE | DT_NOPREFIX);
+        }
+        std::wostringstream polar;
+        polar << L"Polar step: " << config.direction.polar.step_degrees << L"°  · click to cycle";
+        RECT polar_row{left + 10, top + 182, left + 240, top + 204};
+        SetTextColor(dc, text_color);
+        DrawTextW(dc, polar.str().c_str(), -1, &polar_row,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        std::wostringstream profile_label;
+        profile_label << L"Profile: " << NativeWindow::utf8_to_wide(state.profile)
+            << L" · Shift lock "
+            << (state.profile == "Corel" ? 15.0 : state.profile == "Custom"
+                ? config.direction.polar.step_degrees : 45.0) << L"° · click";
+        RECT profile{left + 10, top + 207, left + 240, top + 229};
+        SetTextColor(dc, text_color);
+        DrawTextW(dc, profile_label.str().c_str(), -1, &profile,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        RECT unsupported{left + 10, top + 232, left + 240, top + 256};
+        SetTextColor(dc, RGB(150, 160, 175));
+        DrawTextW(dc, language_ == UILanguage::Vietnamese
+            ? L"Giao, tiếp tuyến, Bezier: chưa khả dụng"
+            : L"Intersection, tangent, Bezier: unavailable",
+            -1, &unsupported, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
+            DT_END_ELLIPSIS | DT_NOPREFIX);
+    }
+}
+
+void NativeWindow::paint_pen_overlay(HDC dc) {
+    if (!pen_tool_ || !pen_tool_->active()) return;
+    const RECT area = canvas_rect(width_, height_);
+    const auto& camera = root().renderer().camera();
+    const auto screen = [&](geometry::Point2D source_point) {
+        const auto world = pen_tool_->world_point_from_source(source_point);
+        const auto local = camera.world_to_screen(world);
+        return POINT{area.left + static_cast<LONG>(std::lround(local.x)),
+                     area.top + static_cast<LONG>(std::lround(local.y))};
+    };
+    const auto screen_world = [&](geometry::Point2D world_point) {
+        const auto local = camera.world_to_screen(world_point);
+        return POINT{area.left + static_cast<LONG>(std::lround(local.x)),
+                     area.top + static_cast<LONG>(std::lround(local.y))};
+    };
+    const auto& draft = pen_tool_->draft();
+    const COLORREF ink = theme_ == ThemeMode::CyberDark ? RGB(0, 242, 195) : RGB(0, 135, 106);
+    const COLORREF preview_color = theme_ == ThemeMode::CyberDark ? RGB(0, 196, 255) : RGB(0, 112, 190);
+    const int saved = SaveDC(dc);
+    SetBkMode(dc, TRANSPARENT);
+
+    HPEN path_pen = CreatePen(PS_SOLID, 2, ink);
+    HGDIOBJ previous_pen = SelectObject(dc, path_pen);
+    HGDIOBJ previous_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+    for (size_t i = 0; i < draft.segments.size() && i + 1 < draft.nodes.size(); ++i) {
+        const auto& start_node = draft.nodes[i];
+        const auto& end_node = draft.nodes[i + 1];
+        const POINT start = screen(start_node.anchor);
+        const POINT end = screen(end_node.anchor);
+        if (draft.segments[i].kind == document::PathSegmentKind::CubicBezier) {
+            const auto out = start_node.has_outgoing_handle
+                ? start_node.outgoing_handle : start_node.anchor;
+            const auto in = end_node.has_incoming_handle
+                ? end_node.incoming_handle : end_node.anchor;
+            POINT curve[4]{start, screen(out), screen(in), end};
+            PolyBezier(dc, curve, 4);
+        } else {
+            MoveToEx(dc, start.x, start.y, nullptr);
+            LineTo(dc, end.x, end.y);
+        }
+    }
+
+    std::optional<geometry::Point2D> preview_anchor;
+    std::optional<geometry::Point2D> preview_incoming;
+    std::optional<geometry::Point2D> preview_outgoing;
+    bool preview_world_coordinates = false;
+    if (const auto& pointer = pen_tool_->pointer_preview()) {
+        preview_anchor = pointer->anchor;
+        preview_incoming = pointer->incoming_handle;
+        preview_outgoing = pointer->outgoing_handle;
+        preview_world_coordinates = true;
+    } else if (pen_tool_->candidate()) {
+        preview_anchor = pen_tool_->candidate()->anchor;
+        preview_incoming = pen_tool_->candidate()->incoming_handle;
+        preview_outgoing = pen_tool_->candidate()->outgoing_handle;
+    }
+
+    if (!draft.nodes.empty() && preview_anchor) {
+        const auto& start_node = draft.nodes.back();
+        const POINT start = screen(start_node.anchor);
+        const POINT end = preview_world_coordinates ? screen_world(*preview_anchor)
+                                                   : screen(*preview_anchor);
+        const auto start_control = start_node.has_outgoing_handle
+            ? start_node.outgoing_handle : start_node.anchor;
+        const auto preview_control = preview_incoming.value_or(*preview_anchor);
+        const bool curved = start_node.has_outgoing_handle || preview_incoming.has_value();
+        HPEN candidate_pen = CreatePen(PS_DASH, 1, preview_color);
+        SelectObject(dc, candidate_pen);
+        if (curved) {
+            POINT curve[4]{start, screen(start_control),
+                preview_world_coordinates ? screen_world(preview_control) : screen(preview_control), end};
+            PolyBezier(dc, curve, 4);
+        } else {
+            MoveToEx(dc, start.x, start.y, nullptr);
+            LineTo(dc, end.x, end.y);
+        }
+        SelectObject(dc, path_pen);
+        DeleteObject(candidate_pen);
+
+        const auto base_pt = pen_tool_->world_point_from_source(start_node.anchor);
+        const auto cand_pt = preview_world_coordinates ? *preview_anchor : pen_tool_->world_point_from_source(*preview_anchor);
+        const double delta_x = cand_pt.x - base_pt.x;
+        const double delta_y = cand_pt.y - base_pt.y;
+        const double cand_dist = std::hypot(delta_x, delta_y);
+        if (!curved && cand_dist > 0.1) {
+            constexpr double kRadToDeg = 180.0 / 3.14159265358979323846;
+            constexpr double kDegToRad = 3.14159265358979323846 / 180.0;
+            double raw_deg = std::atan2(delta_y, delta_x) * kRadToDeg;
+            if (raw_deg < 0.0) raw_deg += 360.0;
+            double snap_deg = std::round(raw_deg / 15.0) * 15.0;
+            if (snap_deg >= 360.0) snap_deg -= 360.0;
+            double diff = std::abs(raw_deg - snap_deg);
+            if (diff > 180.0) diff = 360.0 - diff;
+            const bool is_snapped = (diff <= 0.5) || (active_num_field_ == NumericFieldId::PenAngle) || !pen_numeric_angle_.empty();
+
+            if (is_snapped) {
+                const double ray_deg = (active_num_field_ == NumericFieldId::PenAngle || !pen_numeric_angle_.empty()) ? raw_deg : snap_deg;
+                const double rad = ray_deg * kDegToRad;
+                const geometry::Point2D ray_dir{std::cos(rad), std::sin(rad)};
+                const auto ray_s_world = base_pt - geometry::Point2D{ray_dir.x * 200.0, ray_dir.y * 200.0};
+                const auto ray_e_world = base_pt + geometry::Point2D{ray_dir.x * 3000.0, ray_dir.y * 3000.0};
+                const POINT rs = screen_world(ray_s_world);
+                const POINT re = screen_world(ray_e_world);
+                HPEN track_pen = CreatePen(PS_DOT, 1, theme_ == ThemeMode::CyberDark ? RGB(56, 189, 248) : RGB(14, 165, 233));
+                HGDIOBJ old_p = SelectObject(dc, track_pen);
+                MoveToEx(dc, rs.x, rs.y, nullptr);
+                LineTo(dc, re.x, re.y);
+                SelectObject(dc, old_p);
+                DeleteObject(track_pen);
+            }
+
+            const int hud_w = 176;
+            const int hud_h = 24;
+            int bx = end.x + 16;
+            int by = end.y - 28;
+            if (bx + hud_w > area.right - 8) bx = end.x - hud_w - 16;
+            if (bx < area.left + 8) bx = area.left + 8;
+            if (by < area.top + 8) by = end.y + 16;
+            if (by + hud_h > area.bottom - 8) by = area.bottom - hud_h - 8;
+
+            RECT badge_rc{bx, by, bx + hud_w, by + hud_h};
+            HBRUSH badge_bg = CreateSolidBrush(theme_ == ThemeMode::CyberDark ? RGB(15, 23, 42) : RGB(248, 250, 252));
+            HPEN badge_pen = CreatePen(PS_SOLID, 1, theme_ == ThemeMode::CyberDark ? RGB(56, 189, 248) : RGB(14, 165, 233));
+            HGDIOBJ old_bg = SelectObject(dc, badge_bg);
+            HGDIOBJ old_pn = SelectObject(dc, badge_pen);
+            RoundRect(dc, badge_rc.left, badge_rc.top, badge_rc.right, badge_rc.bottom, 4, 4);
+            SelectObject(dc, old_bg);
+            SelectObject(dc, old_pn);
+            DeleteObject(badge_bg);
+            DeleteObject(badge_pen);
+
+            const bool focus_len = (active_num_field_ == NumericFieldId::PenLength);
+            const bool focus_ang = (active_num_field_ == NumericFieldId::PenAngle);
+
+            RECT rc_len{bx + 3, by + 2, bx + 85, by + hud_h - 2};
+            RECT rc_ang{bx + 89, by + 2, bx + hud_w - 3, by + hud_h - 2};
+
+            if (focus_len || focus_ang) {
+                RECT focused_rc = focus_len ? rc_len : rc_ang;
+                HPEN focus_pen = CreatePen(PS_SOLID, 1, RGB(0, 242, 195));
+                HGDIOBJ p = SelectObject(dc, focus_pen);
+                HGDIOBJ b = SelectObject(dc, GetStockObject(NULL_BRUSH));
+                RoundRect(dc, focused_rc.left, focused_rc.top, focused_rc.right, focused_rc.bottom, 2, 2);
+                SelectObject(dc, b);
+                SelectObject(dc, p);
+                DeleteObject(focus_pen);
+            }
+
+            std::wostringstream wlen, wang;
+            if (focus_len) {
+                wlen << L"L: " << utf8_to_wide(num_input_buffer_) << L"|";
+            } else if (!pen_numeric_length_.empty()) {
+                wlen << L"L: " << utf8_to_wide(pen_numeric_length_);
+            } else {
+                wlen << L"L: " << std::fixed << std::setprecision(1) << cand_dist;
+            }
+
+            if (focus_ang) {
+                wang << L"∠ " << utf8_to_wide(num_input_buffer_) << L"°|";
+            } else if (!pen_numeric_angle_.empty()) {
+                wang << L"∠ " << utf8_to_wide(pen_numeric_angle_) << L"°";
+            } else {
+                wang << L"∠ " << std::fixed << std::setprecision(0) << (is_snapped ? snap_deg : raw_deg) << L"°";
+            }
+
+            HFONT hud_font = font_secondary_ ? font_secondary_ : font_be_vietnam_;
+            HGDIOBJ old_f = SelectObject(dc, hud_font);
+            SetBkMode(dc, TRANSPARENT);
+
+            SetTextColor(dc, focus_len ? RGB(0, 242, 195) : (theme_ == ThemeMode::CyberDark ? RGB(226, 232, 240) : RGB(15, 23, 42)));
+            const auto slen = wlen.str();
+            DrawTextW(dc, slen.c_str(), -1, &rc_len, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+            SetTextColor(dc, focus_ang ? RGB(0, 242, 195) : (theme_ == ThemeMode::CyberDark ? RGB(226, 232, 240) : RGB(15, 23, 42)));
+            const auto sang = wang.str();
+            DrawTextW(dc, sang.c_str(), -1, &rc_ang, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+            SelectObject(dc, old_f);
+        }
+    }
+
+    HBRUSH anchor_brush = CreateSolidBrush(ink);
+    SelectObject(dc, anchor_brush);
+    for (const auto& node : draft.nodes) {
+        const POINT point = screen(node.anchor);
+        Rectangle(dc, point.x - 3, point.y - 3, point.x + 4, point.y + 4);
+    }
+    if (preview_anchor) {
+        const POINT point = preview_world_coordinates ? screen_world(*preview_anchor)
+                                                     : screen(*preview_anchor);
+        HBRUSH preview_brush = CreateSolidBrush(preview_color);
+        SelectObject(dc, preview_brush);
+        Ellipse(dc, point.x - 5, point.y - 5, point.x + 6, point.y + 6);
+        if (preview_incoming || preview_outgoing) {
+            const auto draw_handle = [&](std::optional<geometry::Point2D> handle) {
+                if (!handle) return;
+                const POINT hp = preview_world_coordinates ? screen_world(*handle) : screen(*handle);
+                MoveToEx(dc, point.x, point.y, nullptr);
+                LineTo(dc, hp.x, hp.y);
+                Ellipse(dc, hp.x - 3, hp.y - 3, hp.x + 4, hp.y + 4);
+            };
+            HPEN handle_pen = CreatePen(PS_SOLID, 1, RGB(245, 158, 11));
+            SelectObject(dc, handle_pen);
+            draw_handle(preview_incoming);
+            draw_handle(preview_outgoing);
+            SelectObject(dc, path_pen);
+            DeleteObject(handle_pen);
+        }
+        SelectObject(dc, anchor_brush);
+        DeleteObject(preview_brush);
+    }
+
+    SelectObject(dc, previous_brush);
+    SelectObject(dc, previous_pen);
+    DeleteObject(anchor_brush);
+    DeleteObject(path_pen);
+
+    std::wostringstream hud;
+    hud << L"PEN  ·  " << draft.nodes.size() << L" nodes";
+    if (pen_tool_->resuming()) hud << L"  ·  RESUME";
+    if (drawing_tool_ && drawing_tool_->active()) {
+        const auto snap_state = drawing_tool_->visual_state();
+        hud << L"  ·  Snap " << (snap_state.snap_config.master_enabled ? L"ON" : L"OFF");
+        if (snap_state.snap_index_failed) hud << L" (unavailable; raw input)";
+        else if (!snap_state.snap_index_ready) hud << L" (index building)";
+        else if (snap_state.snap_kind) hud << L" (target acquired)";
+    }
+    if (!pen_numeric_buffer_.empty())
+        hud << L"  ·  " << NativeWindow::utf8_to_wide(pen_numeric_buffer_);
+    RECT hud_rect{area.left + 12, area.top + 10, area.right - 12, area.top + 34};
+    SetTextColor(dc, ink);
+    const auto hud_text = hud.str();
+    DrawTextW(dc, hud_text.c_str(), -1, &hud_rect,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+    const wchar_t* hint = language_ == UILanguage::Vietnamese
+        ? L"Nhấp đặt điểm · kéo tạo cong · Ctrl/Shift khóa theo hồ sơ · Alt tách · Enter kết thúc · Shift+Esc hủy"
+        : L"Click point · drag for curve · Ctrl/Shift constrain by profile · Alt separates · Enter finish · Shift+Esc cancel";
+    RECT hint_rect{area.left + 12, area.top + 34, area.right - 12, area.top + 54};
+    SetTextColor(dc, RGB(150, 170, 190));
+    DrawTextW(dc, hint, -1, &hint_rect,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+    RestoreDC(dc, saved);
+}
+
+void NativeWindow::paint_node_canvas_overlay(HDC dc, int width, int height) {
+    if (!node_tool_ || !node_tool_->active()) return;
+    const auto target_id = node_tool_->target_object();
+    if (target_id == document::kInvalidObjectId) return;
+    const auto snapshot = root().document().current_snapshot();
+    if (!snapshot) return;
+    const auto obj_opt = snapshot->get_object(target_id);
+    if (!obj_opt || !std::holds_alternative<document::PathObject>(*obj_opt)) return;
+    const auto& po = std::get<document::PathObject>(*obj_opt);
+    if (!po.authoring_source) return;
+
+    const RECT area = canvas_rect(width, height);
+    const auto& camera = root().renderer().camera();
+    const auto screen = [&](geometry::Point2D pt) {
+        const auto local = camera.world_to_screen(pt);
+        return POINT{area.left + static_cast<LONG>(std::lround(local.x)),
+                     area.top + static_cast<LONG>(std::lround(local.y))};
+    };
+
+    const int saved = SaveDC(dc);
+    SetBkMode(dc, TRANSPARENT);
+
+    // 1. Draw handles for selected nodes
+    const COLORREF handle_color = RGB(0, 210, 210);
+    HPEN handle_pen = CreatePen(PS_DOT, 1, handle_color);
+    HBRUSH handle_brush = CreateSolidBrush(handle_color);
+    SelectObject(dc, handle_pen);
+    SelectObject(dc, handle_brush);
+
+    for (const auto& sub : po.authoring_source->subpaths) {
+        for (const auto& node : sub.nodes) {
+            if (node_tool_->is_node_selected(sub.id, node.id)) {
+                const POINT a = screen(node.anchor);
+                if (node.has_incoming_handle) {
+                    const POINT h = screen(node.incoming_handle);
+                    MoveToEx(dc, a.x, a.y, nullptr);
+                    LineTo(dc, h.x, h.y);
+                    Ellipse(dc, h.x - 4, h.y - 4, h.x + 5, h.y + 5);
+                }
+                if (node.has_outgoing_handle) {
+                    const POINT h = screen(node.outgoing_handle);
+                    MoveToEx(dc, a.x, a.y, nullptr);
+                    LineTo(dc, h.x, h.y);
+                    Ellipse(dc, h.x - 4, h.y - 4, h.x + 5, h.y + 5);
+                }
+            }
+        }
+    }
+    DeleteObject(handle_pen);
+    DeleteObject(handle_brush);
+
+    // 2. Draw nodes
+    HPEN node_pen = CreatePen(PS_SOLID, 1, RGB(15, 23, 42));
+    HBRUSH sel_brush = CreateSolidBrush(RGB(0, 242, 195));
+    HBRUSH unsel_brush = CreateSolidBrush(RGB(255, 255, 255));
+
+    for (const auto& sub : po.authoring_source->subpaths) {
+        for (const auto& node : sub.nodes) {
+            const POINT pt = screen(node.anchor);
+            const bool is_sel = node_tool_->is_node_selected(sub.id, node.id);
+            SelectObject(dc, node_pen);
+            SelectObject(dc, is_sel ? sel_brush : unsel_brush);
+            Rectangle(dc, pt.x - 4, pt.y - 4, pt.x + 5, pt.y + 5);
+        }
+    }
+    DeleteObject(node_pen);
+    DeleteObject(sel_brush);
+    DeleteObject(unsel_brush);
+
+    // 3. Draw marquee rectangle if active
+    if (node_tool_->is_marquee()) {
+        const auto rect = node_tool_->marquee_rect();
+        const POINT p1 = screen({rect.x, rect.y + rect.height});
+        const POINT p2 = screen({rect.x + rect.width, rect.y});
+        HPEN marquee_pen = CreatePen(PS_DOT, 1, RGB(0, 196, 255));
+        SelectObject(dc, marquee_pen);
+        SelectObject(dc, GetStockObject(NULL_BRUSH));
+        Rectangle(dc, std::min(p1.x, p2.x), std::min(p1.y, p2.y),
+                      std::max(p1.x, p2.x), std::max(p1.y, p2.y));
+        DeleteObject(marquee_pen);
+    }
+
+    RestoreDC(dc, saved);
+}
+
+void NativeWindow::paint_contour_canvas_overlay(HDC dc, const RECT& area) {
+    if (!contour_tool_ || !contour_tool_->active() || !contour_tool_->has_preview())
+        return;
+
+    const auto& res = contour_tool_->preview_result();
+    if (res.steps.empty()) return;
+
+    const auto& camera = root().renderer().camera();
+    const auto screen = [&](geometry::Point2D pt) {
+        const auto local = camera.world_to_screen(pt);
+        return POINT{area.left + static_cast<LONG>(std::lround(local.x)),
+                     area.top + static_cast<LONG>(std::lround(local.y))};
+    };
+
+    const int saved = SaveDC(dc);
+    SetBkMode(dc, TRANSPARENT);
+
+    // Cyan dashed pen for contour preview loops
+    HPEN preview_pen = CreatePen(PS_DASH, 1, RGB(0, 242, 195));
+    HGDIOBJ old_pen = SelectObject(dc, preview_pen);
+
+    for (const auto& step : res.steps) {
+        for (const auto& loop : step.loops) {
+            POINT start_pt{0, 0};
+            for (const auto& el : loop.elements()) {
+                if (el.verb == geometry::PathVerb::MoveTo) {
+                    start_pt = screen(el.pt);
+                    MoveToEx(dc, start_pt.x, start_pt.y, nullptr);
+                } else if (el.verb == geometry::PathVerb::LineTo) {
+                    const POINT p = screen(el.pt);
+                    LineTo(dc, p.x, p.y);
+                } else if (el.verb == geometry::PathVerb::Close) {
+                    LineTo(dc, start_pt.x, start_pt.y);
+                }
+            }
+        }
+    }
+
+    SelectObject(dc, old_pen);
+    DeleteObject(preview_pen);
+    RestoreDC(dc, saved);
 }
 
 void NativeWindow::paint_canvas_guidelines(HDC dc, int width, int height) {
@@ -656,175 +1382,6 @@ void NativeWindow::paint_canvas_guidelines(HDC dc, int width, int height) {
     RestoreDC(dc, saved);
 }
 
-void NativeWindow::paint_drawing_overlay(HDC dc) {
-    if (!drawing_tool_) return;
-    const auto state = drawing_tool_->visual_state();
-    const RECT area = canvas_rect(width_, height_);
-    const auto& camera = root().renderer().camera();
-    const auto screen = [&](geometry::Point2D point) {
-        const auto local = camera.world_to_screen(point);
-        return POINT{area.left + static_cast<LONG>(std::lround(local.x)),
-                     area.top + static_cast<LONG>(std::lround(local.y))};
-    };
-    if (state.active) {
-        HPEN source_pen = CreatePen(PS_SOLID, 2, RGB(0, 242, 195));
-        HGDIOBJ old_pen = SelectObject(dc, source_pen);
-        for (size_t index = 1; index < state.points.size(); ++index) {
-            const auto first = screen(state.points[index - 1]);
-            const auto second = screen(state.points[index]);
-            MoveToEx(dc, first.x, first.y, nullptr);
-            LineTo(dc, second.x, second.y);
-        }
-        if (state.candidate && !state.points.empty()) {
-            HPEN preview_pen = CreatePen(PS_DASH, 1, RGB(0, 196, 255));
-            SelectObject(dc, preview_pen);
-            const auto start = screen(state.points.back());
-            const auto end = screen(*state.candidate);
-            MoveToEx(dc, start.x, start.y, nullptr);
-            LineTo(dc, end.x, end.y);
-            SelectObject(dc, source_pen);
-            DeleteObject(preview_pen);
-        }
-        SelectObject(dc, old_pen);
-        DeleteObject(source_pen);
-        HBRUSH anchor_brush = CreateSolidBrush(RGB(0, 242, 195));
-        HGDIOBJ old_brush = SelectObject(dc, anchor_brush);
-        for (const auto point : state.points) {
-            const auto marker = screen(point);
-            Ellipse(dc, marker.x - 3, marker.y - 3, marker.x + 4, marker.y + 4);
-        }
-        SelectObject(dc, old_brush);
-        DeleteObject(anchor_brush);
-        if (state.candidate) {
-            const auto marker = screen(*state.candidate);
-            HPEN marker_pen = CreatePen(PS_SOLID, 2,
-                state.snap_kind ? RGB(255, 190, 70) : RGB(0, 196, 255));
-            HGDIOBJ previous_pen = SelectObject(dc, marker_pen);
-            HGDIOBJ previous_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-            Ellipse(dc, marker.x - 6, marker.y - 6, marker.x + 7, marker.y + 7);
-            MoveToEx(dc, marker.x - 9, marker.y, nullptr);
-            LineTo(dc, marker.x + 10, marker.y);
-            MoveToEx(dc, marker.x, marker.y - 9, nullptr);
-            LineTo(dc, marker.x, marker.y + 10);
-            SelectObject(dc, previous_brush);
-            SelectObject(dc, previous_pen);
-            DeleteObject(marker_pen);
-        }
-
-        std::wostringstream hud;
-        const auto kind = state.kind == vector::tools::line::PathDrawingKind::Line
-            ? L"LINE" : L"POLYLINE";
-        hud << kind << L"  ·  " << state.points.size() << L" nodes";
-        if (state.candidate) {
-            hud << L"  ·  X " << std::fixed << std::setprecision(2)
-                << state.candidate->x << L" mm  Y " << state.candidate->y << L" mm";
-            if (!state.points.empty()) {
-                const auto delta = *state.candidate - state.points.back();
-                hud << L"  ·  L " << std::hypot(delta.x, delta.y) << L" mm"
-                    << L"  ∠ " << std::atan2(delta.y, delta.x) *
-                        180.0 / 3.14159265358979323846 << L"°";
-            }
-        }
-        if (!state.numeric_entry.empty())
-            hud << L"  ·  = " << NativeWindow::utf8_to_wide(state.numeric_entry);
-        const auto config = state.snap_config;
-        hud << L"  ·  Snap " << (config.master_enabled ? L"ON" : L"OFF")
-            << L"  ·  " << (config.direction.mode == vector::precision::snap::DirectionMode::Free
-                ? L"Free" : config.direction.mode == vector::precision::snap::DirectionMode::Ortho
-                ? L"Ortho" : L"Polar");
-        if (state.snap_index_failed) hud << L"  ·  Snap unavailable; raw input active";
-        else if (!state.snap_index_ready) hud << L"  ·  Index building";
-        RECT text{area.left + 264, area.top + 10, area.right - 12, area.top + 36};
-        SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, RGB(0, 242, 195));
-        const auto line = hud.str();
-        DrawTextW(dc, line.c_str(), -1, &text,
-                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-        const wchar_t* hint = language_ == UILanguage::Vietnamese
-            ? L"Nhấp: đặt điểm   Enter: kết thúc Polyline   Backspace: lùi điểm   Esc: hoàn tất/hủy"
-            : L"Click: place point   Enter: finish Polyline   Backspace: undo point   Esc: finish/cancel";
-        RECT hint_rect{area.left + 264, area.top + 34, area.right - 12, area.top + 54};
-        SetTextColor(dc, RGB(150, 170, 190));
-        DrawTextW(dc, hint, -1, &hint_rect,
-                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-    }
-
-    if (drawing_tool_->snap_panel_open_value()) {
-        const int left = area.left + 12, top = area.top + 12;
-        RECT panel{left, top, left + 250, top + 264};
-        HBRUSH panel_brush = CreateSolidBrush(theme_ == ThemeMode::CyberDark
-            ? RGB(13, 22, 34) : RGB(250, 252, 255));
-        HPEN panel_pen = CreatePen(PS_SOLID, 1, RGB(0, 196, 170));
-        HGDIOBJ previous_brush = SelectObject(dc, panel_brush);
-        HGDIOBJ previous_pen = SelectObject(dc, panel_pen);
-        RoundRect(dc, panel.left, panel.top, panel.right, panel.bottom, 8, 8);
-        SelectObject(dc, previous_brush);
-        SelectObject(dc, previous_pen);
-        DeleteObject(panel_brush);
-        DeleteObject(panel_pen);
-        SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, theme_ == ThemeMode::CyberDark ? RGB(0, 242, 195) : RGB(0, 120, 95));
-        RECT title{left + 12, top + 5, left + 238, top + 27};
-        DrawTextW(dc, language_ == UILanguage::Vietnamese ? L"BẮT ĐIỂM & HƯỚNG"
-                                                          : L"SNAP & DIRECTION",
-                  -1, &title, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        const auto config = state.snap_config;
-        const COLORREF text_color = theme_ == ThemeMode::CyberDark
-            ? RGB(220, 230, 240) : RGB(30, 41, 59);
-        SetTextColor(dc, text_color);
-        const auto option = [&](int y, const wchar_t* label, bool enabled) {
-            RECT row{left + 10, top + y, left + 240, top + y + 22};
-            HBRUSH row_brush = CreateSolidBrush(enabled ? RGB(18, 55, 60)
-                : (theme_ == ThemeMode::CyberDark ? RGB(20, 31, 45) : RGB(235, 240, 246)));
-            FillRect(dc, &row, row_brush);
-            DeleteObject(row_brush);
-            SetTextColor(dc, enabled ? RGB(0, 242, 195) : text_color);
-            DrawTextW(dc, label, -1, &row, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
-                      DT_NOPREFIX | DT_LEFT);
-        };
-        option(32, language_ == UILanguage::Vietnamese ? L"Bắt điểm tổng" : L"Master snapping",
-               config.master_enabled);
-        option(58, L"Endpoint", config.options[static_cast<size_t>(vector::precision::snap::SnapOption::Endpoint)]);
-        option(82, L"Source node", config.options[static_cast<size_t>(vector::precision::snap::SnapOption::SourceNode)]);
-        option(106, L"Line midpoint", config.options[static_cast<size_t>(vector::precision::snap::SnapOption::LineMidpoint)]);
-        option(130, L"Grid", config.options[static_cast<size_t>(vector::precision::snap::SnapOption::Grid)]);
-        const wchar_t* modes[] = {L"Free", L"Ortho", L"Polar"};
-        for (int index = 0; index < 3; ++index) {
-            RECT mode{left + 10 + index * 78, top + 156, left + 84 + index * 78, top + 178};
-            const auto selected = static_cast<int>(config.direction.mode) == index;
-            HBRUSH mode_brush = CreateSolidBrush(selected ? RGB(0, 125, 112)
-                : (theme_ == ThemeMode::CyberDark ? RGB(20, 31, 45) : RGB(235, 240, 246)));
-            FillRect(dc, &mode, mode_brush);
-            DeleteObject(mode_brush);
-            SetTextColor(dc, selected ? RGB(255, 255, 255) : text_color);
-            DrawTextW(dc, modes[index], -1, &mode, DT_CENTER | DT_VCENTER |
-                      DT_SINGLELINE | DT_NOPREFIX);
-        }
-        std::wostringstream polar;
-        polar << L"Polar step: " << config.direction.polar.step_degrees << L"°  · click to cycle";
-        RECT polar_row{left + 10, top + 182, left + 240, top + 204};
-        SetTextColor(dc, text_color);
-        DrawTextW(dc, polar.str().c_str(), -1, &polar_row,
-                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        std::wostringstream profile_label;
-        profile_label << L"Profile: " << NativeWindow::utf8_to_wide(state.profile)
-            << L" · Shift lock "
-            << (state.profile == "Corel" ? 15.0 : state.profile == "Custom"
-                ? config.direction.polar.step_degrees : 45.0) << L"° · click";
-        RECT profile{left + 10, top + 207, left + 240, top + 229};
-        SetTextColor(dc, text_color);
-        DrawTextW(dc, profile_label.str().c_str(), -1, &profile,
-            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        RECT unsupported{left + 10, top + 232, left + 240, top + 256};
-        SetTextColor(dc, RGB(150, 160, 175));
-        DrawTextW(dc, language_ == UILanguage::Vietnamese
-            ? L"Giao, tiếp tuyến, Bezier: chưa khả dụng"
-            : L"Intersection, tangent, Bezier: unavailable",
-            -1, &unsupported, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
-            DT_END_ELLIPSIS | DT_NOPREFIX);
-    }
-}
-
 void NativeWindow::paint_canvas_rulers(HDC dc, int width, int height) {
     const RECT area = canvas_rect(width, height);
     const auto& camera = root().renderer().camera();
@@ -945,7 +1502,6 @@ void NativeWindow::paint_canvas_rulers(HDC dc, int width, int height) {
     SelectObject(dc, old_pen);
     DeleteObject(line);
 }
-
 
 #endif
 

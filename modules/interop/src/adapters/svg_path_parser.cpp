@@ -70,7 +70,18 @@ bool AddPathElement(geometry::Path2D& path, const geometry::Transform2D& transfo
             path.cubic_to(first.x, first.y, second.x, second.y, p.x, p.y); return true;
         }
         case SvgPathVerb::Close: path.close(); return true;
-        case SvgPathVerb::Arc: (void)flags; return false;
+        case SvgPathVerb::Arc: {
+            const auto p = point(0);
+            const double scale_x = std::hypot(transform.a, transform.b);
+            const double scale_y = std::hypot(transform.c, transform.d);
+            const double rx = values[2] * (scale_x > 0.0 ? scale_x : 1.0);
+            const double ry = values[3] * (scale_y > 0.0 ? scale_y : 1.0);
+            const double rot_deg = values[4];
+            const bool large_arc = (flags & 1) != 0;
+            const bool sweep = (flags & 2) != 0;
+            path.arc_to(rx, ry, rot_deg, large_arc, sweep, p.x, p.y);
+            return true;
+        }
     }
     return false;
 }
@@ -103,12 +114,13 @@ bool ParseSvgPath(std::string_view data, const geometry::Transform2D& transform,
             x = start_x; y = start_y; previous = 'Z'; command = 0;
             continue;
         }
-        if (upper == 'A' || (upper != 'M' && upper != 'L' && upper != 'H' && upper != 'V' &&
-                             upper != 'C' && upper != 'S' && upper != 'Q' && upper != 'T')) return false;
+        if (upper != 'A' && upper != 'M' && upper != 'L' && upper != 'H' && upper != 'V' &&
+            upper != 'C' && upper != 'S' && upper != 'Q' && upper != 'T') return false;
         size_t sets = 0;
         while (cursor.MoreNumbers()) {
             std::array<double, 9> values{};
             SvgPathVerb verb = SvgPathVerb::Line;
+            uint8_t flags = 0;
             double nx = x, ny = y;
             if (upper == 'M' || upper == 'L' || upper == 'T') {
                 if (!cursor.Next(nx) || !cursor.Next(ny)) return false;
@@ -153,10 +165,21 @@ bool ParseSvgPath(std::string_view data, const geometry::Transform2D& transform,
                 values[0] = nx; values[1] = ny; values[2] = c1x; values[3] = c1y;
                 values[4] = c2x; values[5] = c2y; verb = SvgPathVerb::Cubic;
                 previous_cx = c2x; previous_cy = c2y;
+            } else if (upper == 'A') {
+                double rx = 0, ry = 0, rot = 0, large = 0, sweep = 0;
+                if (!cursor.Next(rx) || !cursor.Next(ry) || !cursor.Next(rot) ||
+                    !cursor.Next(large) || !cursor.Next(sweep) ||
+                    !cursor.Next(nx) || !cursor.Next(ny)) return false;
+                if (relative) { nx += x; ny += y; }
+                values[0] = nx; values[1] = ny;
+                values[2] = std::abs(rx); values[3] = std::abs(ry);
+                values[4] = rot;
+                flags = static_cast<uint8_t>((large != 0 ? 1 : 0) | (sweep != 0 ? 2 : 0));
+                verb = SvgPathVerb::Arc;
             }
             for (double value : values) if (!std::isfinite(value) || std::abs(value) > 1.0e9) return false;
             if (!has_move && verb != SvgPathVerb::Move) return false;
-            if (!AddPathElement(output, transform, verb, values, 0, maximum)) return false;
+            if (!AddPathElement(output, transform, verb, values, flags, maximum)) return false;
             x = nx; y = ny; previous = upper; ++sets; ++elements;
             if (upper == 'M' && sets == 1) command = relative ? 'l' : 'L';
         }

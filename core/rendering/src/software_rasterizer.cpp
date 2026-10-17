@@ -1,7 +1,10 @@
 #include "pikdraw/rendering/software_rasterizer.hpp"
 #include "pikdraw/typography/layout/glyph_outline.hpp"
+#include "effects/object_compositor.hpp"
 #include "raster/path_raster.hpp"
+#include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <exception>
 
 namespace pikdraw::rendering {
@@ -33,12 +36,24 @@ bool render_page(const document::Page &page, const Camera2D &camera,
 }
 bool render_object(const document::ObjectVariant &variant,
                    const Camera2D &camera, PixelBufferTarget &target,
-                   [[maybe_unused]] RenderMetric &metric, const color::IccPreview *preview) {
+                   RenderMetric &metric, const color::IccPreview *preview) {
   return std::visit(
       [&](const auto &object) -> bool {
         using T = std::decay_t<decltype(object)>;
         if constexpr (std::is_same_v<T, document::PathObject>) {
-          return raster::paint(object, camera, target, preview);
+          size_t gaussian_scratch_capacity_bytes = 0;
+          size_t shadow_scratch_capacity_bytes = 0;
+          const bool rendered = effects::render_path_with_appearance(
+              object, object.appearance, camera, target, preview,
+              &gaussian_scratch_capacity_bytes,
+              &shadow_scratch_capacity_bytes);
+          metric.peak_gaussian_blur_scratch_capacity_bytes = std::max(
+              metric.peak_gaussian_blur_scratch_capacity_bytes,
+              gaussian_scratch_capacity_bytes);
+          metric.peak_drop_shadow_scratch_capacity_bytes = std::max(
+              metric.peak_drop_shadow_scratch_capacity_bytes,
+              shadow_scratch_capacity_bytes);
+          return rendered;
         } else if constexpr (std::is_same_v<T, document::TextObject>) {
       // Enabled only when a genuine platform outline backend is compiled in.
 #ifdef PIKDRAW_TYPOGRAPHY_REAL_OUTLINES
@@ -60,7 +75,19 @@ bool render_object(const document::ObjectVariant &variant,
                                  geometry::Transform2D::scale(1, -1);
             outlines.fill = object.fill;
             outlines.has_stroke = false;
-            return raster::paint(outlines, camera, target, preview);
+            size_t gaussian_scratch_capacity_bytes = 0;
+            size_t shadow_scratch_capacity_bytes = 0;
+            const bool rendered = effects::render_path_with_appearance(
+                outlines, object.appearance, camera, target, preview,
+                &gaussian_scratch_capacity_bytes,
+                &shadow_scratch_capacity_bytes);
+            metric.peak_gaussian_blur_scratch_capacity_bytes = std::max(
+                metric.peak_gaussian_blur_scratch_capacity_bytes,
+                gaussian_scratch_capacity_bytes);
+            metric.peak_drop_shadow_scratch_capacity_bytes = std::max(
+                metric.peak_drop_shadow_scratch_capacity_bytes,
+                shadow_scratch_capacity_bytes);
+            return rendered;
           } catch (const std::exception &) {
             return false;
           }
@@ -101,8 +128,12 @@ bool SoftwareRasterizer::render(const document::DocumentSnapshot &snapshot,
   target.clear(background_.r, background_.g, background_.b, background_.a);
   if (!render_page(snapshot.page(), camera, target))
     return fail("Invalid/unsupported page projection");
+  // Match the compositor's rounded local filter support. Keep one extra world
+  // pixel for target pixel-center sampling after the affine bounds mapping.
+  const double culling_margin_world_mm = 1.0 / camera.zoom();
   const auto visible = SpatialCuller::query_visible_refs(
-      snapshot, camera.visible_world_bounds());
+      snapshot, camera.visible_world_bounds(), camera.zoom(),
+      culling_margin_world_mm);
   bool success = true;
   for (const auto &item : visible) {
     if (render_object(*item.object, camera, target, metric, preview_.get()))

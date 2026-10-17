@@ -12,7 +12,7 @@ namespace pikdraw::desktop {
 #ifdef _WIN32
 namespace {
 
-std::string wide_to_utf8(const wchar_t* value) {
+[[maybe_unused]] std::string wide_to_utf8(const wchar_t* value) {
     if (!value || !*value)
         return {};
     const int size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value, -1,

@@ -96,30 +96,25 @@ To enable rapid UI iteration without long recompilations:
 
 ---
 
-## 4. Visual Design Tokens & Shell Geometry Contract
+## 4. UI organization and visual guidance (documentation update 2026-10-16)
 
-All UI components and QSS stylesheets in `apps/desktop/` must adhere to the 2026 canonical design reference: [docs/architecture/ui-reference/ui_design_2026.html](../docs/architecture/ui-reference/ui_design_2026.html).
+The design authority is [ADR 0008](../docs/decisions/0008-editor-ui-organization.md),
+[UI/UX standard](../docs/design/ui-ux-standard.md) and [workspace layout](../docs/architecture/workspace-layout.md).
+The former mandatory Cyber HTML palette, fonts and fixed-pixel shell table are superseded as visual guidance.
+They are not new document/plugin/IPC fields; this documentation update does not change runtime tokens or geometry storage.
 
-- **Shell Dimensions**:
-  - `topbar_height`: 38px
-  - `context_ribbon_height`: 34px
-  - `tool_strip_width`: 48px – 56px
-  - `inspector_dock_width`: 280px – 320px
-  - `status_bar_height`: 26px
-- **Cyber Dark Color Tokens**:
-  - `color_bg_app`: `#070b10`
-  - `color_bg_header`: `#0c131d`
-  - `color_bg_ribbon`: `#0e1622`
-  - `color_bg_dock`: `#0c131d`
-  - `color_border_tech`: `rgba(255, 255, 255, 0.08)` / `#1d2636`
-  - `color_accent_cyber`: `#00f2c3` (hover: `#00d2aa`, light: `#00a884`, dim: `rgba(0, 242, 195, 0.12)`)
-  - `color_text_primary`: `#e2e8f0` / `#ffffff`
-  - `color_text_muted`: `rgba(255, 255, 255, 0.6)`
-  - `canvas_grid_dot`: `rgba(255, 255, 255, 0.14)` on `#070c12`
-- **Typography**:
-  - `font_family_ui`: `Plus Jakarta Sans`, `Segoe UI`, sans-serif
-  - `font_family_numeric`: `JetBrains Mono`, monospace (with tabular figures)
+Before UI implementation, complete the [feature UI template](../docs/design/feature-ui-template.md): primary menu,
+action IDs, toolbar/toolbox placement, contextual property bar, Properties sections, field scopes/states,
+SVG icons, concise labels, tooltip/focus help, status hints and usage help. Equivalent entry points share
+actions and values; opening a panel remains distinct from editing document properties.
+Use the workspace's DIP-based density guidance and the app's shared theme resources, not per-feature styling.
+Historical HTML/SVG mockups are references only and are not evidence of a working native UI.
 
+This is a design/manual-review policy update. Action IDs/version, localization bindings, modifier precedence,
+document/source units and sections 1–3/5 remain unchanged. No runtime adoption or automated UX checker is claimed;
+implementation and any machine-consumed token/API change require their own scope, consumer review and validation.
+
+---
 
 ## 5. Drawing actions, snap controls, and modifier profiles (extension 1.1)
 

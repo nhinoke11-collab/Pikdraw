@@ -58,6 +58,8 @@ struct SnapCandidateKey {
     SnapOption kind{SnapOption::Endpoint};
     std::optional<document::ObjectId> source_object_id;
     std::optional<uint64_t> source_node_or_segment_id;
+    std::optional<document::ObjectId> secondary_object_id;
+    std::optional<uint64_t> secondary_element_id;
     std::optional<GridCellKey> grid_cell;
     friend bool operator==(const SnapCandidateKey&, const SnapCandidateKey&) = default;
 };
@@ -65,6 +67,7 @@ struct SnapCandidateKey {
 struct SnapCandidate {
     SnapCandidateKey key;
     double parameter_t{0.0};
+    double secondary_parameter_t{0.0};
     geometry::Point2D world_point;
     uint64_t source_revision{0};
     double distance_dip{0.0};
@@ -97,6 +100,7 @@ struct SnapQueryContext {
     std::optional<SnapAcquisitionState> previous_acquisition;
     // When supplied, rejects obsolete async query stamps before visiting geometry.
     std::optional<SnapQueryStamp> current_stamp;
+    std::optional<geometry::Point2D> external_anchor;
     size_t max_entries_examined{100000};
     size_t max_results{8192};
 };

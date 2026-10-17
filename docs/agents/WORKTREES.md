@@ -1,50 +1,44 @@
-# Worktree cho nhóm agent
+# Một source gốc và di trú worktree cũ
 
-Git worktree tách filesystem và branch; các task dùng chung bảng điều phối ở checkout chính.
-Root .git/config, hooks và registry worktree vẫn là Git state dùng chung. Không dùng worktree như sandbox bảo mật.
+## Workflow hiện hành
 
-## Tạo nhiệm vụ
-Các lệnh dưới đây là mẫu thao tác cho nhiệm vụ được giao; `main` cần có commit foundation.
+Từ 16/10/2026, mọi tính năng/fix/review dùng source gốc
+`C:/Users/CK ART STAGE/Downloads/PikDraw` và hệ thống Codex duy nhất.
+Không tạo worktree/clone/checkout/branch task mới; không đổi branch dùng chung khi đang có phiên hoạt động.
+`worktree create` của harness bị vô hiệu hóa. `worktree list` chỉ đọc inventory cũ.
+Không thực hiện implementation từ `.worktrees` hoặc dùng harness cũ trong đó.
 
-```sh
-python tooling/agent_harness.py task create vector-offset --title "Contour chỉnh lại được" --module vector --goal "Prototype contour có undo, giữ biên dạng gốc" --provider codex --base main
-python tooling/agent_harness.py task claim vector-offset --owner codex-session-01 --provider codex
-python tooling/agent_harness.py worktree create --task-id vector-offset --provider codex --owner codex-session-01 --base main
-python tooling/agent_harness.py context --task-id vector-offset
+```powershell
+.\tooling\pikdraw.ps1 task create vector-offset --title 'Contour chỉnh lại được' --module vector --goal 'Contour có undo, giữ biên dạng gốc' --provider codex --base HEAD
+.\tooling\pikdraw.ps1 task claim vector-offset --owner codex-session-01 --provider codex
+.\tooling\pikdraw.ps1 context --task-id vector-offset
 ```
 
-Branch: `agent/<provider>/<task>`. Checkout: `.worktrees/<provider>-<task>`.
-Provider là nhãn định tuyến, không gọi dịch vụ AI. Owner/session phải duy nhất.
-Mỗi agent làm trong đường dẫn worktree trả về; task board vẫn được tìm từ Git common-dir.
+Ví dụ chỉ áp dụng khi task đúng yêu cầu và chưa tồn tại. Claim trước sửa tạo source_baseline.
+Owned paths/lease vẫn bắt buộc để tránh các phiên ghi cùng file; task riêng cho shared contracts.
+Handoff snapshot ghi nhận cả thay đổi chưa commit, không cần commit để chuyển review.
+Một source không tạo sandbox: agent vẫn phải tuân scope và review actual diff.
 
-## Sở hữu file
-Owned paths mặc định từ module registry. Dùng `task create --path` khi nhiệm vụ cần phạm vi khác
-đã thống nhất; đó không phải quyền sửa module khác tùy ý.
-Không gộp nhiều module không liên quan vào một task. Contract dùng chung được coordinator giao riêng.
-Module instructions nằm cạnh code; các quy tắc kiến trúc chung nằm tại root.
+## Di trú lần lượt `.worktrees`
 
-Harness ngăn claim chồng lấn, nhưng hiện chưa có OS sandbox chặn ghi file ngoài phạm vi.
-Reviewer kiểm tra diff/owned paths trước tích hợp. Không sửa file của task khác.
+Chỉ coordinator làm việc này, từng worktree một, sau khi docs/harness được cập nhật.
+Quy trình không đồng nghĩa cho phép chép nguyên cây cũ đè source mới.
 
-Lease không tự hết hạn hoặc cho takeover theo thời gian. Coordinator cần xác nhận task đã dừng trước release; giữ checkout và uncommitted files để task có thể tiếp tục. Các checkout đã chuẩn bị từ base cũ cần đồng bộ/review integration và contract revision trước nhận implementation, không dùng base cũ như nguồn kiến trúc mới nhất.
+1. Kiểm tra worktree/task không còn writer đang chạy; ghi absolute path, branch, HEAD, merge-base và trạng thái tracked/untracked/ignored. Không chiếm lease theo thời gian.
+2. Giữ baseline source gốc (working files, staged/unstaged patch và hash). Sao lưu thay đổi worktree, untracked và ignored cần thiết, bao gồm evidence/customer files cần giữ ở nơi cục bộ phù hợp. Giữ branch/commit làm mốc phục hồi; không đưa bí mật/binary vào Git.
+3. So sánh base/branch/current source để xác định thay đổi đã có và phần còn thiếu. Merge có chọn lọc; xử lý conflict theo semantics, giữ source mới và local edits. Không thay tài liệu hiện hành bằng quy tắc cũ.
+4. Kiểm actual diff/owned paths, dependency/consumer tests liên quan trên source gốc. Ghi evidence từng worktree; thiếu hoặc conflict thì giữ nguyên worktree và next action.
+5. Chỉ khi **đã đồng bộ và kiểm chứng**, xác minh lại absolute path nằm trực tiếp dưới `.worktrees`, checkout không đổi từ inventory và dữ liệu cần giữ còn đủ; dùng `git worktree remove` đúng path. Không dùng force để bỏ dirty/untracked hoặc dữ liệu chưa được kiểm kê.
+6. Xóa ngay worktree vừa đạt bước 5, cập nhật task/handoff thành migrated/removed với bằng chứng. Không tuyên bố migration hoàn tất khi mới backup hoặc archive. Giữ branch/history cho phục hồi; không tự xóa branch.
 
-## Bàn giao và tích hợp
-Commit thay đổi trong branch task; ghi evidence và xuất handoff theo CLI `handoff --help`.
-Reviewer làm trong checkout riêng và đánh giá kết quả, không chỉ lời báo cáo.
-Integrator dùng cherry-pick/merge sau kiểm tra contract, tests và diff.
-Chỉ integrator cập nhật docs/project-state.json cho trạng thái đã tích hợp.
+Nếu Git remove từ chối do dirty, locked hoặc ignored files chưa xử lý, bảo toàn cây và giải quyết
+nguyên nhân; không recursive-delete hoặc dùng force để vượt kiểm tra.
+Metadata phục hồi chỉ do coordinator thực hiện sau khi sao lưu record, xác minh Git state
+và không có writer; không dùng phục hồi để mở rộng owned paths của task đang chạy.
 
-Integrator kiểm tra actual dependencies và consumer semantic fixtures trên merged SHA, không chỉ diff văn bản hoặc kết quả branch riêng. Nếu checkout chính có local edits được người dùng cho sửa, lưu baseline/bản sao scoped files rồi xác nhận baseline còn khớp trước áp kết quả. Không reset/stash/drop hoặc force để mất việc khác; handoff cần ghi nội dung local được kế thừa và limits review.
+## Một build chung
 
-## Giữ và dọn worktree
-`worktree list` chỉ đọc trạng thái. Harness không tự xóa checkout hoặc chiếm lại lease.
-Trước dọn, xác nhận task không chạy, thay đổi đã commit/tích hợp hoặc đã được lưu.
-Dùng Git worktree remove với đường dẫn đã kiểm tra; không force để bỏ mất thay đổi.
-Đồ thị branch/Git là lịch sử code; board/handoff là trạng thái phối hợp, không thay thế nhau.
-
-## Sự cố ghi metadata sau khi tạo checkout
-Nếu Git đã tạo worktree nhưng lưu task thất bại, harness giữ checkout và báo path để không mất dữ liệu.
-Hiện chưa có lệnh tự phục hồi registration. Đây là ngoại lệ bảo trì metadata dành cho coordinator:
-xác nhận không có writer/task chạy, sao lưu record hiện có, kiểm tra Git worktree list cùng branch/path/base commit,
-rồi sửa đúng trường worktree của task và chạy doctor. Không xóa checkout hoặc tạo lại branch để che sự cố.
-Nếu không xác minh được Git state, giữ nguyên checkout/record và ghi blocker; không giả registration thành công.
+Mọi phiên dùng `tooling/native/build.ps1`, `.agent/native-build.lock`,
+`build/win-dev/apps/desktop/pikdraw.exe`. Không build tại worktree.
+Không tạo app alias/timestamp hoặc build directory mới. Đổi Debug/Release ghi đè cùng output.
+Các output cũ chỉ dọn trong bước có inventory và kiểm tra dữ liệu cần giữ riêng.

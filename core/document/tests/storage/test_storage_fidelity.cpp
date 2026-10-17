@@ -3,6 +3,8 @@
 #include "pikdraw/document/storage/save_recovery.hpp"
 #include "../../src/storage/byte_codec.hpp"
 #include <filesystem>
+#include <array>
+#include <bit>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -33,6 +35,64 @@ void repair_checksum(std::vector<uint8_t> &bytes) {
       NativeFormat::calculate_crc32(bytes.data(), bytes.size());
   for (unsigned i = 0; i < 4; ++i)
     bytes[32 + i] = static_cast<uint8_t>(checksum >> (8 * i));
+}
+
+void fixture_u8(std::vector<uint8_t> &bytes, uint8_t value) {
+  bytes.push_back(value);
+}
+
+void fixture_u32(std::vector<uint8_t> &bytes, uint32_t value) {
+  for (unsigned shift = 0; shift < 32; shift += 8)
+    fixture_u8(bytes, static_cast<uint8_t>(value >> shift));
+}
+
+void fixture_u64(std::vector<uint8_t> &bytes, uint64_t value) {
+  for (unsigned shift = 0; shift < 64; shift += 8)
+    fixture_u8(bytes, static_cast<uint8_t>(value >> shift));
+}
+
+void fixture_f64(std::vector<uint8_t> &bytes, double value) {
+  fixture_u64(bytes, std::bit_cast<uint64_t>(value));
+}
+
+void fixture_string(std::vector<uint8_t> &bytes, std::string_view value) {
+  fixture_u32(bytes, static_cast<uint32_t>(value.size()));
+  bytes.insert(bytes.end(), value.begin(), value.end());
+}
+
+std::vector<uint8_t> fixture_node(uint64_t id, std::string_view type,
+                                  bool enabled,
+                                  const std::vector<uint8_t> &parameters,
+                                  uint32_t schema_minor = 0) {
+  std::vector<uint8_t> body;
+  fixture_u64(body, id);
+  fixture_string(body, type);
+  fixture_u32(body, 1);
+  fixture_u32(body, schema_minor);
+  fixture_u8(body, enabled ? 1 : 0);
+  fixture_u32(body, static_cast<uint32_t>(parameters.size()));
+  body.insert(body.end(), parameters.begin(), parameters.end());
+  std::vector<uint8_t> record;
+  fixture_u32(record, static_cast<uint32_t>(body.size()));
+  record.insert(record.end(), body.begin(), body.end());
+  return record;
+}
+
+std::vector<uint8_t> fixture_appearance(
+    double object_opacity, double fill_opacity, double stroke_opacity,
+    std::string_view blend, const std::vector<std::vector<uint8_t>> &nodes) {
+  std::vector<uint8_t> record;
+  fixture_f64(record, object_opacity);
+  fixture_f64(record, fill_opacity);
+  fixture_f64(record, stroke_opacity);
+  fixture_string(record, blend);
+  fixture_u32(record, static_cast<uint32_t>(nodes.size()));
+  for (const auto &node : nodes)
+    record.insert(record.end(), node.begin(), node.end());
+  std::vector<uint8_t> result;
+  fixture_u32(result, static_cast<uint32_t>(record.size()));
+  result.insert(result.end(), record.begin(), record.end());
+  return result;
 }
 
 std::vector<uint8_t> make_legacy_v2_fixture(const PathObject &path) {
@@ -69,6 +129,295 @@ std::vector<uint8_t> make_legacy_v2_fixture(const PathObject &path) {
   return std::move(container.bytes);
 }
 
+std::vector<uint8_t> make_legacy_v3_fixture(const PathObject &path) {
+  using namespace storage_detail;
+  Writer payload;
+  payload.str("legacy-v3-fixture");
+  payload.u32(kAuthoringSourceFormatVersion);
+  payload.u32(kAuthoringPathSchemaMajor);
+  payload.u32(kAuthoringPathSchemaMinor);
+  const auto page = Page::make_default();
+  payload.f64(page.width_mm);
+  payload.f64(page.height_mm);
+  payload.count(page.layers.size(), 10000);
+  for (const auto &layer : page.layers) {
+    payload.str(layer.name);
+    payload.flag(layer.visible);
+    payload.flag(layer.locked);
+    payload.count(1, max_objects);
+    payload.u64(path.id);
+  }
+  payload.count(1, max_objects);
+  write_object(payload, ObjectVariant{path}, true);
+  Writer container;
+  for (const auto byte : kPikDrawMagic)
+    container.u8(byte);
+  container.u32(kAuthoringSourceFormatVersion);
+  container.u32(0);
+  container.u64(7);
+  container.u64(11);
+  container.u32(static_cast<uint32_t>(payload.bytes.size()));
+  container.u32(0);
+  container.append(payload.bytes);
+  repair_checksum(container.bytes);
+  return std::move(container.bytes);
+}
+
+void appearance_codec_matches_independent_byte_fixtures() {
+  using namespace storage_detail;
+  Appearance appearance;
+  appearance.object_opacity = 0.5;
+  appearance.fill_opacity = 0.25;
+  appearance.stroke_opacity = 0.75;
+  appearance.blend_mode = BlendMode::Multiply;
+  EffectNode blur;
+  blur.id = 0x0102030405060708ull;
+  blur.enabled = false;
+  blur.parameters = GaussianBlurEffect{1.25, 2.5};
+  appearance.effects.push_back(blur);
+
+  std::vector<uint8_t> blur_parameters;
+  fixture_f64(blur_parameters, 1.25);
+  fixture_f64(blur_parameters, 2.5);
+  const auto blur_fixture = fixture_appearance(
+      0.5, 0.25, 0.75, "multiply",
+      {fixture_node(0x0102030405060708ull,
+                    "pikdraw.effect.gaussian-blur", false, blur_parameters)});
+  Writer encoded_blur(true);
+  write_appearance(encoded_blur, appearance);
+  check(encoded_blur.bytes == blur_fixture,
+        "Gaussian appearance bytes differ from independent fixture");
+  Reader blur_reader(blur_fixture, true);
+  size_t effect_budget = kMaxEffectsPerDocument;
+  const auto decoded_blur = read_appearance(blur_reader, effect_budget);
+  check(blur_reader.remaining() == 0 && effect_budget == kMaxEffectsPerDocument - 1 &&
+            decoded_blur.object_opacity == 0.5 &&
+            decoded_blur.fill_opacity == 0.25 &&
+            decoded_blur.stroke_opacity == 0.75 &&
+            decoded_blur.blend_mode == BlendMode::Multiply &&
+            decoded_blur.effects.size() == 1 &&
+            decoded_blur.effects.front().id == blur.id &&
+            !decoded_blur.effects.front().enabled &&
+            std::get<GaussianBlurEffect>(decoded_blur.effects.front().parameters)
+                    .sigma_y_mm == 2.5,
+        "Gaussian appearance fixture did not decode exactly");
+
+  DropShadowEffect shadow;
+  shadow.dx_mm = 1.5;
+  shadow.dy_mm = -2.25;
+  shadow.sigma_x_mm = 0.5;
+  shadow.sigma_y_mm = 0.75;
+  shadow.color = color::RGBColor{1.0, 0.25, 0.0, 0.8};
+  shadow.opacity = 0.4;
+  EffectNode shadow_node;
+  shadow_node.id = 0x1112131415161718ull;
+  shadow_node.parameters = shadow;
+  appearance.object_opacity = 1.0;
+  appearance.fill_opacity = 0.9;
+  appearance.stroke_opacity = 0.8;
+  appearance.blend_mode = BlendMode::Screen;
+  appearance.effects.push_back(shadow_node);
+
+  std::vector<uint8_t> shadow_parameters;
+  fixture_f64(shadow_parameters, 1.5);
+  fixture_f64(shadow_parameters, -2.25);
+  fixture_f64(shadow_parameters, 0.5);
+  fixture_f64(shadow_parameters, 0.75);
+  fixture_u8(shadow_parameters, 0); // RGB tag
+  fixture_u8(shadow_parameters, 0); // fill overprint
+  fixture_u8(shadow_parameters, 0); // stroke overprint
+  fixture_f64(shadow_parameters, 1.0);
+  fixture_f64(shadow_parameters, 0.25);
+  fixture_f64(shadow_parameters, 0.0);
+  fixture_f64(shadow_parameters, 0.8);
+  fixture_f64(shadow_parameters, 0.4);
+  const auto ordered_fixture = fixture_appearance(
+      1.0, 0.9, 0.8, "screen",
+      {fixture_node(0x0102030405060708ull,
+                    "pikdraw.effect.gaussian-blur", false, blur_parameters),
+       fixture_node(0x1112131415161718ull,
+                    "pikdraw.effect.drop-shadow", true, shadow_parameters)});
+  Writer encoded_ordered(true);
+  write_appearance(encoded_ordered, appearance);
+  check(encoded_ordered.bytes == ordered_fixture,
+        "ordered blur/shadow bytes differ from independent fixture");
+  Reader ordered_reader(ordered_fixture, true);
+  effect_budget = kMaxEffectsPerDocument;
+  const auto decoded_ordered = read_appearance(ordered_reader, effect_budget);
+  const auto &decoded_shadow = std::get<DropShadowEffect>(
+      decoded_ordered.effects.at(1).parameters);
+  check(ordered_reader.remaining() == 0 &&
+            decoded_ordered.effects.size() == 2 &&
+            decoded_ordered.effects[0].id == blur.id &&
+            decoded_ordered.effects[1].id == shadow_node.id &&
+            decoded_shadow.dx_mm == 1.5 && decoded_shadow.dy_mm == -2.25 &&
+            decoded_shadow.sigma_y_mm == 0.75 &&
+            decoded_shadow.opacity == 0.4 &&
+            std::get<color::RGBColor>(decoded_shadow.color.payload()).a == 0.8,
+        "ordered blur/shadow source parameters changed on decode");
+
+  auto blended_shadow = shadow;
+  blended_shadow.blend_mode = BlendMode::Multiply;
+  EffectNode blended_shadow_node = shadow_node;
+  blended_shadow_node.schema_minor = kDropShadowBlendSchemaMinor;
+  blended_shadow_node.parameters = blended_shadow;
+  Appearance shadow_blend_appearance;
+  shadow_blend_appearance.effects.push_back(blended_shadow_node);
+  auto blended_shadow_parameters = shadow_parameters;
+  fixture_string(blended_shadow_parameters, "multiply");
+  const auto shadow_blend_fixture = fixture_appearance(
+      1.0, 1.0, 1.0, "normal",
+      {fixture_node(0x1112131415161718ull,
+                    "pikdraw.effect.drop-shadow", true,
+                    blended_shadow_parameters, kDropShadowBlendSchemaMinor)});
+  Writer encoded_shadow_blend(true);
+  write_appearance(encoded_shadow_blend, shadow_blend_appearance);
+  check(encoded_shadow_blend.bytes == shadow_blend_fixture,
+        "Drop Shadow schema 1.1 bytes differ from independent fixture");
+  Reader shadow_blend_reader(shadow_blend_fixture, true);
+  effect_budget = kMaxEffectsPerDocument;
+  const auto decoded_shadow_blend =
+      read_appearance(shadow_blend_reader, effect_budget);
+  check(shadow_blend_reader.remaining() == 0 &&
+            decoded_shadow_blend.effects.front().schema_minor ==
+                kDropShadowBlendSchemaMinor &&
+            std::get<DropShadowEffect>(
+                decoded_shadow_blend.effects.front().parameters).blend_mode ==
+                BlendMode::Multiply,
+        "Drop Shadow schema 1.1 blend ID did not roundtrip");
+
+  const std::array<std::pair<BlendMode, std::string_view>, 6> blend_ids{{
+      {BlendMode::Normal, "normal"}, {BlendMode::Multiply, "multiply"},
+      {BlendMode::Screen, "screen"}, {BlendMode::Overlay, "overlay"},
+      {BlendMode::Darken, "darken"}, {BlendMode::Lighten, "lighten"}}};
+  for (const auto &[mode, stable_id] : blend_ids) {
+    Appearance blend;
+    blend.blend_mode = mode;
+    const auto fixture = fixture_appearance(1.0, 1.0, 1.0, stable_id, {});
+    Writer writer(true);
+    write_appearance(writer, blend);
+    check(writer.bytes == fixture, "blend ID byte fixture mismatch");
+    Reader reader(fixture, true);
+    effect_budget = kMaxEffectsPerDocument;
+    check(read_appearance(reader, effect_budget).blend_mode == mode &&
+              reader.remaining() == 0,
+          "stable blend ID did not decode");
+  }
+
+  auto rejected = [](std::vector<uint8_t> malformed) {
+    try {
+      Reader reader(malformed, true);
+      size_t budget = kMaxEffectsPerDocument;
+      (void)read_appearance(reader, budget);
+    } catch (const std::exception &) {
+      return true;
+    }
+    return false;
+  };
+  auto bad_node_length = blur_fixture;
+  std::fill(bad_node_length.begin() + 44, bad_node_length.begin() + 48, 0xff);
+  check(rejected(std::move(bad_node_length)),
+        "oversized node record length was accepted");
+  auto unknown_type = blur_fixture;
+  unknown_type[60] = static_cast<uint8_t>('x');
+  check(rejected(std::move(unknown_type)), "unknown required node type was accepted");
+  auto unknown_schema = blur_fixture;
+  unknown_schema[88] = 2;
+  check(rejected(std::move(unknown_schema)),
+        "unknown required effect schema was accepted");
+  auto invalid_utf8 = blur_fixture;
+  invalid_utf8[32] = 0xc0;
+  check(rejected(std::move(invalid_utf8)), "invalid v4 UTF-8 was accepted");
+  auto short_parameters = blur_fixture;
+  short_parameters[97] = 15;
+  check(rejected(std::move(short_parameters)),
+        "truncated Gaussian payload was accepted");
+  auto trailing_record_byte = blur_fixture;
+  ++trailing_record_byte[0];
+  trailing_record_byte.push_back(0);
+  check(rejected(std::move(trailing_record_byte)),
+        "unconsumed appearance record byte was accepted");
+}
+
+void appearance_survives_native_v4_path_and_text_roundtrip() {
+  Document document("appearance-native-roundtrip");
+  PathObject path;
+  path.id = 71000;
+  path.path = geometry::Path2D::make_rect(1.25, 2.5, 30.0, 15.0);
+  path.appearance.object_opacity = 0.6;
+  path.appearance.fill_opacity = 0.4;
+  path.appearance.stroke_opacity = 0.8;
+  path.appearance.blend_mode = BlendMode::Overlay;
+  EffectNode blur;
+  blur.id = 71001;
+  blur.parameters = GaussianBlurEffect{0.125, 1.75};
+  path.appearance.effects.push_back(blur);
+  check(document.execute_command(std::make_unique<AddObjectCommand>(path)).success,
+        "add appearance path");
+
+  TextObject text;
+  text.id = 72000;
+  text.text = "hiệu ứng";
+  text.appearance.object_opacity = 0.9;
+  text.appearance.fill_opacity = 0.7;
+  text.appearance.blend_mode = BlendMode::Darken;
+  DropShadowEffect shadow;
+  shadow.dx_mm = -1.25;
+  shadow.dy_mm = 2.5;
+  shadow.sigma_x_mm = 0.75;
+  shadow.sigma_y_mm = 1.25;
+  shadow.color = color::SpotColor{"PANTONE 青", 0.35,
+                                  color::RGBColor{0.2, 0.4, 0.6, 0.85}, true};
+  shadow.color.set_overprint({true, false});
+  shadow.opacity = 0.55;
+  shadow.blend_mode = BlendMode::Screen;
+  EffectNode shadow_node;
+  shadow_node.id = 72001;
+  shadow_node.schema_minor = kDropShadowBlendSchemaMinor;
+  shadow_node.parameters = shadow;
+  text.appearance.effects.push_back(shadow_node);
+  check(document.execute_command(std::make_unique<AddObjectCommand>(text)).success,
+        "add appearance text");
+
+  const auto bytes = NativeFormat::serialize(*document.current_snapshot());
+  check(bytes.size() > 36 && bytes[4] == 4,
+        "appearance document did not save as native v4");
+  std::string error;
+  const auto reopened = NativeFormat::deserialize(bytes.data(), bytes.size(), &error);
+  check(reopened && error.empty(), "appearance document did not reopen");
+  const auto restored_path = std::get<PathObject>(*reopened->get_object(path.id));
+  const auto restored_text = std::get<TextObject>(*reopened->get_object(text.id));
+  check(restored_path.appearance.object_opacity == 0.6 &&
+            restored_path.appearance.fill_opacity == 0.4 &&
+            restored_path.appearance.stroke_opacity == 0.8 &&
+            restored_path.appearance.blend_mode == BlendMode::Overlay &&
+            restored_path.appearance.effects.size() == 1 &&
+            restored_path.appearance.effects.front().id == blur.id &&
+            std::get<GaussianBlurEffect>(
+                restored_path.appearance.effects.front().parameters)
+                    .sigma_x_mm == 0.125,
+        "Path appearance changed through v4 container roundtrip");
+  const auto &restored_shadow = std::get<DropShadowEffect>(
+      restored_text.appearance.effects.front().parameters);
+  const auto &restored_spot =
+      std::get<color::SpotColor>(restored_shadow.color.payload());
+  check(restored_text.text == text.text &&
+            restored_text.appearance.object_opacity == 0.9 &&
+            restored_text.appearance.fill_opacity == 0.7 &&
+            restored_text.appearance.blend_mode == BlendMode::Darken &&
+            restored_text.appearance.effects.front().id == shadow_node.id &&
+            restored_text.appearance.effects.front().schema_minor ==
+                kDropShadowBlendSchemaMinor &&
+            restored_shadow.dx_mm == -1.25 &&
+            restored_shadow.sigma_y_mm == 1.25 &&
+            restored_shadow.opacity == 0.55 &&
+            restored_shadow.blend_mode == BlendMode::Screen &&
+            restored_spot.spot_name == "PANTONE 青" &&
+            restored_spot.tint == 0.35 && restored_spot.overprint &&
+            restored_shadow.color.overprint().fill,
+        "Text appearance or spot shadow source changed through v4");
+}
+
 void authoring_source_roundtrip_and_legacy_migration() {
   Document doc("authoring-source-roundtrip");
   PathObject path;
@@ -92,19 +441,19 @@ void authoring_source_roundtrip_and_legacy_migration() {
         "add analytic source path");
 
   const auto bytes = NativeFormat::serialize(*doc.current_snapshot());
-  check(bytes.size() > 36 && bytes[4] == 3,
-        "native writer did not emit container v3");
+  check(bytes.size() > 36 && bytes[4] == 4,
+        "native writer did not emit container v4");
   std::string error;
   const auto reopened =
       NativeFormat::deserialize(bytes.data(), bytes.size(), &error);
-  check(reopened && error.empty(), "v3 authoring path did not reopen");
+  check(reopened && error.empty(), "v4 authoring path did not reopen");
   const auto restored = std::get<PathObject>(*reopened->get_object(path.id));
   check(restored.authoring_source &&
             restored.authoring_source->subpaths.front().id == SubpathId{9002} &&
             restored.authoring_source->subpaths.front().nodes[1].id == NodeId{9004} &&
             restored.authoring_source->subpaths.front().segments.front().id ==
                 SegmentId{9005},
-        "v3 changed stable path identities");
+        "v4 changed stable path identities");
   const auto &restored_arc =
       restored.authoring_source->subpaths.front().segments.front().arc;
   check(restored_arc.center == geometry::Point2D{0, 0} &&
@@ -143,16 +492,47 @@ void authoring_source_roundtrip_and_legacy_migration() {
             migrated_path.authoring_source->subpaths.front().segments[2].kind ==
                 PathSegmentKind::CubicBezier,
         "v2 migration did not allocate stable authoring identities");
+  check(migrated_path.appearance.object_opacity == 1.0 &&
+            migrated_path.appearance.fill_opacity == 1.0 &&
+            migrated_path.appearance.stroke_opacity == 1.0 &&
+            migrated_path.appearance.blend_mode == BlendMode::Normal &&
+            migrated_path.appearance.effects.empty(),
+        "v2 migration did not create default appearance");
   const auto migrated_id =
       migrated_path.authoring_source->subpaths.front().nodes.front().id;
-  const auto migrated_v3 = NativeFormat::serialize(*migrated);
+  const auto migrated_v4 = NativeFormat::serialize(*migrated);
   const auto migrated_again =
-      NativeFormat::deserialize(migrated_v3.data(), migrated_v3.size());
+      NativeFormat::deserialize(migrated_v4.data(), migrated_v4.size());
   check(migrated_again &&
             std::get<PathObject>(*migrated_again->get_object(legacy_path.id))
                     .authoring_source->subpaths.front().nodes.front().id ==
                 migrated_id,
-        "v2 migration identities were not persisted by v3");
+        "v2 migration identities were not persisted by v4");
+
+  auto v3_path = PathObject{};
+  v3_path.id = 12002;
+  v3_path.path = geometry::Path2D::make_rect(2, 3, 20, 10);
+  std::string conversion_error;
+  auto v3_source = editable_path_from_path2d(v3_path.path, &conversion_error);
+  check(v3_source.has_value(), "v3 fixture path source conversion failed");
+  v3_path.set_authoring_source(std::move(*v3_source));
+  const auto v3_fixture = make_legacy_v3_fixture(v3_path);
+  const auto from_v3 = NativeFormat::deserialize(
+      v3_fixture.data(), v3_fixture.size(), &error);
+  check(from_v3 && error.empty(), "valid v3 migration failed");
+  const auto migrated_v3_path =
+      std::get<PathObject>(*from_v3->get_object(v3_path.id));
+  check(migrated_v3_path.appearance.object_opacity == 1.0 &&
+            migrated_v3_path.appearance.fill_opacity == 1.0 &&
+            migrated_v3_path.appearance.stroke_opacity == 1.0 &&
+            migrated_v3_path.appearance.blend_mode == BlendMode::Normal &&
+            migrated_v3_path.appearance.effects.empty(),
+        "v3 migration did not create default appearance");
+  const auto v3_saved_as_v4 = NativeFormat::serialize(*from_v3);
+  check(v3_saved_as_v4[4] == 4 &&
+            NativeFormat::deserialize(v3_saved_as_v4.data(),
+                                      v3_saved_as_v4.size(), &error),
+        "explicit save of v3 did not migrate to v4");
 
   auto unsupported_legacy = PathObject{};
   unsupported_legacy.id = 12001;
@@ -166,7 +546,7 @@ void authoring_source_roundtrip_and_legacy_migration() {
         "ambiguous legacy arc did not report a blocking fidelity diagnostic");
 
   auto future = bytes;
-  future[4] = 4;
+  future[4] = 5;
   repair_checksum(future);
   check(!NativeFormat::deserialize(future.data(), future.size(), &error) &&
             error.find("Unsupported native version") != std::string::npos,
@@ -295,6 +675,10 @@ void source_roundtrip() {
         "fill rule lost");
   check(restored.fill.color_space() == color::ColorSpace::Cmyk,
         "CMYK model lost");
+  check(restored.appearance.object_opacity == 1.0 &&
+            restored.appearance.blend_mode == BlendMode::Normal &&
+            restored.appearance.effects.empty(),
+        "default appearance changed in v4 roundtrip");
   check(std::get<color::CMYKColor>(restored.fill.payload()).c ==
             std::get<color::CMYKColor>(path.fill.payload()).c,
         "source double rounded through preview");
@@ -367,6 +751,44 @@ void source_roundtrip() {
             reinterpret_cast<const uint8_t *>(marker.data()), marker.size()) ==
             0xcbf43926,
         "CRC32 known-answer vector failed");
+}
+
+void image_source_roundtrip() {
+  Document doc("image-source-roundtrip");
+  ImageObject image;
+  image.id = generate_object_id();
+  image.name = "RGBA source";
+  image.bounds_rect = {2.25, 3.5, 4.75, 6.125};
+  image.transform = geometry::Transform2D::translation(11.5, -7.25);
+  image.width_px = 2;
+  image.height_px = 2;
+  image.pixels_rgba = {0x10203040, 0x50607080, 0x90a0b0c0, 0xd0e0f001};
+  auto clip = geometry::Path2D::make_rect(0.25, 0.5, 1.5, 1.25);
+  clip.set_winding_rule(geometry::WindingRule::EvenOdd);
+  image.clip_path = clip;
+  check(doc.execute_command(std::make_unique<AddObjectCommand>(image)).success,
+        "add image source");
+
+  const auto bytes = NativeFormat::serialize(*doc.current_snapshot());
+  std::string error;
+  const auto reopened =
+      NativeFormat::deserialize(bytes.data(), bytes.size(), &error);
+  check(reopened && error.empty(), "native image did not reopen");
+  const auto restored = std::get<ImageObject>(*reopened->get_object(image.id));
+  check(restored.name == image.name &&
+            restored.bounds_rect.approx_equal(image.bounds_rect) &&
+            restored.transform.tx == image.transform.tx &&
+            restored.transform.ty == image.transform.ty &&
+            restored.width_px == image.width_px &&
+            restored.height_px == image.height_px &&
+            restored.pixels_rgba == image.pixels_rgba,
+        "native image source properties or RGBA pixels changed");
+  check(restored.clip_path &&
+            restored.clip_path->winding_rule() == geometry::WindingRule::EvenOdd &&
+            restored.clip_path->size() == clip.size() &&
+            restored.clip_path->elements().front().pt ==
+                clip.elements().front().pt,
+        "native image clipping path changed");
 }
 
 void save_faults_and_paths() {
@@ -450,8 +872,11 @@ int main() {
   try {
     source_roundtrip();
     authoring_source_roundtrip_and_legacy_migration();
+    appearance_codec_matches_independent_byte_fixtures();
+    appearance_survives_native_v4_path_and_text_roundtrip();
     versioned_recovery_draft_isolated_from_documents();
     document_path_ids_are_globally_unique();
+    image_source_roundtrip();
     save_faults_and_paths();
     std::cout << "PASS source fidelity, malformed file quotas, checksum, save "
                  "faults, UTF8 paths and reopen\n";

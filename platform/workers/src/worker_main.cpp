@@ -1,6 +1,8 @@
 #include "pikdraw/interop/ipc_dto.hpp"
 #include "pikdraw/interop/payload_validator.hpp"
+#ifdef PIKDRAW_WORKER_TEST_HOOKS
 #include "pikdraw/workers/canary_definitions.hpp"
+#endif
 #include "pikdraw/workers/source_snapshot.hpp"
 #include "v2_worker_protocol.hpp"
 #include "pikdraw/workers/win32_common.hpp"
@@ -9,8 +11,10 @@
 #include <charconv>
 #include <limits>
 #include <vector>
+#ifdef PIKDRAW_WORKER_TEST_HOOKS
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#endif
 #include <io.h>
 #include <fcntl.h>
 
@@ -19,6 +23,7 @@ using namespace pikdraw::workers;
 
 namespace {
 
+#ifdef PIKDRAW_WORKER_TEST_HOOKS
 BOOL ProbeHandleInformation(HANDLE handle,DWORD* flags,bool* strict_exception) noexcept {
     *strict_exception=false;
 #if defined(_MSC_VER) || (defined(__clang__) && defined(_WIN64))
@@ -44,6 +49,7 @@ BOOL ProbeHandleInformation(HANDLE handle,DWORD* flags,bool* strict_exception) n
     return GetHandleInformation(handle,flags);
 #endif
 }
+#endif
 
 bool ReadExact(HANDLE h, void* buf, DWORD bytes) {
     DWORD total = 0;
@@ -69,6 +75,7 @@ bool WriteExact(HANDLE h, const void* buf, DWORD bytes) {
     return true;
 }
 
+#ifdef PIKDRAW_WORKER_TEST_HOOKS
 CanaryPayloadResponse HandleCanary(const CanaryPayloadRequest& req) {
     CanaryPayloadResponse resp{};
     resp.canary_type = req.canary_type;
@@ -235,12 +242,16 @@ CanaryPayloadResponse HandleCanary(const CanaryPayloadRequest& req) {
     return resp;
 }
 
+#endif
+
+
 bool ParseUnsigned(std::string_view text, uint64_t& value) {
     if (text.empty()) return false;
     const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value, 10);
     return parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size();
 }
 
+#ifdef PIKDRAW_WORKER_TEST_HOOKS
 bool ParseDigest(std::string_view text, SourceDigest& digest) {
     if (text.size() != digest.size() * 2) return false;
     const auto nibble = [](char value) -> int {
@@ -282,9 +293,12 @@ bool ProbeReadOnlySource(
     return GetLastError() == ERROR_ACCESS_DENIED;
 }
 
+#endif
+
 } // namespace
 
 int main(int argc, char** argv) {
+#ifdef PIKDRAW_WORKER_TEST_HOOKS
     if (argc==2 && std::string_view(argv[1])=="--test-child-exit") return 0;
     // Deterministic repository-owned failure fixtures, never a source-format adapter.
     if (argc==2 && std::string_view(argv[1])=="--test-stall-before-read") { Sleep(10000); return 0; }
@@ -293,13 +307,27 @@ int main(int argc, char** argv) {
         WriteFile(GetStdHandle(STD_OUTPUT_HANDLE),&byte,1,&written,nullptr);
         return 0;
     }
+#endif
     HANDLE source_handle = INVALID_HANDLE_VALUE;
+#ifdef PIKDRAW_WORKER_TEST_HOOKS
     bool test_source_probe = false;
     bool has_expected_size = false;
     bool has_expected_digest = false;
+    bool mismatch = false;
+    bool no_secret = false;
     uint64_t expected_size = 0;
     SourceDigest expected_digest{};
     std::string_view v2_stream_fixture;
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view arg(argv[i]);
+        mismatch |= arg == "--test-mismatched-envelope";
+        no_secret |= arg == "--test-no-secret-env";
+    }
+    if (no_secret && GetEnvironmentVariableW(L"PIKDRAW_TEST_HOST_SECRET", nullptr, 0) > 0)
+        return 9;
+#else
+    (void)argc;
+#endif
     for (int i = 1; i < argc; ++i) {
         const std::string_view argument(argv[i]);
         if (argument == "--pikdraw-source-handle" && i + 1 < argc) {
@@ -307,6 +335,11 @@ int main(int argc, char** argv) {
             if (!ParseUnsigned(argv[++i], value) || value == 0 ||
                 value > std::numeric_limits<uintptr_t>::max()) return 2;
             source_handle = reinterpret_cast<HANDLE>(static_cast<uintptr_t>(value));
+#ifdef PIKDRAW_WORKER_TEST_HOOKS
+        } else if (argument == "--test-mismatched-envelope") {
+            mismatch = true;
+        } else if (argument == "--test-no-secret-env") {
+            no_secret = true;
         } else if (argument == "--test-source-probe") {
             test_source_probe = true;
         } else if (argument == "--test-source-size" && i + 1 < argc) {
@@ -318,10 +351,12 @@ int main(int argc, char** argv) {
         } else if (argument.starts_with("--test-v2-stream-")) {
             if (!v2_stream_fixture.empty()) return 2;
             v2_stream_fixture = argument;
+#endif
         } else {
             return 2;
         }
     }
+#ifdef PIKDRAW_WORKER_TEST_HOOKS
     if (!v2_stream_fixture.empty()) {
         return source_handle != INVALID_HANDLE_VALUE
             ? RunV2StreamFixture(v2_stream_fixture, source_handle)
@@ -332,6 +367,7 @@ int main(int argc, char** argv) {
             has_expected_digest && ProbeReadOnlySource(source_handle, expected_size, expected_digest)
             ? 0 : 41;
     }
+#endif
 
     HANDLE stdin_h = GetStdHandle(STD_INPUT_HANDLE);
     HANDLE stdout_h = GetStdHandle(STD_OUTPUT_HANDLE);
@@ -377,17 +413,23 @@ int main(int argc, char** argv) {
             pong_hdr.payload_bytes = 0;
             WriteExact(stdout_h, &pong_hdr, sizeof(IpcHeader));
         } else if (hdr.message_type == static_cast<uint16_t>(MessageType::CanaryRequest)) {
+#ifdef PIKDRAW_WORKER_TEST_HOOKS
             auto req_opt = DeserializeCanaryRequest(full_packet);
             if (req_opt) {
-                auto resp = HandleCanary(*req_opt);
-                auto resp_bytes = SerializeCanaryResponse(resp, hdr.sequence_id);
-                WriteExact(stdout_h, resp_bytes.data(), static_cast<DWORD>(resp_bytes.size()));
+                auto resp = SerializeCanaryResponse(HandleCanary(*req_opt), hdr.sequence_id);
+                WriteExact(stdout_h, resp.data(), static_cast<DWORD>(resp.size()));
             }
+#else
+            return 2;
+#endif
         } else if (hdr.message_type == static_cast<uint16_t>(MessageType::ImportRequest)) {
             auto req_opt = DeserializeImportRequest(full_packet);
             if (req_opt) {
                 ImportPayloadResponse resp{};
                 resp.job = req_opt->job;
+#ifdef PIKDRAW_WORKER_TEST_HOOKS
+                if (mismatch) ++resp.job.epoch;
+#endif
                 resp.success = false;
                 resp.error_message = "Unsupported source format: no parser adapter is implemented";
                 resp.loss_reports.push_back("Import rejected; no geometry generated or fidelity claimed");

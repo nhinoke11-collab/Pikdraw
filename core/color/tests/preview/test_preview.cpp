@@ -41,4 +41,8 @@ PIKDRAW_COLOR_TEST(preview_cache_invalidation) {
     uint64_t gen2 = 2;
     DeviceRGBA c3 = cache.get_or_compute(color, gen2);
     PIKDRAW_ASSERT(cache.size() == 2);
+    PIKDRAW_ASSERT(c3.r == c1.r);
+    PIKDRAW_ASSERT(c3.g == c1.g);
+    PIKDRAW_ASSERT(c3.b == c1.b);
+    PIKDRAW_ASSERT(c3.a == c1.a);
 }

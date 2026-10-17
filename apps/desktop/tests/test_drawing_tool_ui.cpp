@@ -39,8 +39,9 @@ struct DrawingUiFixture {
 
     POINT point(double x, double y) {
         const auto screen = window.root().renderer().camera().world_to_screen({x, y});
-        return {72 + static_cast<LONG>(std::lround(screen.x)),
-                92 + static_cast<LONG>(std::lround(screen.y))};
+        const RECT canvas = window.canvas_rect(1440, 900);
+        return {canvas.left + static_cast<LONG>(std::lround(screen.x)),
+                canvas.top + static_cast<LONG>(std::lround(screen.y))};
     }
 
     void click(double x, double y) {
@@ -81,18 +82,18 @@ int main(int argc, char** argv) {
         REQUIRE(dispatcher.get_action(desktop::actions::ActionId::kToolPolyline));
         REQUIRE(dispatcher.get_action(desktop::actions::ActionId::kToolSnapPanel));
         REQUIRE(dispatcher.dispatch_shortcut("L"));
-        REQUIRE(window.active_tool() == 4);
+        REQUIRE(window.active_tool() == 6);
         REQUIRE(window.drawing_path_active());
         const auto start = fixture.point(20, 30);
         SendMessageW(window.hwnd(), WM_LBUTTONDOWN, MK_LBUTTON,
                      MAKELPARAM(start.x, start.y));
-        if (window.active_tool() != 4 || !window.drawing_path_active())
+        if (window.active_tool() != 6 || !window.drawing_path_active())
             throw std::runtime_error("Line lost its active state after click at " +
                 std::to_string(start.x) + "," + std::to_string(start.y) +
                 " (tool=" + std::to_string(window.active_tool()) + ")");
         REQUIRE(window.drawing_path_point_count() == 1);
         SendMessageW(window.hwnd(), WM_LBUTTONUP, 0, MAKELPARAM(start.x, start.y));
-        REQUIRE(window.active_tool() == 4 && window.drawing_path_active());
+        REQUIRE(window.active_tool() == 6 && window.drawing_path_active());
         const auto cursor = fixture.point(90, 30);
         SendMessageW(window.hwnd(), WM_MOUSEMOVE, 0, MAKELPARAM(cursor.x, cursor.y));
         const auto snap_deadline = std::chrono::steady_clock::now() +
@@ -117,32 +118,32 @@ int main(int argc, char** argv) {
         REQUIRE(!line.has_fill && line.has_stroke);
 
         REQUIRE(dispatcher.dispatch_shortcut("Shift+L"));
-        REQUIRE(window.active_tool() == 5);
+        REQUIRE(window.active_tool() == 7);
         SendMessageW(window.hwnd(), WM_CHAR, 'L', 0);
         for (const char value : std::string("#15;15"))
             SendMessageW(window.hwnd(), WM_CHAR, value, 0);
         SendMessageW(window.hwnd(), WM_KEYDOWN, VK_RETURN, 0);
         REQUIRE(window.drawing_path_point_count() == 1);
         SendMessageW(window.hwnd(), WM_KILLFOCUS, 0, 0);
-        REQUIRE(window.active_tool() == 5 && window.drawing_path_active());
+        REQUIRE(window.active_tool() == 7 && window.drawing_path_active());
         REQUIRE(window.drawing_path_point_count() == 1);
         SendMessageW(window.hwnd(), WM_SETFOCUS, 0, 0);
-        REQUIRE(window.active_tool() == 5 && window.drawing_path_active());
+        REQUIRE(window.active_tool() == 7 && window.drawing_path_active());
         const auto pan = fixture.point(50, 50);
         SendMessageW(window.hwnd(), WM_MBUTTONDOWN, MK_MBUTTON,
                      MAKELPARAM(pan.x, pan.y));
         SendMessageW(window.hwnd(), WM_KILLFOCUS, 0, 0);
-        REQUIRE(window.active_tool() == 5 && window.drawing_path_active());
+        REQUIRE(window.active_tool() == 7 && window.drawing_path_active());
         REQUIRE(window.drawing_path_point_count() == 1);
         SendMessageW(window.hwnd(), WM_SETFOCUS, 0, 0);
-        REQUIRE(window.active_tool() == 5 && window.drawing_path_active());
+        REQUIRE(window.active_tool() == 7 && window.drawing_path_active());
 
         fixture.type_numeric("@20mm<45deg");
-        REQUIRE(window.active_tool() == 5 && window.drawing_path_active());
+        REQUIRE(window.active_tool() == 7 && window.drawing_path_active());
         SendMessageW(window.hwnd(), WM_KEYDOWN, VK_RETURN, 0);
         REQUIRE(window.drawing_path_point_count() == 2);
         fixture.type_numeric("@20mm<1.5707963267948966rad");
-        REQUIRE(window.active_tool() == 5 && window.drawing_path_active());
+        REQUIRE(window.active_tool() == 7 && window.drawing_path_active());
         SendMessageW(window.hwnd(), WM_KEYDOWN, VK_RETURN, 0);
         REQUIRE(window.drawing_path_point_count() == 3);
 
@@ -171,6 +172,25 @@ int main(int argc, char** argv) {
         REQUIRE(!action_dispatcher.dispatch_shortcut("F8"));
         REQUIRE(!action_dispatcher.dispatch_shortcut("F10"));
         REQUIRE(!action_dispatcher.dispatch_shortcut("Shift+F2"));
+
+        window.set_active_tool(6);
+        const auto first_document_objects = document.current_snapshot()->object_count();
+        window.create_new_tab("Second Document", 200.0, 150.0);
+        auto& second_document = window.root().document();
+        auto& second_dispatcher = window.root().window().action_dispatcher();
+        REQUIRE(second_document.current_snapshot()->object_count() == 0);
+        REQUIRE(second_dispatcher.get_action(desktop::actions::ActionId::kToolLine));
+        REQUIRE(window.active_tool() == 6 && window.drawing_path_active());
+        REQUIRE(second_dispatcher.dispatch_shortcut("L"));
+        fixture.click(20, 30);
+        fixture.click(90, 70);
+        REQUIRE(second_document.current_snapshot()->object_count() == 1);
+        REQUIRE(document.current_snapshot()->object_count() == first_document_objects);
+
+        window.switch_to_tab(0);
+        REQUIRE(window.active_tool() == 6 && window.drawing_path_active());
+        REQUIRE(document.current_snapshot()->object_count() == first_document_objects);
+        window.set_active_tool(0);
         std::cout << "[PASS] Native Line/Polyline input, snap HUD, bindings, and native save/reopen\n";
 #else
         (void)argc;

@@ -182,7 +182,7 @@ std::optional<StyleEditorResult> edit_source_color(HWND owner, const color::Colo
     layout.dialog.style = WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME;
     layout.dialog.cx = 260;
     layout.dialog.cy = 240;
-    EditorState state{initial, initial, width_mm, stroke, vietnamese};
+    EditorState state{initial, initial, width_mm, stroke, vietnamese, 0, false, false, std::nullopt};
     DialogBoxIndirectParamW(GetModuleHandleW(nullptr), &layout.dialog, owner, editor_proc,
                             reinterpret_cast<LPARAM>(&state));
     return state.result;

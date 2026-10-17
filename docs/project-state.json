@@ -2,31 +2,46 @@
   "schema_version": 1,
   "project": "PikDraw",
   "stage": "m1_editor_validation",
-  "updated_at": "2026-10-16",
+  "updated_at": "2026-10-17",
   "implemented": [
-    "Provider-neutral module registry, task/worktree harness and contract/reference gates",
+    "Single-source Codex task harness with root-only writes, disjoint leases, source-snapshot handoffs and contract/reference gates",
     "Native Win32/GDI desktop shell with C++20 document/vector/rendering services; Qt remains an architecture blueprint",
     "mm/binary64 source primitives and editable paths; production geometry coverage is not certified by this delivery",
     "Single-writer atomic document commands, immutable persistent-map snapshots, monotonic edits/undo/redo, job lifecycle guards",
-    "Native v2 codec preserving RGB/CMYK/spot/gray, alpha/overprint, source paths, Unicode/font metadata and document identity; bounded readers and atomic save faults tested",
+    "Native v2/v3 readers and v4 writer; v4 preserves source color metadata and stores revisioned Path/Text Appearance with bounded effects and ordered typed nodes",
     "Bounded software raster baseline for fills, winding, alpha, source stroke widths, layer order, clipping and diagnostics",
-    "Native pick/hover, CAD Window/Crossing, Shift-add/Ctrl-toggle, eight resize handles, movement, delete and cancellation",
+    "Native pick/hover, CAD Window/Crossing, Shift-add/Ctrl-toggle, eight scale handles with edge/corner aspect lock, rotation handle with preview and undo, movement, delete and cancellation",
+    "Native 12-group main menu bar with mouse and keyboard navigation, enabled existing handlers, disabled unsupported commands, and shortcut labels matched to existing bindings",
     "Atomic multi-object fill/stroke/width controls, numeric RGB/CMYK/opacity dialogs, source palettes and typed creation defaults",
     "Windows ICC source RGB/CMYK to sRGB session preview, channel-model validation and bounded conversion cache; source color channels remain intact",
     "Canvas frame cache keyed by immutable root/camera/size/profile/theme; overlay interactions reuse the source frame",
     "D07 source snap core: revisioned endpoint/source-node/line-midpoint and grid candidates, DIP tolerances, configurable priorities/tool overrides, and Ortho/Polar direction constraints",
     "D08 core Line/Polyline authoring: editable path commands, numeric points, hard-direction snapping, stale-camera rejection, and local draft editing",
     "D09 candidate native Line/Polyline tools: recognizable toolbar actions, numeric HUD, supported source/grid snaps, Ortho/Polar controls, persistent preferences, draft preservation across focus changes, degree/radian keyboard input, and native save/reopen",
-    "SVG subset workflows and isolated worker protocol/lifecycle services; coverage and OS containment require their own acceptance evidence"
+    "Native grouped toolbox flyouts for Quick Shapes (Rectangle/Ellipse/Polygon) and Path Drawing (Line/Polyline/Pen), with keyboard navigation; Polygon creates an editable regular path with validated Sides and Rotation properties plus Shift/Ctrl drag constraints shared by preview and commit",
+    "Native Appearance toolbox group routes to Properties > Style and conditionally appends Gaussian Blur or Drop Shadow through shared Effects actions; Tab/Shift+Tab keyboard focus with visible focus ring and Alt+Down/arrow/Enter/Space/Esc flyout navigation; Effects > Clear Effects atomically removes eligible filter stacks while preserving Opacity and Blend",
+    "SVG subset workflows and isolated worker protocol/lifecycle services; coverage and OS containment require their own acceptance evidence",
+    "Selection-aware Align/Distribute in the Win32/GDI context bar and Object menu; Inspector Align view opens on demand via Window or Ctrl+Shift+A, with selection/key/page references, all edge/center/equal-gap distributions, validated fixed-mm gap input and undoable operations; exact rectangle-path Boolean Shaping retains target style",
+    "Native Path Appearance: Object/Fill/Stroke opacity model and CPU compositor, six blend modes, ordered Gaussian Blur/Drop Shadow, native v4 storage and undoable Properties controls; Text uses the same renderer only with real glyph outlines",
+    "Double-click rotate mode activation (CorelDRAW/Illustrator standard) with corner handle 2D scaling in transform mode and Esc exit; object transformation suite (Flip H, Flip V, Rotate 90 CW/CCW, Rotate 180) across Object > Transform menu, property bar buttons, and shortcuts Ctrl+Shift+H/V, Ctrl+]/[ with full undo/redo",
+    "Opt-in AI automation with MCP Streamable HTTP hosted inside the Win32 desktop process, scoped Settings grants, bearer/loopback controls and UI-owner document writer; authenticated same-user named pipe remains for stdio sidecar and per-user COM compatibility",
+    "Multi-format Windows Clipboard ecosystem (Cut, Copy, Paste, Paste in Place Ctrl+Shift+V, Paste in Front Ctrl+F, Paste in Back Ctrl+B, Duplicate Ctrl+D, Duplicate at Origin NumPad +, Alt+Drag visual duplication) with deep-clone ID remapping and SketchUp-style dynamic linear array (*N multiplier, /N divider, live interactive adjustment) registered across Edit menu, ribbon, and keyboard pipeline",
+    "Node Tool (Plan 01): Comprehensive node editing with single/box selection, Cusp/Smooth/Symmetrical continuity modes, collinear handle angle locking, segment splitting, Break Node, path Open/Close, and atomic undo/redo node commands",
+    "Contour / Offset Tool (Plan 02): Parametric offset engine (Inside, Outside, Center) with Miter/Round/Bevel joins, multi-step concentric contours, exact Arc-based rounded corners, topology self-intersection pruning, and Break Apart command into editable document objects",
+    "Advanced OSNAP & Dynamic 2D Inference (Plan 03): Analytic Center, Quadrants, Nearest, Bézier t-midpoint, Half Curve Length, robust Curve Intersections (adaptive subdivision + 2D Newton-Raphson), Perpendicular & Tangent points, dynamic Ortho/Polar tracking rays, dwell acquisition with jitter reset, and multi-stage Escape handling",
+    "Technical Dimensions (Plan 04): Parametric annotations for Linear (Horizontal, Vertical, Aligned), Angular, Radial (Radius & Diameter), ArcLength, Ordinate, and MultiLeader measurements. 6-group DimensionStyle (Lines/Arrows, Text, Fit, Primary Units, Dual Units [exact 25.4 mm conversion], Tolerances [Symmetric & Deviation]). Interactive desktop Pick-First, Pick-Second, Placement-Drag gestures with live preview layout, contour_spec serialization for atomic undo/redo fidelity, and multi-stage Escape handling"
   ],
   "specifications": [
+    "Gradient Path fill plan from official Illustrator/CorelDRAW documentation: UI/Properties spec, canonical paint/commands/CPU sampler/native v5 proposal, per-format fidelity matrix, disjoint agent DAG and 16 acceptance cases; ADR 0012 is Proposed and no Gradient runtime capability is implemented or enabled by this documentation task (docs/roadmap/gradient-20261017.md)",
     "Native desktop architecture with four workspaces sharing one document model",
     "Workspace/UI blueprint; runtime theme, localization and tools are implemented for Milestone M1 Vector workspace",
     "Single-writer document, immutable revisioned snapshots and source/production/render precision boundaries",
     "Capability-based GPU/software rendering, executor ownership and recovery policies",
     "Three foundation spikes with semantic, fidelity, containment and hardware acceptance evidence",
     "Post-spike implementation roadmap and 26-task planning catalog with dependency gates, owned paths, acceptance and review; not an executing scheduler",
-    "Native Qt Widgets preview workflow with development-time UI/QSS reload and incremental C++ builds"
+    "Native Qt Widgets preview workflow with development-time UI/QSS reload and incremental C++ builds",
+    "Editor UI organization policy: primary menu classification, contextual property bar, Properties sections, SVG icon/short-label rules, tooltip/status/help and mandatory feature UI spec; implementation coverage is feature-specific and does not certify the full policy",
+    "C10 agent automation service with MCP and optional local COM adapters; runtime capability and release acceptance are tracked separately in the implementation roadmap"
   ],
   "planned": [
     "Milestone M2: Advanced node editing, raster tools, Pen and advanced curve/relation snaps, print proofing, soak testing, and production packaging",
@@ -48,8 +63,8 @@
     "runtime": "Single writer, immutable snapshots, bounded executors and isolated workers"
   },
   "next_priorities": [
-    "Review and integrate the tested editor delivery branch with uncommitted UI work currently present on main; do not overwrite that work",
-    "Review and integrate the D09 Line/Polyline candidate while preserving the local UI changes on main",
+    "Complete in-process MCP release verification: current-protocol transport tests/build, canonical live app dispatch, Settings URL/key usability and revoke, installed client/package smoke; keep AC01-AC09 visual, safety and production assertions separate",
+    "Basic-effects earlier full CTest passed 79/79 in Debug and Release after SSE2 integration; latest full Debug CTest after restoring the serial AVX/SSE2 baseline passed 80/80; full Release 79/79 remains historical and has not been rerun. The previous Debug 77/80 failure set did not reproduce. SSE2 Blur historical median p50/p95 was 50.6/58.4 ms; a new three-run Release 40-sample baseline on i7-3537U measured median 49.6/73.9 ms p50/p95 with stable checksum, still above 33.3 ms; AVX dispatch passes parity but was slightly slower. Bounded two-lane convolution was rejected after a same-fixture serial control showed no useful latency win; profile a lower-work/lower-copy algorithm and measure renderer-owned scratch before performance claims.",
     "Implement Pen/Node editing and advanced curve/relation snaps through separately reviewed tasks",
     "Improve full source redraw: this software trace exceeds both 16.7 ms and 33.3 ms p95 budgets; measure real present/input latency separately",
     "Complete actual text outlines/group semantics, document ICC embedding/proof/export, spatial index and remaining M1 acceptance coverage before declaring M1 complete"
@@ -64,36 +79,98 @@
     "docs/roadmap/foundation-spikes.md",
     "docs/roadmap/post-spike-implementation.md",
     "docs/roadmap/post-spike-tasks.json",
-    "docs/quality/gates.md"
+    "docs/quality/gates.md",
+    "docs/decisions/0007-single-source-workflow.md",
+    "docs/design/ui-ux-standard.md",
+    "docs/design/feature-ui-template.md",
+    "docs/decisions/0008-editor-ui-organization.md",
+    "contracts/c10-agent-automation.md",
+    "docs/decisions/0010-agent-automation-gateway.md",
+    "docs/decisions/0011-in-process-mcp-http.md",
+    "docs/roadmap/ai-agent-mcp-com-20261017.md"
   ],
   "limitations": [
-    "This feature branch has a runnable native vector editor; its changes are not yet merged into the dirty main checkout",
-    "D09 candidate branch after review fixes: Debug CTest 42/42 and Release D09 controller/UI tests 2/2 pass; full Release CTest is 40/42 because document_commands exits 0xc0000409 and interop_svg_exporter segfaults, including on individual reruns; feature is not yet integrated into main",
+    "The editor and D09 Line/Polyline changes are integrated into the main source checkout at 11512046d23fac08059ecd37382179283b4530a0 plus uncommitted working-tree changes; no commit was created",
+    "Strict Debug/Release full CTest passed 79/79 after registering the SSE2 parity target; Debug built 63 executable test targets in 158/158 steps. Symmetric SSE2 convolution reduced same-session Blur p50/p95 medians from 204.8/266.1 to 50.6/58.4 ms with unchanged benchmark checksum, but p50 remains above 33.3 ms. AVX runtime dispatch passes parity and is enabled on the measured i7-3537U, but repeated Release Blur median p50/p95 is 52.8/67.0 ms, slightly slower than SSE2. Renderer-owned scratch allocation measurement, present/input timing and second-machine qualification remain open. See docs/reviews/basic-effects-performance-20261017.md.",
+    "A pre-integration D09 Release candidate reported document_commands exit 0xc0000409 and interop_svg_exporter segfaults; current integrated Debug CTest passes, but the Release-only behavior has not been rechecked",
     "Release CPU benchmark uses 1000 paths/101000 path elements on an i7-3537U with 8.45 GB RAM; no GPU/present/input-latency qualification",
     "Release source redraw p95 is 35.42-57.05 ms over three software runs; the trace exceeds the 16.7/33.3 ms budgets and does not meet 60 FPS",
     "Cached hidden native CPU paint p95 is 10.46-14.09 ms; it is not a measured present interval",
     "Group editing and genuine text rendering remain incomplete; text hit bounds are approximate",
+    "Selection scale/rotation is implemented on canvas; numeric X/Y/W/H fields still target the first selected object when multiple objects are selected",
+    "Effects UI: Appearance toolbox flyout provides Appearance Properties, Gaussian Blur and Drop Shadow; effect entries enable only for eligible selections, and Effects > Clear Effects is dynamically gated. Selecting Blur/Shadow again focuses the existing node for Edit, preserving ID/parameters/revision; quick-add commits one default only when the selected objects lack that effect. Drop Shadow schema 1.1 has six Shadow Blend modes separate from Object Blend; non-Normal requires Shadow to be the last enabled node. BF12 adds cancellable Blur/Shadow drafts in Properties with transient Preview, atomic Apply and Cancel/Esc; direct OS interaction and async preview cancellation remain unverified. Other unsupported Cut/Copy/Paste, Node, bitmap processing, Page Setup and Help entries still have no actions",
+    "The initial Debug runner overlapped an in-progress canvas background change and failed at app link; after that definition was present, the canonical full Debug runner built all 67 steps and passed CTest 70/70, including the SVG save-preservation regression",
     "D09 native shell routes the supported Endpoint, Source node, Line midpoint and Grid candidates; advanced curve/relation snaps remain unsupported",
-    "The D09 feature branch is not integrated into main; screenshots and three Release CPU runs are in apps/desktop/tests/evidence/drawing-tools-d09-20261016/review.md",
-    "D09 Release-only document command and SVG exporter test failures are outside changed modules but remain unexplained and need a separate baseline/isolation task",
+    "Six native editor screenshots are available under artifacts/evidence/drawing-native-ui-integration-20261016; they are ignored local evidence files",
     "D08 typed Line/Polyline points are not crash-recovery serialized through ToolSession; per-point byte edits would copy growing payloads quadratically, so recovery needs a bounded optimized lifecycle design",
     "ICC settings are per-machine preview only; no document ICC binding/embedding, paper/ink soft proof, gamut warning, BPC or PDF/X",
     "Native v1 lossy containers are rejected; no silent source-color flattening or legacy native round-trip claim",
-    "Source AI/CDR authoring round-trip, CAD constraints, CAM, 3D and external AI-provider scheduling are not implemented by this delivery",
-    "Harness leases and Git worktrees are coordination checks, not OS write isolation"
+    "AI/CDR/PDF/EPS import and source-format round-trip are not implemented; SVG import is a limited subset and does not import these appearance effects, while SVG export rejects effect nodes and non-Normal blend. Desktop SVG save checks the explicit export result before output replacement; the E2E regression confirms existing destination bytes remain intact on rejection. CAD constraints, CAM, 3D and external AI-provider scheduling are also not implemented",
+    "Harness leases and Git worktrees are coordination checks, not OS write isolation",
+    "Boolean Shaping is limited to exact axis-aligned rectangle paths after transform; freeform/curved paths, Boundary extraction and CNC Auto-Weld remain unsupported",
+    "AI automation exposes 20 semantic MCP tools and COM calls. Desktop source hosts Streamable HTTP directly on 127.0.0.1 with a per-enable bearer key and routes requests to the UI-owner queue; source supports MCP 2026-07-28 stateless headers and 2025-11-25 compatibility. The focused command `./tooling/native/build.ps1 -Test -TestTarget test_pikdraw_embedded_mcp_http,test_pikdraw_mcp_server,test_pikdraw_mcp_pipe_integration -TestRegex '^test_pikdraw_(embedded_mcp_http|mcp_server|mcp_pipe_integration)$'` built the changed desktop automation and test targets, then passed CTest 3/3. Coverage includes modern discovery/catalog/connect/create, legacy initialize/notification/delete, invalid bearer, Host/Origin rejection, routing metadata checks, token rotation, UI-owner dispatch and queued revoke cancellation. A prior full configured CTest snapshot ran 86/87; test_pikdraw_document_contour failed at test_contour_commands.cpp:44 under plan-02-contour-offset ownership. The canonical pikdraw target subsequently linked successfully after that task released its lease; full CTest must be rerun on the final source snapshot. `./tooling/native/build.ps1 -Test -TestTarget pikdraw -BuildOnly` built and linked the canonical app target 2/2 after contour task moved to review; Settings Copy URL/key controls (`action.settings.ai_connections.copy_endpoint`, `action.settings.ai_connections.copy_access_key`) and a real-NativeWindow E2E target are in source; four affected objects compile 4/4 with warnings-as-errors and `test_pikdraw_in_process_mcp_e2e` links. The latest direct HTTP E2E passed discovery/catalog, scoped create/edit/validate/save/reopen and keyboard Settings revoke; listener-off assertion passed. Its final stale-endpoint assertion failed because the test helper now reports negative transport codes while the assertion still expected 0 or 401. The assertion now includes status/body, but the corrected target has not rebuilt: active task plan-04-technical-dimensions currently blocks the shared Debug build with five `-Werror=unused-parameter` diagnostics for `arrow_size_mm` in `core/geometry/src/dimensions/dimension_geometry.cpp`. Credential-copy UI check was skipped because the existing clipboard contains non-text formats. OSNAP dependencies compile after plan-03 handoff; stale-endpoint denial, copy/revoke acceptance, canonical app/package, and AC01-AC09 remain open. Earlier sidecar/release package MCP and COM smokes remain prior-snapshot evidence. Current package/install and AC01-AC09 visual/safety/production gates remain open; arbitrary paths, import/export, general constraints, visual quality and production readiness remain unsupported or unverified",
+    "Object context bar screenshot evidence is at artifacts/evidence/object-contextual-actions-20261017; generated shell-test images remain isolated under the system temp directory",
+    "Align/Distribute Inspector screenshots are at artifacts/evidence/align-distribute-panel-20261017; automated GDI coverage is 1440x900, with manual narrow-window, 125–200% DPI, accessibility and all-theme review still open",
+    "Quick Shapes, Path Drawing, Appearance Effects flyout and Polygon have native Debug build evidence only; direct OS interaction, narrow-window, 125–200% DPI, accessibility and theme review remain open",
+    "Basic effects Properties English/Vietnamese images at artifacts/evidence/basic-effects-properties-20261017 were recaptured from NativeWindow Win32/GDI after moving the Source Color Palette heading below the opacity hint; the two labels no longer overlap. These are not OS desktop captures and do not prove manual interaction, DPI, accessibility, Release, performance or external-format fidelity",
+    "Appearance toolbox English/Vietnamese flyout images at artifacts/evidence/basic-effects-toolbox-20261017 are NativeWindow Win32/GDI captures at 1440x900; focused shell CTest covers Properties routing, Blur/Shadow append, disabled no-selection state and keyboard-only handler navigation, not manual OS keyboard interaction, DPI, accessibility or external-format fidelity",
+    "Basic effects BF11: test_effects_toolbox_flyout covers Shift+Tab to Appearance, Alt+Down, arrow selection, Enter apply, Esc close/return, Alt+Tab pass-through, Effects > Clear Effects through menu click, one-revision atomic stack removal, preserving Opacity/Blend and Undo restoration; focused Debug CTest passed 1/1 on 2026-10-17",
+    "Fill/Stroke Opacity Properties acceptance passed focused Debug build (145/145 Ninja steps) and test_pikdraw_desktop_shell CTest 1/1 on 2026-10-17; this is not manual OS interaction, DPI/accessibility, Release, performance, or external-format fidelity evidence",
+    "Basic effects BF12 draft acceptance passed. Latest default Debug build via tooling/native/build.ps1 -Test completed before full CTest passed 80/80 on 2026-10-17, including storage fidelity, compositor, culling, blend, Gaussian/SIMD, Drop Shadow, render warning, draft, desktop, interop and workflow regressions. Earlier full Debug and Release CTest passed 79/79; Release has not been rerun on the latest snapshot. During the earlier run, the canonical app was not relinked because PikDraw PID 42744 held its executable open; the latest default build completed, but no manual runtime UX claim follows. EN/VI GDI evidence is under artifacts/evidence/basic-effects-draft-20261017 and artifacts/evidence/basic-effects-shadow-blend-20261017. Direct OS interaction, async preview cancellation latency, DPI/accessibility, performance target and external-format fidelity remain unverified.",
+    "Effects performance probe (Release, i7-3537U, 640x480): pre-cache 20-sample p50 ms source-only 7.788, Blur 71.603, Shadow 76.972, stack 88.612, 64 Blur objects 114.551; pre-cache isolated Blur 40-sample p50/p95 78.020/124.646 ms. Bounded cache stages up to 262144 output pixels (4 MiB) after complete preflight; larger regions retain the existing two-pass path. Post-cache compositor CTest passed 1/1 Release. Post-cache 20-sample Blur/Shadow/stack/64-object p50/p95 ms: 85.999/94.510, 71.759/87.278, 74.533/86.342, 89.902/101.815. Three pre-SIMD Blur 40-sample runs in the current session were 204.323/255.089, 204.783/266.125 and 208.355/279.261 ms; three SSE2 runs were 50.641/58.444, 50.517/57.856 and 53.867/66.547 ms with identical checksum 14946842818742444328. This is about 75% lower median p50 on one CPU, but p50 remains above 33.3 ms. AVX dispatch parity passed and was enabled on the same host; repeated Release p50/p95 were 52.690/67.021, 52.763/64.889 and 57.730/97.154 ms with the same checksum; median 52.763/67.021 is slightly slower than SSE2. The bounded two-lane trial and serial control used the same 640x480 Blur fixture, 40 samples and checksum: parallel p50/p95 runs 547.779/1931.361, 202.335/478.219, 147.802/244.515 ms; serial control 146.605/189.802, 202.757/1197.394, 183.516/331.486 ms. Median p50/p95 were 202.335/478.219 parallel and 183.516/331.486 serial; process CPU p50 medians were both 78.125 ms and host load was unstable, so no useful latency gain was demonstrated and the code was removed. Latest full Debug CTest after restoring the serial AVX/SSE2 baseline passed 80/80, including the prior desktop paste-bounds and COM catalog cases; the earlier 77/80 run is superseded. A new same-fixture Release 3x40 Blur baseline has median p50/p95 49.6/73.9 ms on i7-3537U with unchanged checksum; process peak-memory delta is not scratch-memory measurement; the performance gate remains open; see docs/reviews/basic-effects-performance-20261017.md."
   ],
   "editor_delivery": {
-    "branch": "agent/codex/editor-pick-style-delivery-20261015",
-    "code_revision": "e977cc2",
-    "debug_ctest": {
-      "passed": 33,
-      "total": 33
-    },
+    "branch": "main",
+    "code_revision": "11512046d23fac08059ecd37382179283b4530a0 plus uncommitted source-root integration",
     "release_consumer_ctest": {
-      "passed": 5,
-      "total": 5
+      "passed": 79,
+      "total": 79
     },
-    "evidence": "apps/desktop/tests/evidence/editor-tools-20261015/review.md",
-    "integration_status": "feature_branch_tested_main_has_uncommitted_ui_changes"
+    "evidence": "artifacts/evidence/drawing-native-ui-integration-20261016/; artifacts/evidence/object-contextual-actions-20261017/; artifacts/evidence/align-distribute-panel-20261017/; build/win-dev/apps/desktop/pikdraw.exe; .agent/migrations/20261016/ctest-final-63-of-63.log; artifacts/evidence/basic-effects-draft-20261017/ (1440x900 NativeWindow GDI draft previews, English and Vietnamese); artifacts/evidence/basic-effects-shadow-blend-20261017/ (1440x900 GDI Drop Shadow edit-existing and Shadow Blend Properties, English and Vietnamese); docs/reviews/basic-effects-performance-20261017.md and targeted Release benchmark executable",
+    "integration_status": "integrated_into_main_worktree_uncommitted"
+  },
+  "workflow": {
+    "effective_date": "2026-10-16",
+    "mode": "single-source",
+    "agent_system": "codex",
+    "source_root": "C:/Users/CK ART STAGE/Downloads/PikDraw",
+    "new_worktrees": false,
+    "build_directory": "build/win-dev",
+    "app_executable": "build/win-dev/apps/desktop/pikdraw.exe",
+    "build_entrypoint": "tooling/native/build.ps1",
+    "worktree_migration": "complete_68_of_68_verified_removed_root_preserved",
+    "legacy_build_cleanup": "canonical_win_dev_apps_desktop_cleaned_to_one_pikdraw_exe",
+    "validation": {
+      "harness_tests": "35/35 passed on final harness and runner source",
+      "doctor": "ok=true, 15 modules, no issues",
+      "powershell_parser": "passed for native scripts",
+      "docs": "13 documents, 47 local links checked; JSON and code fences passed",
+      "app_rebuild": "clean Debug app-only build passed; exactly one executable, build/win-dev/apps/desktop/pikdraw.exe",
+      "native_ctest": "Earlier 2026-10-17 integrated-source full Debug and Release CTest each passed 79/79. After restoring the serial AVX/SSE2 baseline, the default Debug build via tooling/native/build.ps1 -Test completed and full CTest passed 80/80. A subsequent tooling/native/build.ps1 -TestsOnly run at 19:07–19:08 also passed 80/80, 0 failures, reusing the already-built Debug test binaries; LastTest.log records all 80 tests as passed, including storage fidelity, compositor, culling, blend, Gaussian/SIMD, Drop Shadow, effect draft, render warning, desktop shell, SVG interop and workflow E2E. This supersedes the previous serial-control run at 77/80, where the desktop paste-bounds and COM semantic catalog failures occurred. Full Release CTest has not been rerun on the latest snapshot. Automated build/test does not establish direct OS UI, DPI/accessibility, performance target or vendor-format fidelity. Existing Blur/Shadow activation edits the node in place, preserving ID/parameters/revision. Performance target, manual OS interaction, DPI/accessibility and vendor-format fidelity remain open",
+      "test_source_cleanup": "The temporary cleanup was reversed and native test sources are restored; CMake tests default OFF and are enabled by tooling/native/build.ps1 -Test",
+      "independent_review": "final source snapshot available for review"
+    },
+    "legacy_worktrees_detected": 68,
+    "legacy_worktrees_removed": 68,
+    "evidence": "docs/reviews/worktree-consolidation-20261016.md; docs/reviews/single-source-workflow-20261016.md"
+  },
+  "ui_design_policy": {
+    "effective_date": "2026-10-16",
+    "status": "specified_for_manual_design_and_review",
+    "standard": "docs/design/ui-ux-standard.md",
+    "feature_template": "docs/design/feature-ui-template.md",
+    "layout": "docs/architecture/workspace-layout.md",
+    "legacy_visual_references": "historical_not_mandatory",
+    "runtime_ui_changes_in_this_task": true,
+    "automatic_harness_ux_gate": false,
+    "validation": {
+      "doctor": "ok=true; 15 modules; no issues",
+      "harness_tests": "35/35 passed in 46.228s; no app build or runtime UX acceptance",
+      "docs_audit": "20 document files; 102 local links; JSON/canonical/code fences/owned paths passed",
+      "c7_scope": "only visual guidance section 4 changed; header/version/actions/localization/input sections unchanged",
+      "runtime_and_harness_source": "Native Win32/GDI grouped Quick Shapes and Path Drawing flyouts plus Polygon side/rotation controls in the property bar and Properties are implemented; Debug app build passes. Direct interactive acceptance, DPI, accessibility, themes and narrow-window review remain open"
+    },
+    "feature_spec_owner": "implementing_agent",
+    "decision_flow": "Agent analyzes the request and existing UI, writes and decides the feature spec, self-checks it, then implements within authorized scope; no routine user/coordinator pre-code sign-off."
   }
 }

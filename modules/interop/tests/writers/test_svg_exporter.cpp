@@ -80,10 +80,77 @@ void test_svg_analytic_arc_and_loss_report() {
            blocked.report.has_unsupported());
 }
 
+void test_svg_path_and_text_opacity_mapping() {
+    // AC-BF-SVG-01 — Given source paint alpha plus component/object opacity,
+    // When exporting a Path and Text object, Then paint opacity is multiplied
+    // exactly and object opacity is emitted at the element compositing level.
+    Document doc("svg-opacity-mapping");
+    PathObject path;
+    path.id = generate_object_id();
+    path.path = geometry::Path2D::make_rect(10, 10, 40, 30);
+    path.fill = color::RGBColor{0.2, 0.4, 0.6, 0.5};
+    path.stroke = color::RGBColor{0.1, 0.2, 0.3, 0.75};
+    path.stroke_width_mm = 1.25;
+    path.appearance.fill_opacity = 0.5;
+    path.appearance.stroke_opacity = 0.5;
+    path.appearance.object_opacity = 0.25;
+    assert(doc.execute_command(std::make_unique<AddObjectCommand>(path)).success);
+
+    TextObject text;
+    text.id = generate_object_id();
+    text.text = "opacity";
+    text.fill = color::RGBColor{0.3, 0.5, 0.7, 0.5};
+    text.appearance.fill_opacity = 0.5;
+    text.appearance.object_opacity = 0.5;
+    assert(doc.execute_command(std::make_unique<AddObjectCommand>(text)).success);
+
+    const auto exported = SvgExporter::export_with_report(*doc.current_snapshot());
+    assert(exported.success);
+    assert(exported.svg.find("fill-opacity=\"0.25\"") != std::string::npos);
+    assert(exported.svg.find("stroke-opacity=\"0.375\"") != std::string::npos);
+    assert(exported.svg.find("opacity=\"0.25\"") != std::string::npos);
+    assert(exported.svg.find("opacity=\"0.5\"") != std::string::npos);
+}
+
+void test_svg_unsupported_appearance_is_rejected_before_output() {
+    // AC-BF-SVG-02 — Given an unrepresentable blend or effect node, When SVG
+    // export is requested, Then it returns no bytes and identifies the loss.
+    Document blend_doc("svg-unsupported-blend");
+    PathObject blended;
+    blended.id = generate_object_id();
+    blended.path = geometry::Path2D::make_rect(0, 0, 20, 20);
+    blended.appearance.blend_mode = BlendMode::Multiply;
+    assert(blend_doc.execute_command(std::make_unique<AddObjectCommand>(blended)).success);
+    const auto blend_result =
+        SvgExporter::export_with_report(*blend_doc.current_snapshot());
+    assert(!blend_result.success && blend_result.svg.empty());
+    assert(blend_result.report.has_unsupported());
+    assert(blend_result.report.issues().front().feature == "Object blend mode");
+
+    Document effect_doc("svg-unsupported-effect");
+    PathObject effected;
+    effected.id = generate_object_id();
+    effected.path = geometry::Path2D::make_rect(0, 0, 20, 20);
+    EffectNode disabled_blur;
+    disabled_blur.id = generate_effect_instance_id();
+    disabled_blur.enabled = false;
+    disabled_blur.parameters = GaussianBlurEffect{1.0, 1.0};
+    effected.appearance.effects.push_back(disabled_blur);
+    assert(effect_doc.execute_command(std::make_unique<AddObjectCommand>(effected)).success);
+    const auto effect_result =
+        SvgExporter::export_with_report(*effect_doc.current_snapshot());
+    assert(!effect_result.success && effect_result.svg.empty());
+    assert(effect_result.report.has_unsupported());
+    assert(effect_result.report.issues().front().feature == "Appearance effects");
+    assert(SvgExporter::export_to_string(*effect_doc.current_snapshot()).empty());
+}
+
 int main() {
     std::cout << "[test_svg_exporter] Running SVG exporter tests...\n";
     test_svg_export_and_roundtrip();
     test_svg_analytic_arc_and_loss_report();
+    test_svg_path_and_text_opacity_mapping();
+    test_svg_unsupported_appearance_is_rejected_before_output();
     std::cout << "[test_svg_exporter] All tests passed!\n";
     return 0;
 }

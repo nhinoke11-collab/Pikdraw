@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "../automation/native_window_automation.hpp"
 #include <sstream>
 #include <iomanip>
 
@@ -84,7 +85,7 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
     MoveToEx(mem_dc, modal_x, modal_y + 46, NULL);
     LineTo(mem_dc, modal_x + modal_w, modal_y + 46);
 
-    // 4. Left Sidebar Navigation (6 CorelDRAW style categories)
+    // 4. Left Sidebar Navigation (existing categories plus AI Connections)
     HBRUSH br_side = CreateSolidBrush(m_sidebar_bg);
     RECT rc_side = { modal_x, modal_y + 47, modal_x + 190, modal_y + modal_h - 46 };
     FillRect(mem_dc, &rc_side, br_side);
@@ -95,14 +96,16 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
 
     const wchar_t* vi_tab_names[] = {
         L"  Chung & Ngôn ngữ", L"  Giao diện (Theme)", L"  Đơn vị & Bắt điểm",
-        L"  Quản lý màu & ICC", L"  Phím tắt & Thao tác", L"  Thi công & CNC"
+        L"  Quản lý màu & ICC", L"  Phím tắt & Thao tác", L"  Thi công & CNC",
+        L"  Kết nối AI"
     };
     const wchar_t* en_tab_names[] = {
         L"  General & Language", L"  Display & Theme", L"  Units & Snapping",
-        L"  Color & ICC Profiles", L"  Shortcuts & Hotkeys", L"  Production & CAM"
+        L"  Color & ICC Profiles", L"  Shortcuts & Hotkeys", L"  Production & CAM",
+        L"  AI Connections"
     };
 
-    for (int i = 0; i < 6; ++i) {
+    for (int i = 0; i < 7; ++i) {
         int ty = modal_y + 54 + i * 36;
         RECT rc_tab = { modal_x + 10, ty, modal_x + 180, ty + 32 };
         if (settings_active_tab_ == i) {
@@ -474,7 +477,7 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
             L"Ctrl+J          : Options & Preferences";
         DrawTextW(mem_dc, sc_list, -1, &rc_sc_table, DT_LEFT | DT_NOPREFIX);
 
-    } else {
+    } else if (settings_active_tab_ == 5) {
         // Tab 5: Thi công & CNC
         SelectObject(mem_dc, font_vn_bold);
         SetTextColor(mem_dc, m_text_pri);
@@ -517,6 +520,172 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
             L"• Autosave Interval: Every 5 minutes to %LOCALAPPDATA%/PikDraw/\n"
             L"• Undo/Redo Depth: 50 atomic command revisions";
         DrawTextW(mem_dc, sys_text, -1, &rc_sys_b, DT_LEFT | DT_NOPREFIX);
+
+    } else if (settings_active_tab_ == 6) {
+        SelectObject(mem_dc, font_vn_bold);
+        SetTextColor(mem_dc, m_text_pri);
+        RECT title{cx, cy, cx + 490, cy + 22};
+        DrawTextW(mem_dc, is_vi ? L"Kết nối AI qua MCP" : L"AI Connections through MCP", -1,
+                  &title, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+
+        auto draw_access_card = [&](int top, bool checked, bool enabled, int focus,
+                                    const wchar_t* label, const wchar_t* detail) {
+            RECT card{cx, top, cx + 490, top + 60};
+            HBRUSH card_brush = CreateSolidBrush(enabled ? m_header_bg : m_sidebar_bg);
+            FillRect(mem_dc, &card, card_brush);
+            DeleteObject(card_brush);
+            HPEN card_pen = CreatePen(PS_SOLID, settings_ai_focus_index_ == focus ? 2 : 1,
+                settings_ai_focus_index_ == focus ? m_teal : m_border);
+            HGDIOBJ previous_pen = SelectObject(mem_dc, card_pen);
+            HGDIOBJ previous_brush = SelectObject(mem_dc, GetStockObject(HOLLOW_BRUSH));
+            RoundRect(mem_dc, card.left, card.top, card.right, card.bottom, 7, 7);
+            SelectObject(mem_dc, previous_brush);
+            SelectObject(mem_dc, previous_pen);
+            DeleteObject(card_pen);
+
+            RECT box{cx + 14, top + 17, cx + 36, top + 39};
+            HPEN box_pen = CreatePen(PS_SOLID, 1, enabled ? m_teal : m_text_mut);
+            previous_pen = SelectObject(mem_dc, box_pen);
+            previous_brush = SelectObject(mem_dc, GetStockObject(HOLLOW_BRUSH));
+            Rectangle(mem_dc, box.left, box.top, box.right, box.bottom);
+            SelectObject(mem_dc, previous_brush);
+            SelectObject(mem_dc, previous_pen);
+            DeleteObject(box_pen);
+            if (checked) {
+                SetTextColor(mem_dc, enabled ? m_teal : m_text_mut);
+                RECT mark{box.left, box.top - 1, box.right, box.bottom + 1};
+                DrawTextW(mem_dc, L"✓", -1, &mark, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            }
+            SelectObject(mem_dc, font_vn_bold);
+            SetTextColor(mem_dc, enabled ? m_text_pri : m_text_mut);
+            RECT label_rect{cx + 48, top + 8, cx + 475, top + 30};
+            DrawTextW(mem_dc, label, -1, &label_rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            SelectObject(mem_dc, font_sec);
+            SetTextColor(mem_dc, m_text_mut);
+            RECT detail_rect{cx + 48, top + 30, cx + 475, top + 54};
+            DrawTextW(mem_dc, detail, -1, &detail_rect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        };
+
+        draw_access_card(cy + 30, settings_mcp_enabled_choice_, true, 0,
+            is_vi ? L"Cho phép MCP" : L"Allow MCP access",
+            is_vi ? L"Cho agent đọc tài liệu, truy vấn đối tượng, font và phép đo chữ."
+                  : L"Allow agents to inspect documents, objects, fonts and text metrics.");
+        draw_access_card(cy + 102, settings_mcp_edit_choice_, settings_mcp_enabled_choice_, 1,
+            is_vi ? L"Cho phép sửa tài liệu và tệp native" : L"Allow document editing and native files",
+            is_vi ? L"Bao gồm tạo tài liệu, sửa batch, đọc và lưu tệp .pikdraw được cấp quyền."
+                  : L"Includes document creation, batch edits, and granted .pikdraw file access.");
+
+        SelectObject(mem_dc, font_vn_bold);
+        SetTextColor(mem_dc, m_text_pri);
+        RECT status_title{cx, cy + 176, cx + 490, cy + 196};
+        DrawTextW(mem_dc, is_vi ? L"Trạng thái endpoint" : L"Endpoint status", -1,
+                  &status_title, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+        SelectObject(mem_dc, font_sec_bold);
+        SetTextColor(mem_dc, mcp_listener_active() ? m_teal : m_text_mut);
+        RECT status_rect{cx, cy + 200, cx + 490, cy + 220};
+        const wchar_t* endpoint_status = mcp_listener_active()
+            ? (mcp_edit_access_active()
+                ? (is_vi ? L"Đang lắng nghe · Có quyền chỉnh sửa" : L"Listening · Editing enabled")
+                : (is_vi ? L"Đang lắng nghe · Chỉ đọc" : L"Listening · Read only"))
+            : (mcp_error_message().empty()
+                ? (is_vi ? L"Đã tắt" : L"Off")
+                : (is_vi ? L"Không thể khởi động MCP" : L"Could not start MCP"));
+        DrawTextW(mem_dc, endpoint_status, -1, &status_rect, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+
+        const bool access_pending = settings_mcp_enabled_choice_ != mcp_listener_active() ||
+            settings_mcp_edit_choice_ != mcp_edit_access_active();
+        SelectObject(mem_dc, font_sec_bold);
+        SetTextColor(mem_dc, access_pending ? m_teal : m_text_mut);
+        RECT pending_rect{cx, cy + 222, cx + 490, cy + 242};
+        DrawTextW(mem_dc, access_pending
+            ? (is_vi ? L"Có thay đổi chưa áp dụng" : L"Changes pending")
+            : (is_vi ? L"Quyền đang áp dụng" : L"Applied access"), -1,
+            &pending_rect, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+
+        const std::string endpoint_value = mcp_listener_active() && mcp_runtime_
+            ? mcp_runtime_->http.endpoint() : std::string{};
+        const std::string token_value = mcp_listener_active() && mcp_runtime_
+            ? mcp_runtime_->http.access_token() : std::string{};
+        const auto endpoint_wide = NativeWindow::utf8_to_wide(endpoint_value.empty()
+            ? (is_vi ? "Áp dụng để tạo endpoint" : "Apply to create the endpoint") : endpoint_value);
+        const auto token_wide = NativeWindow::utf8_to_wide(token_value.empty()
+            ? (is_vi ? "Áp dụng để tạo access token" : "Apply to create an access token") : token_value);
+        SelectObject(mem_dc, font_sec_bold);
+        SetTextColor(mem_dc, m_text_pri);
+        RECT endpoint_label{cx, cy + 246, cx + 78, cy + 265};
+        DrawTextW(mem_dc, is_vi ? L"MCP URL" : L"MCP URL", -1, &endpoint_label,
+                  DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+        SelectObject(mem_dc, font_mono);
+        SetTextColor(mem_dc, m_teal);
+        RECT endpoint_rect{cx + 78, cy + 246, cx + 405, cy + 265};
+        DrawTextW(mem_dc, endpoint_wide.c_str(), -1, &endpoint_rect,
+                  DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        SelectObject(mem_dc, font_sec_bold);
+        SetTextColor(mem_dc, m_text_pri);
+        RECT token_label{cx, cy + 267, cx + 78, cy + 286};
+        DrawTextW(mem_dc, is_vi ? L"Access key" : L"Access key", -1, &token_label,
+                  DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+        SelectObject(mem_dc, font_mono);
+        SetTextColor(mem_dc, mcp_listener_active() ? m_text_pri : m_text_mut);
+        RECT token_rect{cx + 78, cy + 267, cx + 405, cy + 286};
+        DrawTextW(mem_dc, token_wide.c_str(), -1, &token_rect,
+                  DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+        auto draw_copy_button = [&](RECT rect, int focus, const wchar_t* label) {
+            const bool enabled = mcp_listener_active();
+            HBRUSH button_brush = CreateSolidBrush(enabled ? m_header_bg : m_sidebar_bg);
+            HPEN button_pen = CreatePen(PS_SOLID, 1,
+                settings_ai_focus_index_ == focus ? m_teal : m_border);
+            HGDIOBJ old_brush = SelectObject(mem_dc, button_brush);
+            HGDIOBJ old_pen = SelectObject(mem_dc, button_pen);
+            RoundRect(mem_dc, rect.left, rect.top, rect.right, rect.bottom, 5, 5);
+            SelectObject(mem_dc, old_brush);
+            SelectObject(mem_dc, old_pen);
+            DeleteObject(button_brush);
+            DeleteObject(button_pen);
+            SelectObject(mem_dc, font_sec_bold);
+            SetTextColor(mem_dc, enabled ? m_text_pri : m_text_mut);
+            DrawTextW(mem_dc, label, -1, &rect,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            if (settings_ai_focus_index_ == focus) {
+                HPEN focus_pen = CreatePen(PS_SOLID, 2, m_teal);
+                HGDIOBJ previous_pen = SelectObject(mem_dc, focus_pen);
+                HGDIOBJ previous_brush = SelectObject(mem_dc, GetStockObject(HOLLOW_BRUSH));
+                RoundRect(mem_dc, rect.left - 2, rect.top - 2,
+                    rect.right + 2, rect.bottom + 2, 6, 6);
+                SelectObject(mem_dc, previous_brush);
+                SelectObject(mem_dc, previous_pen);
+                DeleteObject(focus_pen);
+            }
+        };
+        draw_copy_button({cx + 412, cy + 245, cx + 490, cy + 266}, 2,
+            is_vi ? L"Chép URL" : L"Copy URL");
+        draw_copy_button({cx + 412, cy + 267, cx + 490, cy + 288}, 3,
+            is_vi ? L"Chép khóa" : L"Copy key");
+
+        SelectObject(mem_dc, font_sec);
+        SetTextColor(mem_dc, m_text_mut);
+        RECT explanation{cx, cy + 290, cx + 490, cy + 324};
+        if (!mcp_error_message().empty()) {
+            const auto error_wide = NativeWindow::utf8_to_wide(mcp_error_message());
+            DrawTextW(mem_dc, error_wide.c_str(), -1, &explanation,
+                      DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+        } else {
+            DrawTextW(mem_dc, is_vi
+                ? L"MCP chạy ngay trong PikDraw, chỉ bind 127.0.0.1 và yêu cầu access key. Origin ngoài loopback bị từ chối."
+                : L"MCP runs inside PikDraw, binds only to 127.0.0.1 and requires the access key. Non-loopback Origin is rejected.",
+                -1, &explanation, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+        }
+        RECT file_scope{cx, cy + 326, cx + 490, cy + 356};
+        DrawTextW(mem_dc, is_vi
+            ? L"Tệp native chỉ nằm trong %LOCALAPPDATA%\\PikDraw\\automation\\files. Quyền chỉ có hiệu lực trong phiên app này."
+            : L"Native files are limited to %LOCALAPPDATA%\\PikDraw\\automation\\files. Access lasts for this app session.",
+            -1, &file_scope, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+        RECT help_text{cx, cy + 360, cx + 490, cy + 402};
+        DrawTextW(mem_dc, is_vi
+            ? L"Cấu hình client MCP Streamable HTTP bằng URL và header Authorization: Bearer <access key> ở trên. Thay đổi chỉ có hiệu lực sau khi nhấn Áp dụng."
+            : L"Configure the MCP client for Streamable HTTP with the URL above and Authorization: Bearer <access key>. Changes take effect after Apply.",
+            -1, &help_text, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
     }
 
     // 6. Modal Footer (Matching CorelDRAW [ ? ] Help and [ OK ] [ Cancel ])
@@ -544,6 +713,16 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
     SetTextColor(mem_dc, m_text_mut);
     RECT rc_f_rst = { modal_x + 54, fy + 12, modal_x + 180, fy + 36 };
     DrawTextW(mem_dc, is_vi ? L"Khôi phục mặc định" : L"Reset Defaults", -1, &rc_f_rst, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    if (settings_active_tab_ == 6 && settings_ai_focus_index_ == 4) {
+        HPEN focus_pen = CreatePen(PS_SOLID, 2, m_teal);
+        HGDIOBJ previous_pen = SelectObject(mem_dc, focus_pen);
+        HGDIOBJ previous_brush = SelectObject(mem_dc, GetStockObject(HOLLOW_BRUSH));
+        RoundRect(mem_dc, rc_f_rst.left - 3, rc_f_rst.top - 3,
+                  rc_f_rst.right + 3, rc_f_rst.bottom + 3, 6, 6);
+        SelectObject(mem_dc, previous_brush);
+        SelectObject(mem_dc, previous_pen);
+        DeleteObject(focus_pen);
+    }
 
     // Right: Cancel button
     RECT rc_btn_cls = { modal_x + modal_w - 170, fy + 8, modal_x + modal_w - 95, fy + 38 };
@@ -554,6 +733,16 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
     SelectObject(mem_dc, font_vn_bold);
     SetTextColor(mem_dc, m_text_pri);
     DrawTextW(mem_dc, is_vi ? L"Hủy (Cancel)" : L"Cancel", -1, &rc_btn_cls, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    if (settings_active_tab_ == 6 && settings_ai_focus_index_ == 5) {
+        HPEN focus_pen = CreatePen(PS_SOLID, 2, m_teal);
+        HGDIOBJ previous_pen = SelectObject(mem_dc, focus_pen);
+        HGDIOBJ previous_brush = SelectObject(mem_dc, GetStockObject(HOLLOW_BRUSH));
+        RoundRect(mem_dc, rc_btn_cls.left - 2, rc_btn_cls.top - 2,
+                  rc_btn_cls.right + 2, rc_btn_cls.bottom + 2, 8, 8);
+        SelectObject(mem_dc, previous_brush);
+        SelectObject(mem_dc, previous_pen);
+        DeleteObject(focus_pen);
+    }
 
     // Right: OK button
     RECT rc_btn_app = { modal_x + modal_w - 85, fy + 8, modal_x + modal_w - 15, fy + 38 };
@@ -567,7 +756,19 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
     DeleteObject(pen_ok);
     DeleteObject(pen_b_def);
     SetTextColor(mem_dc, is_dark ? RGB(7, 11, 16) : RGB(255, 255, 255));
-    DrawTextW(mem_dc, is_vi ? L"OK" : L"OK", -1, &rc_btn_app, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    DrawTextW(mem_dc, settings_active_tab_ == 6
+        ? (is_vi ? L"Áp dụng" : L"Apply") : L"OK", -1, &rc_btn_app,
+        DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    if (settings_active_tab_ == 6 && settings_ai_focus_index_ == 6) {
+        HPEN focus_pen = CreatePen(PS_SOLID, 2, m_text_pri);
+        HGDIOBJ previous_pen = SelectObject(mem_dc, focus_pen);
+        HGDIOBJ previous_brush = SelectObject(mem_dc, GetStockObject(HOLLOW_BRUSH));
+        RoundRect(mem_dc, rc_btn_app.left - 2, rc_btn_app.top - 2,
+                  rc_btn_app.right + 2, rc_btn_app.bottom + 2, 8, 8);
+        SelectObject(mem_dc, previous_brush);
+        SelectObject(mem_dc, previous_pen);
+        DeleteObject(focus_pen);
+    }
 
     SelectObject(mem_dc, old_pen);
     DeleteObject(pen_div);

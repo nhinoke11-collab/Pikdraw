@@ -8,6 +8,8 @@ int main(int argc, char* argv[]) {
     bool screenshot_mode = false;
     std::string screenshot_path;
     bool headless = false;
+    bool mcp_enabled = false;
+    bool mcp_edit_access = false;
     int timeout_ms = 0;
     pikdraw::desktop::UILanguage initial_lang = pikdraw::desktop::UILanguage::English;
     pikdraw::desktop::ThemeMode initial_theme = pikdraw::desktop::ThemeMode::Light;
@@ -26,6 +28,8 @@ int main(int argc, char* argv[]) {
     bool demo_solid_trim = false;
     bool demo_knife = false;
     bool demo_vector_bitmap = false;
+    int tool_id = -1;
+    int flyout_group = 0;
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -34,6 +38,11 @@ int main(int argc, char* argv[]) {
             screenshot_path = argv[++i];
         } else if (arg == "--headless") {
             headless = true;
+        } else if (arg == "--enable-mcp") {
+            mcp_enabled = true;
+        } else if (arg == "--enable-mcp-edit") {
+            mcp_enabled = true;
+            mcp_edit_access = true;
         } else if (arg == "--timeout" && i + 1 < argc) {
             timeout_ms = std::stoi(argv[++i]) * 1000;
         } else if (arg == "--lang" && i + 1 < argc) {
@@ -78,12 +87,25 @@ int main(int argc, char* argv[]) {
             demo_knife = true;
         } else if (arg == "--demo-vector-bitmap") {
             demo_vector_bitmap = true;
+        } else if (arg == "--tool" && i + 1 < argc) {
+            tool_id = std::stoi(argv[++i]);
+        } else if (arg == "--flyout" && i + 1 < argc) {
+            flyout_group = std::stoi(argv[++i]);
         }
     }
 
     pikdraw::desktop::NativeWindow window(1440, 900);
+    if (mcp_enabled) window.enable_mcp(mcp_edit_access);
     window.set_language(initial_lang);
     window.set_theme(initial_theme);
+    if (tool_id >= 0) {
+        window.set_active_tool(tool_id);
+    }
+    if (flyout_group > 0) {
+        const int fy = (flyout_group == 1) ? 154 : (flyout_group == 2) ? 196 : 364;
+        window.handle_mouse_down(42, fy);
+        window.handle_mouse_up(42, fy);
+    }
     if (create_tabs) {
         window.create_new_tab("Pano Đô Thị (CMYK)", 2000.0, 1000.0, "CMYK", 150);
         window.create_new_tab("Logo Nhãn Hàng (RGB)", 100.0, 100.0, "RGB", 300);

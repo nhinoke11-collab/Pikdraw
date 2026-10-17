@@ -1,60 +1,82 @@
 #include "pikdraw/typography/layout/text_layout.hpp"
-#include <sstream>
-
+#include "pikdraw/typography/layout/caret_navigation.hpp"
+#include <cmath>
+#include <stdexcept>
 namespace pikdraw::typography {
-
 void TextLayout::add_line(LayoutLine line) {
-    if (lines_.empty()) {
-        bounds_ = line.line_bounds;
-    } else {
-        bounds_ = bounds_.united(line.line_bounds);
-    }
+    bounds_ = lines_.empty() ? line.line_bounds : bounds_.united(line.line_bounds);
     lines_.push_back(std::move(line));
 }
-
-TextLayout TextLayout::layout_text(
-    std::string_view utf8_text,
-    const FontIdentity& font,
-    const LayoutOptions& options
-) {
-    TextLayout layout;
-    if (utf8_text.empty()) {
-        return layout;
+namespace {
+size_t wrap_end(const ShapedRun &run, double max_width) {
+    double width = 0;
+    size_t end = 0;
+    size_t word_break = 0;
+    for (size_t i = 0; i < run.glyphs.size(); ++i) {
+        width += run.glyphs[i].x_advance_mm;
+        if (i + 1 < run.glyphs.size() &&
+            run.glyphs[i + 1].cluster_byte_offset == run.glyphs[i].cluster_byte_offset)
+            continue;
+        const size_t next =
+            i + 1 < run.glyphs.size() ? run.glyphs[i + 1].cluster_byte_offset : run.text_utf8.size();
+        if (width > max_width && end > 0)
+            return word_break > 0 ? word_break : end;
+        end = next;
+        if (end > 0 && run.text_utf8[end - 1] == ' ')
+            word_break = end;
     }
-
-    const double line_height = font.size_mm() * options.line_spacing_ratio;
-    double current_y = 0.0;
-
-    std::stringstream ss{std::string(utf8_text)};
-    std::string line_str;
-
-    while (std::getline(ss, line_str, '\n')) {
-        ShapedRun run = shape_text(line_str, font);
-
-        double x_offset = 0.0;
-        if (options.max_width_mm > run.total_advance_mm) {
-            if (options.alignment == TextAlignment::Center) {
-                x_offset = (options.max_width_mm - run.total_advance_mm) * 0.5;
-            } else if (options.alignment == TextAlignment::Right) {
-                x_offset = options.max_width_mm - run.total_advance_mm;
-            }
-        }
-
-        LayoutLine line;
-        line.run = std::move(run);
-        line.baseline_origin = geometry::Point2D{x_offset, current_y + font.size_mm() * 0.8};
-        line.line_bounds = geometry::Rect2D{
-            x_offset,
-            current_y,
-            line.run.total_advance_mm,
-            font.size_mm()
-        };
-
-        layout.add_line(std::move(line));
-        current_y += line_height;
-    }
-
-    return layout;
+    return end == 0 ? run.text_utf8.size() : end;
 }
-
+} // namespace
+TextLayout TextLayout::layout_text(std::string_view text, const FontIdentity &font,
+                                   const LayoutOptions &options) {
+    if (!std::isfinite(options.max_width_mm) || options.max_width_mm < 0 ||
+        !std::isfinite(options.line_spacing_ratio) || options.line_spacing_ratio <= 0)
+        throw std::invalid_argument("Invalid layout width or spacing");
+    if (options.alignment != TextAlignment::Left && options.alignment != TextAlignment::Center &&
+        options.alignment != TextAlignment::Right)
+        throw std::invalid_argument("Unsupported text alignment");
+    TextLayout result;
+    double baseline = 0;
+    size_t paragraph_start = 0;
+    do {
+        size_t paragraph_end = text.find_first_of("\r\n", paragraph_start);
+        if (paragraph_end == std::string_view::npos)
+            paragraph_end = text.size();
+        size_t start = paragraph_start;
+        do {
+            auto run = shape_text(text.substr(start, paragraph_end - start), font);
+            size_t length = paragraph_end - start;
+            if (options.max_width_mm > 0 && run.total_advance_mm > options.max_width_mm) {
+                length = wrap_end(run, options.max_width_mm);
+                // The wrap boundary must also be a source grapheme boundary.
+                const size_t previous = prev_grapheme_cluster(run.text_utf8, length);
+                const size_t boundary = next_grapheme_cluster(run.text_utf8, previous);
+                if (boundary != length)
+                    length = previous > 0 ? previous : boundary;
+                run = shape_text(text.substr(start, length), font);
+            }
+            double x = 0;
+            if (options.max_width_mm > run.total_advance_mm) {
+                const auto remaining = options.max_width_mm - run.total_advance_mm;
+                if (options.alignment == TextAlignment::Center)
+                    x = remaining / 2;
+                if (options.alignment == TextAlignment::Right)
+                    x = remaining;
+            }
+            const double ascent = run.ascent_mm;
+            const double height = run.ascent_mm + run.descent_mm;
+            const double width = run.total_advance_mm;
+            result.add_line({std::move(run), {x, baseline}, {x, baseline - ascent, width, height}, start});
+            baseline += height * options.line_spacing_ratio;
+            start += length;
+        } while (start < paragraph_end);
+        if (paragraph_end == text.size())
+            break;
+        paragraph_start = paragraph_end + 1;
+        if (text[paragraph_end] == '\r' && paragraph_start < text.size() && text[paragraph_start] == '\n')
+            ++paragraph_start;
+    } while (paragraph_start <= text.size());
+    return result;
+}
 } // namespace pikdraw::typography

@@ -1,30 +1,15 @@
 {
   "schema_version": 1,
   "project": "PikDraw",
-  "mode": "prepared-worktree-lanes",
+  "mode": "single-source",
+  "agent_system": "codex",
+  "source_root": "C:/Users/CK ART STAGE/Downloads/PikDraw",
   "external_provider_execution": false,
-  "integration_owner": "assigned-per-session",
-  "lanes": [
-    {
-      "provider": "codex",
-      "task_id": "desktop-layout",
-      "module": "desktop",
-      "title": "Prototype desktop shell and docking",
-      "goal": "Prototype the native PikDraw shell, four workspaces and contextual docking; measure input/layout behavior before stack acceptance. No graphics-engine or format-support claims."
-    },
-    {
-      "provider": "claude",
-      "task_id": "document-spike",
-      "module": "document",
-      "title": "Prototype editable document commands",
-      "goal": "Define and prototype stable object IDs, transactions, undo/redo and versioned storage with recovery evidence. Shared-contract changes require a separately scoped task."
-    },
-    {
-      "provider": "gemini",
-      "task_id": "interop-spike",
-      "module": "interop",
-      "title": "Benchmark editable file interchange",
-      "goal": "Evaluate PDF, PDF-compatible AI and CDR readers using synthetic or redistributable fixtures; report visual fidelity, editability, source-format export coverage and dependency licenses separately."
-    }
-  ]
+  "integration_owner": "one-coordinator-per-shared-source",
+  "delegation_policy": "explicit-user-or-applicable-instruction-authorization; disjoint leases; same source",
+  "new_worktrees": false,
+  "build_directory": "build/win-dev",
+  "app_executable": "build/win-dev/apps/desktop/pikdraw.exe",
+  "build_entrypoint": "tooling/native/build.ps1",
+  "lanes": []
 }

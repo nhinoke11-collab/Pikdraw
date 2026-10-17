@@ -3,15 +3,59 @@
 #include <bit>
 #include <span>
 #include <stdexcept>
+#include <string_view>
 
 namespace pikdraw::document::storage_detail {
 inline constexpr size_t max_file_bytes = 256u * 1024u * 1024u;
 inline constexpr uint32_t max_objects = 100000;
 inline constexpr uint32_t max_elements = 1000000;
+inline constexpr uint32_t max_image_pixels =
+    static_cast<uint32_t>(max_file_bytes / sizeof(uint32_t));
 inline constexpr uint32_t max_string_bytes = 16u * 1024u * 1024u;
+
+inline bool is_valid_utf8(std::string_view value) noexcept {
+  size_t i = 0;
+  while (i < value.size()) {
+    const auto lead = static_cast<uint8_t>(value[i]);
+    if (lead <= 0x7f) {
+      ++i;
+      continue;
+    }
+    size_t continuation_count = 0;
+    uint8_t second_min = 0x80;
+    uint8_t second_max = 0xbf;
+    if (lead >= 0xc2 && lead <= 0xdf) {
+      continuation_count = 1;
+    } else if (lead >= 0xe0 && lead <= 0xef) {
+      continuation_count = 2;
+      if (lead == 0xe0) second_min = 0xa0;
+      if (lead == 0xed) second_max = 0x9f;
+    } else if (lead >= 0xf0 && lead <= 0xf4) {
+      continuation_count = 3;
+      if (lead == 0xf0) second_min = 0x90;
+      if (lead == 0xf4) second_max = 0x8f;
+    } else {
+      return false;
+    }
+    if (continuation_count > value.size() - i - 1)
+      return false;
+    const auto second = static_cast<uint8_t>(value[i + 1]);
+    if (second < second_min || second > second_max)
+      return false;
+    for (size_t j = 2; j <= continuation_count; ++j) {
+      const auto byte = static_cast<uint8_t>(value[i + j]);
+      if (byte < 0x80 || byte > 0xbf)
+        return false;
+    }
+    i += continuation_count + 1;
+  }
+  return true;
+}
 
 class Writer {
 public:
+  explicit Writer(bool validate_utf8 = false) : validate_utf8_(validate_utf8) {}
+
   void u8(uint8_t value) {
     ensure(1);
     bytes.push_back(value);
@@ -36,6 +80,8 @@ public:
     u32(static_cast<uint32_t>(value));
   }
   void str(const std::string &value) {
+    if (validate_utf8_ && !is_valid_utf8(value))
+      throw std::invalid_argument("Native string is not valid UTF-8");
     count(value.size(), max_string_bytes);
     ensure(value.size());
     bytes.insert(bytes.end(), value.begin(), value.end());
@@ -59,11 +105,13 @@ private:
     if (length > max_file_bytes - bytes.size())
       throw std::length_error("Native file exceeds 256 MiB budget");
   }
+  bool validate_utf8_{false};
 };
 
 class Reader {
 public:
-  explicit Reader(std::span<const uint8_t> data) : data_(data) {}
+  explicit Reader(std::span<const uint8_t> data, bool validate_utf8 = false)
+      : data_(data), validate_utf8_(validate_utf8) {}
   uint8_t u8() {
     require(1);
     return data_[position_++];
@@ -104,6 +152,14 @@ public:
         reinterpret_cast<const char *>(data_.data() + position_);
     std::string result(start, length);
     position_ += length;
+    if (validate_utf8_ && !is_valid_utf8(result))
+      throw std::invalid_argument("Native string is not valid UTF-8");
+    return result;
+  }
+  Reader subreader(size_t length) {
+    require(length);
+    Reader result(data_.subspan(position_, length), validate_utf8_);
+    position_ += length;
     return result;
   }
   geometry::Transform2D transform() {
@@ -118,15 +174,19 @@ private:
   }
   std::span<const uint8_t> data_;
   size_t position_{0};
+  bool validate_utf8_{false};
 };
 
 void write_color(Writer &writer, const color::ColorValue &value);
 color::ColorValue read_color(Reader &reader);
 void write_object(Writer &writer, const ObjectVariant &object,
                   bool include_authoring_source,
-                  const EditablePath *source_override = nullptr);
+                  const EditablePath *source_override = nullptr,
+                  bool include_appearance = false);
 ObjectVariant read_object(Reader &reader, uint32_t &remaining_elements,
                           bool include_authoring_source);
+void write_appearance(Writer &writer, const Appearance &appearance);
+Appearance read_appearance(Reader &reader, size_t &remaining_effects);
 void write_editable_path(Writer &writer, const EditablePath &source);
 EditablePath read_editable_path(Reader &reader, uint32_t &remaining_elements);
 uint32_t container_crc(const uint8_t *data, size_t size) noexcept;

@@ -11,7 +11,7 @@ AsyncProposalMetadata Document::begin_job(uint64_t job_id) {
         throw std::overflow_error("Job generation exhausted");
     const auto generation = ++next_job_generation_;
     jobs_[job_id] = generation;
-    return {document_id_, epoch_, revision_, job_id, generation};
+    return {document_id_, epoch_, revision_, job_id, generation, {}};
 }
 
 void Document::cancel_job(uint64_t job_id) {

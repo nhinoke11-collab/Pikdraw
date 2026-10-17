@@ -108,7 +108,7 @@ bool AppendEntity(size_t ordinal, const EntityInfo &entity,
   document::PathObject object;
   object.id = document::generate_object_id();
   int aci = 0;
-  if (!EntityStyle(entity, layer, scale, object, aci)) {
+  if (!EntityStyle(entity, layer, object, aci)) {
     error = Failure("DXF entity style is unsupported or malformed",
                     "unsupported_entity_style");
     return false;

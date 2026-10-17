@@ -1,65 +1,44 @@
 # PikDraw
 
-Bộ khung mã nguồn mở cho ứng dụng desktop thiết kế vector chuyên nghiệp, chỉnh ảnh cơ bản, in quảng cáo, CNC, bản vẽ thi công và 3D cơ bản.
+PikDraw là ứng dụng desktop chỉnh sửa vector cho thiết kế, in quảng cáo và sản xuất.
 
-**Hiện có:** cấu trúc module, tài liệu kiến trúc, quy tắc thiết kế, skill dự án và harness phối hợp agent bằng Git worktree.
-**Chưa có:** engine đồ họa, trình chỉnh sửa chạy được, bộ đọc PDF/CDR/AI/EPS/DXF/SKP hoặc plugin host. Các mục này là công việc phát triển tiếp theo.
+Runtime hiện tại dùng C++20 và Win32/GDI. Nhiều phần của editor và document đã chạy, nhưng M1, hiệu năng đồ họa, độ chính xác sản xuất và độ tương thích định dạng chưa được nghiệm thu đầy đủ. Phạm vi đã làm và bằng chứng nằm trong docs/project-state.json.
 
 ## Bắt đầu
 
-Cần Git và Python 3.10+. Không cần thư viện Python bên ngoài.
+Đọc AGENTS.md và docs/START.md trước khi nhận task.
 
-Windows PowerShell có launcher tự tìm Python hoặc runtime đã có tại máy:
+Trên Windows:
+- .\tooling\pikdraw.ps1 doctor
+- .\tooling\pikdraw.ps1 task list
+- .\tooling\native\build.ps1
+- .\tooling\native\build.ps1 -Test
 
-```powershell
-.\tooling\pikdraw.ps1 doctor
-.\tooling\pikdraw.ps1 task list
-```
+Cần Python 3.10+ cho harness. Launcher PowerShell tự tìm Python đã có trên máy.
 
-Nếu dùng Python ở vị trí khác, đặt `PIKDRAW_PYTHON` trỏ đến executable. Launcher không tải hoặc cài phần mềm.
+## Cấu trúc mã
 
-```sh
-python tooling/agent_harness.py doctor
-python -m unittest discover -s tests/harness -v
-python tooling/agent_harness.py task list
-```
+- apps/desktop: cửa sổ và giao diện Win32/GDI; actions, presenters, runtime, shell, tools và workflows.
+- core/document, geometry, rendering, color, typography: dữ liệu tài liệu, hình học, vẽ, màu và chữ.
+- core/localization: chỗ ghi đặc tả; chưa có runtime localization.
+- modules/vector và modules/interop: công cụ vẽ và adapter định dạng hiện có.
+- modules/raster, production, scene3d: module kế hoạch, chưa có implementation sản phẩm.
+- platform/workers: host tiến trình worker và kiểm tra proposal.
+- packages/plugin-sdk: đặc tả; plugin host/SDK runtime chưa hoàn tất.
+- tests ở cấp repo chứa harness, architecture và integration audit; test C++ nằm cạnh module sở hữu.
+- contracts, registry và tooling: schema, dependency map, task harness và build/check runners.
 
-Agent mới đọc [AGENTS.md](AGENTS.md), [docs/START.md](docs/START.md), sau đó lấy context riêng của task. Không nạp toàn bộ kho tài liệu.
+## Tài liệu
 
-- [Trạng thái hiện tại](docs/project-state.json)
-- [Kiến trúc](docs/architecture/architecture.md)
-- [Document, precision và concurrency](docs/architecture/document-runtime.md)
-- [Ba spike foundation trong hai tuần](docs/roadmap/foundation-spikes.md)
-- [Kế hoạch triển khai sau spike](docs/roadmap/post-spike-implementation.md) — 26 task có dependencies, scope, acceptance và vòng lặp UI native
-- [Catalog task sau spike](docs/roadmap/post-spike-tasks.json) — đặc tả điều phối, chưa là scheduler hoặc task đang chạy
-- [Bố cục giao diện](docs/architecture/workspace-layout.md)
-- [Blueprint giao diện](docs/architecture/workspace-blueprint.svg)
-- [Quy trình worktree](docs/agents/WORKTREES.md)
-- [Giao thức agent](docs/agents/PROTOCOL.md)
-- [Ba lane phát triển](docs/agents/PREPARED-LANES.md)
-- [Registry module](registry/modules.json)
-- [Cổng chất lượng](docs/quality/gates.md)
+- Trạng thái và giới hạn: docs/project-state.json
+- Sơ đồ source hiện tại: docs/development/code-organization.md
+- Kiến trúc và ranh giới module: docs/architecture/architecture.md
+- Quy tắc build: docs/development/native-build.md
+- Quy tắc chất lượng theo rủi ro: docs/quality/gates.md
+- Cấu trúc và cách chọn test nghiệm thu tính năng: docs/quality/feature-acceptance.md
+- Thiết kế UI: docs/design/ui-ux-standard.md
+- Một source và xử lý worktree cũ: docs/agents/WORKTREES.md
 
-## Cách tổ chức
+Tài liệu roadmap là kế hoạch, không chứng minh code đã có. Task board và evidence theo source snapshot mới nhất mới là trạng thái thực thi.
 
-```text
-apps/desktop/             shell và layout desktop
-core/                     document, geometry, rendering, typography, color
-modules/                  vector, raster, production, scene3d, interop
-platform/workers/         host tác vụ cách ly
-packages/plugin-sdk/      hợp đồng plugin và API mở rộng
-contracts/                schema công khai có phiên bản
-registry/                 module, dependency và định tuyến context
-skills/                   skill dùng chung giữa các nhà cung cấp agent
-tooling/                  harness Git worktree và bàn giao
-docs/                     quyết định, trạng thái và tài liệu đọc theo nhu cầu
-tests/                    kiểm thử harness; corpus đồ họa sẽ bổ sung
-.agent/                   bảng task dùng chung cục bộ, không đưa vào Git
-.worktrees/               checkout riêng từng task, không đưa vào Git
-```
-
-Các adapter Claude/Gemini/Copilot chỉ dẫn về cùng một bộ quy tắc; chúng không tự kết nối hay chạy dịch vụ AI. Việc gọi nhà cung cấp và trao đổi giữa máy khác nhau cần tích hợp riêng.
-
-Dự án giữ giấy phép [Apache-2.0](LICENSE) theo lựa chọn của chủ repository GitHub. Thông báo MIT của phần foundation có trước được giữ tại [LICENSES/MIT-foundation.txt](LICENSES/MIT-foundation.txt). Dependency, parser, font và tài sản bên thứ ba cần được kiểm kê giấy phép trước khi phân phối ứng dụng.
-
-Baseline khảo sát là C++20/Qt/Skia; ngôn ngữ/backend/schema và budgets ứng dụng còn chờ spike. Mục tiêu 60 FPS chỉ nghiệm thu trên corpus/máy đã xác định; software có budget riêng. Native CDR export, AI round-trip, CAM và mô phỏng quang học chưa thuộc lát cắt đầu.
+Giấy phép repository là Apache-2.0; thông báo MIT cho phần foundation có trước được giữ tại LICENSES/MIT-foundation.txt. Kiểm tra license của dependency và tài sản trước khi phân phối.

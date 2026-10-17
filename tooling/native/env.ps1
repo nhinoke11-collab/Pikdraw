@@ -3,6 +3,20 @@
 
 $ErrorActionPreference = 'Stop'
 
+function Assert-PikDrawPrimarySource([string]$SourceRoot) {
+    $sourceGit = Get-Item -Force -LiteralPath (Join-Path $SourceRoot '.git')
+    if (-not $sourceGit.PSIsContainer) {
+        throw 'Single-source policy: run native tooling from the primary PikDraw source.'
+    }
+    $currentTop = git rev-parse --show-toplevel 2>$null
+    if ($LASTEXITCODE -eq 0 -and $currentTop) {
+        $currentGit = Get-Item -Force -LiteralPath (Join-Path $currentTop.Trim() '.git')
+        if (-not $currentGit.PSIsContainer) {
+            throw 'Leave the legacy worktree and run from the primary PikDraw source.'
+        }
+    }
+}
+
 function Get-PikDrawToolchain {
     $tools = @{
         Python = $null

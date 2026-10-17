@@ -14,16 +14,36 @@ int bounded_ceil(double value, int limit) {
   return static_cast<int>(
       std::ceil(std::clamp(value, 0.0, static_cast<double>(limit))));
 }
-void blend(PixelBufferTarget &target, int x, int y, color::DeviceRGBA value) {
-  target.blend_pixel(x, y, value.r, value.g, value.b, value.a);
-}
-
 bool fill(const std::vector<Contour> &contours, geometry::WindingRule rule,
-          color::DeviceRGBA value, PixelBufferTarget &target) {
+          const RasterColor &value, PixelBufferTarget &target) {
   if (rule != geometry::WindingRule::NonZero &&
       rule != geometry::WindingRule::EvenOdd)
     return false;
-  std::vector<std::vector<Hit>> rows(static_cast<size_t>(target.height));
+  bool has_points = false;
+  double min_y = 0.0;
+  double max_y = 0.0;
+  for (const auto &contour : contours) {
+    for (const auto point : contour.screen) {
+      if (!has_points) {
+        min_y = max_y = point.y;
+        has_points = true;
+      } else {
+        min_y = std::min(min_y, point.y);
+        max_y = std::max(max_y, point.y);
+      }
+    }
+  }
+  if (!has_points)
+    return true;
+
+  // Allocate and visit scanline buckets only where this path can cover pixel
+  // centers. Small objects should not allocate one vector per viewport row.
+  const int first_row = bounded_ceil(min_y - 0.5, target.height);
+  const int end_row = bounded_ceil(max_y - 0.5, target.height);
+  if (end_row <= first_row)
+    return true;
+  std::vector<std::vector<Hit>> rows(
+      static_cast<size_t>(end_row - first_row));
   size_t work = 0;
   for (const auto &contour : contours) {
     const auto &points = contour.screen;
@@ -42,13 +62,13 @@ bool fill(const std::vector<Contour> &contours, geometry::WindingRule rule,
         return false;
       for (int y = y0; y < y1; ++y) {
         const double t = (static_cast<double>(y) + 0.5 - a.y) / (b.y - a.y);
-        rows[static_cast<size_t>(y)].push_back(
+        rows[static_cast<size_t>(y - first_row)].push_back(
             {a.x + t * (b.x - a.x), winding});
       }
     }
   }
-  for (int y = 0; y < target.height; ++y) {
-    auto &hits = rows[static_cast<size_t>(y)];
+  for (int y = first_row; y < end_row; ++y) {
+    auto &hits = rows[static_cast<size_t>(y - first_row)];
     std::sort(hits.begin(), hits.end(),
               [](const Hit &a, const Hit &b) { return a.x < b.x; });
     int winding = 0;
@@ -63,7 +83,7 @@ bool fill(const std::vector<Contour> &contours, geometry::WindingRule rule,
         const int x0 = bounded_ceil(previous - 0.5, target.width);
         const int x1 = bounded_ceil(x - 0.5, target.width);
         for (int col = x0; col < x1; ++col)
-          blend(target, col, y, value);
+          blend_preview(target, col, y, value);
       }
       while (i < hits.size() && hits[i].x == x)
         winding += hits[i++].winding;
@@ -84,12 +104,13 @@ bool paint(const document::PathObject &object, const Camera2D &camera,
   if (!flatten(object, camera, contours))
     return false;
   const auto convert = [preview](const color::ColorValue &value) {
-    return (preview ? preview->convert(value) : color::to_preview_rgba(value)).to_device();
+    return preview ? preview->convert(value) : color::to_preview_rgba(value);
   };
-  if (object.has_fill &&
-      !fill(contours, object.path.winding_rule(),
-            convert(object.fill), target))
-    return false;
+  if (object.has_fill) {
+    const auto value = make_raster_color(convert(object.fill), target);
+    if (!fill(contours, object.path.winding_rule(), value, target))
+      return false;
+  }
   return !object.has_stroke ||
          stroke(contours, object, camera,
                 convert(object.stroke), target);

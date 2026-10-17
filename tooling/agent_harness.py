@@ -1,176 +1,74 @@
 #!/usr/bin/env python3
-"""PikDraw's local, provider-neutral task/worktree/context coordinator.
+"""PikDraw's local single-source task/context coordinator.
 
 Python stdlib only. Task leases are explicit: a clock never transfers ownership.
-The board is shared by all Git worktrees and all writers take one O_EXCL lock.
+The primary source owns the board; legacy worktrees are readable migration inputs.
+All board writers take one O_EXCL lock.
 This is coordination, not a security sandbox for agents or third-party plugins.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 from contextlib import contextmanager
-from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
 import re
-import subprocess
 import sys
 import tempfile
 
-SCHEMA_VERSION = 1
-STATUSES = {"todo", "in_progress", "review", "done", "blocked"}
-SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,63}\Z")
-OWNER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:@-]{0,127}\Z")
-PROTECTED = {".git", ".worktrees", ".codex", ".agents"}
-WINDOWS_DEVICES = {"con", "prn", "aux", "nul"} | {
-    f"{prefix}{digit}" for prefix in ("com", "lpt") for digit in range(1, 10)
-}
-MAX_JSON_BYTES = 2 * 1024 * 1024
+from harness_support import (SCHEMA_VERSION, STATUSES, HarnessError, now, checked_slug,
+    checked_owner, checked_text, relative_path, contained, read_json, atomic_json,
+    git, coordinator_root, commit_oid, paths_overlap, path_owned)
+from harness_context import ContextRoutes
 
 
-class HarnessError(Exception):
-    """An actionable CLI error, without an implementation traceback."""
-
-
-def now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def checked_slug(value: str, label: str = "id") -> str:
-    if not isinstance(value, str) or not SLUG.fullmatch(value):
-        raise HarnessError(f"Invalid {label}: use lowercase letters/digits/hyphen (max 64).")
-    if value in WINDOWS_DEVICES:
-        raise HarnessError(f"Invalid {label}: Windows reserves {value!r}.")
-    return value
-
-
-def checked_owner(value: str) -> str:
-    if not isinstance(value, str) or not OWNER.fullmatch(value):
-        raise HarnessError("Invalid owner: use a stable provider/session identifier.")
-    return value
-
-
-def checked_text(value: str, label: str, limit: int = 2000) -> str:
-    if not isinstance(value, str) or not value.strip() or len(value) > limit:
-        raise HarnessError(f"{label} must be nonempty and at most {limit} characters.")
-    return value.strip()
-
-
-def relative_path(value: str, *, allow_runtime: bool = True) -> str:
-    if not isinstance(value, str) or not value or "\\" in value or ":" in value:
-        raise HarnessError(f"Unsafe relative POSIX path: {value!r}")
-    parts = value.split("/")
-    if any(part in {"", ".", ".."} for part in parts):
-        raise HarnessError(f"Unsafe relative POSIX path: {value!r}")
-    if any(part.endswith((".", " ")) or any(ord(char) < 32 for char in part)
-           or part.split(".", 1)[0].casefold() in WINDOWS_DEVICES for part in parts):
-        raise HarnessError(f"Unsafe Windows-compatible path: {value!r}")
-    if parts[0].casefold() in PROTECTED or (not allow_runtime and parts[0].casefold() == ".agent"):
-        raise HarnessError(f"Protected path: {value!r}")
-    return value
-
-
-def contained(root: Path, relative: str, *, must_exist: bool = False,
-              allow_runtime: bool = True) -> Path:
-    relative_path(relative, allow_runtime=allow_runtime)
-    path = root / relative
-    try:
-        path.resolve().relative_to(root.resolve())
-    except (ValueError, OSError, RuntimeError) as exc:
-        raise HarnessError(f"Path escapes repository: {relative}") from exc
-    if must_exist and not path.exists():
-        raise HarnessError(f"Missing referenced path: {relative}")
-    return path
-
-
-def read_json(path: Path):
-    try:
-        if path.stat().st_size > MAX_JSON_BYTES:
-            raise HarnessError(f"JSON exceeds {MAX_JSON_BYTES} bytes: {path}")
-        with path.open(encoding="utf-8-sig") as stream:
-            return json.load(stream)
-    except (OSError, ValueError) as exc:
-        raise HarnessError(f"Cannot read JSON {path}: {exc}") from exc
-
-
-def atomic_json(path: Path, data) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = None
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", newline="\n",
-                                         dir=path.parent, delete=False) as stream:
-            temporary = Path(stream.name)
-            json.dump(data, stream, ensure_ascii=False, indent=2)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, path)
-    finally:
-        if temporary is not None and temporary.exists():
-            temporary.unlink()
-
-
-def git(root: Path, *arguments: str, check: bool = True) -> subprocess.CompletedProcess:
-    try:
-        result = subprocess.run(["git", "-C", str(root), *arguments],
-                                capture_output=True, text=True, encoding="utf-8",
-                                errors="replace", timeout=60)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise HarnessError(f"Git unavailable or timed out: {exc}") from exc
-    if check and result.returncode:
-        raise HarnessError(f"Git {' '.join(arguments[:2])} failed: {result.stderr.strip()[:1000]}")
-    return result
-
-
-def coordinator_root(start: Path) -> Path:
-    """A linked worktree's common Git dir points back to its primary board."""
-    start = start.resolve()
-    top = git(start, "rev-parse", "--show-toplevel", check=False)
-    if top.returncode:
-        # doctor/context also work before the initial commit/repository exists.
-        return start
-    checkout = Path(top.stdout.strip()).resolve()
-    common_raw = git(checkout, "rev-parse", "--git-common-dir").stdout.strip()
-    common = Path(common_raw)
-    if not common.is_absolute():
-        common = checkout / common
-    common = common.resolve()
-    if common.name != ".git":
-        raise HarnessError("Unsupported Git layout: common Git directory must be <repo>/.git.")
-    root = common.parent
-    if not (root / "registry/modules.json").is_file():
-        raise HarnessError("Shared coordinator lacks registry/modules.json; use --repo explicitly.")
-    return root
-
-
-def commit_oid(root: Path, ref: str) -> str:
-    if not isinstance(ref, str) or not ref or ref.startswith("-") or any(c.isspace() for c in ref):
-        raise HarnessError("Invalid Git ref.")
-    result = git(root, "rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}")
-    return result.stdout.strip()
-
-
-def paths_overlap(left: str, right: str) -> bool:
-    # Windows is the primary host; be conservative on other systems too.
-    left, right = left.casefold(), right.casefold()
-    return left == right or left.startswith(right + "/") or right.startswith(left + "/")
-
-
-def path_owned(path: str, owned_paths: list[str]) -> bool:
-    return any(path.casefold() == own.casefold() or path.casefold().startswith(own.casefold() + "/")
-               for own in owned_paths)
-
-
-class Harness:
+class Harness(ContextRoutes):
     def __init__(self, repo: Path):
         top = git(repo.resolve(), "rev-parse", "--show-toplevel", check=False)
         self.checkout = Path(top.stdout.strip()).resolve() if not top.returncode else repo.resolve()
         self.root = coordinator_root(repo)
         self.board = contained(self.root, ".agent")
 
+    def require_primary(self):
+        if self.checkout != self.root or Path.cwd().resolve().is_relative_to(self.root / ".worktrees"):
+            raise HarnessError(f"Single-source policy: run writes from the primary source: {self.root}")
+
+    def source_files(self, owned):
+        output = git(self.root, "ls-files", "-z", "--cached", "--others", "--exclude-standard",
+                     "--", *[":(literal)" + path for path in owned]).stdout
+        files = {}
+        for relative in sorted(set(filter(None, output.split("\0")))):
+            path = contained(self.root, relative, allow_runtime=False)
+            if path.is_file():
+                files[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+            elif path.exists():
+                raise HarnessError(f"Unsupported source entry: {relative}")
+        return files
+
+    def source_snapshot(self, task):
+        files = self.source_files(task["owned_paths"])
+        directory = contained(self.root, f".agent/snapshots/{task['id']}")
+        directory.mkdir(parents=True, exist_ok=True)
+        target = Path(tempfile.mkdtemp(prefix="source-", dir=directory))
+        for relative, digest in files.items():
+            data = contained(self.root, relative, allow_runtime=False).read_bytes()
+            if hashlib.sha256(data).hexdigest() != digest:
+                raise HarnessError("Source changed while taking snapshot; retry after writers finish.")
+            copy = contained(target, "files/" + relative, allow_runtime=False)
+            copy.parent.mkdir(parents=True, exist_ok=True)
+            copy.write_bytes(data)
+        if files != self.source_files(task["owned_paths"]):
+            raise HarnessError("Source changed while taking snapshot; retry after writers finish.")
+        manifest = {"schema_version": 1, "head_oid": commit_oid(self.root, "HEAD"),
+                    "files": files, "files_directory": "files", "created_at": now()}
+        atomic_json(target / "manifest.json", manifest)
+        return target.relative_to(self.root).as_posix() + "/manifest.json"
+
     @contextmanager
     def locked(self):
+        self.require_primary()
         # Reject a board redirected by a symlink/junction outside this checkout.
         contained(self.root, ".agent")
         self.board.mkdir(parents=True, exist_ok=True)
@@ -186,78 +84,6 @@ class Harness:
             yield
         finally:
             lock_path.unlink()
-
-    def modules(self) -> dict[str, dict]:
-        registry = read_json(contained(self.checkout, "registry/modules.json", must_exist=True))
-        if not isinstance(registry, dict) or registry.get("schema_version") != SCHEMA_VERSION:
-            raise HarnessError("registry/modules.json requires schema_version: 1.")
-        raw_modules = registry.get("modules")
-        if not isinstance(raw_modules, list) or not raw_modules:
-            raise HarnessError("Module registry must contain a nonempty modules array.")
-        modules = {}
-        for module in raw_modules:
-            if not isinstance(module, dict):
-                raise HarnessError("Each module must be an object.")
-            identifier = checked_slug(module.get("id"), "module id")
-            if identifier in modules:
-                raise HarnessError(f"Duplicate module id: {identifier}")
-            contained(self.checkout, module.get("path"), must_exist=True)
-            checked_text(module.get("status"), f"{identifier} status", 80)
-            for field in ("dependencies", "context", "owned_paths"):
-                if not isinstance(module.get(field), list) or not all(isinstance(v, str) for v in module[field]):
-                    raise HarnessError(f"{identifier}.{field} must be an array of strings.")
-                if len(module[field]) != len(set(module[field])):
-                    raise HarnessError(f"Duplicate {identifier}.{field} value.")
-            if not module["owned_paths"]:
-                raise HarnessError(f"{identifier} requires owned_paths.")
-            for path in module["context"]:
-                contained(self.checkout, path, must_exist=True)
-            for path in module["owned_paths"]:
-                contained(self.checkout, path, allow_runtime=False)
-            modules[identifier] = module
-        for identifier, module in modules.items():
-            unknown = set(module["dependencies"]) - modules.keys()
-            if unknown:
-                raise HarnessError(f"{identifier}: unknown dependencies {sorted(unknown)}")
-        visited, visiting = set(), []
-
-        def visit(identifier):
-            if identifier in visiting:
-                raise HarnessError("Module dependency cycle: " + " -> ".join(visiting + [identifier]))
-            if identifier in visited:
-                return
-            visiting.append(identifier)
-            for dependency in modules[identifier]["dependencies"]:
-                visit(dependency)
-            visiting.pop()
-            visited.add(identifier)
-
-        for identifier in modules:
-            visit(identifier)
-        return modules
-
-    def boot(self, modules: dict[str, dict]) -> dict:
-        path = contained(self.checkout, "registry/boot.json")
-        if not path.exists():
-            return {"schema_version": 1, "routes": []}
-        boot = read_json(path)
-        if not isinstance(boot, dict) or boot.get("schema_version") != 1 or not isinstance(boot.get("routes"), list):
-            raise HarnessError("registry/boot.json requires schema_version: 1 and routes array.")
-        seen = set()
-        for route in boot["routes"]:
-            if not isinstance(route, dict):
-                raise HarnessError("Boot route must be an object.")
-            identifier = checked_slug(route.get("id"), "route id")
-            if identifier in seen:
-                raise HarnessError(f"Duplicate boot route: {identifier}")
-            seen.add(identifier)
-            if not isinstance(route.get("paths"), list) or not route["paths"]:
-                raise HarnessError(f"Boot route {identifier} needs paths.")
-            for reference in route["paths"]:
-                contained(self.checkout, reference, must_exist=True)
-            if route.get("module") is not None and route["module"] not in modules:
-                raise HarnessError(f"Boot route {identifier}: unknown module.")
-        return boot
 
     def task_path(self, task_id: str) -> Path:
         return contained(self.root, f".agent/tasks/{checked_slug(task_id, 'task id')}.json")
@@ -340,8 +166,11 @@ class Harness:
                                            f"task {other['id']} ({other['lease']['owner']}).")
 
     def create_task(self, task_id, title, module_id, goal, provider, base, paths=None):
+        self.require_primary()
         checked_slug(task_id, "task id")
         checked_slug(provider, "provider")
+        if provider != "codex":
+            raise HarnessError("Single agent system: new tasks use --provider codex; historical records remain readable.")
         checked_text(title, "Task title", 160)
         checked_text(goal, "Task goal")
         modules = self.modules()
@@ -366,6 +195,8 @@ class Harness:
         checked_slug(provider, "provider")
         with self.locked():
             task = self.task(task_id)
+            if provider != "codex" or task.get("worktree"):
+                raise HarnessError("Single-source policy: migrate the legacy task; claim a Codex task at the primary source.")
             if provider != task["provider"]:
                 raise HarnessError("Provider differs from task assignment.")
             if task["status"] == "done":
@@ -376,6 +207,10 @@ class Harness:
             if not task.get("lease"):
                 task["lease"] = {"owner": owner, "provider": provider, "acquired_at": now(),
                                  "release_policy": "explicit"}
+            if not task.get("source_baseline"):
+                if commit_oid(self.root, "HEAD") != task["base"]["oid"]:
+                    raise HarnessError("Task base is stale; create a scoped task at the primary HEAD.")
+                task["source_baseline"] = self.source_snapshot(task)
             task["status"] = "in_progress"
             self.save_task(task)
         return task
@@ -424,43 +259,7 @@ class Harness:
         return result
 
     def create_worktree(self, task_id, provider, base, owner):
-        checked_slug(provider, "provider")
-        checked_slug(task_id, "task id")
-        branch = f"agent/{provider}/{task_id}"
-        relative = f".worktrees/{provider}-{task_id}"
-        # .worktrees is reserved from agent-owned sources, but created only here.
-        parent = self.root / ".worktrees"
-        target = parent / f"{provider}-{task_id}"
-        try:
-            target.resolve().relative_to(self.root.resolve())
-        except (ValueError, OSError) as exc:
-            raise HarnessError("Worktree target escapes repository.") from exc
-        oid = commit_oid(self.checkout, base)
-        with self.locked():
-            task = self.task(task_id)
-            self.require_owner(task, owner)
-            if task["provider"] != provider or task["base"]["oid"] != oid:
-                raise HarnessError("Worktree provider/base must match task assignment.")
-            self.assert_no_overlap(task, self.all_tasks())
-            if task.get("worktree"):
-                raise HarnessError("Task already has a registered worktree.")
-            if target.exists() or target.is_symlink():
-                raise HarnessError(f"Refusing existing worktree path: {target}")
-            if git(self.root, "show-ref", "--verify", f"refs/heads/{branch}", check=False).returncode == 0:
-                raise HarnessError(f"Refusing existing branch: {branch}")
-            for reference in ("AGENTS.md", "docs/START.md", "docs/project-state.json", "registry/modules.json"):
-                git(self.root, "ls-files", "--error-unmatch", "--", reference)
-                git(self.root, "cat-file", "-e", f"{oid}:{reference}")
-            parent.mkdir(exist_ok=True)
-            git(self.root, "worktree", "add", "-b", branch, str(target), oid)
-            # Never remove a checkout on registration failure: preserve it for recovery.
-            task["worktree"] = {"path": relative, "branch": branch, "base_oid": oid}
-            try:
-                self.save_task(task)
-            except Exception as exc:
-                raise HarnessError(f"Worktree created at {target}, but registration failed. "
-                                   "Preserve it; repair the task record before retrying.") from exc
-        return {"task_id": task_id, "branch": branch, "path": str(target), "base_oid": oid}
+        raise HarnessError(f"Single-source policy: worktree create is disabled. Edit owned paths in {self.root}.")
 
     def handoff(self, task_id, owner, head, summary, changed_paths, decisions,
                 tests, questions, next_steps):
@@ -474,39 +273,38 @@ class Harness:
             task = self.task(task_id)
             self.require_owner(task, owner)
             base_oid = task["base"]["oid"]
-            checkout = self.checkout
             if task.get("worktree"):
-                checkout = self.root / task["worktree"]["path"]
-                try:
-                    checkout.resolve().relative_to(self.root.resolve())
-                except (ValueError, OSError, RuntimeError) as exc:
-                    raise HarnessError("Registered task worktree escapes repository.") from exc
-            # HEAD and other checkout-local refs must resolve in the assigned checkout,
-            # not the primary checkout where the shared board lives.
-            head_oid = commit_oid(checkout, head)
-            if task.get("worktree"):
-                if commit_oid(checkout, "HEAD") != head_oid:
-                    raise HarnessError("Handoff head must match the task worktree HEAD.")
-                if git(checkout, "status", "--porcelain", "--untracked-files=normal").stdout.strip():
-                    raise HarnessError("Task worktree is dirty; commit owned changes before handoff.")
+                raise HarnessError("Migrate legacy worktree before a single-source handoff.")
+            head_oid = commit_oid(self.root, head)
+            if commit_oid(self.root, "HEAD") != head_oid:
+                raise HarnessError("Handoff head must match primary HEAD.")
+            if not task.get("source_baseline"):
+                raise HarnessError("Missing source baseline; claim again before editing, never infer a baseline afterwards.")
             if git(self.root, "merge-base", "--is-ancestor", base_oid, head_oid, check=False).returncode:
                 raise HarnessError("Handoff head must descend from the assigned base commit.")
-            actual = sorted(filter(None, git(self.root, "diff", "--name-only", "-z", base_oid, head_oid).stdout.split("\0")))
-            for path in actual:
-                contained(checkout, path, allow_runtime=False)
+            committed = filter(None, git(self.root, "diff", "--name-only", "-z", "--no-renames", base_oid, head_oid).stdout.split("\0"))
+            for path in committed:
+                contained(self.root, path, allow_runtime=False)
                 if not path_owned(path, task["owned_paths"]):
                     raise HarnessError(f"Changed file is outside task ownership: {path}")
+            baseline = read_json(contained(self.root, task["source_baseline"], must_exist=True))
+            snapshot_path = self.source_snapshot(task)
+            snapshot = read_json(contained(self.root, snapshot_path, must_exist=True))
+            actual = sorted(path for path in baseline["files"].keys() | snapshot["files"].keys()
+                            if baseline["files"].get(path) != snapshot["files"].get(path))
             if changed_paths and sorted(set(changed_paths)) != actual:
-                raise HarnessError("Declared changed paths differ from the committed Git diff.")
+                raise HarnessError("Declared changed paths differ from the source snapshot diff.")
             if not tests:
                 raise HarnessError("Handoff needs --test evidence (or an explicit reason a check was not run).")
             packet = {"schema_version": 1, "type": "handoff", "task_id": task_id,
                       "provider": task["provider"], "owner": owner, "module": task["module"],
                       "base": task["base"], "head": {"ref": head, "oid": head_oid},
+                      "source_baseline": task["source_baseline"], "source_snapshot": snapshot_path,
+                      "uncommitted": bool(git(self.root, "status", "--porcelain").stdout.strip()),
                       "summary": summary, "changed_paths": actual, "decisions": decisions,
                       "tests": tests, "open_questions": questions, "next_steps": next_steps,
                       "created_at": now()}
-            packet_path = f".agent/handoffs/{task_id}-{head_oid[:12]}.json"
+            packet_path = f".agent/handoffs/{task_id}-{Path(snapshot_path).parent.name}.json"
             atomic_json(contained(self.root, packet_path), packet)
             task.update(status="review", summary=summary, next_steps=next_steps,
                         handoff=packet_path, lease=None,
@@ -514,75 +312,6 @@ class Harness:
             self.save_task(task)
         return packet
 
-    def doctor(self):
-        issues = []
-        modules = {}
-        try:
-            modules = self.modules()
-            self.boot(modules)
-            for reference in ("AGENTS.md", "docs/START.md", "docs/project-state.json"):
-                contained(self.checkout, reference, must_exist=True)
-            state = read_json(contained(self.checkout, "docs/project-state.json", must_exist=True))
-            if not isinstance(state, dict) or state.get("schema_version") != 1:
-                raise HarnessError("docs/project-state.json requires schema_version: 1.")
-            tasks = self.all_tasks()
-            for task in tasks:
-                self.validate_task(task, modules)
-                if task.get("lease"):
-                    self.assert_no_overlap(task, tasks)
-                if task.get("handoff"):
-                    packet = read_json(contained(self.root, task["handoff"], must_exist=True))
-                    if packet.get("schema_version") != 1 or packet.get("task_id") != task["id"]:
-                        raise HarnessError(f"Invalid handoff reference for {task['id']}.")
-        except HarnessError as exc:
-            issues.append(str(exc))
-        return {"ok": not issues, "product": "PikDraw", "schema_version": 1,
-                "modules": len(modules), "issues": issues}
-
-    def context(self, task_id, max_chars=12000):
-        if max_chars < 1000 or max_chars > 50000:
-            raise HarnessError("--max-chars must be between 1000 and 50000.")
-        modules = self.modules()
-        task = self.task(task_id)
-        self.validate_task(task, modules)
-        module = modules[task["module"]]
-        boot = self.boot(modules)
-        references = ["AGENTS.md", "docs/START.md", "docs/project-state.json", "registry/modules.json"]
-        references += module["context"]
-        route_ids = {module["id"], "session", "session-start", "general", "module-change"}
-        if module["id"] == "plugin-sdk":
-            route_ids.add("plugin")
-        if task["status"] == "review":
-            route_ids.add("review")
-        for route in boot["routes"]:
-            if route.get("module") == module["id"] or route["id"] in route_ids:
-                references += route["paths"]
-        references = list(dict.fromkeys(references))
-        sections = [f"PikDraw task context v1 | task={task_id} | module={module['id']}",
-                    "Shared coordinator: " + str(self.root),
-                    "Source checkout: " + str(self.checkout),
-                    "Read only the references relevant to this task; expand context on demand.",
-                    "TASK\n" + json.dumps(task, ensure_ascii=False, separators=(",", ":")),
-                    "MODULE\n" + json.dumps(module, ensure_ascii=False, separators=(",", ":")),
-                    "DEPENDENCY POINTERS\n" + json.dumps({dep: modules[dep]["context"] for dep in module["dependencies"]}, ensure_ascii=False),
-                    "REFERENCES\n" + "\n".join(references)]
-        # Only three boot documents are opened, each with a strict byte/read bound.
-        for reference, limit in (("AGENTS.md", 2600), ("docs/START.md", 1500), ("docs/project-state.json", 1600)):
-            path = contained(self.checkout, reference, must_exist=True)
-            try:
-                with path.open(encoding="utf-8-sig") as stream:
-                    snippet = stream.read(limit + 1)
-            except OSError as exc:
-                raise HarnessError(f"Cannot read context document {reference}: {exc}") from exc
-            if len(snippet) > limit:
-                snippet = snippet[:limit] + "\n[excerpt; open reference only if needed]"
-            sections.append(reference + "\n" + snippet)
-        content = "\n\n".join(sections)
-        # Reserve print's newline; no unbounded logs or automatic directory scan.
-        if len(content) + 1 > max_chars:
-            suffix = "\n[context capped; use task show and listed references as needed]"
-            content = content[:max_chars - len(suffix) - 1] + suffix
-        return content
 
 
 def parser():
@@ -622,7 +351,7 @@ def parser():
     worktree_create = worktree.add_parser("create")
     for name in ("task-id", "provider", "base", "owner"):
         worktree_create.add_argument("--" + name, required=True)
-    handoff = commands.add_parser("handoff", help="Publish a bounded committed handoff; release task into review")
+    handoff = commands.add_parser("handoff", help="Snapshot owned source changes without committing; release task into review")
     for name in ("task-id", "owner", "head", "summary"):
         handoff.add_argument("--" + name, required=True)
     for name, destination in (("changed-path", "changed_paths"), ("decision", "decisions"),

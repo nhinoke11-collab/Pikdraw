@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "suite": "pikdraw.basic-effects.reference",
+  "semantic_profile": "appearance-basic-v1",
+  "provenance": {
+    "blend_formula": "W3C Compositing and Blending Level 1, general blend formula and separable blend definitions",
+    "gaussian_formula": "normalized exp(-x*x/(2*sigma*sigma)) with PikDraw finite support radius ceil(4*sigma)",
+    "independent_from_implementation": true,
+    "source_urls": [
+      "https://www.w3.org/TR/compositing-1/#blending",
+      "https://www.w3.org/TR/filter-effects-1/#feGaussianBlurElement",
+      "https://www.w3.org/TR/filter-effects-1/#feDropShadowElement"
+    ]
+  },
+  "color_and_alpha": {
+    "blend_space": "srgb_encoded_v1",
+    "filter_space": "linear_srgb_v1",
+    "working_alpha": "premultiplied",
+    "target_alpha": "straight_rgba8",
+    "source_color_metadata_mutated": false
+  },
+  "opacity": [
+    {
+      "id": "object-opacity-applies-once-to-overlap",
+      "source_premultiplied_rgba": [0.0, 0.0, 1.0, 1.0],
+      "object_opacity": 0.5,
+      "expected_premultiplied_rgba": [0.0, 0.0, 0.5, 0.5],
+      "expected_alpha": 0.5
+    },
+    {
+      "id": "source-color-alpha-times-object-opacity",
+      "source_premultiplied_rgba": [0.5, 0.0, 0.0, 0.5],
+      "object_opacity": 0.5,
+      "expected_premultiplied_rgba": [0.25, 0.0, 0.0, 0.25],
+      "expected_alpha": 0.25
+    }
+  ],
+  "blend": {
+    "opaque_colors": {
+      "backdrop_srgb": [0.2, 0.4, 0.6],
+      "source_srgb": [0.8, 0.5, 0.25],
+      "expected_srgb": {
+        "normal": [0.8, 0.5, 0.25],
+        "multiply": [0.16, 0.2, 0.15],
+        "screen": [0.84, 0.7, 0.7],
+        "overlay": [0.32, 0.4, 0.4],
+        "darken": [0.2, 0.4, 0.25],
+        "lighten": [0.8, 0.5, 0.6]
+      }
+    },
+    "multiply_with_translucent_backdrop_and_source": {
+      "backdrop_srgb": [0.2, 0.4, 0.6],
+      "backdrop_alpha": 0.5,
+      "source_srgb": [0.8, 0.5, 0.25],
+      "source_alpha": 0.5,
+      "expected_alpha": 0.75,
+      "expected_premultiplied_rgb": [0.29, 0.275, 0.25],
+      "expected_straight_srgb": [0.3866666667, 0.3666666667, 0.3333333333]
+    },
+    "zero_alpha_backdrop": {
+      "backdrop_premultiplied_rgba": [0.0, 0.0, 0.0, 0.0],
+      "source_premultiplied_rgba": [0.2, 0.1, 0.05, 0.5],
+      "mode": "multiply",
+      "expected_premultiplied_rgba": [0.2, 0.1, 0.05, 0.5]
+    }
+  },
+  "gaussian_blur": {
+    "sigma_px": 1.0,
+    "support_radius_px": 4,
+    "sample_positions_px": [-4, -3, -2, -1, 0, 1, 2, 3, 4],
+    "normalized_kernel": [0.0001338306, 0.0044318616, 0.0539911274, 0.2419714457, 0.3989434694, 0.2419714457, 0.0539911274, 0.0044318616, 0.0001338306],
+    "identity_cases": [
+      { "sigma_x_px": 0.0, "sigma_y_px": 0.0, "must_preserve_pixels": true },
+      { "sigma_x_px": 1.0, "sigma_y_px": 0.0, "must_preserve_rows": true },
+      { "sigma_x_px": 0.0, "sigma_y_px": 1.0, "must_preserve_columns": true }
+    ],
+    "transparent_hidden_rgb": {
+      "input_straight_rgba": [1.0, 0.0, 0.0, 0.0],
+      "expected_premultiplied_rgba_after_blur": [0.0, 0.0, 0.0, 0.0]
+    }
+  },
+  "drop_shadow": {
+    "input_alpha": 0.5,
+    "shadow_color_alpha": 1.0,
+    "shadow_opacity": 0.5,
+    "object_opacity": 0.5,
+    "expected_alpha_outside_source_after_object_opacity": 0.125,
+    "order": ["input-alpha", "gaussian-blur", "local-offset", "tint", "shadow-under-input", "object-opacity-once"],
+    "positive_local_dx_moves_right": true,
+    "positive_local_dy_moves_up": true
+  },
+  "drop_shadow_blend": {
+    "backdrop_srgb": [0.2, 0.4, 0.8],
+    "shadow_srgb": [0.5, 0.5, 0.5],
+    "shadow_alpha": 1.0,
+    "object_blend_mode": "normal",
+    "shadow_blend_expected_srgb": {
+      "normal": [0.5, 0.5, 0.5],
+      "multiply": [0.1, 0.2, 0.4],
+      "screen": [0.6, 0.7, 0.9],
+      "overlay": [0.2, 0.4, 0.8],
+      "darken": [0.2, 0.4, 0.5],
+      "lighten": [0.5, 0.5, 0.8]
+    },
+    "source_pixel_srgb": [1.0, 0.0, 0.0],
+    "source_pixel_expected_srgb": [1.0, 0.0, 0.0],
+    "multiply_shadow_object_opacity": 0.5,
+    "multiply_shadow_pixel_expected_srgb": [0.15, 0.3, 0.6]
+  },
+  "resource_policy": {
+    "reject_non_finite_parameters": true,
+    "checked_size_arithmetic": true,
+    "reject_before_allocation_when_estimated_work_exceeds_budget": true,
+    "partial_effect_result_is_never_published": true,
+    "stale_document_epoch_revision_or_job_generation_is_rejected": true
+  }
+}

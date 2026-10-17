@@ -11,11 +11,6 @@ namespace {
 constexpr double kPi = 3.141592653589793238462643383279502884;
 constexpr double kTau = 2.0 * kPi;
 
-bool finite_curve(const CubicBezier& curve) {
-    return curve.p0.is_finite() && curve.p1.is_finite() &&
-           curve.p2.is_finite() && curve.p3.is_finite();
-}
-
 double normalized_positive(double angle) {
     double result = std::fmod(angle, kTau);
     if (result < 0.0) result += kTau;

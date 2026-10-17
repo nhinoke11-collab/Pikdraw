@@ -13,6 +13,8 @@ add_library(pikdraw_geometry STATIC
     src/flattening/flattening.cpp
     src/operations/boolean.cpp
     src/operations/offset.cpp
+    src/queries/curve_intersections.cpp
+    src/dimensions/dimension_geometry.cpp
 )
 
 target_include_directories(pikdraw_geometry PUBLIC
@@ -26,7 +28,11 @@ if(PIKDRAW_BUILD_TESTS)
         tests/primitives/test_primitives.cpp
         tests/curves/test_curves.cpp
         tests/curves/test_curve_analytic.cpp
+        tests/queries/test_curve_intersections.cpp
+        tests/dimensions/test_dimension_geometry.cpp
         tests/operations/test_operations.cpp
+        tests/operations/test_offset.cpp
+        tests/operations/test_subset_safety.cpp
         tests/acceptance/test_20m_billboard.cpp
     )
 

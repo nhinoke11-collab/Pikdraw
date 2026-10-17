@@ -35,9 +35,11 @@ crash-recovery cho từng điểm nháp; benchmark CPU hiện có không đo FPS
 document. Point picking dùng tolerance từ số pixel của desktop; stroke biến đổi không đều
 được kiểm trong source và world, tránh chọn nhầm xa đường viền.
 
-`selection_resize_transform` trả delta binary64 cho tám tay nắm, giữ anchor đối diện;
-Shift giữ tỉ lệ ở góc. `TransformGesture::update_transform` chỉ giữ preview, commit kiểm
-document/epoch/revision và tạo một undo unit. `apply_object_styles` áp patch cho nhiều
+`selection_resize_transform` trả transform binary64 cho tám tay nắm, giữ anchor đối diện;
+khóa tỉ lệ/Shift áp dụng cho cả handle cạnh và góc, còn cạnh khi mở khóa chỉ scale một trục.
+Shell Pick có tám handle scale cùng handle xoay riêng; preview không sửa source, thả chuột commit
+qua `TransformGesture` thành một undo unit và Escape hủy. Commit kiểm document/epoch/revision.
+`apply_object_styles` áp patch cho nhiều
 đối tượng nguyên tử, giữ overprint riêng của từng đối tượng.
 
 Test mới: `test_pikdraw_editor_selection`; consumer ở `apps/desktop/tests/test_editor_tools.cpp`.

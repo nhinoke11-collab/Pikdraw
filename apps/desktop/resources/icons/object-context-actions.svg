@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" role="img" aria-labelledby="title">
+  <title id="title">PikDraw object context actions</title>
+  <symbol id="align-left" viewBox="0 0 24 24"><path d="M4 3v18M4 6h13v5H4zM4 14h9v5H4z"/></symbol>
+  <symbol id="align-center-horizontal" viewBox="0 0 24 24"><path d="M12 3v18M6 6h12v5H6zM8 14h8v5H8z"/></symbol>
+  <symbol id="align-right" viewBox="0 0 24 24"><path d="M20 3v18M7 6h13v5H7zM11 14h9v5h-9z"/></symbol>
+  <symbol id="align-top" viewBox="0 0 24 24"><path d="M3 4h18M6 4h5v13H6zM14 4h5v9h-5z"/></symbol>
+  <symbol id="align-center-vertical" viewBox="0 0 24 24"><path d="M3 12h18M6 6h5v12H6zM14 8h5v8h-5z"/></symbol>
+  <symbol id="align-bottom" viewBox="0 0 24 24"><path d="M3 20h18M6 7h5v13H6zM14 11h5v9h-5z"/></symbol>
+  <symbol id="center-page" viewBox="0 0 24 24"><path d="M5 2.75h14v18.5H5zM9 8h6v8H9zM12 5v3M12 16v3M6.5 12H9M15 12h2.5"/></symbol>
+  <symbol id="distribute-horizontal" viewBox="0 0 24 24"><path d="M3 5v14M21 5v14M6 8h3v8H6zM10.5 8h3v8h-3zM15 8h3v8h-3zM9.5 6.5h1M14 6.5h1"/></symbol>
+  <symbol id="distribute-vertical" viewBox="0 0 24 24"><path d="M5 3h14M5 21h14M8 6h8v3H8zM8 10.5h8v3H8zM8 15h8v3H8zM6.5 9.5v1M6.5 14v1"/></symbol>
+  <symbol id="group" viewBox="0 0 24 24"><rect x="3" y="5" width="12" height="12" rx="1.5"/><rect x="9" y="8" width="12" height="12" rx="1.5"/></symbol>
+  <symbol id="weld-union" viewBox="0 0 24 24"><path d="M5 5h8a4 4 0 0 1 4 4v1h2v9H9a4 4 0 0 1-4-4zM8 9h4M10 7v4"/></symbol>
+  <symbol id="difference" viewBox="0 0 24 24"><path d="M4 5h9a4 4 0 0 1 4 4v10H8a4 4 0 0 1-4-4zM14 5h5v10M16 8h2"/></symbol>
+  <symbol id="intersect" viewBox="0 0 24 24"><defs><clipPath id="intersection-clip"><rect x="8" y="7" width="9" height="10"/></clipPath></defs><rect x="3" y="4" width="12" height="14" rx="3"/><rect x="9" y="6" width="12" height="14" rx="3"/><rect x="3" y="4" width="12" height="14" rx="3" clip-path="url(#intersection-clip)" fill="currentColor" fill-opacity=".25"/></symbol>
+  <symbol id="exclude-xor" viewBox="0 0 24 24"><path d="M4 5h8a4 4 0 0 1 4 4v10H8a4 4 0 0 1-4-4zM12 5h4a4 4 0 0 1 4 4v6M10 9l4 4M14 9l-4 4"/></symbol>
+  <symbol id="reverse-difference" viewBox="0 0 24 24"><path d="M11 5H8a4 4 0 0 0-4 4v10h9a4 4 0 0 0 4-4V9a4 4 0 0 0-4-4zM10 5h6a4 4 0 0 1 4 4v6M8 8h4"/></symbol>
+</svg>

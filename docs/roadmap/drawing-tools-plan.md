@@ -1,6 +1,9 @@
 # PikDraw — Kế hoạch công cụ vẽ, Pen, sửa node và hình học kỹ thuật 2D
 
-Ngày: 2026-10-15. Trạng thái: **đặc tả đề xuất, chưa triển khai**.
+> Tài liệu thiết kế ngày 15/10/2026; inventory source và trạng thái Dxx bên dưới là lịch sử. Pen core/controller/numeric hiện có trong review; P07 shell hookup còn thiếu và Node chưa triển khai. Xem [Pen README](pen-tool-20261016/README.md), project state và task board để biết hiện trạng. Với thay đổi UI, ghi spec theo [chuẩn UX/UI](../design/ui-ux-standard.md); agent tự quyết lựa chọn thường lệ trong scope.
+
+
+Ngày: 2026-10-15. Trạng thái lúc viết: **đặc tả đề xuất**.
 Catalog thực hiện: [drawing-tools-tasks.json](drawing-tools-tasks.json). Bổ sung nhóm điều khiển snap/modifier/shape trong mục 3.4–3.7; đây vẫn là kế hoạch chưa triển khai.
 
 ## 1. Phạm vi và bằng chứng hiện tại
@@ -323,7 +326,7 @@ Pen/Node cần renderer hỗ trợ fill/stroke/curve/closure thật; thiếu ren
 | `core/rendering` | Overlay path/node/handle, incremental invalidation, render adapter của geometry mới |
 | `modules/production` | Annotation/measurement và derived route checks; không sở hữu Pen hay mutable path riêng |
 
-Tên là file map đề xuất; chỉ tạo khi có trách nhiệm thật. Public header nhắm 80–180 dòng không rỗng, cap 300; implementation nhắm 150–350, cap 500; entry/composition cap 250; test cap 500; CMake cap 250. Đọc [quy tắc tổ chức code](../development/code-organization.md). Không thêm logic công cụ vào các file `native_window_events.cpp`/`native_window_paint.cpp` đang lớn; adapter chỉ route sự kiện và render presenter. Không minify, `.inc` lách cap hoặc tạo hàng loạt file getter trống.
+Tên là file map đề xuất; chỉ tạo khi có trách nhiệm thật. Public header nhắm 80–180 dòng không rỗng, cap 300; implementation nhắm 150–350, cap 1000; private implementation header và test source cap 1000; entry/composition cap 250; CMake cap 250. Đọc [quy tắc tổ chức code](../development/code-organization.md). Không thêm logic công cụ vào các file `native_window_events.cpp`/`native_window_paint.cpp` đang lớn; adapter chỉ route sự kiện và render presenter. Không minify, `.inc` lách cap hoặc tạo hàng loạt file getter trống.
 
 Không phụ thuộc đổi Qt/Skia để bắt đầu lõi tương tác. UI adapter bám host đã nghiệm thu; quyết định đổi shell/backend cần task/ADR độc lập và số liệu.
 

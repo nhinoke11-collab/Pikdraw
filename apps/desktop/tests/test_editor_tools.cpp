@@ -29,7 +29,9 @@ struct EditorFixture {
     }
     POINT point(double x, double y) {
         const auto screen = window.root().renderer().camera().world_to_screen({x, y});
-        return {72 + static_cast<LONG>(std::lround(screen.x)), 92 + static_cast<LONG>(std::lround(screen.y))};
+        const auto canvas = window.canvas_rect(width, height);
+        return {canvas.left + static_cast<LONG>(std::lround(screen.x)),
+                canvas.top + static_cast<LONG>(std::lround(screen.y))};
     }
     void mouse(UINT message, POINT p, WPARAM buttons = 0) {
         SendMessageW(window.hwnd(), message, buttons, MAKELPARAM(p.x, p.y));
@@ -79,11 +81,11 @@ void CALLBACK edit_dialog(HWND owner, UINT, UINT_PTR timer, DWORD) {
 }
 void exercise_dialog(EditorFixture &f, bool stroke, bool cancel) {
     const int dock = f.width - 280;
-    f.mouse(WM_LBUTTONDOWN, {dock + (stroke ? 200 : 70), 108 + 94}, MK_LBUTTON);
+    f.mouse(WM_LBUTTONDOWN, {dock + (stroke ? 200 : 70), 162 + 94}, MK_LBUTTON);
     DialogScript script{cancel, stroke};
     active_script = &script;
     REQUIRE(SetTimer(f.window.hwnd(), 991, 20, edit_dialog));
-    f.mouse(WM_LBUTTONDOWN, {dock + 130, 108 + 140}, MK_LBUTTON);
+    f.mouse(WM_LBUTTONDOWN, {dock + 130, 162 + 140}, MK_LBUTTON);
     KillTimer(f.window.hwnd(), 991);
     active_script = nullptr;
     REQUIRE(script.seen);
@@ -154,14 +156,22 @@ void verify_editor(EditorFixture &f) {
 
     // Exercise actual painted palette hit regions, including right-click stroke.
     const int dock = f.width - 280;
-    f.mouse(WM_LBUTTONDOWN, {dock + 200, 108 + 310}, MK_LBUTTON); // CMYK tab
-    f.mouse(WM_LBUTTONUP, {dock + 200, 108 + 310});
-    f.mouse(WM_LBUTTONDOWN, {dock + 12 + 4 * 28 + 10, 108 + 348}, MK_LBUTTON);
-    f.mouse(WM_LBUTTONUP, {dock + 12 + 4 * 28 + 10, 108 + 348});
+    const int style_section_center = dock + 12 + 87 + 40;
+    f.mouse(WM_LBUTTONDOWN, {style_section_center, 148}, MK_LBUTTON); // Switch Inspector to Style.
+    f.mouse(WM_LBUTTONUP, {style_section_center, 148});
+    const POINT palette_red{dock + 12 + 4 * 28 + 10, 162 + 434};
+    f.mouse(WM_RBUTTONDOWN, palette_red); // Right-click applies the RGB swatch to Stroke.
+    REQUIRE(f.object(a).stroke.color_space() == color::ColorSpace::Rgb);
+    REQUIRE(std::get<color::RGBColor>(f.object(a).stroke.payload()).approx_equal({1, 0, 0, 1}, 1e-12));
+    f.mouse(WM_LBUTTONDOWN, {dock + 200, 162 + 400}, MK_LBUTTON); // CMYK tab
+    f.mouse(WM_LBUTTONUP, {dock + 200, 162 + 400});
+    f.mouse(WM_LBUTTONDOWN, palette_red, MK_LBUTTON);
+    f.mouse(WM_LBUTTONUP, palette_red);
     REQUIRE(f.object(a).fill.color_space() == color::ColorSpace::Cmyk);
     const auto red = std::get<color::CMYKColor>(f.object(a).fill.payload());
     REQUIRE(red.c == 0 && red.m == 1 && red.y == 1 && red.k == 0);
-    f.mouse(WM_RBUTTONDOWN, {dock + 22, 108 + 376});
+    const POINT palette_cyan{dock + 22, 162 + 462};
+    f.mouse(WM_RBUTTONDOWN, palette_cyan);
     REQUIRE(f.object(a).stroke.color_space() == color::ColorSpace::Cmyk);
     const auto cyan = std::get<color::CMYKColor>(f.object(a).stroke.payload());
     REQUIRE(cyan.c == 1 && cyan.m == 0 && cyan.y == 0 && cyan.k == 0);
@@ -177,7 +187,7 @@ void verify_editor(EditorFixture &f) {
     REQUIRE(f.object(a).stroke_width_mm == 3.125);
     REQUIRE(std::get<color::CMYKColor>(f.object(a).stroke.payload()).approx_equal(cyan, 1e-12));
     // Return palette target to fill for the evidence and subsequent color operations.
-    f.mouse(WM_LBUTTONDOWN, {dock + 70, 108 + 94}, MK_LBUTTON);
+    f.mouse(WM_LBUTTONDOWN, {dock + 70, 162 + 94}, MK_LBUTTON);
 
     window.root().vector_controller().set_selection({a, b}, *doc.current_snapshot());
     const auto before_style = doc.revision();

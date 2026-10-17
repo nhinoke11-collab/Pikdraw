@@ -2,10 +2,13 @@
 #include "pikdraw/desktop/workflows/document_workflow.hpp"
 #include "pikdraw/interop/capabilities/format_capabilities.hpp"
 #include "pikdraw/document/async/async_proposal.hpp"
+#include "pikdraw/document/commands/appearance_commands.hpp"
 #include "pikdraw/document/storage/native_format.hpp"
 #include <iostream>
 #include <cassert>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 
 using namespace pikdraw;
 using namespace pikdraw::desktop;
@@ -82,18 +85,62 @@ void test_e2e_m06_m07_interop_and_diagnostics() {
     assert(exported_svg.find("<svg") != std::string::npos);
     assert(exported_svg.find("</svg>") != std::string::npos);
 
-    // M1-E07: Unsupported format reporting (no silent claims)
+    // M1-E07: Report supported subsets and reject formats without adapters.
     assert(interop::FormatCapabilities::is_import_supported(interop::FormatType::Svg));
     assert(interop::FormatCapabilities::is_export_supported(interop::FormatType::Svg));
+    assert(interop::FormatCapabilities::is_import_supported(interop::FormatType::Dxf));
+    assert(interop::FormatCapabilities::is_worker_import_profile_supported(
+        interop::FormatType::Dxf, "dxf-entities-v1"));
     assert(!interop::FormatCapabilities::is_import_supported(interop::FormatType::Pdf));
-    assert(!interop::FormatCapabilities::is_import_supported(interop::FormatType::Dxf));
     assert(!interop::FormatCapabilities::is_import_supported(interop::FormatType::Cdr));
     assert(!interop::FormatCapabilities::is_import_supported(interop::FormatType::Ai));
+    assert(!interop::FormatCapabilities::is_import_supported(interop::FormatType::Png));
+    assert(!interop::FormatCapabilities::is_import_supported(interop::FormatType::Jpeg));
 
-    std::cout << "[PASS] M1-E06 and M1-E07: SVG import/export roundtrip and Unsupported capabilities\n";
+    std::cout << "[PASS] M1-E06 and M1-E07: SVG import/export and declared format capabilities\n";
 }
 
-void test_e2e_m08_to_m10_stale_proposals_and_fault_recovery(const std::string& corrupt_file) {
+void test_e2e_svg_save_preserves_existing_target_on_unsupported_appearance() {
+    CompositionRoot root;
+    root.initialize();
+    DocumentWorkflow workflow(root);
+
+    const auto object_id = workflow.add_rectangle(10.0, 10.0, 40.0, 30.0);
+    assert(object_id != document::kInvalidObjectId);
+    const auto object = root.document().current_snapshot()->objects().get(object_id);
+    assert(object.has_value());
+    auto appearance = std::get<document::PathObject>(*object).appearance;
+    appearance.blend_mode = document::BlendMode::Multiply;
+    const auto changed = root.document().execute_command(
+        std::make_unique<document::SetAppearanceCommand>(
+            std::vector<document::AppearanceReplacement>{{object_id, appearance}}));
+    assert(changed.success);
+
+    const auto target = std::filesystem::temp_directory_path() /
+        ("pikdraw-svg-save-preservation-" + std::to_string(object_id) + ".svg");
+    const std::string sentinel = "keep this existing SVG intact";
+    {
+        std::ofstream output(target, std::ios::binary | std::ios::trunc);
+        assert(output.good());
+        output.write(sentinel.data(), static_cast<std::streamsize>(sentinel.size()));
+        assert(output.good());
+    }
+
+    assert(!workflow.save_svg(target.string()));
+    std::string preserved;
+    {
+        std::ifstream input(target, std::ios::binary);
+        preserved.assign(std::istreambuf_iterator<char>(input),
+                         std::istreambuf_iterator<char>());
+    }
+    assert(preserved == sentinel);
+    std::error_code ignored;
+    std::filesystem::remove(target, ignored);
+
+    std::cout << "[PASS] AC-BF-13: refused SVG export preserves existing destination bytes\n";
+}
+
+void test_e2e_m08_to_m10_stale_proposals_and_fault_recovery() {
     CompositionRoot root;
     root.initialize();
 
@@ -162,11 +209,10 @@ int main() {
     std::cout << "===========================================================\n";
 
     const std::string temp_file = "test_e2e_m1_workspace.pikdraw";
-    const std::string corrupt_file = "test_e2e_corrupt.pikdraw";
-
     test_e2e_m01_to_m05_shapes_text_undo_save(temp_file);
     test_e2e_m06_m07_interop_and_diagnostics();
-    test_e2e_m08_to_m10_stale_proposals_and_fault_recovery(corrupt_file);
+    test_e2e_svg_save_preserves_existing_target_on_unsupported_appearance();
+    test_e2e_m08_to_m10_stale_proposals_and_fault_recovery();
     test_e2e_m11_to_m13_reload_render_and_shutdown();
 
     // Cleanup temp files

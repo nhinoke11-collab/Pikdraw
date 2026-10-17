@@ -1,8 +1,8 @@
 #pragma once
 
 #include "pikdraw/typography/shaping/font_identity.hpp"
-#include <vector>
 #include <string>
+#include <vector>
 
 namespace pikdraw::typography {
 
@@ -14,18 +14,15 @@ struct ResolvedFont {
 };
 
 class FontResolver {
-public:
+  public:
     FontResolver();
 
-    [[nodiscard]] ResolvedFont resolve(const FontIdentity& font) const;
+    [[nodiscard]] ResolvedFont resolve(const FontIdentity &font) const;
     void register_available_font(std::string family_name);
 
-    [[nodiscard]] bool is_font_available(const std::string& family_name) const;
+    [[nodiscard]] bool is_font_available(const std::string &family_name) const;
 
-    static FontResolver& instance();
-
-private:
-    std::vector<std::string> available_families_;
+    static FontResolver &instance();
 };
 
 } // namespace pikdraw::typography

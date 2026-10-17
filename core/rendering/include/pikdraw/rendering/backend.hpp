@@ -24,6 +24,16 @@ struct RenderMetric {
   size_t culled_objects{0};
   size_t rendered_objects{0};
   std::chrono::microseconds render_duration{0};
+  // Peak live vector capacity observed while a Gaussian Blur node executes.
+  // Includes isolated source/filter surfaces and Gaussian temporary buffers;
+  // excludes allocator metadata, the caller target, geometry, and Drop Shadow
+  // internals. This is a capacity measure, not process resident memory.
+  size_t peak_gaussian_blur_scratch_capacity_bytes{0};
+  // Peak live vector capacity observed while a Drop Shadow node executes.
+  // Includes object-local source/current surfaces, alpha conversion, shadow
+  // result, and Drop Shadow/Gaussian temporary vectors; excludes allocator
+  // metadata, the caller target/backdrop, and process memory.
+  size_t peak_drop_shadow_scratch_capacity_bytes{0};
   // Caller must surface errors/warnings. Software renderer caps this to 65
   // entries.
   std::vector<RenderDiagnostic> diagnostics;

@@ -89,12 +89,18 @@ CommandResult Document::prepare_command(DocumentCommand& cmd, bool reverse, Snap
     };
     try {
         BusyScope execution(executing_);
-        if (revision_ == std::numeric_limits<uint64_t>::max())
-            return CommandResult::fail("Document revision exhausted");
         auto result = reverse ? cmd.undo(*this) : cmd.execute(*this);
         if (!result.success) {
             restore();
             return result;
+        }
+        if (result.is_no_change) {
+            restore();
+            return result;
+        }
+        if (revision_ == std::numeric_limits<uint64_t>::max()) {
+            restore();
+            return CommandResult::fail("Document revision exhausted");
         }
         next = std::make_shared<const DocumentSnapshot>(
             epoch_, revision_ + 1, current_page_, current_objects_, document_id_);
@@ -120,6 +126,7 @@ CommandResult Document::execute_command(CommandPtr cmd) {
     SnapshotPtr next;
     auto result = prepare_command(*cmd, false, next);
     if (!result.success) return result;
+    if (result.is_no_change) return result;
     record->set_after(next);
     history_.push_undo(std::move(record));
     publish_snapshot(std::move(next));

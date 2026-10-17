@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "../utf8_path.hpp"
 #include <fstream>
 #ifdef _WIN32
 #include <commdlg.h>
@@ -18,6 +19,7 @@ bool NativeWindow::configure_preview_profiles(const std::filesystem::path &rgb_s
     color_preview_ = preview;
     rgb_preview_profile_ = rgb_source;
     cmyk_preview_profile_ = cmyk_source;
+    canvas_cache_valid_ = false;
 #ifdef _WIN32
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, FALSE);
@@ -75,7 +77,7 @@ void NativeWindow::load_color_preferences() {
         !std::getline(input, rgb) || !std::getline(input, cmyk) || rgb.size() > 32768 || cmyk.size() > 32768)
         return;
     std::string error;
-    if (!configure_preview_profiles(std::filesystem::u8path(rgb), std::filesystem::u8path(cmyk), &error))
+    if (!configure_preview_profiles(detail::path_from_utf8(rgb), detail::path_from_utf8(cmyk), &error))
         status_msg_ = language_ == UILanguage::Vietnamese
                           ? "Profile preview không khả dụng; đang dùng preview gần đúng."
                           : "Preview profile unavailable; approximate preview is active.";

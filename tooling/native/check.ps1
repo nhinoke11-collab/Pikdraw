@@ -20,6 +20,8 @@ if (-not $tools.Python) {
 }
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+Assert-PikDrawPrimarySource $repoRoot
+if ($Preset -and $Preset -ne 'win-dev') { throw 'Only the win-dev preset is supported.' }
 $testsRan = 0
 $testsFailed = 0
 
@@ -30,9 +32,9 @@ Write-Host "Python: $($tools.Python)" -ForegroundColor Gray
 if ($Suite -eq 'architecture' -or $Suite -eq 'all') {
     Write-Host "`n--> Running Architecture Gates Suite..." -ForegroundColor Yellow
     $archDir = Join-Path $repoRoot 'tests\architecture'
-    if (-not (Test-Path -LiteralPath $archDir)) {
-        Write-Error "Architecture tests directory not found: $archDir"
-        exit 1
+    $archTests = @(Get-ChildItem -LiteralPath $archDir -Filter 'test_*.py' -File -ErrorAction SilentlyContinue)
+    if ($archTests.Count -eq 0) {
+        throw 'Architecture test source was removed after the recorded final test run. Restore tests/architecture before running this suite.'
     }
 
     & $tools.Python -m unittest discover -s (Join-Path $repoRoot 'tests\architecture') -v
@@ -73,36 +75,10 @@ print('All fixtures and oracles parsed valid JSON.')
 }
 
 if ($Suite -eq 'unit' -or $Suite -eq 'all') {
-    Write-Host "`n--> Running Native C++ Unit Tests..." -ForegroundColor Yellow
-    $presetName = if ($Preset) { $Preset } else { 'win-dev' }
-    $buildDir = Join-Path $repoRoot "build\$presetName"
-    $unitExes = Get-ChildItem -Recurse -Path $buildDir -Filter "test_*.exe" -ErrorAction SilentlyContinue
-    if (-not $unitExes) {
-        Write-Host "No unit test executables found in $buildDir" -ForegroundColor Yellow
-    } else {
-        foreach ($exe in $unitExes) {
-            Write-Host "Running: $($exe.Name)..." -ForegroundColor Cyan
-            & $exe.FullName
-            if ($LASTEXITCODE -ne 0) {
-                Write-Error "Test $($exe.Name) FAILED with exit code $LASTEXITCODE"
-                exit $LASTEXITCODE
-            }
-        }
-        Write-Host "All native C++ unit tests PASSED." -ForegroundColor Green
-    }
+    & (Join-Path $PSScriptRoot 'build.ps1') -TestsOnly -Configuration $Configuration
 }
-
 if ($Suite -eq 'e2e') {
-    Write-Host "`n--> Checking E2E Integration Suite..." -ForegroundColor Yellow
-    $buildDir = Join-Path $repoRoot "build\win-dev"
-    $appExe = Join-Path $buildDir "bin\pikdraw.exe"
-    if (-not (Test-Path -LiteralPath $appExe)) {
-        Write-Host "Notice: E2E suite requires desktop vertical slice executable (planned for M1 ps13-vertical-slice)." -ForegroundColor Magenta
-        Write-Host "No tests run for E2E in M0 foundation phase." -ForegroundColor Yellow
-        exit 1
-    }
-    Write-Host "Running E2E tests against $appExe..."
-    # Future M1 E2E runner invocation
+    & (Join-Path $PSScriptRoot 'build.ps1') -TestsOnly -Configuration $Configuration -TestRegex 'test_pikdraw_vertical_slice_e2e'
 }
 
 Write-Host "`n=== All requested check suites PASSED ===" -ForegroundColor Green

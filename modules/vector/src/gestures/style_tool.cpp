@@ -19,7 +19,7 @@ document::CommandResult apply_object_styles(document::Document &doc,
         std::visit(
             [&](const auto &value) {
                 using T = std::decay_t<decltype(value)>;
-                if constexpr (!std::is_same_v<T, document::GroupObject>) {
+                if constexpr (std::is_same_v<T, document::PathObject> || std::is_same_v<T, document::TextObject>) {
                     if (fill)
                         fill->set_overprint(value.fill.overprint());
                 }
@@ -65,8 +65,11 @@ document::CommandResult SetObjectStyleCommand::execute(document::Document &doc) 
             return document::CommandResult::fail("Text stroke/fill flags unsupported by source model");
         if (fill_)
             text->fill = *fill_;
-    } else
+    } else if (std::holds_alternative<document::ImageObject>(updated)) {
+        return document::CommandResult::fail("Bitmap image style is not editable as vector fill/stroke");
+    } else {
         return document::CommandResult::fail("Group style unsupported");
+    }
     before_ = old;
     doc.apply_mutation(doc.page(), doc.objects().set(id_, std::move(updated)));
     return document::CommandResult::ok();

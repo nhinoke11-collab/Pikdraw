@@ -29,6 +29,26 @@ void validate_document_structure(const Page& page, const PersistentObjectMap& ob
                     throw std::invalid_argument("Authoring segment ID collides in document");
         }
     }
+    // Object IDs, editable path IDs, and effect instance IDs share one allocator.
+    // Collect every source identity before checking effects so traversal order cannot
+    // let an effect collide with a later object or path element unnoticed.
+    size_t effect_count = 0;
+    for (const auto& [id, object] : objects.all()) {
+        (void)id;
+        const Appearance* appearance = nullptr;
+        if (const auto* path = std::get_if<PathObject>(&object)) {
+            appearance = &path->appearance;
+        } else if (const auto* text = std::get_if<TextObject>(&object)) {
+            appearance = &text->appearance;
+        }
+        if (!appearance) continue;
+        if (appearance->effects.size() > kMaxEffectsPerDocument - effect_count)
+            throw std::invalid_argument("Document exceeds the maximum effect node count");
+        effect_count += appearance->effects.size();
+        for (const auto& effect : appearance->effects)
+            if (effect.id == kInvalidEffectInstanceId || !element_ids.insert(effect.id).second)
+                throw std::invalid_argument("Effect ID collides with another stable document ID");
+    }
     std::unordered_set<ObjectId> reached;
     reached.reserve(objects.size());
     std::vector<std::pair<ObjectId, size_t>> pending;

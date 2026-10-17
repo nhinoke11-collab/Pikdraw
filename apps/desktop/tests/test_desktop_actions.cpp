@@ -14,6 +14,15 @@ void test_action_id_validation() {
     assert(ActionId::is_valid_action_id(ActionId::kViewHome));
     assert(ActionId::is_valid_action_id(ActionId::kEditUndo));
     assert(ActionId::is_valid_action_id(ActionId::kViewReloadUi));
+    assert(ActionId::is_valid_action_id(ActionId::kObjectAlignLeft));
+    assert(ActionId::is_valid_action_id(ActionId::kObjectAlignCenterVertical));
+    assert(ActionId::is_valid_action_id(ActionId::kObjectCenterPage));
+    assert(ActionId::is_valid_action_id(ActionId::kObjectDistributeSpacingHorizontal));
+    assert(ActionId::is_valid_action_id(ActionId::kObjectFlipHorizontal));
+    assert(ActionId::is_valid_action_id(ActionId::kObjectFlipVertical));
+    assert(ActionId::is_valid_action_id(ActionId::kObjectRotate90CW));
+    assert(ActionId::is_valid_action_id(ActionId::kObjectRotate90CCW));
+    assert(ActionId::is_valid_action_id(ActionId::kObjectRotate180));
     assert(!ActionId::is_valid_action_id("invalid.id"));
     assert(!ActionId::is_valid_action_id("action."));
     std::cout << "[PASS] test_action_id_validation\n";

@@ -52,6 +52,10 @@ PIKDRAW_TEST(transform_composition_and_inversion) {
     auto t2 = Transform2D::scale(2.0, 3.0);
     auto t3 = Transform2D::rotation_degrees(90.0);
 
+    const Point2D rotated = t3.map_point({1.0, 0.0});
+    PIKDRAW_ASSERT_NEAR(rotated.x, 0.0, 1e-9);
+    PIKDRAW_ASSERT_NEAR(rotated.y, 1.0, 1e-9);
+
     // Parent * Child
     auto combined = t1 * t2;
     Point2D pt{10.0, 10.0};

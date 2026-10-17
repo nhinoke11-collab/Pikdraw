@@ -96,9 +96,9 @@ bool CaptureFrame(const IpcV2Frame& frame, ImportCapture& capture) {
 }
 
 WorkerLaunchConfig ConfigFor(const SourceSnapshot& source) {
-    fs::path executable = fs::current_path() / "spike_worker.exe";
+    fs::path executable = fs::current_path() / "spike_worker_test.exe";
     if (!fs::exists(executable)) {
-        executable = fs::current_path() / "build" / "win-dev" / "platform" / "workers" / "spike_worker.exe";
+        executable = fs::current_path() / "build" / "win-dev" / "platform" / "workers" / "spike_worker_test.exe";
     }
     WorkerLaunchConfig config;
     config.worker_executable_path = executable.wstring();
