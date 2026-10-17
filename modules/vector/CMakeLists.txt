@@ -28,6 +28,7 @@ add_library(pikdraw_vector STATIC
     src/tools/pen/pen_drawing_tool.cpp
     src/tools/node/node_tool.cpp
     src/tools/contour/contour_tool.cpp
+    src/tools/gradient_tool.cpp
 )
 
 target_include_directories(pikdraw_vector PUBLIC

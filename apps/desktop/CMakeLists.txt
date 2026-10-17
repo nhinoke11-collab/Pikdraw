@@ -16,6 +16,7 @@ add_library(pikdraw_desktop STATIC
     src/presenters/ribbon_presenter.cpp
     src/presenters/inspector_presenter.cpp
     src/presenters/object_style.cpp
+    src/presenters/gradient_properties.cpp
     src/themes/theme_tokens.cpp
     src/development/ui_reload_controller.cpp
     src/runtime/composition_root.cpp
@@ -26,6 +27,7 @@ add_library(pikdraw_desktop STATIC
     src/tools/pen_tool_controller.cpp
     src/tools/node_tool_controller.cpp
     src/tools/contour_tool_controller.cpp
+    src/tools/gradient_tool_controller.cpp
     src/tools/native_drawing_input.cpp
     src/tools/snap_index_worker.cpp
     src/tools/snap_status_controller.cpp

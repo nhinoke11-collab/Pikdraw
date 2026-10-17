@@ -133,6 +133,7 @@ GradientHandleHit GradientTool::hit_test_handles(geometry::Point2D object_pos, d
 }
 
 void GradientTool::on_pointer_down(geometry::Point2D object_pos, bool shift, bool ctrl) {
+  (void)shift;
   (void)ctrl;
   const auto hit = hit_test_handles(object_pos, 3.0);
   if (hit.kind != GradientHandleKind::None) {

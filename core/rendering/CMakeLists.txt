@@ -17,6 +17,7 @@ add_library(pikdraw_rendering STATIC
     src/raster/path_flatten.cpp
     src/raster/path_paint.cpp
     src/raster/path_stroke.cpp
+    src/raster/gradient_sampler.cpp
     src/path_adapter/authoring_path_adapter.cpp
 )
 

@@ -10,6 +10,7 @@ add_library(pikdraw_document STATIC
     src/snapshots/structure_validator.cpp
     src/commands/command.cpp
     src/commands/appearance_commands.cpp
+    src/commands/gradient_commands.cpp
     src/commands/pen_path_extension_command.cpp
     src/commands/node_commands.cpp
     src/commands/contour_commands.cpp
@@ -21,12 +22,14 @@ add_library(pikdraw_document STATIC
     src/storage/crc32.cpp
     src/storage/color_codec.cpp
     src/storage/appearance_codec.cpp
+    src/storage/gradient_codec.cpp
     src/storage/object_codec.cpp
     src/storage/editable_path_codec.cpp
     src/storage/recovery_draft.cpp
     src/storage/save_recovery.cpp
     src/storage/file_io.cpp
     src/model/clone_utils.cpp
+    src/model/gradient_paint.cpp
     src/document.cpp
 )
 
