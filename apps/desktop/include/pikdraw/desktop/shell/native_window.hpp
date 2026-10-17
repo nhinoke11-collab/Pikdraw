@@ -27,7 +27,7 @@ namespace pikdraw::desktop {
 struct CanvasFrameCache;
 struct NativeWindowAutomationRuntime;
 enum class MenuActionId;
-namespace tools { class DrawingToolController; class PenToolController; class NodeToolController; class ContourToolController; }
+namespace tools { class DrawingToolController; class PenToolController; class NodeToolController; class ContourToolController; class GradientToolController; }
 
 enum class UILanguage {
     Vietnamese,
@@ -367,6 +367,11 @@ public:
     bool handle_contour_property_click(int x, int y);
     void paint_contour_canvas_overlay(HDC hdc, const RECT& canvas);
 
+    [[nodiscard]] tools::GradientToolController* gradient_tool() noexcept { return gradient_tool_.get(); }
+    [[nodiscard]] const tools::GradientToolController* gradient_tool() const noexcept { return gradient_tool_.get(); }
+    bool handle_gradient_property_click(int x, int y);
+    void paint_gradient_canvas_overlay(HDC hdc, const RECT& canvas);
+
 #ifdef _WIN32
     [[nodiscard]] HWND hwnd() const noexcept { return hwnd_; }
     bool handle_key_down(WPARAM key);
@@ -617,6 +622,7 @@ private:
     std::unique_ptr<tools::PenToolController> pen_tool_;
     std::unique_ptr<tools::NodeToolController> node_tool_;
     std::unique_ptr<tools::ContourToolController> contour_tool_;
+    std::unique_ptr<tools::GradientToolController> gradient_tool_;
     std::string pen_numeric_buffer_;
     std::string pen_numeric_length_;
     std::string pen_numeric_angle_;

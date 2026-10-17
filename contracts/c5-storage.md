@@ -1,17 +1,12 @@
 # Contract C5: Native Storage and File Durability
 
-Version: 2.2.0
-Status: Native v4 appearance schema 1.0 codec is implemented and covered by byte-level regressions; broader C5 durability and recovery acceptance remain separate
+Version: 2.3.0
+Status: Native v5 container and gradient schema 1.0 contract finalized; reader accepts v2/v3/v4/v5, writer emits v5
 Producers: modules/storage
 Consumers: core/document, modules/desktop, modules/interop
 
-Implementation audit (2026-10-17): source writes native container v4 and reads v2, v3, or v4
-(core/document/include/pikdraw/document/storage/native_format.hpp and
-core/document/src/storage/native_format.cpp). V4 persists Path/Text appearance schema 1.0 and
-migrates v2/v3 documents to default appearance in memory; explicit save writes v4. Independent
-byte fixtures cover appearance records, node ordering, Shadow schema 1.1, blend IDs, corruption,
-and v2/v3 migration in core/document/tests/storage/test_storage_fidelity.cpp. This confirms the
-development codec path, not complete C5 durability, recovery, or every production-file gate.
+Implementation audit (2026-10-17): source extends native container to v5, preserving v2/v3/v4 backward compatibility while introducing structured length-framed gradient paint records for PathObject. Independent byte fixtures cover gradient records, stop ordering, hard edges, midpoints, spreads, transform matrices, and legacy migration.
+
 
 ---
 
@@ -146,3 +141,46 @@ The logical schema and parser/writer field order above are implemented. Exact of
 - A recovery/checkpoint record that contains a v4 document snapshot must carry the document ID, epoch, base revision, native/appearance schema versions, a checksum, and the same object/node/path limits. It must preserve the full appearance graph and reject a stale or unsupported record before publication. An older recovery schema must not accept an appearance-bearing snapshot and then omit its nodes.
 - Native parsing validates every count and record length against both its local cap and remaining bytes before allocating. Checked arithmetic is required for aggregate sizes. The v4 node limits above are storage quotas; C3 separately owns per-render memory/work admission. A valid saved sigma or offset that exceeds the current render budget remains source data and produces an explicit incomplete/budget diagnostic rather than a silently omitted effect.
 - Save/recovery uses the same required-schema, checksum, migration, and no-partial-publish rules. A corrupt or over-budget input cannot replace the existing file or current document.
+
+### 4.5 Native v5 gradient paint schema 1.0
+
+Native v5 is the container version that persists the Gradient paint schema 1.0 for PathObject.
+The v5 container header maintains the 36-byte format with `format_version: uint32_t = 5`.
+The payload prefix adds `gradient_schema_major: uint32_t = 1` and `gradient_schema_minor: uint32_t = 0`.
+`minimum_compatible_version: uint32_t` is set to 5.
+
+Immediately following the appearance record bytes for each `PathObject`, write `gradient_record_length: uint32_t`:
+- If `gradient_record_length == 0`: no gradient paint is attached (`fill_gradient == nullptr`).
+- If `gradient_record_length > 0`: exactly `gradient_record_length` bytes containing the gradient record body.
+
+The gradient record body is encoded in this exact order:
+1. `schema_major: uint32_t` (1)
+2. `schema_minor: uint32_t` (0)
+3. `paint_id: uint64_t` (nonzero, unique)
+4. `kind: uint8_t` (0 = Linear, 1 = Radial)
+5. `spread: uint8_t` (0 = Pad, 1 = Repeat, 2 = Reflect)
+6. `interpolation: uint8_t` (0 = EncodedSRGBStraightAlpha)
+7. `gradient_to_object: 6 x f64` (a, b, c, d, tx, ty)
+8. `stop_count: uint32_t` (2 to 256)
+9. `stop_count` ordered stop records.
+
+Each stop record is encoded in this order:
+1. `stop_id: uint64_t` (nonzero, unique within paint)
+2. `offset: f64` ([0.0, 1.0], monotonic non-decreasing)
+3. `color: ColorValue` (using standard native color codec)
+4. `opacity: f64` ([0.0, 1.0], stop-level opacity multiplier)
+5. `midpoint_to_next: f64` ([0.01, 0.99]; terminal stop always 0.5)
+
+Validation and bounds:
+- 2 to 256 stops per paint; max 1,000,000 stops per document.
+- Offsets must be finite, in [0, 1], and monotonic non-decreasing. Hard edges (equal offsets) preserve vector order.
+- Invertibility guardrail: relative inverse threshold `|det(A/n)| > 1e-12` with `n = max(|a|,|b|,|c|,|d|) > 0`.
+- All coordinates and lengths must be finite and within host limits (`|coord| <= 1e9`).
+- Corruption, truncated records, duplicate IDs, out-of-range values, or unconsumed bytes reject the file atomically before publishing.
+
+### 4.6 v2/v3/v4 to v5 migration and compatibility
+
+- Opening v2, v3, or v4 documents loads all paths with `fill_gradient = nullptr`. Their solid `fill` and `has_fill` are preserved.
+- When saved explicitly, documents are written as v4 (if no gradient is present) or v5 (if any gradient paint is present, or by default for all new saves under the v5 writer).
+- Legacy readers (v4 or older) reject v5 files with an unsupported version diagnostic rather than attempting lossy fallback.
+

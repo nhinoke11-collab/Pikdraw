@@ -1,4 +1,5 @@
 #include "path_raster.hpp"
+#include "pikdraw/rendering/gradient_sampler.hpp"
 #include <algorithm>
 #include <cmath>
 #include <utility>
@@ -15,7 +16,8 @@ int bounded_ceil(double value, int limit) {
       std::ceil(std::clamp(value, 0.0, static_cast<double>(limit))));
 }
 bool fill(const std::vector<Contour> &contours, geometry::WindingRule rule,
-          const RasterColor &value, PixelBufferTarget &target) {
+          const RasterColor &value, PixelBufferTarget &target,
+          const GradientSampler *gradient = nullptr) {
   if (rule != geometry::WindingRule::NonZero &&
       rule != geometry::WindingRule::EvenOdd)
     return false;
@@ -82,8 +84,15 @@ bool fill(const std::vector<Contour> &contours, geometry::WindingRule rule,
       if (inside) {
         const int x0 = bounded_ceil(previous - 0.5, target.width);
         const int x1 = bounded_ceil(x - 0.5, target.width);
-        for (int col = x0; col < x1; ++col)
-          blend_preview(target, col, y, value);
+        if (gradient) {
+          for (int col = x0; col < x1; ++col) {
+            const auto sample = gradient->sample_raster_color(col, y, target);
+            blend_preview(target, col, y, sample);
+          }
+        } else {
+          for (int col = x0; col < x1; ++col)
+            blend_preview(target, col, y, value);
+        }
       }
       while (i < hits.size() && hits[i].x == x)
         winding += hits[i++].winding;
@@ -97,7 +106,7 @@ bool fill(const std::vector<Contour> &contours, geometry::WindingRule rule,
 
 bool paint(const document::PathObject &object, const Camera2D &camera,
            PixelBufferTarget &target, const color::IccPreview *preview) {
-  if ((object.has_fill && !object.fill.is_valid()) ||
+  if ((object.has_fill && !object.fill_gradient && !object.fill.is_valid()) ||
       (object.has_stroke && !object.stroke.is_valid()))
     return false;
   std::vector<Contour> contours;
@@ -107,9 +116,20 @@ bool paint(const document::PathObject &object, const Camera2D &camera,
     return preview ? preview->convert(value) : color::to_preview_rgba(value);
   };
   if (object.has_fill) {
-    const auto value = make_raster_color(convert(object.fill), target);
-    if (!fill(contours, object.path.winding_rule(), value, target))
-      return false;
+    if (object.fill_gradient) {
+      const auto sampler = GradientSampler::prepare(
+          *object.fill_gradient, object.transform, camera, preview,
+          object.appearance.fill_opacity);
+      if (!sampler)
+        return false;
+      const RasterColor dummy{};
+      if (!fill(contours, object.path.winding_rule(), dummy, target, &*sampler))
+        return false;
+    } else {
+      const auto value = make_raster_color(convert(object.fill), target);
+      if (!fill(contours, object.path.winding_rule(), value, target, nullptr))
+        return false;
+    }
   }
   return !object.has_stroke ||
          stroke(contours, object, camera,

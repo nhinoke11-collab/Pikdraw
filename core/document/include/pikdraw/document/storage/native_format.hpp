@@ -29,8 +29,9 @@ struct PikDrawHeader {
 inline constexpr uint8_t kPikDrawMagic[4] = {'P', 'K', 'D', 'R'};
 inline constexpr uint32_t kLegacyFormatVersion = 2;
 inline constexpr uint32_t kAuthoringSourceFormatVersion = 3;
-inline constexpr uint32_t kCurrentFormatVersion = 4;
-inline constexpr uint32_t kMinimumCompatibleVersion = 4;
+inline constexpr uint32_t kAppearanceFormatVersion = 4;
+inline constexpr uint32_t kCurrentFormatVersion = 5;
+inline constexpr uint32_t kMinimumCompatibleVersion = 5;
 inline constexpr uint32_t kAuthoringPathSchemaMajor = 1;
 inline constexpr uint32_t kAuthoringPathSchemaMinor = 0;
 

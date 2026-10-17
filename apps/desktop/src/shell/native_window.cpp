@@ -11,6 +11,7 @@
 #include "../tools/pen_tool_controller.hpp"
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
+#include "../tools/gradient_tool_controller.hpp"
 #include "pikdraw/vector/tools/shape_tools.hpp"
 #include <iostream>
 #include <fstream>

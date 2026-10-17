@@ -39,13 +39,20 @@ std::vector<uint8_t> NativeFormat::serialize(const DocumentSnapshot &snapshot) {
   payload.u32(kAuthoringPathSchemaMinor);
   payload.u32(kAppearanceSchemaVersion);
   payload.u32(kAppearanceSchemaMinor);
+  payload.u32(kGradientSchemaMajor);
+  payload.u32(kGradientSchemaMinor);
   uint64_t maximum_stable_id = 0;
   for (const auto &[id, object] : snapshot.objects().all()) {
     maximum_stable_id = std::max(maximum_stable_id, id);
     const Appearance *appearance = nullptr;
-    if (const auto *path = std::get_if<PathObject>(&object))
+    if (const auto *path = std::get_if<PathObject>(&object)) {
       appearance = &path->appearance;
-    else if (const auto *text = std::get_if<TextObject>(&object))
+      if (path->fill_gradient) {
+        maximum_stable_id = std::max(maximum_stable_id, path->fill_gradient->id);
+        for (const auto &stop : path->fill_gradient->stops)
+          maximum_stable_id = std::max(maximum_stable_id, stop.id);
+      }
+    } else if (const auto *text = std::get_if<TextObject>(&object))
       appearance = &text->appearance;
     if (appearance)
       for (const auto &effect : appearance->effects)
@@ -111,7 +118,7 @@ std::vector<uint8_t> NativeFormat::serialize(const DocumentSnapshot &snapshot) {
     if (const auto *path = std::get_if<PathObject>(&object);
         path && !path->authoring_source)
       source_override = &migrated_sources.at(id);
-    write_object(payload, object, true, source_override, true);
+    write_object(payload, object, true, source_override, true, true);
   }
   Writer container;
   for (const auto byte : kPikDrawMagic)
@@ -145,10 +152,11 @@ NativeFormat::deserialize(const uint8_t *data, size_t length,
     const auto version = header.u32();
     if (version != kLegacyFormatVersion &&
         version != kAuthoringSourceFormatVersion &&
+        version != kAppearanceFormatVersion &&
         version != kCurrentFormatVersion)
       throw std::invalid_argument(
-          "Unsupported native version; v1 is not silently migrated and v4 "
-          "requires a v4 reader");
+          "Unsupported native version; v1 is not silently migrated and v5 "
+          "requires a v5 reader");
     if (header.u32() != 0)
       throw std::invalid_argument("Unsupported native feature flags");
     const auto epoch = header.u64();
@@ -173,12 +181,19 @@ NativeFormat::deserialize(const uint8_t *data, size_t length,
       if (schema_major != kAuthoringPathSchemaMajor ||
           schema_minor > kAuthoringPathSchemaMinor)
         throw std::invalid_argument("Unsupported required authoring-path schema");
-      if (version == kCurrentFormatVersion) {
+      if (version >= kAppearanceFormatVersion) {
         const auto appearance_major = reader.u32();
         const auto appearance_minor = reader.u32();
         if (appearance_major != kAppearanceSchemaVersion ||
             appearance_minor > kAppearanceSchemaMinor)
           throw std::invalid_argument("Unsupported required appearance schema");
+      }
+      if (version == kCurrentFormatVersion) {
+        const auto gradient_major = reader.u32();
+        const auto gradient_minor = reader.u32();
+        if (gradient_major != kGradientSchemaMajor ||
+            gradient_minor > kGradientSchemaMinor)
+          throw std::invalid_argument("Unsupported required gradient schema");
       }
     }
     Page page;
@@ -209,10 +224,11 @@ NativeFormat::deserialize(const uint8_t *data, size_t length,
     ObjectId maximum_object_id = 0;
     uint32_t remaining_elements = max_elements;
     size_t remaining_effects = kMaxEffectsPerDocument;
+    size_t remaining_gradient_stops = kMaxDocumentGradientStops;
     for (uint32_t i = 0; i < object_count; ++i) {
       auto object = read_object(reader, remaining_elements,
                                 version >= kAuthoringSourceFormatVersion);
-      if (version == kCurrentFormatVersion) {
+      if (version >= kAppearanceFormatVersion) {
         std::visit(
             [&](auto &value) {
               using T = std::decay_t<decltype(value)>;
@@ -221,6 +237,11 @@ NativeFormat::deserialize(const uint8_t *data, size_t length,
                 value.appearance = read_appearance(reader, remaining_effects);
             },
             object);
+      }
+      if (version == kCurrentFormatVersion) {
+        if (auto *path = std::get_if<PathObject>(&object)) {
+          path->fill_gradient = read_gradient(reader, remaining_gradient_stops);
+        }
       }
       const auto id =
           std::visit([](const auto &value) { return value.id; }, object);
@@ -257,6 +278,11 @@ NativeFormat::deserialize(const uint8_t *data, size_t length,
       const Appearance *appearance = nullptr;
       if (const auto *path = std::get_if<PathObject>(&object)) {
         appearance = &path->appearance;
+        if (path->fill_gradient) {
+          maximum_stable_id = std::max(maximum_stable_id, path->fill_gradient->id);
+          for (const auto &stop : path->fill_gradient->stops)
+            maximum_stable_id = std::max(maximum_stable_id, stop.id);
+        }
         if (path->authoring_source)
           for (const auto &subpath : path->authoring_source->subpaths) {
             maximum_stable_id = std::max(maximum_stable_id, subpath.id.value());

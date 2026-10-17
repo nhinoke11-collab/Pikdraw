@@ -104,6 +104,7 @@ enum class MenuActionId {
     ObjectRotate90CW,
     ObjectRotate90CCW,
     ObjectRotate180,
+    ObjectFillGradient,
     // Effects
     EffectsGaussianBlur,
     EffectsContour,
@@ -132,6 +133,7 @@ enum class MenuActionId {
     ToolPolyline,
     ToolPen,
     ToolPolygon,
+    ToolGradient,
     // Window
     WindowProperties,
     WindowAlignDistributePanel,
@@ -392,10 +394,11 @@ inline constexpr std::array<MenuItem, 8> kLayoutMenuItems{{
 }};
 
 // 5. Object Menu
-inline constexpr std::array<MenuItem, 39> kObjectMenuItems{{
+inline constexpr std::array<MenuItem, 40> kObjectMenuItems{{
     {MenuActionId::ObjectGroup, L"Group Objects", L"Nhóm đối tượng", L"Ctrl+G"},
     {MenuActionId::ObjectUngroup, L"Ungroup", L"Rã nhóm", L"Ctrl+Shift+G"},
     {MenuActionId::ObjectProperties, L"Properties…", L"Thuộc tính…", L""},
+    {MenuActionId::ObjectFillGradient, L"Gradient Fill…", L"Tô chuyển sắc…", L"G"},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::None, L"TRANSFORM", L"BIẾN ĐỔI", L"", false, true, true},
     {MenuActionId::ObjectFlipHorizontal, L"Flip Horizontal", L"Lật ngang", L"Ctrl+Shift+H"},
@@ -464,7 +467,7 @@ inline constexpr std::array<MenuItem, 5> kTextMenuItems{{
 }};
 
 // 9. Tools Menu
-inline constexpr std::array<MenuItem, 10> kToolsMenuItems{{
+inline constexpr std::array<MenuItem, 11> kToolsMenuItems{{
     {MenuActionId::ToolPick, L"Pick Tool (Selection)", L"Công cụ chọn (Pick)", L"V"},
     {MenuActionId::ToolNode, L"Node Edit Tool", L"Chỉnh sửa điểm (Node)", L"", false, true},
     {MenuActionId::ToolRectangle, L"Rectangle Tool", L"Vẽ hình chữ nhật", L"R"},
@@ -474,7 +477,8 @@ inline constexpr std::array<MenuItem, 10> kToolsMenuItems{{
     {MenuActionId::ToolKnife, L"Knife Cutting Tool", L"Dao cắt hình", L"K"},
     {MenuActionId::ToolLine, L"Line Tool", L"Đoạn thẳng", L"L"},
     {MenuActionId::ToolPolyline, L"Polyline Tool", L"Đường gấp khúc", L"Shift+L"},
-    {MenuActionId::ToolPen, L"Pen Tool", L"Công cụ Pen", L""}
+    {MenuActionId::ToolPen, L"Pen Tool", L"Công cụ Pen", L""},
+    {MenuActionId::ToolGradient, L"Interactive Gradient Tool", L"Công cụ chuyển sắc tương tác", L"G"}
 }};
 
 // 10. Window Menu

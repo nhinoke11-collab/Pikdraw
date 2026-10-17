@@ -32,6 +32,11 @@ inline void validate_path_source(const PathObject& object) {
         !std::isfinite(object.stroke_width_mm) || object.stroke_width_mm < 0)
         throw std::invalid_argument("Invalid source color or stroke width");
     validate_geometry_path(object.path);
+    if (object.fill_gradient) {
+        if (const auto error = object.fill_gradient->validation_error()) {
+            throw std::invalid_argument("Invalid gradient fill: " + *error);
+        }
+    }
     if (object.authoring_source) {
         if (const auto error = object.authoring_source->validation_error())
             throw std::invalid_argument(*error);

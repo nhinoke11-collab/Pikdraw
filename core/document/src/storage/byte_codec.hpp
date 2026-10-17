@@ -182,11 +182,14 @@ color::ColorValue read_color(Reader &reader);
 void write_object(Writer &writer, const ObjectVariant &object,
                   bool include_authoring_source,
                   const EditablePath *source_override = nullptr,
-                  bool include_appearance = false);
+                  bool include_appearance = false,
+                  bool include_gradient = false);
 ObjectVariant read_object(Reader &reader, uint32_t &remaining_elements,
                           bool include_authoring_source);
 void write_appearance(Writer &writer, const Appearance &appearance);
 Appearance read_appearance(Reader &reader, size_t &remaining_effects);
+void write_gradient(Writer &writer, const std::shared_ptr<const GradientPaint> &gradient);
+std::shared_ptr<const GradientPaint> read_gradient(Reader &reader, size_t &remaining_stops);
 void write_editable_path(Writer &writer, const EditablePath &source);
 EditablePath read_editable_path(Reader &reader, uint32_t &remaining_elements);
 uint32_t container_crc(const uint8_t *data, size_t size) noexcept;

@@ -32,7 +32,7 @@
     "Technical Dimensions (Plan 04): Parametric annotations for Linear (Horizontal, Vertical, Aligned), Angular, Radial (Radius & Diameter), ArcLength, Ordinate, and MultiLeader measurements. 6-group DimensionStyle (Lines/Arrows, Text, Fit, Primary Units, Dual Units [exact 25.4 mm conversion], Tolerances [Symmetric & Deviation]). Interactive desktop Pick-First, Pick-Second, Placement-Drag gestures with live preview layout, contour_spec serialization for atomic undo/redo fidelity, and multi-stage Escape handling"
   ],
   "specifications": [
-    "Gradient Path fill plan from official Illustrator/CorelDRAW documentation: UI/Properties spec, canonical paint/commands/CPU sampler/native v5 proposal, per-format fidelity matrix, disjoint agent DAG and 16 acceptance cases; ADR 0012 is Proposed and no Gradient runtime capability is implemented or enabled by this documentation task (docs/roadmap/gradient-20261017.md)",
+    "Gradient Path fill plan from official Illustrator/CorelDRAW documentation: UI/Properties spec, canonical paint/commands/CPU sampler/native v5 proposal, per-format fidelity matrix, disjoint agent DAG and 16 acceptance cases; ADR 0012 is Accepted, G00 contracts C5/C7/C9 finalized, and runtime implementation is active (docs/roadmap/gradient-20261017.md)",
     "Native desktop architecture with four workspaces sharing one document model",
     "Workspace/UI blueprint; runtime theme, localization and tools are implemented for Milestone M1 Vector workspace",
     "Single-writer document, immutable revisioned snapshots and source/production/render precision boundaries",

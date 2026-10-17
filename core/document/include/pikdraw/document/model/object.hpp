@@ -1,6 +1,7 @@
 #pragma once
 #include "pikdraw/document/model/path_adapter.hpp"
 #include "pikdraw/document/effects/effect_stack.hpp"
+#include "pikdraw/document/model/gradient_paint.hpp"
 
 #include "pikdraw/document/model/object_id.hpp"
 #include "pikdraw/geometry/curves/path.hpp"
@@ -37,10 +38,22 @@ struct PathObject {
     double stroke_width_mm{1.0};
     bool has_fill{true};
     bool has_stroke{true};
+    std::shared_ptr<const GradientPaint> fill_gradient{nullptr};
     Appearance appearance;
     bool visible{true};
     bool locked{false};
     std::string contour_spec;
+
+    [[nodiscard]] EffectiveFillPaint effective_fill_paint() const {
+        if (!has_fill) {
+            return {FillPaintKind::None, fill, nullptr};
+        }
+        if (fill_gradient) {
+            return {FillPaintKind::Gradient, fill, fill_gradient};
+        }
+        return {FillPaintKind::Solid, fill, nullptr};
+    }
+
 
     void set_authoring_source(EditablePath source) {
         if (const auto error = source.validation_error())

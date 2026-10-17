@@ -61,14 +61,31 @@ action.<domain>.<verb>[.<qualifier>]
   - `action.tool.rectangle`
   - `action.tool.ellipse`
   - `action.tool.text`
+  - `action.tool.gradient` (`tool.gradient.activate`)
 - **Object Domain**:
   - `action.object.group`
   - `action.object.ungroup`
   - `action.object.to_curves`
   - `action.object.boolean_union`
   - `action.object.boolean_difference`
+  - `action.object.fill.gradient.properties` (`object.fill.gradient.properties`)
+- **Gradient Domain**:
+  - `action.gradient.type`
+  - `action.gradient.stop.add`
+  - `action.gradient.stop.delete`
+  - `action.gradient.stop.color`
+  - `action.gradient.stop.position`
+  - `action.gradient.stop.opacity`
+  - `action.gradient.segment.midpoint`
+  - `action.gradient.geometry`
+  - `action.gradient.reverse`
+  - `action.gradient.fit`
+  - `action.gradient.spread`
+  - `action.gradient.apply`
+  - `action.gradient.cancel`
 
 ---
+
 
 ## 2. Development-Time UI Reload Loop
 

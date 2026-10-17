@@ -1,6 +1,6 @@
 # ADR 0012 — Gradient là fill paint có version
 
-Ngày: 17/10/2026. Trạng thái: **Proposed — chỉ đặc tả, chưa triển khai hoặc bật capability**.
+Ngày: 17/10/2026. Trạng thái: **Accepted — hoàn tất hợp đồng G00, sẵn sàng triển khai runtime**.
 Plan: [Gradient](../roadmap/gradient-20261017.md), [UI](../design/features/gradient.md),
 [AC](../quality/gradient-acceptance.md). Kế thừa [C5](../../contracts/c5-storage.md),
 [C9](../../contracts/c9-appearance-effects.md), [document runtime](../architecture/document-runtime.md).
@@ -47,7 +47,6 @@ Bridge có thêm quy tắc ownership, clone và validation; source format versio
 file mới. Đổi lại source data không biến mất âm thầm. Không bật UI trước storage/renderer/clone/style
 audit. G00 phải cập nhật C5/C7/C9 trong task có scope, nhận consumer review của document/rendering/
 vector/interop/desktop và pin giới hạn/vectors; G01–G10 cung cấp evidence theo đúng source snapshot.
+G00 đã hoàn tất cập nhật hợp đồng C5/C7/C9, chốt types, IDs, record framing v5 và semantic invariants;
+ADR này chính thức chuyển Accepted để mở đường cho các task G01–G10 triển khai runtime.
 
-ADR này chưa sửa C5/C9 runtime, không chứng nhận fidelity/UX/performance và không cho phép task
-planning bắt đầu triển khai. Chuyển Accepted khi G00 hoàn tất review hợp đồng và ghi evidence;
-triển khai/qualification vẫn được báo riêng theo mốc native và SVG.

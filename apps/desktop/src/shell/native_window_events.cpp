@@ -6,6 +6,7 @@
 #include "../tools/pen_tool_controller.hpp"
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
+#include "../tools/gradient_tool_controller.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -81,6 +82,7 @@ bool NativeWindow::is_menu_action_enabled(MenuActionId action) const {
     case MenuActionId::ObjectRotate90CW:
     case MenuActionId::ObjectRotate90CCW:
     case MenuActionId::ObjectRotate180:
+    case MenuActionId::ObjectFillGradient:
         return !root().vector_controller().selection().selected_ids().empty();
     case MenuActionId::EffectsGaussianBlur:
         return workflow().can_activate_selected_effect(document::GaussianBlurEffect{1.0, 1.0});
@@ -375,6 +377,8 @@ void NativeWindow::execute_menu_action(int action_id) {
     case MenuActionId::ToolLine: workflow().cancel_effect_draft(); set_active_tool(6); return;
     case MenuActionId::ToolPolyline: workflow().cancel_effect_draft(); set_active_tool(7); return;
     case MenuActionId::ToolPen: workflow().cancel_effect_draft(); set_active_tool(8); return;
+    case MenuActionId::ToolGradient: workflow().cancel_effect_draft(); set_active_tool(13); return;
+    case MenuActionId::ObjectFillGradient: workflow().cancel_effect_draft(); set_active_tool(13); open_inspector_properties_panel(); return;
     case MenuActionId::WindowProperties: open_inspector_properties_panel(); return;
     case MenuActionId::WindowAlignDistributePanel: open_align_distribute_panel(); return;
     case MenuActionId::SettingsPreferences: open_settings_modal(); return;
@@ -1127,6 +1131,68 @@ bool NativeWindow::handle_contour_property_click(int x, int y) {
         }
     } else if (x >= 830 && x < 940) {
         trigger_break_contour_apart();
+    } else {
+        return false;
+    }
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    return true;
+}
+
+bool NativeWindow::handle_gradient_property_click(int x, int y) {
+    if (active_tool_ != 13 || !gradient_tool_ || !gradient_tool_->active())
+        return false;
+    const int topbar_h = 32;
+    const int tabbar_h = 32;
+    const int content_top = topbar_h + tabbar_h + 40;
+    if (y < topbar_h + tabbar_h || y > content_top)
+        return false;
+
+    if (x >= 80 && x < 145) {
+        gradient_tool_->presenter().set_kind(document::GradientKind::Linear);
+        gradient_tool_->tool().set_kind(document::GradientKind::Linear);
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Kiểu: Tuyến tính (Linear)" : "Kind: Linear";
+    } else if (x >= 150 && x < 215) {
+        gradient_tool_->presenter().set_kind(document::GradientKind::Radial);
+        gradient_tool_->tool().set_kind(document::GradientKind::Radial);
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Kiểu: Tỏa tròn (Radial)" : "Kind: Radial";
+    } else if (x >= 225 && x < 275) {
+        gradient_tool_->presenter().set_spread(document::GradientSpread::Pad);
+        gradient_tool_->tool().set_spread(document::GradientSpread::Pad);
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Tràn viền: Chặn (Pad)" : "Spread: Pad";
+    } else if (x >= 280 && x < 345) {
+        gradient_tool_->presenter().set_spread(document::GradientSpread::Repeat);
+        gradient_tool_->tool().set_spread(document::GradientSpread::Repeat);
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Tràn viền: Lặp lại (Repeat)" : "Spread: Repeat";
+    } else if (x >= 350 && x < 420) {
+        gradient_tool_->presenter().set_spread(document::GradientSpread::Reflect);
+        gradient_tool_->tool().set_spread(document::GradientSpread::Reflect);
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Tràn viền: Đối xứng (Reflect)" : "Spread: Reflect";
+    } else if (x >= 430 && x < 500) {
+        gradient_tool_->presenter().reverse_stops();
+        gradient_tool_->tool().reverse_stops();
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Đã đảo chiều dải màu" : "Reversed gradient stops";
+    } else if (x >= 505 && x < 575) {
+        const auto bounds = root().vector_controller().selection().bounds(*root().document().current_snapshot()).value_or(geometry::Rect2D{0, 0, 100, 100});
+        gradient_tool_->presenter().fit_to_bounds(bounds);
+        gradient_tool_->tool().fit_to_object_bounds(bounds);
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Đã khớp dải màu theo khung đối tượng" : "Fit gradient to bounds";
+    } else if (x >= 585 && x < 665) {
+        auto proj = gradient_tool_->presenter().geometry_projection();
+        proj.angle_degrees = std::fmod(proj.angle_degrees + 45.0, 360.0);
+        gradient_tool_->presenter().set_angle_degrees(proj.angle_degrees);
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Góc quay: " + std::to_string(static_cast<int>(proj.angle_degrees)) + "°"
+            : "Angle: " + std::to_string(static_cast<int>(proj.angle_degrees)) + "°";
+    } else if (x >= 675 && x < 735) {
+        gradient_tool_->presenter().add_stop(0.5, color::ColorValue{color::RGBColor{255, 200, 50}});
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Đã thêm điểm dừng màu ở vị trí 50%" : "Added color stop at 50%";
+    } else if (x >= 745 && x < 815) {
+        if (gradient_tool_->apply()) {
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã áp dụng chuyển sắc vào đối tượng" : "Applied gradient fill";
+        }
+    } else if (x >= 820 && x < 880) {
+        gradient_tool_->cancel();
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Đã hủy thay đổi chuyển sắc" : "Cancelled gradient edits";
     } else {
         return false;
     }
@@ -2086,6 +2152,8 @@ void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
     if (handle_node_property_click(x, y))
         return;
     if (handle_contour_property_click(x, y))
+        return;
+    if (handle_gradient_property_click(x, y))
         return;
     if (handle_node_pointer_down(x, y, modifiers))
         return;

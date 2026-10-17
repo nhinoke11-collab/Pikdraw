@@ -3,6 +3,7 @@
 #include "../tools/pen_tool_controller.hpp"
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
+#include "../tools/gradient_tool_controller.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -576,6 +577,8 @@ void NativeWindow::paint_drawing_overlay(HDC dc) {
         paint_node_canvas_overlay(dc, width_, height_);
     if (active_tool_ == 12 && contour_tool_ && contour_tool_->active())
         paint_contour_canvas_overlay(dc, canvas_rect(width_, height_));
+    if (active_tool_ == 13 && gradient_tool_ && gradient_tool_->active())
+        paint_gradient_canvas_overlay(dc, canvas_rect(width_, height_));
     if (!drawing_tool_) return;
     const auto state = drawing_tool_->visual_state();
     const RECT area = canvas_rect(width_, height_);
@@ -1217,6 +1220,78 @@ void NativeWindow::paint_contour_canvas_overlay(HDC dc, const RECT& area) {
 
     SelectObject(dc, old_pen);
     DeleteObject(preview_pen);
+    RestoreDC(dc, saved);
+}
+
+void NativeWindow::paint_gradient_canvas_overlay(HDC dc, const RECT& area) {
+    if (!gradient_tool_ || !gradient_tool_->active())
+        return;
+
+    const auto* paint = gradient_tool_->active_draft_paint();
+    if (!paint) return;
+
+    const auto& camera = root().renderer().camera();
+    const auto screen = [&](geometry::Point2D pt) {
+        const auto local = camera.world_to_screen(pt);
+        return POINT{area.left + static_cast<LONG>(std::lround(local.x)),
+                     area.top + static_cast<LONG>(std::lround(local.y))};
+    };
+
+    const int saved = SaveDC(dc);
+    SetBkMode(dc, TRANSPARENT);
+
+    const auto handles = gradient_tool_->tool().get_handles();
+    if (handles.empty()) {
+        RestoreDC(dc, saved);
+        return;
+    }
+
+    // Connect axis
+    if (paint->kind == document::GradientKind::Linear) {
+        HPEN axis_pen = CreatePen(PS_SOLID, 2, RGB(0, 242, 195));
+        HGDIOBJ old_pen = SelectObject(dc, axis_pen);
+        const auto p1 = screen(handles[0].position_object);
+        const auto p2 = screen(handles[1].position_object);
+        MoveToEx(dc, p1.x, p1.y, nullptr);
+        LineTo(dc, p2.x, p2.y);
+        SelectObject(dc, old_pen);
+        DeleteObject(axis_pen);
+    } else {
+        HPEN axis_pen = CreatePen(PS_DASH, 1, RGB(0, 196, 255));
+        HGDIOBJ old_pen = SelectObject(dc, axis_pen);
+        const auto center = screen(handles[0].position_object);
+        if (handles.size() > 1) {
+            const auto r_pt = screen(handles[1].position_object);
+            MoveToEx(dc, center.x, center.y, nullptr);
+            LineTo(dc, r_pt.x, r_pt.y);
+            const int rx = std::abs(r_pt.x - center.x);
+            const int ry = handles.size() > 2 ? std::abs(screen(handles[2].position_object).y - center.y) : rx;
+            Arc(dc, center.x - rx, center.y - ry, center.x + rx, center.y + ry, 0, 0, 0, 0);
+        }
+        SelectObject(dc, old_pen);
+        DeleteObject(axis_pen);
+    }
+
+    // Draw handles
+    HBRUSH handle_brush = CreateSolidBrush(RGB(255, 255, 255));
+    HPEN handle_pen = CreatePen(PS_SOLID, 2, RGB(0, 242, 195));
+    SelectObject(dc, handle_brush);
+    SelectObject(dc, handle_pen);
+
+    for (const auto& h : handles) {
+        const auto pt = screen(h.position_object);
+        if (h.kind == vector::tools::GradientHandleKind::LinearStart ||
+            h.kind == vector::tools::GradientHandleKind::LinearEnd ||
+            h.kind == vector::tools::GradientHandleKind::RadialCenter ||
+            h.kind == vector::tools::GradientHandleKind::RadialRadius) {
+            Rectangle(dc, pt.x - 4, pt.y - 4, pt.x + 5, pt.y + 5);
+        } else {
+            Ellipse(dc, pt.x - 3, pt.y - 3, pt.x + 4, pt.y + 4);
+        }
+    }
+
+    DeleteObject(handle_pen);
+    DeleteObject(handle_brush);
     RestoreDC(dc, saved);
 }
 

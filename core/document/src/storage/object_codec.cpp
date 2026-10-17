@@ -79,7 +79,8 @@ template <class T> void read_common(Reader &reader, T &object) {
 void write_object(Writer &writer, const ObjectVariant &value,
                   bool include_authoring_source,
                   const EditablePath *source_override,
-                  bool include_appearance) {
+                  bool include_appearance,
+                  bool include_gradient) {
   writer.u8(static_cast<uint8_t>(value.index()));
   std::visit(
       [&](const auto &object) {
@@ -108,6 +109,8 @@ void write_object(Writer &writer, const ObjectVariant &value,
           }
           if (include_appearance)
             write_appearance(writer, object.appearance);
+          if (include_gradient)
+            write_gradient(writer, object.fill_gradient);
         } else if constexpr (std::is_same_v<T, TextObject>) {
           writer.str(object.text);
           writer.str(object.font.family_name);

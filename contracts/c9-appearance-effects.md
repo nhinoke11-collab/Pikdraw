@@ -84,7 +84,26 @@ Drop Shadow for the input alpha A is defined as offset(blur(A, sigma_x, sigma_y)
 
 The target boundary is the only implicit viewport clip in this profile. Filter output bounds, damage, reverse ROI, and conservative resampling support follow C3. Source geometry bounds remain available separately for selection and production. The contract requires finite scratch/work quotas, checked arithmetic and reservation before allocation, with tiling only after a complete-halo seam oracle. Current source enforces per-request kernel scratch and cumulative filter-work limits; aggregate scratch reservation across concurrent jobs and tiled seam qualification remain open. A budget refusal or unsupported transform is an explicit incomplete result; it must not be presented as a successful frame with a missing effect.
 
+### 3.3 Gradient fill paint authority and compositing
+
+Gradient is a paint server for path fills, not an effect node in the effect stack.
+1. **Authority hierarchy**:
+   - `has_fill == false` -> None (no fill is painted).
+   - `has_fill == true && fill_gradient != nullptr` -> Gradient paint is evaluated as the authoritative fill paint.
+   - `has_fill == true && fill_gradient == nullptr` -> Solid `fill` ColorValue is painted.
+   Solid `fill` is retained in memory as the remembered solid color when switching paint modes, but must never be used as a visual fallback when gradient rendering is expected.
+2. **Evaluation in compositor**:
+   The gradient sampler produces straight color and effective alpha `(source_alpha * stop_opacity)` across covered pixels.
+   Fill opacity is applied once to the gradient rasterization before stroke drawing.
+   Object opacity and blend modes apply to the resulting combined graphic exactly as with solid fills.
+3. **Invariants**:
+   - Types: Linear, Radial (centered ellipse).
+   - Spreads: Pad (clamp), Repeat, Reflect.
+   - Interpolation: EncodedSRGBStraightAlpha.
+   - Relative invertibility guardrail: `n = max(|a|,|b|,|c|,|d|) > 0` with `|det(A/n)| > 1e-12`.
+
 ## 4. Proposed feature families and separation rules
+
 
 | Family | Candidate semantics | Distinctions that must stay visible |
 | --- | --- | --- |
