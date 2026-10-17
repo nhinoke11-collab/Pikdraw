@@ -4,7 +4,7 @@
     {
       "id": "geometry",
       "path": "core/geometry",
-      "status": "planned",
+      "status": "implemented",
       "dependencies": [],
       "context": [
         "core/geometry/README.md",
@@ -18,7 +18,7 @@
     {
       "id": "color",
       "path": "core/color",
-      "status": "planned",
+      "status": "implemented",
       "dependencies": [],
       "context": [
         "core/color/README.md",
@@ -32,7 +32,7 @@
     {
       "id": "typography",
       "path": "core/typography",
-      "status": "planned",
+      "status": "implemented",
       "dependencies": [
         "geometry"
       ],
@@ -48,7 +48,7 @@
     {
       "id": "document",
       "path": "core/document",
-      "status": "planned",
+      "status": "implemented",
       "dependencies": [
         "geometry",
         "color",
@@ -66,7 +66,7 @@
     {
       "id": "rendering",
       "path": "core/rendering",
-      "status": "planned",
+      "status": "implemented",
       "dependencies": [
         "document",
         "geometry",
@@ -85,7 +85,7 @@
     {
       "id": "vector",
       "path": "modules/vector",
-      "status": "planned",
+      "status": "implemented",
       "dependencies": [
         "document",
         "geometry",
@@ -182,7 +182,7 @@
     {
       "id": "interop",
       "path": "modules/interop",
-      "status": "planned",
+      "status": "implemented",
       "dependencies": [
         "document",
         "geometry",
@@ -217,10 +217,9 @@
     {
       "id": "workers",
       "path": "platform/workers",
-      "status": "planned",
+      "status": "implemented",
       "dependencies": [
-        "interop",
-        "plugin-sdk"
+        "interop"
       ],
       "context": [
         "platform/workers/README.md",
@@ -234,16 +233,12 @@
     {
       "id": "desktop",
       "path": "apps/desktop",
-      "status": "planned",
+      "status": "implemented",
       "dependencies": [
         "document",
         "rendering",
         "vector",
-        "raster",
-        "production",
-        "scene3d",
         "interop",
-        "plugin-sdk",
         "automation",
         "workers"
       ],

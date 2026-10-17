@@ -5,7 +5,7 @@
 - Producers: document commands, format adapters in `modules/interop`, and native authoring tools.
 - Consumers: `core/document`, `core/rendering`, native storage, interop adapters, and desktop fidelity reporting.
 - Depends on: [C2 Document](c2-document.md), [C3 Rendering](c3-rendering.md), [C4 Color and typography](c4-color-typography.md), [C5 Storage](c5-storage.md), and [C8 Import fidelity](c8-import-fidelity.md).
-- Related implementation roadmap: [P22–P24 effect tasks](../docs/roadmap/canvas-performance-upgrade-20261016/tasks.md) and [phase dispatch](../docs/roadmap/canvas-performance-upgrade-20261016/dispatch/phase-19-25.md).
+- Related implementation roadmap: [Basic effects plan](../docs/roadmap/basic-effects-20261017.md).
 
 ## 1. Purpose and compatibility claim
 

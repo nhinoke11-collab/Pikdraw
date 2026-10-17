@@ -87,9 +87,20 @@ class ContextRoutes:
             self.boot(modules)
             for reference in ("AGENTS.md", "docs/START.md", "docs/project-state.json"):
                 contained(self.root, reference, must_exist=True)
-            state = read_json(contained(self.root, "docs/project-state.json", must_exist=True))
+            state_path = contained(self.root, "docs/project-state.json", must_exist=True)
+            if state_path.stat().st_size > 8000:
+                raise HarnessError("docs/project-state.json exceeds 8000 bytes; keep only current snapshot state, do not append historical logs.")
+            state = read_json(state_path)
             if not isinstance(state, dict) or state.get("schema_version") != 1:
                 raise HarnessError("docs/project-state.json requires schema_version: 1.")
+            docs_dir = contained(self.root, "docs", must_exist=True)
+            non_doc_files = sorted(
+                path.relative_to(self.root).as_posix()
+                for path in docs_dir.rglob("*")
+                if path.is_file() and path.suffix.lower() != ".md" and path.relative_to(self.root).as_posix() != "docs/project-state.json"
+            )
+            if non_doc_files:
+                raise HarnessError(f"docs/ must only contain .md files and docs/project-state.json; move code/images/fixtures out of docs/: {non_doc_files[:5]}")
             tasks = self.all_tasks()
             for task in tasks:
                 self.validate_task(task, modules)
@@ -126,6 +137,11 @@ class ContextRoutes:
             if route.get("module") == module["id"] or route["id"] in route_ids:
                 references += route["paths"]
         references = list(dict.fromkeys(references))
+        active_deps = {
+            dep: modules[dep]["context"]
+            for dep in module["dependencies"]
+            if modules[dep].get("status") != "planned" or module.get("status") == "planned"
+        }
         sections = [f"PikDraw task context v1 | task={task_id} | module={module['id']}",
                     "POLICY: one primary source; no new worktrees; Codex only; claim owned paths before editing.",
                     "BUILD: build/win-dev/apps/desktop/pikdraw.exe; use tooling/native/build.ps1 (shared lock).",
@@ -134,10 +150,10 @@ class ContextRoutes:
                     "Read only the references relevant to this task; expand context on demand.",
                     "TASK\n" + json.dumps(task, ensure_ascii=False, separators=(",", ":")),
                     "MODULE\n" + json.dumps(module, ensure_ascii=False, separators=(",", ":")),
-                    "DEPENDENCY POINTERS\n" + json.dumps({dep: modules[dep]["context"] for dep in module["dependencies"]}, ensure_ascii=False),
+                    "DEPENDENCY POINTERS\n" + json.dumps(active_deps, ensure_ascii=False),
                     "REFERENCES\n" + "\n".join(references)]
         # Only three boot documents are opened, each with a strict byte/read bound.
-        for reference, limit in (("AGENTS.md", 2600), ("docs/START.md", 1500), ("docs/project-state.json", 1600)):
+        for reference, limit in (("AGENTS.md", 2600), ("docs/START.md", 1500), ("docs/project-state.json", 8000)):
             path = contained(self.root, reference, must_exist=True)
             try:
                 with path.open(encoding="utf-8-sig") as stream:

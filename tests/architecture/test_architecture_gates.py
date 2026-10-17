@@ -219,6 +219,24 @@ class ArchitectureGatesTests(unittest.TestCase):
                     f"Module {mod['id']} has unsafe owned_path: {path}",
                 )
 
+    def test_docs_contains_only_markdown_and_project_state(self):
+        """Verifies docs/ contains only Markdown documentation and docs/project-state.json."""
+        docs_dir = self.repo_root / "docs"
+        violations = []
+        for file_path in docs_dir.rglob("*"):
+            if not file_path.is_file():
+                continue
+            rel = file_path.relative_to(self.repo_root).as_posix()
+            if rel == "docs/project-state.json":
+                continue
+            if file_path.suffix.lower() != ".md":
+                violations.append(rel)
+        self.assertEqual(
+            violations,
+            [],
+            f"docs/ must only contain .md files and docs/project-state.json; found non-doc files: {violations}",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -53,29 +53,17 @@ Không dùng preset/build folder cũ theo cấu hình riêng:
 
 ```powershell
 .\tooling\native\build.ps1
-.\tooling\native\build.ps1 -Test
+.\tooling\native\build.ps1 -Test -TestTarget test_pikdraw_desktop_shell -TestRegex '^test_pikdraw_desktop_shell$'
 .\tooling\native\build.ps1 -Configuration Release
 ```
 
 Giữ môi trường/toolchain và encoding UTF-8 nhất quán; thêm/sửa compiler flags cần task build có scope,
-không thay đường output để né lỗi. Các lệnh ở đây là hướng dẫn; task tài liệu hiện tại không chạy build app.
+không thay đường output để né lỗi.
 
-test_pikdraw_editor_tools.exe [evidence-directory] gửi mouse/keyboard messages tới cửa sổ
-native, mở và thao tác hộp màu thật, kiểm tra source/Undo/ICC pixels/native reopen rồi
-chụp canvas bằng chính code paint của app. Cửa sổ test ẩn; đây không phải đo input-to-present.
+`test_pikdraw_editor_tools.exe` gửi mouse/keyboard messages tới cửa sổ
+native, mở và thao tác hộp màu thật, kiểm tra source/Undo/ICC pixels/native reopen. Cửa sổ test ẩn; đây không phải đo input-to-present.
 
-Release cũng ghi đè build/win-dev qua runner, không tạo preset/output khác. Các test mới dùng điều kiện có hiệu lực
-khi NDEBUG bật. benchmark_pikdraw_editor_tools.exe xuất JSON cho corpus 1.000 path /
-101.000 path elements: redraw CPU, point pick, Window/Crossing và cached native CPU paint.
-Không lấy số đo cửa sổ ẩn làm FPS/present hoặc chứng nhận GPU/min-spec.
+## Giới hạn hiện tại
 
-## Giới hạn
-
-Pick/transform/style hỗ trợ root path/text có thể sửa; group hierarchy chưa đầy đủ.
-Hit-test chữ dùng logical bounds gần đúng; build này báo unsupported nếu chưa có backend
-outline chữ thật. Resize biến đổi cả stroke theo transform; inspector ghi **viền nguồn**.
-Chưa có node editing, rotation handles, constraint CAD hoặc CAM.
-
-ICC hiện là preview của máy. Chưa gán/nhúng ICC vào document, soft proof giấy/mực, gamut
-warning, BPC hoặc PDF/X. Native v2 giữ RGB/CMYK/spot/overprint; native v1 lossy bị từ chối
-theo ADR 0005. Bản này không tự công bố native AI/CDR round-trip.
+Pick/transform/style hỗ trợ root path/text có thể sửa; đã có tay nắm xoay (rotation handle), lật đối xứng (flip), Pen/Quick Shapes/Gradient, cùng các bộ điều khiển `NodeToolController`, `ContourToolController`, `DimensionToolController` (cần đồng bộ thêm lối vào trên Toolbox/Menu và hoàn thiện render `GroupObject`/`ImageObject` trong `SoftwareRasterizer`).
+ICC hiện là preview của máy; Native v2 giữ RGB/CMYK/spot/gradient/overprint.

@@ -58,8 +58,8 @@ if ($Suite -eq 'contract' -or $Suite -eq 'all') {
         # Inline contract verification
         & $tools.Python -c @"
 import json, glob, sys
-fixtures = glob.glob('docs/quality/reference-fixtures/*.json')
-oracles = glob.glob('docs/quality/oracles/*.json')
+fixtures = glob.glob('tests/fixtures/reference-fixtures/*.json')
+oracles = glob.glob('tests/fixtures/oracles/*.json')
 print(f'Checking {len(fixtures)} reference fixtures and {len(oracles)} oracles...')
 for f in fixtures + oracles:
     with open(f, 'r', encoding='utf-8') as fp:

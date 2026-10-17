@@ -32,13 +32,10 @@
 - Có split chính xác theo De Casteljau cho line/quadratic/cubic và split tham số cho ellipse arc; đo chiều dài adaptive trả sai số ước lượng hoặc `IterationLimit`.
 - Nearest-point trên line là chính xác; curve dùng branch-and-bound từ bounds và trả giới hạn sai số hoặc `IterationLimit`. Giao đoạn thẳng hỗ trợ điểm, chồng lấp và input lỗi.
 - `Path2D::bounds_checked` / `transformed_checked` trả status và chỉ số element lỗi. `bounds()` giữ tương thích bằng hull bảo thủ khi path lỗi; đó không phải xác nhận dữ liệu hợp lệ. `transformed()` ném exception nếu không thể giữ nguyên hình học.
-- `Path2D::make_ellipse` vẫn tạo cubic tương thích các consumer hiện có. `ArcTo` rendering/import-export và giao cắt curve tổng quát chưa được tích hợp/kiểm chứng. Boolean/Offset chỉ nhận hình chữ nhật song song trục được nhận dạng chính xác; curve/trapezoid trả unsupported, không đổi thành bounding rectangle. Đây chưa phải CAD kernel hay bù dao.
+- `Path2D::make_ellipse` tạo cubic tương thích các consumer hiện có. Đã bổ sung giao cắt đường cong (`curve_intersections`), offset/contour đa giác & đường cong (`offset.cpp`), và hình học kích thước kỹ thuật (`dimension_geometry.cpp`).
 
 ## Build and Test
 
 ```powershell
-.\tooling\native\build.ps1 -Target test_pikdraw_geometry
-.\tooling\native\build.ps1 -TestsOnly -TestRegex '^pikdraw_geometry_tests$'
+.\tooling\native\build.ps1 -Test -TestTarget test_pikdraw_geometry -TestRegex '^pikdraw_geometry_tests$'
 ```
-
-Kết quả D02 phải ghi SHA và artifact sau khi chạy trên revision tích hợp. Một lần build/test của worktree chưa là bằng chứng tích hợp.

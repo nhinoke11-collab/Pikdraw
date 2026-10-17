@@ -3,7 +3,7 @@
   "project": "PikDraw",
   "mode": "single-source",
   "agent_system": "codex",
-  "source_root": "C:/Users/CK ART STAGE/Downloads/PikDraw",
+  "source_root": "C:/Users/Administrator/Downloads/PikDraw",
   "external_provider_execution": false,
   "integration_owner": "one-coordinator-per-shared-source",
   "delegation_policy": "explicit-user-or-applicable-instruction-authorization; disjoint leases; same source",

@@ -151,7 +151,7 @@ unsupported_protocol, không gọi parser trong host.
   checksum/hash/count không khớp, record vượt range hoặc EOF giữa frame làm hủy toàn proposal.
   Final hash không thay thế semantic validation từng record host-side.
 - Record ID và payload được version hóa tại
-  [`import-record-v1.json`](../docs/quality/reference-fixtures/import-record-v1.json): `1=Page`,
+  [`import-record-v1.json`](../tests/fixtures/reference-fixtures/import-record-v1.json): `1=Page`,
   `2=Path`, `3=Text`, `4=FidelityReport`, `5=FidelityIssue`. Số nguyên, độ dài và IEEE-754 binary64
   dùng little-endian. Page, endpoint/control points, arc radii, stroke width và vị trí text dùng
   mm; font size dùng pt. Record ID của object chỉ ổn định trong một proposal; `source_id` giữ nguồn
@@ -160,7 +160,7 @@ unsupported_protocol, không gọi parser trong host.
   alpha, spot name, alternate RGB và cờ overprint; host không đổi màu nguồn sang RGB âm thầm.
   FidelityReport tóm tắt coverage, appearance, editability, production assessment và tổng issue;
   host kiểm từng record, thứ tự, số issue và report trước khi nhận proposal.
-- Record schema v2 tại [`import-record-v2.json`](../docs/quality/reference-fixtures/import-record-v2.json)
+- Record schema v2 tại [`import-record-v2.json`](../tests/fixtures/reference-fixtures/import-record-v2.json)
   giữ nguyên payload v1 cho Page/Path/Text/FidelityReport/FidelityIssue và thêm `6=Layer`, `7=Group`.
   Layer trỏ tới các object gốc; Group trỏ tới các object con. Host kiểm thứ tự, ID, UTF-8/source ID,
   mọi tham chiếu, đúng một owner cho mỗi object, đồ thị không chu trình, issue locator và report
@@ -231,7 +231,7 @@ Kiểm tra containment bằng path/file/network/handle/child positive+negative c
 bằng truncated, oversized, duplicate/out-of-order, nonfinite, deep, stale, fuzz và stdout flood;
 lifecycle bằng cancel/crash/timeout/close/restart; soak leak temp/files/handles/commit bytes.
 Các wire-level vectors đã version hóa tại
-[`worker-ipc-v2-vectors.json`](../docs/quality/reference-fixtures/worker-ipc-v2-vectors.json).
+[`worker-ipc-v2-vectors.json`](../tests/fixtures/reference-fixtures/worker-ipc-v2-vectors.json).
 Kiểm thử trên source user được chạy cục bộ; chỉ lưu corpus IDs/hash trong report có phân quyền,
 không commit sample, tên khách hàng hoặc nội dung file.
 

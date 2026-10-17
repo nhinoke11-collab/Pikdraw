@@ -521,7 +521,7 @@ def build_manifest(seed: int = DEFAULT_SEED) -> Dict[str, Any]:
 
 
 def default_manifest_path() -> Path:
-    return Path(__file__).resolve().parents[2] / "docs" / "quality" / "canvas-corpus-v1.json"
+    return Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "canvas-corpus-v1.json"
 
 
 def write_manifest(path: Path, seed: int = DEFAULT_SEED) -> None:

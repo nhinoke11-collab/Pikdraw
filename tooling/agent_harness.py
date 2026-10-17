@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import sys
 import tempfile
 
@@ -94,7 +95,7 @@ class Harness(ContextRoutes):
         checked_slug(task.get("id"), "task id")
         checked_slug(task.get("provider"), "provider")
         checked_text(task.get("title"), "Task title", 160)
-        checked_text(task.get("goal"), "Task goal", 2000)
+        checked_text(task.get("goal"), "Task goal", 500)
         if task.get("status") not in STATUSES:
             raise HarnessError("Invalid task status.")
         if modules is not None and task.get("module") not in modules:
@@ -114,8 +115,8 @@ class Harness(ContextRoutes):
             checked_owner(lease.get("owner"))
             if lease.get("provider") != task["provider"]:
                 raise HarnessError("Task lease provider does not match task provider.")
-            if task["status"] == "done":
-                raise HarnessError("Completed task cannot retain a lease.")
+            if task["status"] in ("done", "review"):
+                raise HarnessError("Completed or review task cannot retain a lease.")
         worktree = task.get("worktree")
         if worktree is not None:
             if not isinstance(worktree, dict):
@@ -172,7 +173,7 @@ class Harness(ContextRoutes):
         if provider != "codex":
             raise HarnessError("Single agent system: new tasks use --provider codex; historical records remain readable.")
         checked_text(title, "Task title", 160)
-        checked_text(goal, "Task goal")
+        checked_text(goal, "Task goal", 500)
         modules = self.modules()
         if module_id not in modules:
             raise HarnessError(f"Unknown module: {module_id}")
@@ -216,9 +217,11 @@ class Harness(ContextRoutes):
         return task
 
     def update(self, task_id, owner, status, summary, next_steps, evidence):
-        checked_text(summary, "Summary")
+        checked_text(summary, "Summary", 320)
+        if len(next_steps) > 6 or len(evidence) > 6:
+            raise HarnessError("Keep update logs concise: at most 6 next_steps and 6 evidence items.")
         for item in next_steps + evidence:
-            checked_text(item, "Next step/evidence")
+            checked_text(item, "Next step/evidence", 240)
         if status not in STATUSES:
             raise HarnessError("Invalid task status.")
         with self.locked():
@@ -227,14 +230,19 @@ class Harness(ContextRoutes):
             if status == "done" and not evidence and not task.get("evidence"):
                 raise HarnessError("Done requires concrete validation evidence.")
             task.update(status=status, summary=summary, next_steps=next_steps,
-                        evidence=list(dict.fromkeys(task.get("evidence", []) + evidence))[-32:])
-            if status == "done":
+                        evidence=list(dict.fromkeys(task.get("evidence", []) + evidence))[-6:])
+            if status in ("done", "review", "todo"):
                 task["lease"] = None
+            if status == "done" and not task.get("handoff"):
+                task.pop("source_baseline", None)
+                snap_dir = contained(self.root, f".agent/snapshots/{task['id']}")
+                if snap_dir.exists():
+                    shutil.rmtree(snap_dir, ignore_errors=True)
             self.save_task(task)
         return task
 
     def release(self, task_id, owner, summary):
-        checked_text(summary, "Summary")
+        checked_text(summary, "Summary", 320)
         with self.locked():
             task = self.task(task_id)
             self.require_owner(task, owner)
@@ -263,12 +271,12 @@ class Harness(ContextRoutes):
 
     def handoff(self, task_id, owner, head, summary, changed_paths, decisions,
                 tests, questions, next_steps):
-        checked_text(summary, "Handoff summary")
+        checked_text(summary, "Handoff summary", 320)
         for field in (decisions, tests, questions, next_steps):
-            if len(field) > 32:
-                raise HarnessError("Handoff arrays are limited to 32 concise entries.")
+            if len(field) > 6:
+                raise HarnessError("Handoff arrays are limited to 6 concise entries.")
             for item in field:
-                checked_text(item, "Handoff entry")
+                checked_text(item, "Handoff entry", 240)
         with self.locked():
             task = self.task(task_id)
             self.require_owner(task, owner)
@@ -308,7 +316,7 @@ class Harness(ContextRoutes):
             atomic_json(contained(self.root, packet_path), packet)
             task.update(status="review", summary=summary, next_steps=next_steps,
                         handoff=packet_path, lease=None,
-                        evidence=list(dict.fromkeys(task.get("evidence", []) + tests))[-32:])
+                        evidence=list(dict.fromkeys(task.get("evidence", []) + tests))[-6:])
             self.save_task(task)
         return packet
 
@@ -325,13 +333,15 @@ def parser():
     task = commands.add_parser("task").add_subparsers(dest="action", required=True)
     create = task.add_parser("create")
     create.add_argument("id")
-    for name in ("title", "module", "goal", "provider", "base"):
+    for name in ("title", "module", "goal"):
         create.add_argument("--" + name, required=True)
+    create.add_argument("--provider", default="codex")
+    create.add_argument("--base", default="HEAD")
     create.add_argument("--path", dest="paths", action="append", help="Explicit owned path; repeat to override module defaults")
     claim = task.add_parser("claim")
     claim.add_argument("id")
     claim.add_argument("--owner", required=True)
-    claim.add_argument("--provider", required=True)
+    claim.add_argument("--provider", default="codex")
     update = task.add_parser("update")
     update.add_argument("id")
     update.add_argument("--owner", required=True)
@@ -352,8 +362,9 @@ def parser():
     for name in ("task-id", "provider", "base", "owner"):
         worktree_create.add_argument("--" + name, required=True)
     handoff = commands.add_parser("handoff", help="Snapshot owned source changes without committing; release task into review")
-    for name in ("task-id", "owner", "head", "summary"):
+    for name in ("task-id", "owner", "summary"):
         handoff.add_argument("--" + name, required=True)
+    handoff.add_argument("--head", default="HEAD")
     for name, destination in (("changed-path", "changed_paths"), ("decision", "decisions"),
                               ("test", "tests"), ("open-question", "questions"), ("next-step", "next_steps")):
         handoff.add_argument("--" + name, dest=destination, action="append", default=[])

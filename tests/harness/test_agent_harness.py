@@ -185,10 +185,29 @@ class HarnessTests(unittest.TestCase):
             self.harness.update("doc-task", "someone-else", "done", "Done", [], ["Passed"])
         with self.assertRaisesRegex(h.HarnessError, "validation evidence"):
             self.harness.update("doc-task", "codex:session-1", "done", "Done", [], [])
+        with self.assertRaisesRegex(h.HarnessError, "at most 320 characters"):
+            self.harness.update("doc-task", "codex:session-1", "in_progress", "x" * 321, [], [])
+        with self.assertRaisesRegex(h.HarnessError, "at most 6"):
+            self.harness.update("doc-task", "codex:session-1", "in_progress", "Short", [], ["e"] * 7)
+        reviewed = self.harness.update("doc-task", "codex:session-1", "review", "Ready for review", [], ["Unit test pass"])
+        self.assertIsNone(reviewed["lease"])
+        self.claim()
         completed = self.harness.update("doc-task", "codex:session-1", "done", "Done", [], ["Regression passed"])
         self.assertIsNone(completed["lease"])
         with self.assertRaisesRegex(h.HarnessError, "cannot be claimed"):
             self.claim()
+
+    def test_doctor_rejects_bloated_project_state(self):
+        self.write_json("docs/project-state.json", {"schema_version": 1, "history": "x" * 8100})
+        result = self.harness.doctor()
+        self.assertFalse(result["ok"])
+        self.assertIn("exceeds 8000 bytes", result["issues"][0])
+
+    def test_doctor_rejects_non_markdown_files_in_docs(self):
+        self.write("docs/quality/fixture.json", "{}")
+        result = self.harness.doctor()
+        self.assertFalse(result["ok"])
+        self.assertIn("docs/ must only contain .md files", result["issues"][0])
 
     def test_explicit_release_allows_next_task_to_claim(self):
         self.create()

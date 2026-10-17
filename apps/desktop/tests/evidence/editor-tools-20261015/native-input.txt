@@ -1,1 +1,0 @@
-[PASS] Native mouse window/crossing/toggle/add, move/resize/cancel, palette fill/stroke, atomic style undo, ICC pixels, native reopen and typed creation defaults

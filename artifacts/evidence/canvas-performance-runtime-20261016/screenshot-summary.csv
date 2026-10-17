@@ -1,5 +1,0 @@
-"scenario","runs","wallMedianMs","wallP95Ms","cpuMedianMs","peakWorkingSetMaxMiB","peakPrivateMaxMiB","errors"
-"empty","5","337.93","375.09","312.5","18.96","12.07","0"
-"objects","5","381.7","412.46","359.38","19.09","12.14","0"
-"solid-weld","5","352.11","365.22","328.12","19.16","12.45","0"
-"vector-bitmap","5","348.85","381.4","343.75","19.44","12.33","0"

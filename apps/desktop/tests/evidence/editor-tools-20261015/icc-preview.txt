@@ -1,2 +1,0 @@
-[PASS] Installed SWOP CMYK -> sRGB ICC, independent channels, alpha cache; difference=0.475456
-[PASS] System sRGB ICC and invalid/wrong-channel profile rejection

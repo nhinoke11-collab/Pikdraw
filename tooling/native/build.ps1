@@ -8,7 +8,8 @@ param(
     [switch]$TestsOnly,
     [string[]]$TestTarget = @(),
     [switch]$BuildOnly,
-    [string]$TestRegex = ''
+    [string]$TestRegex = '',
+    [int]$LockWaitSeconds = 120
 )
 $ErrorActionPreference = 'Stop'
 if ($TestTarget.Count -gt 0 -and -not $Test) {
@@ -30,10 +31,35 @@ New-Item -ItemType Directory -Path $boardDir -Force | Out-Null
 $lockPath = Join-Path $boardDir 'native-build.lock'
 $lockStream = $null
 try {
-    try {
-        $lockStream = [System.IO.File]::Open($lockPath, 'CreateNew', 'Write', 'None')
-    } catch [System.IO.IOException] {
-        throw 'Another session owns .agent/native-build.lock. Wait for it; never steal an active build lock.'
+    $deadline = (Get-Date).AddSeconds([Math]::Max(0, $LockWaitSeconds))
+    while ($null -eq $lockStream) {
+        try {
+            $lockStream = [System.IO.File]::Open($lockPath, 'CreateNew', 'Write', 'Read')
+        } catch [System.IO.IOException] {
+            $lockText = ''
+            try {
+                $readStream = [System.IO.File]::Open($lockPath, 'Open', 'Read', 'ReadWrite')
+                try {
+                    $reader = New-Object System.IO.StreamReader($readStream)
+                    $lockText = $reader.ReadToEnd()
+                } finally {
+                    $readStream.Dispose()
+                }
+            } catch {}
+            if ($lockText -match '^pid=(\d+)\b') {
+                $ownerPid = [int]$Matches[1]
+                $ownerProc = Get-Process -Id $ownerPid -ErrorAction SilentlyContinue
+                if ($null -eq $ownerProc) {
+                    Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+                    continue
+                }
+                if ((Get-Date) -lt $deadline) {
+                    Start-Sleep -Milliseconds 500
+                    continue
+                }
+            }
+            throw 'Another session owns .agent/native-build.lock. Wait for it; never steal an active build lock.'
+        }
     }
     $lockBytes = [System.Text.Encoding]::UTF8.GetBytes("pid=$PID source=$repoRoot")
     $lockStream.Write($lockBytes, 0, $lockBytes.Length)
@@ -70,11 +96,22 @@ try {
                 throw 'Test source code was removed after the recorded final CTest run. Restore test sources before requesting -Test or -TestsOnly.'
             }
         }
+        $cachePath = Join-Path $buildDir 'CMakeCache.txt'
+        $ninjaPath = Join-Path $buildDir 'build.ninja'
         if (-not $TestsOnly) {
-            $configureArgs = @('--preset', 'win-dev', "-DCMAKE_BUILD_TYPE=$Configuration")
-            if ($Test) { $configureArgs += '-DPIKDRAW_BUILD_TESTS=ON' }
-            & $tools.CMake @configureArgs
-            if ($LASTEXITCODE -ne 0) { throw "Configure failed ($LASTEXITCODE)." }
+            $needsConfigure = $true
+            if ((Test-Path -LiteralPath $cachePath) -and (Test-Path -LiteralPath $ninjaPath)) {
+                $hasConfig = Select-String -LiteralPath $cachePath -Pattern "^CMAKE_BUILD_TYPE:STRING=$Configuration$" -Quiet
+                $hasTests = (-not $Test) -or (Select-String -LiteralPath $cachePath -Pattern '^PIKDRAW_BUILD_TESTS:BOOL=ON$' -Quiet)
+                if ($hasConfig -and $hasTests) {
+                    $needsConfigure = $false
+                }
+            }
+            if ($needsConfigure) {
+                $configureArgs = @('--preset', 'win-dev', "-DCMAKE_BUILD_TYPE=$Configuration", '-DPIKDRAW_BUILD_TESTS=ON')
+                & $tools.CMake @configureArgs
+                if ($LASTEXITCODE -ne 0) { throw "Configure failed ($LASTEXITCODE)." }
+            }
             if ($Clean) {
                 & $tools.CMake --build $buildDir --target clean
                 if ($LASTEXITCODE -ne 0) { throw "Clean failed ($LASTEXITCODE)." }
@@ -90,13 +127,16 @@ try {
                 $runtimeDir = Split-Path $tools.Clang -Parent
                 $appDir = Join-Path $buildDir 'apps\desktop'
                 if (Test-Path -LiteralPath $appDir) {
-                    Get-ChildItem -LiteralPath $runtimeDir -Filter '*.dll' |
-                        Copy-Item -Destination $appDir -Force
+                    Get-ChildItem -LiteralPath $runtimeDir -Filter '*.dll' | ForEach-Object {
+                        $destDll = Join-Path $appDir $_.Name
+                        if (-not (Test-Path -LiteralPath $destDll)) {
+                            Copy-Item -LiteralPath $_.FullName -Destination $destDll -Force -ErrorAction SilentlyContinue
+                        }
+                    }
                 }
             }
         }
         if (($Test -or $TestsOnly) -and -not $BuildOnly) {
-            $cachePath = Join-Path $buildDir 'CMakeCache.txt'
             if (-not (Test-Path -LiteralPath $cachePath) -or
                 -not (Select-String -LiteralPath $cachePath -Pattern '^PIKDRAW_BUILD_TESTS:BOOL=ON$' -Quiet)) {
                 throw 'CTest targets are not configured. Restore test source code and configure with -Test before using -TestsOnly.'

@@ -215,6 +215,23 @@ bool NativeWindow::handle_key_down(WPARAM key) {
         return true;
     }
 
+    if (quick_dimension_active_) {
+        if (key == VK_ESCAPE) {
+            end_quick_dimension();
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã hủy nhập kích thước" : "Cancelled dimension input";
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
+        if (key == VK_RETURN) {
+            apply_quick_dimension();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
+        if (key == VK_BACK) {
+            return false; // let WM_CHAR handle backspace
+        }
+    }
+
     if (handle_pen_key_down(key))
         return true;
 

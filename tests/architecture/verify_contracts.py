@@ -52,8 +52,8 @@ def verify_contracts(root: Path) -> list[str]:
 
 def verify_fixtures_and_oracles(root: Path) -> list[str]:
     issues: list[str] = []
-    fixtures_dir = root / "docs" / "quality" / "reference-fixtures"
-    oracles_dir = root / "docs" / "quality" / "oracles"
+    fixtures_dir = root / "tests" / "fixtures" / "reference-fixtures"
+    oracles_dir = root / "tests" / "fixtures" / "oracles"
 
     required_fixtures = [
         "geometry-transform-vectors.json",

@@ -1,7 +1,6 @@
 # PikDraw vector tools
 
-Trạng thái: pick/style/shape cơ bản có consumer Win32; D09 nối Line/Polyline và snap controls
-vào cửa sổ native. Bằng chứng D09 hiện ở task candidate, chưa được tích hợp vào main.
+Trạng thái: Đã tích hợp pick/style/shape, Line/Polyline/Pen, Node Tool, Contour/Offset, Gradient Tool và OSnap/Inference engine vào source chính.
 
 ## D09 — Line, Polyline và snap trong desktop
 
@@ -17,16 +16,12 @@ thái snap và nội dung đang nhập. Shift khóa góc theo profile (45° PikD
 15° Corel; Custom dùng bước đã đặt); Ctrl khóa Ortho.
 
 Bảng F3 bật/tắt snap tổng, Endpoint, Source node, Line midpoint, Grid, Free/Ortho/Polar,
-bước cực và profile. Bốn loại candidate được xây từ snapshot revision chính xác trên một
-worker latest-only; khi index chưa sẵn sàng hoặc lỗi, con trỏ thô vẫn dùng được. Tùy chọn
-quan hệ chưa triển khai hiện disabled kèm lý do. Thiết lập lưu riêng ngoài file bản vẽ, giới
+bước cực và profile. Candidate được xây từ snapshot revision chính xác trên một
+worker latest-only; khi index chưa sẵn sàng hoặc lỗi, con trỏ thô vẫn dùng được. Thiết lập lưu riêng ngoài file bản vẽ, giới
 hạn 4096 byte và thay file nguyên tử.
 
 Kiểm thử consumer: `apps/desktop/tests/test_drawing_tool_controller.cpp` và
-`apps/desktop/tests/test_drawing_tool_ui.cpp`. Ảnh và benchmark có scope rõ ở
-[`apps/desktop/tests/evidence/drawing-tools-d09-20261016/review.md`](../../apps/desktop/tests/evidence/drawing-tools-d09-20261016/review.md).
-Không bao gồm Pen/Node editing, Intersection/Tangent/Bezier snaps, CAD constraints hoặc
-crash-recovery cho từng điểm nháp; benchmark CPU hiện có không đo FPS/present.
+`apps/desktop/tests/test_drawing_tool_ui.cpp`.
 
 ## Bổ sung pick/style — 2026-10-15
 
@@ -74,4 +69,4 @@ Các giới hạn `max_*_payload_bytes` chỉ chặn tổng kích thước paylo
 
 Thay đổi API cần consumer review: mọi gọi TransformGesture::begin phải thêm snapshot; tạo shape phải dùng down/move/up; `on_pointer_up` không còn tự tạo hình 100x60 ở vị trí click. Selection manual qua `selection()` không tự xác nhận document identity; controller chỉ cho delete sau bind lifecycle qua pointer interaction hoặc create/insert thành công.
 
-Build từ root Ninja/Clang C++20 Release, `-DPIKDRAW_REQUIRE_M1_TARGETS=OFF` khi thiếu desktop ở base. Targets: `test_pikdraw_vector_selection`, `test_pikdraw_vector_shapes`, `test_pikdraw_vector_gestures`. `ctest --test-dir build/vector-release -R test_pikdraw_vector --output-on-failure`. Checks trong tests dùng lỗi runtime, vẫn hoạt động với `NDEBUG`. Các suite này không chứng minh UI render/frame timing hoặc shaping/font fallback.
+Build/test từ root qua runner chuẩn `.\tooling\native\build.ps1 -Test -TestTarget test_pikdraw_vector_selection,test_pikdraw_vector_shapes,test_pikdraw_vector_gestures -TestRegex '^test_pikdraw_vector'` (dùng chung `build/win-dev`, không tạo `build/vector-release`). Checks trong tests dùng lỗi runtime, vẫn hoạt động với `NDEBUG`. Các suite này không chứng minh UI render/frame timing hoặc shaping/font fallback.

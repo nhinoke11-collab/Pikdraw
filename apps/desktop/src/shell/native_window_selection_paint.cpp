@@ -159,14 +159,28 @@ void NativeWindow::paint_selection_overlay(HDC dc) {
 
         const LONG cx = (rect.left + rect.right) / 2;
         std::wostringstream text;
-        text << std::fixed << std::setprecision(2) << bounds->width << L" × " << bounds->height << L" mm";
-        if (is_rotate_mode_) {
-            text << (language_ == UILanguage::Vietnamese ? L" · Chế độ xoay" : L" · Rotate Mode");
+        if (quick_dimension_active_) {
+            text << (language_ == UILanguage::Vietnamese ? L"Kích thước: " : L"Dimensions: ");
+            if (!quick_dimension_buffer_.empty()) {
+                for (char c : quick_dimension_buffer_) text << static_cast<wchar_t>(c);
+                text << L" mm (↵ Enter)";
+            } else {
+                text << std::fixed << std::setprecision(1) << bounds->width << L", " << bounds->height << (language_ == UILanguage::Vietnamese ? L" (Gõ ngang,dài ↵)" : L" (Type W,L ↵)");
+            }
+        } else {
+            text << std::fixed << std::setprecision(2) << bounds->width << L" × " << bounds->height << L" mm";
+            if (is_rotate_mode_) {
+                text << (language_ == UILanguage::Vietnamese ? L" · Chế độ xoay" : L" · Rotate Mode");
+            }
         }
-        RECT label{cx - 105, rect.bottom + 10, cx + 105, rect.bottom + 30};
-        fill_rect(dc, label, theme_ == ThemeMode::CyberDark ? RGB(15, 23, 34) : RGB(226, 232, 240));
+        const int label_half_w = quick_dimension_active_ ? 140 : 105;
+        RECT label{cx - label_half_w, rect.bottom + 10, cx + label_half_w, rect.bottom + 30};
+        fill_rect(dc, label, quick_dimension_active_ ? RGB(20, 32, 48) : (theme_ == ThemeMode::CyberDark ? RGB(15, 23, 34) : RGB(226, 232, 240)));
+        if (quick_dimension_active_) {
+            outline(dc, label, RGB(0, 242, 195), PS_SOLID);
+        }
         SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, theme_ == ThemeMode::CyberDark ? RGB(0, 242, 195) : RGB(0, 112, 88));
+        SetTextColor(dc, quick_dimension_active_ ? RGB(0, 242, 195) : (theme_ == ThemeMode::CyberDark ? RGB(0, 242, 195) : RGB(0, 112, 88)));
         DrawTextW(dc, text.str().c_str(), -1, &label, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
     if (is_marquee_) {

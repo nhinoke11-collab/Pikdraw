@@ -16,7 +16,7 @@ from tooling.performance import canvas_fixture_manifest as corpus
 
 class CanvasFixtureManifestTests(unittest.TestCase):
     def test_checked_in_manifest_is_reproducible_and_hashed(self) -> None:
-        path = ROOT / "docs" / "quality" / "canvas-corpus-v1.json"
+        path = ROOT / "tests" / "fixtures" / "canvas-corpus-v1.json"
         stored = json.loads(path.read_text(encoding="utf-8"))
         generated = corpus.build_manifest()
         self.assertEqual(stored, generated)

@@ -30,8 +30,12 @@ WORD NativeWindow::canvas_cursor_at(int x, int y) const {
         constexpr WORD cursors[] = {32642, 32645, 32643, 32644, 32642, 32645, 32643, 32644};
         return cursors[handle];
     }
-    if (active_tool_ == 1 || active_tool_ == 2 || active_tool_ == 9)
-        return 32515;
+    const bool is_quick_shape = (active_tool_ == 1 || active_tool_ == 2 || active_tool_ == 9);
+    if (is_quick_shape) {
+        if (hover_object_ || is_dragging_)
+            return 32646; // IDC_SIZEALL: hover on selectable object or dragging
+        return 32515; // IDC_CROSS: drawing crosshair
+    }
     if (active_tool_ == 0 && show_guidelines_) {
         const int g_idx = guideline_at(x, y);
         if (g_idx >= 0 && g_idx < static_cast<int>(guidelines_.size())) {
@@ -41,7 +45,8 @@ WORD NativeWindow::canvas_cursor_at(int x, int y) const {
     return hover_object_ || is_dragging_ ? 32646 : 32512;
 }
 int NativeWindow::selection_handle_at(int x, int y) const {
-    if (active_tool_ != 0 || !is_canvas_point(x, y))
+    const bool can_pick = (active_tool_ == 0 || active_tool_ == 1 || active_tool_ == 2 || active_tool_ == 9);
+    if (!can_pick || !is_canvas_point(x, y))
         return -1;
     const auto snapshot = root().document().current_snapshot();
     const auto bounds = root().vector_controller().selection().bounds(*snapshot);
@@ -140,8 +145,12 @@ void NativeWindow::handle_canvas_mouse_down(int x, int y, unsigned modifiers) {
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
-    if (active_tool_ == 0) {
-        if (show_guidelines_) {
+    if (quick_dimension_active_) {
+        end_quick_dimension();
+    }
+    const bool is_quick_shape = (active_tool_ == 1 || active_tool_ == 2 || active_tool_ == 9);
+    if (active_tool_ == 0 || is_quick_shape) {
+        if (active_tool_ == 0 && show_guidelines_) {
             const int g_idx = guideline_at(x, y);
             if (g_idx >= 0 && g_idx < static_cast<int>(guidelines_.size())) {
                 selected_guideline_index_ = g_idx;
@@ -202,15 +211,21 @@ void NativeWindow::handle_canvas_mouse_down(int x, int y, unsigned modifiers) {
                     custom_pivot_world_.reset();
                 }
             } else {
-                is_marquee_ = true;
-                is_rotate_mode_ = false;
-                custom_pivot_world_.reset();
+                if (is_quick_shape) {
+                    controller.selection().clear();
+                    is_rotate_mode_ = false;
+                    custom_pivot_world_.reset();
+                    is_creating_shape_ = true;
+                    quick_dimension_origin_ = pointer_down_world_;
+                } else {
+                    is_marquee_ = true;
+                    is_rotate_mode_ = false;
+                    custom_pivot_world_.reset();
+                }
             }
         }
         if (is_dragging_)
             drag_preview_bounds_ = controller.selection().bounds(*snapshot);
-    } else if (active_tool_ == 1 || active_tool_ == 2 || active_tool_ == 9) {
-        is_creating_shape_ = true;
     }
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
@@ -230,7 +245,8 @@ void NativeWindow::handle_canvas_mouse_move(int x, int y, unsigned modifiers) {
     }
     if (!pointer_active_) {
         std::optional<document::ObjectId> hover;
-        if (active_tool_ == 0 && is_canvas_point(x, y))
+        const bool can_pick = (active_tool_ == 0 || active_tool_ == 1 || active_tool_ == 2 || active_tool_ == 9);
+        if (can_pick && is_canvas_point(x, y))
             hover =
                 vector::SelectionModel::hit_test(canvas_to_world(x, y), *root().document().current_snapshot(),
                                                  6.0 / root().renderer().camera().zoom());
@@ -413,10 +429,28 @@ bool NativeWindow::commit_created_shape() {
         }
         root().vector_controller().set_selection({object.id}, *root().document().current_snapshot());
         previous_drawing_tool_ = active_tool_;
-        set_active_tool(0);
+
+        // Kích hoạt chế độ gõ nhanh kích thước ngang dài kiểu SketchUp (chỉ áp dụng cho lần vẽ đầu tiên)
+        quick_dimension_active_ = true;
+        quick_dimension_object_id_ = object.id;
+        quick_dimension_buffer_.clear();
+        quick_dimension_origin_ = pointer_down_world_;
+        quick_dimension_drag_dir_x_ = (pointer_current_world_.x >= pointer_down_world_.x) ? 1.0 : -1.0;
+        quick_dimension_drag_dir_y_ = (pointer_current_world_.y >= pointer_down_world_.y) ? 1.0 : -1.0;
+        quick_dimension_initial_w_ = bounds.width;
+        quick_dimension_initial_h_ = bounds.height;
+
+        std::ostringstream ss_w, ss_h;
+        ss_w << std::fixed << std::setprecision(1) << bounds.width;
+        ss_h << std::fixed << std::setprecision(1) << bounds.height;
+        std::string w_str = ss_w.str();
+        std::string h_str = ss_h.str();
+        if (w_str.size() > 2 && w_str.substr(w_str.size() - 2) == ".0") w_str.erase(w_str.size() - 2);
+        if (h_str.size() > 2 && h_str.substr(h_str.size() - 2) == ".0") h_str.erase(h_str.size() - 2);
+
         status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Đã tạo đối tượng và chọn ngay (Pick) · Kéo tay nắm để scale/xoay, click ngoài để tiếp tục vẽ"
-            : "Created object and selected (Pick) · Drag handles to scale/rotate, click outside to resume drawing";
+            ? "Đã tạo hình [" + w_str + " × " + h_str + " mm] · Gõ nhanh kích thước (vd: 30,40) rồi nhấn Enter | Esc để hủy"
+            : "Shape created [" + w_str + " × " + h_str + " mm] · Type dimensions (e.g. 30,40) and press Enter | Esc to cancel";
     }
     return result.success;
 }

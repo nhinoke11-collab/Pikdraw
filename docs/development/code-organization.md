@@ -1,25 +1,25 @@
-# Tổ chức mã nguồn
+# Tổ chức mã nguồn & Quy chuẩn 800 dòng (Vibe Code Standard)
 
-Tài liệu này mô tả cây mã hiện tại và một vài nguyên tắc review. Đây không phải bộ quy tắc số dòng hay yêu cầu tách file máy móc.
+Tài liệu này quy định cấu trúc cây mã nguồn và **ngưỡng độ dài tối đa 800 dòng/file** nhằm tối ưu hóa khả năng đọc hiểu trọn vẹn trong 1 lần gọi tool (`view_file`), tránh lỗi sửa file và giảm xung đột khóa (lease) khi nhiều AI Agent cùng làm việc.
 
 ## Cấu trúc hiện tại
 
-- apps/desktop: ứng dụng Win32/GDI. Phần chính nằm trong src/actions, development, presenters, runtime, shell, tools và workflows.
-- core: document, geometry, rendering, color và typography có source; localization mới là chỗ ghi đặc tả.
-- modules/vector và modules/interop có implementation. raster, production và scene3d hiện là module kế hoạch.
-- platform/workers: launcher, IPC và kiểm tra proposal của worker.
-- Test C++ thường nằm trong thư mục tests của module. tests/architecture, tests/harness và tests/integration chứa kiểm tra cấp repo.
-- packages/plugin-sdk mới có tài liệu; chưa phải plugin host đang chạy.
+- `apps/desktop`: Ứng dụng Win32/GDI. Phần chính nằm trong `src/actions`, `development`, `presenters`, `runtime`, `shell`, `tools` và `workflows`.
+- `core`: `document`, `geometry`, `rendering`, `color` và `typography` có source; `localization` là đặc tả.
+- `modules/vector`, `modules/interop`, `modules/automation` có implementation. `raster`, `production` và `scene3d` hiện là module kế hoạch.
+- `platform/workers`: Launcher, IPC và kiểm tra proposal của worker.
+- Test C++ nằm trong thư mục `tests/` của từng module. `tests/architecture`, `tests/harness`, `tests/fixtures` và `tests/integration` chứa kiểm tra và dữ liệu mẫu cấp repo.
 
-Tên module và dependency chuẩn nằm trong registry/modules.json. README của từng module mô tả chi tiết hơn khi có thay đổi tại module đó.
+Tên module và dependency chuẩn nằm trong `registry/modules.json`.
 
-## Nguyên tắc review
+## Quy chuẩn độ dài file (Ngưỡng 800 dòng)
 
-- Nhóm code theo hành vi và nơi nó được dùng. Helper riêng cho một feature có thể ở cạnh feature đó.
-- File khoảng 1.000 dòng hoàn toàn có thể hợp lý. Kích thước tự nó không bắt buộc tách file hoặc xin exception; file dài hơn vẫn ổn nếu trách nhiệm rõ, dễ đọc và có thể kiểm chứng.
-- Tách khi có ranh giới thật về trách nhiệm, dependency, lifecycle hoặc kiểm thử. Gộp lại khi việc tách chỉ tạo wrapper, file vài dòng hay nhiều lần chuyển tiếp.
-- Giữ public API gọn khi có lợi cho consumer; đừng hy sinh abstraction hữu ích hoặc tính rõ ràng để đạt một số dòng.
-- Không minify, giấu implementation trong file include hoặc thêm module chung chỉ để né kiểm tra.
-- Các lớp lưu trữ, production và renderer giữ ranh giới riêng: dữ liệu nguồn không bị thay bằng preview hoặc approximation.
-
-Review tập trung vào tính đúng, khả năng sửa tiếp và ranh giới module. Không có hard cap LOC hoặc checker tự động về kích thước file.
+1. **Ngưỡng chuẩn (300–700 dòng, tối đa 800 dòng/file)**:
+   - Công cụ đọc file của AI Agent đọc tối đa **800 dòng/lần**. Vì vậy, mọi file `.cpp`/`.hpp` mới hoặc sau khi tách phải nằm trong ngưỡng **300–700 dòng** và **không vượt quá 800 dòng**.
+2. **Cấm nối đuôi (No Appending) vào file đã trên 800 dòng**:
+   - Khi thêm tính năng, công cụ hoặc nhóm lệnh mới vào một class lớn (như `NativeWindow`, `DocumentWorkflow`, `AutomationService`), **tuyệt đối không viết nối tiếp vào cuối file đã tiệm cận hoặc vượt 800 dòng**.
+   - Bắt buộc tách nhóm hàm của tính năng đó sang một file `.cpp` cùng thư mục theo đúng tên nhóm tính năng (ví dụ: `native_window_text.cpp`, `document_workflow_appearance.cpp`) và đăng ký vào `CMakeLists.txt` của module.
+3. **Nguyên tắc tách file theo nhóm tính năng (Feature Cohesion)**:
+   - Tách theo **nhóm hành vi/tính năng đồng nhất** (ví dụ: nhóm Text/Table, nhóm Clipboard/Array/Group, nhóm Appearance/Effects, nhóm Tool Pointer Events), không cắt ngang giữa một hàm hoặc tách vụn thành các file chỉ vài chục dòng.
+   - Với các hàm helper dùng chung giữa nhiều file `.cpp` của cùng một module, khai báo trong một header nội bộ (`*_internal.hpp` trong thư mục `src/...`) hoặc thành private helper method của class.
+   - Chi tiết kế hoạch tách các file vượt ngưỡng hiện tại xem tại [docs/roadmap/code-modularization-800loc-plan.md](../roadmap/code-modularization-800loc-plan.md).

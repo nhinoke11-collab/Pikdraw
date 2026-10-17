@@ -63,12 +63,4 @@ Mô-đun: `apps/desktop` · Trạng thái: Đã tích hợp và kiểm nghiệm 
 
 ## 4. Bằng Chứng Nghiệm Thu (Evidence & Verification)
 
-Các ảnh chụp kiểm nghiệm thực tế đã được xuất tự động vào thư mục `artifacts/evidence/toolbox-redesign-20261017/`:
-- `toolbox-pen-crop.png`: Nút Pen Tool đang hoạt động (active teal highlight), ngòi bút máy thanh thoát, tam giác flyout gọn gàng ở góc dưới phải.
-- `toolbox-knife-crop.png`: Nút Dao cắt đang hoạt động, icon con trỏ chọn ở trạng thái inactive hiển thị sắc nét.
-- `flyout-path-drawing-crop.png`: Nhóm công cụ vẽ đường (Line, Polyline, Pen) hiển thị đồng bộ trong popup flyout.
-- `flyout-quick-shapes-crop.png`: Nhóm hình cơ bản (Rectangle, Ellipse, Polygon) chuẩn hình học hiện đại.
-- `flyout-appearance-crop.png`: Nhóm hiệu ứng diện mạo (Properties, Gaussian Blur, Drop Shadow).
-- `toolbox-pen-dark-crop.png`: Kiểm nghiệm giao diện chế độ tối CyberDark với độ tương phản chuẩn mực.
-
-Bộ kiểm thử tự động của Desktop Shell (`test_pikdraw_desktop_shell`, `test_pikdraw_pen_native_shell`, `test_pikdraw_drawing_tool_ui`) đều vượt qua 100%.
+Bộ kiểm thử tự động của Desktop Shell (`test_pikdraw_desktop_shell`, `test_pikdraw_pen_native_shell`, `test_pikdraw_drawing_tool_ui`) kiểm tra trực tiếp icon rendering, trạng thái active/flyout và vượt qua 100%. Không lưu trữ ảnh chụp tạm thời trong kho mã nguồn.

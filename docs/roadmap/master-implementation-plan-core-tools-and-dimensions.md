@@ -116,8 +116,6 @@ Dimensions tuyến tính có thể dùng điểm rõ ràng và snap cơ bản tr
 | CMakeLists/registry/contracts/project-state | Coordinator/integrator claim riêng; consumer khai source/target cần thêm trong handoff |
 | New feature implementation/test files | Có thể tách nếu được cho phép và leases không overlap, kể cả parent-directory lease |
 
-Catalog cũ [drawing-tools](drawing-tools-plan.md) / [tasks](drawing-tools-tasks.json): D11 → plan 01;
-D16 phần offset → plan 02; D15 → plan 03; D20 → plan 04. Không chạy hai catalog như hai implementation song song.
 Các tính năng Boolean tổng quát, Fillet/Chamfer, driving solver, 3D, CAM/G-code và auto-stitch tự động nằm ngoài đợt này.
 
 ### Lời giao việc để dùng lại

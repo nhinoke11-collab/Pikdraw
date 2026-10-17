@@ -20,7 +20,7 @@ from tooling.performance.canvas_semantic_oracle import (
 class CanvasSemanticOracleTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        fixture_path = ROOT / "docs" / "quality" / "reference-fixtures" / "canvas-semantics.json"
+        fixture_path = ROOT / "tests" / "fixtures" / "reference-fixtures" / "canvas-semantics.json"
         cls.fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
 
     def test_geometry_vectors_cover_evenodd_and_nonzero(self) -> None:

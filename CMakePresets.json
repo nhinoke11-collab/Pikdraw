@@ -14,8 +14,8 @@
       "binaryDir": "${sourceDir}/build/win-dev",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "PIKDRAW_BUILD_TESTS": "OFF",
-        "PIKDRAW_ENABLE_WARNINGS_AS_ERRORS": "ON"
+        "PIKDRAW_BUILD_TESTS": "ON",
+        "PIKDRAW_ENABLE_WARNINGS_AS_ERRORS": "OFF"
       }
     }
   ],

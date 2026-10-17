@@ -95,7 +95,6 @@ Giữ nhãn field/section dễ đọc, tooltip/focus help và accessible name nh
 
 - [Chuẩn UX/UI](../design/ui-ux-standard.md) là nguồn duy nhất cho phân loại lệnh, bề mặt và help.
 - [Phiếu UI](../design/feature-ui-template.md) mô tả field/state/commit và layout của feature trong khung này.
-- [Ảnh/mockup cũ](ui-reference/README.md) được giữ để tra cứu, không là chuẩn bắt buộc.
 - Runtime hiện tại là Win32/GDI theo [project-state](../project-state.json); Qt/QSS/UI Reload là hướng kiến trúc
   có phạm vi và evidence riêng. Khung này không quyết định toolkit hoặc cấp phép đổi stack.
 - Native UI vẫn đi qua action/presenter và command document, immutable snapshots; không đưa renderer/UI type vào storage/plugin contract.
