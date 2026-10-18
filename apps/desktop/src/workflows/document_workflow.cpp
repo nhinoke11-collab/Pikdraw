@@ -34,6 +34,42 @@
 namespace pikdraw::desktop {
 using namespace detail;
 
+namespace {
+class SetPageSizeCommand final : public document::DocumentCommand {
+public:
+    SetPageSizeCommand(double width_mm, double height_mm)
+        : width_mm_(width_mm), height_mm_(height_mm) {}
+
+    std::string_view name() const noexcept override { return "Set Page Size"; }
+
+    document::CommandResult execute(document::Document& doc) override {
+        auto page = doc.page();
+        if (page.width_mm == width_mm_ && page.height_mm == height_mm_)
+            return document::CommandResult::no_change();
+        previous_size_ = std::pair{page.width_mm, page.height_mm};
+        page.width_mm = width_mm_;
+        page.height_mm = height_mm_;
+        doc.apply_mutation(std::move(page), doc.objects());
+        return document::CommandResult::ok();
+    }
+
+    document::CommandResult undo(document::Document& doc) override {
+        if (!previous_size_)
+            return document::CommandResult::fail("Page size command has no state to restore");
+        auto page = doc.page();
+        page.width_mm = previous_size_->first;
+        page.height_mm = previous_size_->second;
+        doc.apply_mutation(std::move(page), doc.objects());
+        return document::CommandResult::ok();
+    }
+
+private:
+    double width_mm_;
+    double height_mm_;
+    std::optional<std::pair<double, double>> previous_size_;
+};
+} // namespace
+
 DocumentWorkflow::DocumentWorkflow(CompositionRoot& root)
     : root_(root) {}
 
@@ -89,7 +125,7 @@ document::ObjectId DocumentWorkflow::add_vietnamese_text(
 ) {
     document::TextObject text_obj;
     text_obj.id = document::generate_object_id();
-    text_obj.name = "V─ân bß║ún: " + utf8_text.substr(0, 20);
+    text_obj.name = "Văn bản: " + detail::utf8_truncate_codepoints(utf8_text, 20);
     text_obj.text = utf8_text;
     text_obj.font = typography::FontIdentity{font_family, font_family + "-Regular", 400, false, font_size_pt};
     text_obj.fill = parse_hex_color(fill_hex);
@@ -145,7 +181,7 @@ bool DocumentWorkflow::convert_text_to_curves(document::ObjectId text_id) {
 
     document::PathObject path_obj;
     path_obj.id = document::generate_object_id();
-    path_obj.name = "─É╞░ß╗¥ng cong: " + (text_obj.text.empty() ? "Curves" : text_obj.text.substr(0, 16));
+    path_obj.name = "Đường cong: " + (text_obj.text.empty() ? "Curves" : detail::utf8_truncate_codepoints(text_obj.text, 16));
     path_obj.path = std::move(outline_path);
     path_obj.fill = text_obj.fill;
     path_obj.stroke = color::RGBColor{0.0, 0.0, 0.0, 1.0};
@@ -191,7 +227,7 @@ document::ObjectId DocumentWorkflow::create_table(
     color::RGBColor alt_fill{0.98, 0.99, 1.0, 1.0};
 
     const std::vector<std::string> default_headers = {
-        "STT", "Hß║íng mß╗Ñc (Item)", "Sß╗æ l╞░ß╗úng (Qty)", "─É╞ín gi├í (Price)", "Th├ánh tiß╗ün", "Ghi ch├║"
+        "STT", "Hạng mục (Item)", "Số lượng (Qty)", "Đơn giá (Price)", "Thành tiền", "Ghi chú"
     };
 
     for (int r = 0; r < rows; ++r) {
@@ -202,7 +238,7 @@ document::ObjectId DocumentWorkflow::create_table(
             // 1. Cell background & border rectangle
             document::PathObject cell_rect;
             cell_rect.id = document::generate_object_id();
-            cell_rect.name = "├ö R" + std::to_string(r + 1) + "C" + std::to_string(c + 1);
+            cell_rect.name = "Ô R" + std::to_string(r + 1) + "C" + std::to_string(c + 1);
             cell_rect.path = geometry::Path2D::make_rect(cx, cy, col_w, row_h);
             cell_rect.fill = (r == 0) ? header_fill : ((r % 2 == 1) ? base_fill : alt_fill);
             cell_rect.stroke = border_col;
@@ -217,13 +253,13 @@ document::ObjectId DocumentWorkflow::create_table(
             // 2. Cell text
             document::TextObject cell_text;
             cell_text.id = document::generate_object_id();
-            cell_text.name = "Chß╗» R" + std::to_string(r + 1) + "C" + std::to_string(c + 1);
+            cell_text.name = "Chữ R" + std::to_string(r + 1) + "C" + std::to_string(c + 1);
             if (r == 0) {
-                cell_text.text = (c < static_cast<int>(default_headers.size())) ? default_headers[c] : ("Cß╗Öt " + std::to_string(c + 1));
+                cell_text.text = (c < static_cast<int>(default_headers.size())) ? default_headers[c] : ("Cột " + std::to_string(c + 1));
                 cell_text.font = typography::FontIdentity{"Segoe UI", "SegoeUI-Bold", 700, false, 11.0};
                 cell_text.fill = color::RGBColor{0.05, 0.2, 0.4, 1.0};
             } else {
-                cell_text.text = (c == 0) ? std::to_string(r) : ("Dß╗» liß╗çu R" + std::to_string(r) + "C" + std::to_string(c + 1));
+                cell_text.text = (c == 0) ? std::to_string(r) : ("Dữ liệu R" + std::to_string(r) + "C" + std::to_string(c + 1));
                 cell_text.font = typography::FontIdentity{"Segoe UI", "SegoeUI-Regular", 400, false, 10.0};
                 cell_text.fill = color::RGBColor{0.15, 0.2, 0.25, 1.0};
             }
@@ -239,7 +275,7 @@ document::ObjectId DocumentWorkflow::create_table(
     // 3. Wrap entire table into a GroupObject
     document::GroupObject table_grp;
     table_grp.id = document::generate_object_id();
-    table_grp.name = "Bß║úng (Table) " + std::to_string(rows) + "├ù" + std::to_string(cols);
+    table_grp.name = "Bảng (Table) " + std::to_string(rows) + "×" + std::to_string(cols);
     table_grp.children_ids = cell_ids;
 
     const auto table_id = table_grp.id;
@@ -437,17 +473,7 @@ void DocumentWorkflow::set_page_size(double page_width_mm, double page_height_mm
     page_height_mm = std::clamp(page_height_mm, 10.0, geometry::kMaxCanvasDimensionMm);
 
     auto& doc = root_.document();
-    const auto snapshot = doc.current_snapshot();
-    auto page = snapshot->page();
-    page.width_mm = page_width_mm;
-    page.height_mm = page_height_mm;
-    auto new_snapshot = std::make_shared<const document::DocumentSnapshot>(
-        snapshot->epoch(),
-        snapshot->revision() + 1,
-        std::move(page),
-        snapshot->objects());
-    if (!doc.reset_from_snapshot(std::move(new_snapshot)))
-        return;
+    doc.execute_command(std::make_unique<SetPageSizeCommand>(page_width_mm, page_height_mm));
     sync_status_bar();
 }
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -121,6 +122,64 @@ class ArchitectureGatesTests(unittest.TestCase):
         """Verifies the module dependency graph has no cycles."""
         cycles = detect_cycles(self.registry)
         self.assertEqual(cycles, [], f"Detected circular module dependencies: {cycles}")
+
+    def test_source_files_respect_800_loc_limit(self):
+        violations = []
+        for root in ("core", "modules", "apps", "platform", "packages"):
+            for path in (self.repo_root / root).rglob("*"):
+                if path.is_file() and path.suffix in {".h", ".hpp", ".cpp"}:
+                    count = len(path.read_text(encoding="utf-8-sig").splitlines())
+                    if count > 800:
+                        violations.append(f"{path.relative_to(self.repo_root)}: {count} lines")
+        self.assertEqual(violations, [], "Sources exceed 800 lines:\n" + "\n".join(violations))
+
+    def test_cross_module_includes_match_registry(self):
+        modules = {module["id"]: module for module in self.registry["modules"]}
+        headers = {}
+        for owner, module in modules.items():
+            for path in (self.repo_root / module["path"] / "include" / "pikdraw").rglob("*"):
+                if path.is_file():
+                    headers["pikdraw/" + path.relative_to(
+                        self.repo_root / module["path"] / "include" / "pikdraw").as_posix()] = owner
+        include = re.compile(r'^\s*#\s*include\s*[<"](pikdraw/[^>"\r\n]+)[>"]', re.MULTILINE)
+        violations = []
+        for owner, module in modules.items():
+            allowed = {owner, *module["dependencies"]}
+            for path in (self.repo_root / module["path"]).rglob("*"):
+                if not path.is_file() or path.suffix not in {".h", ".hpp", ".cpp"}:
+                    continue
+                text = path.read_text(encoding="utf-8-sig")
+                file_allowed = allowed | (set(module.get("test_dependencies", []))
+                                          if "tests" in path.relative_to(
+                                              self.repo_root / module["path"]).parts else set())
+                for match in include.finditer(text):
+                    dependency = headers.get(match.group(1), match.group(1).split("/")[1])
+                    if dependency not in file_allowed:
+                        line = text.count("\n", 0, match.start()) + 1
+                        violations.append(f"{path.relative_to(self.repo_root)}:{line}: "
+                                          f"{owner} -> {dependency}")
+        self.assertEqual(violations, [], "Undeclared includes:\n" + "\n".join(violations))
+
+    def test_negative_undeclared_include_and_oversized_source_are_caught(self):
+        # Given independent source fixtures, both gates must reject the actual file.
+        with tempfile.TemporaryDirectory(prefix="pikdraw-architecture-") as directory:
+            root = Path(directory)
+            source = root / "apps" / "sample" / "src" / "illegal.cpp"
+            source.parent.mkdir(parents=True)
+            source.write_text('#include "pikdraw/foreign/header.hpp"\n' + '// fixture\n' * 800,
+                              encoding="utf-8")
+            gate = ArchitectureGatesTests("test_cross_module_includes_match_registry")
+            gate.repo_root = root
+            gate.registry = {"modules": [{"id": "sample", "path": "apps/sample",
+                                          "dependencies": []}]}
+            with self.assertRaisesRegex(AssertionError, "sample -> foreign"):
+                gate.test_cross_module_includes_match_registry()
+            with self.assertRaisesRegex(AssertionError, "801 lines"):
+                gate.test_source_files_respect_800_loc_limit()
+            # Test-only edges must never authorize production includes.
+            gate.registry["modules"][0]["test_dependencies"] = ["foreign"]
+            with self.assertRaisesRegex(AssertionError, "sample -> foreign"):
+                gate.test_cross_module_includes_match_registry()
 
     def test_desktop_is_the_only_ui_module(self):
         """Verifies no non-desktop module declares a dependency on desktop."""

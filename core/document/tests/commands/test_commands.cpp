@@ -1,6 +1,7 @@
 #include "pikdraw/document/document.hpp"
 #include "pikdraw/document/commands/appearance_commands.hpp"
 #include "pikdraw/document/commands/path_commands.hpp"
+#include "pikdraw/document/commands/import_content_command.hpp"
 #include <cassert>
 #include <cmath>
 #include <iostream>
@@ -581,6 +582,54 @@ void test_hidden_locked_and_failed_composite_edits_do_not_publish() {
     assert(rolled_back_mapping->elements.empty());
 }
 
+void test_import_content_preserves_layers_and_undoes_atomically() {
+    Document doc("import-command-test", Page::make_default());
+    const auto original_layers = doc.current_snapshot()->page().layers.size();
+
+    PathObject path;
+    path.id = generate_object_id();
+    path.name = "Imported path";
+    path.path.move_to(0, 0);
+    path.path.line_to(10, 5);
+    GroupObject group;
+    group.id = generate_object_id();
+    group.name = "Imported group";
+    group.children_ids.push_back(path.id);
+    Layer source_layer{"Source layer", false, true, {group.id}};
+
+    std::vector<ObjectVariant> objects;
+    objects.emplace_back(path);
+    objects.emplace_back(group);
+    const auto imported_group_id = group.id;
+    auto result = doc.execute_command(std::make_unique<ImportContentCommand>(
+        std::vector<Layer>{source_layer}, std::move(objects)));
+    if (!result.success) std::cerr << "ImportContentCommand rejected valid hierarchy: " << result.error_message << '\n';
+    assert(result.success && doc.revision() == 1);
+    assert(doc.current_snapshot()->page().layers.size() == original_layers + 1);
+    assert(doc.current_snapshot()->page().layers.back().name == "Source layer");
+    assert(!doc.current_snapshot()->page().layers.back().visible);
+    assert(doc.current_snapshot()->page().layers.back().locked);
+    assert(doc.current_snapshot()->object_count() == 2);
+    assert(doc.undo());
+    assert(doc.current_snapshot()->page().layers.size() == original_layers);
+    assert(doc.current_snapshot()->object_count() == 0);
+    assert(doc.redo());
+    const auto restored = doc.current_snapshot()->get_object(imported_group_id);
+    assert(restored && std::get<GroupObject>(*restored).children_ids.size() == 1);
+
+    Document rejected("invalid-import-test", Page::make_default());
+    PathObject orphan;
+    orphan.id = generate_object_id();
+    orphan.path.move_to(0, 0);
+    orphan.path.line_to(1, 1);
+    Layer invalid_layer{"Invalid", true, false, {}};
+    auto rejected_result = rejected.execute_command(std::make_unique<ImportContentCommand>(
+        std::vector<Layer>{invalid_layer}, std::vector<ObjectVariant>{orphan}));
+    assert(!rejected_result.success);
+    assert(rejected.revision() == 0 && rejected.current_snapshot()->object_count() == 0);
+    assert(rejected.current_snapshot()->page().layers.size() == 1);
+}
+
 int main() {
     std::cout << "[test_commands] Running command tests...\n";
     test_add_and_undo_path();
@@ -597,6 +646,7 @@ int main() {
     test_join_requires_bridge_or_explicit_survivor();
     test_close_zero_length_requires_explicit_target();
     test_hidden_locked_and_failed_composite_edits_do_not_publish();
+    test_import_content_preserves_layers_and_undoes_atomically();
     std::cout << "[test_commands] All tests passed!\n";
     return 0;
 }

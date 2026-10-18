@@ -1,11 +1,31 @@
 #include "pikdraw/rendering/renderer.hpp"
+#include "pikdraw/rendering/d2d_backend.hpp"
+#include <cstdlib>
 #include <exception>
+#include <string_view>
 
 namespace pikdraw::rendering {
 
+namespace {
+
+std::shared_ptr<IRenderBackend> create_default_backend() {
+  const char *env = std::getenv("PIKDRAW_RENDER_BACKEND");
+  if (env && std::string_view(env) == "cpu") {
+    return std::make_shared<SoftwareRasterizer>();
+  }
+#if defined(_WIN32)
+  auto d2d = std::make_shared<D2DRenderBackend>();
+  if (d2d->device_status() == DeviceLossStatus::Healthy) {
+    return d2d;
+  }
+#endif
+  return std::make_shared<SoftwareRasterizer>();
+}
+
+} // namespace
+
 ViewportRenderer::ViewportRenderer(std::shared_ptr<IRenderBackend> backend)
-    : backend_(backend ? std::move(backend)
-                       : std::make_shared<SoftwareRasterizer>()) {}
+    : backend_(backend ? std::move(backend) : create_default_backend()) {}
 
 bool ViewportRenderer::render_frame(const document::DocumentSnapshot &snapshot,
                                     PixelBufferTarget &target,

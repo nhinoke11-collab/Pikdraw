@@ -153,7 +153,7 @@ class ContextRoutes:
                     "DEPENDENCY POINTERS\n" + json.dumps(active_deps, ensure_ascii=False),
                     "REFERENCES\n" + "\n".join(references)]
         # Only three boot documents are opened, each with a strict byte/read bound.
-        for reference, limit in (("AGENTS.md", 2600), ("docs/START.md", 1500), ("docs/project-state.json", 8000)):
+        for reference, limit in (("AGENTS.md", 5000), ("docs/START.md", 1500), ("docs/project-state.json", 8000)):
             path = contained(self.root, reference, must_exist=True)
             try:
                 with path.open(encoding="utf-8-sig") as stream:

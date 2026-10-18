@@ -12,7 +12,7 @@
 
 namespace pikdraw::rendering {
 namespace {
-constexpr uint64_t kMaxTargetPixels = 8388608;
+constexpr uint64_t kMaxTargetPixels = 33554432ULL;
 void diagnostic(RenderMetric &metric, document::ObjectId id, bool error,
                 std::string message) {
   constexpr size_t kMaxDiagnostics = 64;

@@ -95,7 +95,7 @@ void NativeWindow::paint_left_toolbox(HDC mem_dc, int w, int h) {
             const int flyout_top = content_top + 10 + group_row * 42;
             const int flyout_left = 54;
             const int flyout_width = toolbox_open_group_ == 3 ? 208 : 188;
-            const int flyout_height = toolbox_open_group_ == 3 ? 145 : 116;
+            const int flyout_height = toolbox_open_group_ == 3 ? 174 : 116;
             RECT flyout{flyout_left, flyout_top, flyout_left + flyout_width, flyout_top + flyout_height};
             HBRUSH flyout_brush = CreateSolidBrush(is_dark ? RGB(20, 31, 46) : RGB(250, 252, 255));
             HPEN flyout_pen = CreatePen(PS_SOLID, 1, col_border);
@@ -125,24 +125,27 @@ void NativeWindow::paint_left_toolbox(HDC mem_dc, int w, int h) {
                 quick_shapes ? 1 : path_drawing ? 6 : 10,
                 quick_shapes ? 2 : path_drawing ? 7 : 11,
                 quick_shapes ? 9 : path_drawing ? 8 : 12,
+                appearance ? 14 : 13,
                 13};
-            const wchar_t* labels_en[] = {L"Rectangle", L"Ellipse", L"Polygon", L""};
-            const wchar_t* labels_vi[] = {L"Hình chữ nhật", L"Hình elip", L"Đa giác", L""};
-            const wchar_t* path_en[] = {L"Line", L"Polyline", L"Pen", L""};
-            const wchar_t* path_vi[] = {L"Đoạn thẳng", L"Đường gấp khúc", L"Pen", L""};
-            const wchar_t* appearance_en[] = {L"Appearance Properties", L"Gaussian Blur", L"Drop Shadow", L"Gradient"};
-            const wchar_t* appearance_vi[] = {L"Thuộc tính diện mạo", L"Gaussian Blur", L"Drop Shadow", L"Chuyển sắc"};
+            const wchar_t* labels_en[] = {L"Rectangle", L"Ellipse", L"Polygon", L"", L""};
+            const wchar_t* labels_vi[] = {L"Hình chữ nhật", L"Hình elip", L"Đa giác", L"", L""};
+            const wchar_t* path_en[] = {L"Line", L"Polyline", L"Pen", L"", L""};
+            const wchar_t* path_vi[] = {L"Đoạn thẳng", L"Đường gấp khúc", L"Pen", L"", L""};
+            const wchar_t* appearance_en[] = {L"Appearance Properties", L"Gaussian Blur", L"Drop Shadow", L"Contour", L"Gradient"};
+            const wchar_t* appearance_vi[] = {L"Thuộc tính diện mạo", L"Gaussian Blur", L"Drop Shadow", L"Viền Contour", L"Chuyển sắc"};
             const bool has_blur = appearance && workflow().selected_effect_index(
                 document::GaussianBlurEffect{1.0, 1.0}).has_value();
             const bool has_shadow = appearance && workflow().selected_effect_index(
                 document::DropShadowEffect{}).has_value();
-            const int max_items = toolbox_open_group_ == 3 ? 4 : 3;
+            const bool is_contour = appearance && (active_tool_ == 12 || (contour_tool_ && contour_tool_->active()));
+            const int max_items = toolbox_open_group_ == 3 ? 5 : 3;
             for (int item = 0; item < max_items; ++item) {
                 const int item_top = flyout_top + 26 + item * 29;
                 const bool selected = appearance
-                    ? (item == 1 && has_blur) || (item == 2 && has_shadow) || (item == 3 && active_tool_ == 13)
+                    ? (item == 1 && has_blur) || (item == 2 && has_shadow) || (item == 3 && is_contour) || (item == 4 && active_tool_ == 13)
                     : active_tool_ == flyout_tools[item];
-                const bool available = !appearance || item == 0 || item == 3 ||
+                const bool available = !appearance || item == 0 || item == 4 ||
+                    (item == 3 && !root().vector_controller().selection().selected_ids().empty()) ||
                     (item == 1 && workflow().can_activate_selected_effect(
                         document::GaussianBlurEffect{1.0, 1.0})) ||
                     (item == 2 && workflow().can_activate_selected_effect(
@@ -474,8 +477,7 @@ void NativeWindow::paint_right_inspector_dock(HDC mem_dc, int w, int h) {
             } else if (show_style_inspector_) {
                 paint_style_inspector(mem_dc, insp_x, content_y + 24, h - status_h);
             } else {
-            DrawTextW(mem_dc, is_vi ? L"THUỘC TÍNH ĐANG CHỌN" : L"SELECTION", -1,
-                      &rc_head, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+            // The Objects tab already names this section; a second heading overlaps it.
             content << (is_vi ? L"Số đối tượng: " : L"Selected objects: ") << selection.size();
             if (selection.size() == 1) {
                 const auto sel_id = selection.front();

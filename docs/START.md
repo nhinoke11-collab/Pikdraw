@@ -10,4 +10,4 @@ Với task tạo hoặc sửa hành vi, agent tự xác định và thêm/cập 
 
 Với thay đổi UI, đọc docs/design/ui-ux-standard.md và đối chiếu docs/architecture/workspace-layout.md. Ghi feature spec hoặc nội dung tương đương: đường menu/action ID, toolbox/toolbar, contextual property bar/Properties, field scopes/states, SVG icons, short labels, tooltip/focus help, status hint và usage help. Nêu mục không áp dụng; agent tự quyết định lựa chọn thường lệ trong scope.
 
-Build app qua .\tooling\native\build.ps1. Kết quả luôn ở build/win-dev/apps/desktop/pikdraw.exe. Test sources hiện đã có lại; build/test đúng phạm vi thay đổi và source snapshot đang làm việc.
+Build app qua .\tooling\native\build.ps1. Kết quả luôn ở build/win-dev/apps/desktop/pikdraw.exe (C++20 Win32 Shell; Direct2D 1.1 / D3D11 hardware hoặc WARP dựng frame, staging/readback về buffer rồi GDI trình bày canvas/overlays; SoftwareRasterizer là CPU fallback/oracle). Test sources hiện đã có lại; build/test đúng phạm vi thay đổi và source snapshot đang làm việc.

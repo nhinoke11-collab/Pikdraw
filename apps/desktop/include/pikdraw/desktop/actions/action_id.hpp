@@ -9,6 +9,7 @@ struct ActionId {
     static constexpr std::string_view kFileNew = "action.file.new";
     static constexpr std::string_view kFileNewFromTemplate = "action.file.new_from_template";
     static constexpr std::string_view kFileOpen = "action.file.open";
+    static constexpr std::string_view kFileRecoverAutosave = "action.file.recover_autosave";
     static constexpr std::string_view kFileOpenCloud = "action.file.open_cloud";
     static constexpr std::string_view kFileOpenRecent = "action.file.open_recent";
     static constexpr std::string_view kFileClose = "action.file.close";

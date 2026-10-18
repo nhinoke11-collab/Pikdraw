@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <stop_token>
 #include <string_view>
 
 namespace pikdraw::workers {
@@ -30,7 +31,8 @@ namespace pikdraw::workers {
     std::chrono::milliseconds timeout,
     const pikdraw::interop::V2ProposalStreamLimits& limits,
     const std::function<bool(const pikdraw::interop::IpcV2Frame&)>& consumer,
-    std::string_view& failure) noexcept;
+    std::string_view& failure,
+    std::stop_token cancellation) noexcept;
 
 class V2ProposalStreamValidator final {
 public:

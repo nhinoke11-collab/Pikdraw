@@ -9,15 +9,14 @@
 
 namespace pikdraw::document {
 
-/// Fixed v2/v3/v4 container header: PKDR, version, flags, epoch, revision,
+/// Fixed native container header: PKDR, version, flags, epoch, revision,
 /// payload-byte count and CRC32. All integers are little-endian; CRC offset 32.
-/// v3 adds the required authoring-path schema and source records to v2. v4
-/// adds the required appearance schema and length-framed Appearance records
-/// after Path/Text source records; appearance details live in C5.
+/// v3 adds authoring paths, v4 appearance records, v5 gradient records, and v6
+/// stable multi-page roots. Readers migrate v2-v5 to a one-page snapshot.
 #pragma pack(push, 1)
 struct PikDrawHeader {
     uint8_t magic[4];       // {'P', 'K', 'D', 'R'}
-    uint32_t version;       // v2/v3 legacy input or current v4 appearance source
+    uint32_t version;       // v2-v5 legacy input or current v6 multi-page source
     uint32_t flags;         // feature flags / compression
     uint64_t epoch;         // document epoch at save
     uint64_t revision;      // document revision at save
@@ -30,8 +29,9 @@ inline constexpr uint8_t kPikDrawMagic[4] = {'P', 'K', 'D', 'R'};
 inline constexpr uint32_t kLegacyFormatVersion = 2;
 inline constexpr uint32_t kAuthoringSourceFormatVersion = 3;
 inline constexpr uint32_t kAppearanceFormatVersion = 4;
-inline constexpr uint32_t kCurrentFormatVersion = 5;
-inline constexpr uint32_t kMinimumCompatibleVersion = 5;
+inline constexpr uint32_t kGradientFormatVersion = 5;
+inline constexpr uint32_t kCurrentFormatVersion = 6;
+inline constexpr uint32_t kMinimumCompatibleVersion = 6;
 inline constexpr uint32_t kAuthoringPathSchemaMajor = 1;
 inline constexpr uint32_t kAuthoringPathSchemaMinor = 0;
 

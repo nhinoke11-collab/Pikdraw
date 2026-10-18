@@ -34,6 +34,8 @@ enum class MenuActionId {
     // File
     FileNew,
     FileOpen,
+    FileImport,
+    FileRecoverAutosave,
     FileSave,
     FileSaveAs,
     FileExportSvg,
@@ -108,6 +110,7 @@ enum class MenuActionId {
     // Effects
     EffectsGaussianBlur,
     EffectsContour,
+    EffectsBreakContourApart,
     EffectsDropShadow,
     EffectsExtrude,
     EffectsBevel,
@@ -335,9 +338,11 @@ struct AlignPanelMetrics {
 };
 
 // 1. File Menu
-inline constexpr std::array<MenuItem, 8> kFileMenuItems{{
+inline constexpr std::array<MenuItem, 10> kFileMenuItems{{
     {MenuActionId::FileNew, L"New Document", L"Bản vẽ mới", L"Ctrl+N"},
     {MenuActionId::FileOpen, L"Open PikDraw File…", L"Mở tệp PikDraw…", L"Ctrl+O"},
+    {MenuActionId::FileImport, L"Import…", L"Nhập…", L""},
+    {MenuActionId::FileRecoverAutosave, L"Recover Autosave…", L"Phục hồi bản tự lưu…", L""},
     {MenuActionId::FileSave, L"Save", L"Lưu", L"Ctrl+S"},
     {MenuActionId::FileSaveAs, L"Save As…", L"Lưu thành…", L"Ctrl+Shift+S"},
     {MenuActionId::FileExportSvg, L"Export SVG…", L"Xuất SVG…", L"Ctrl+E"},
@@ -438,11 +443,12 @@ inline constexpr std::array<MenuItem, 40> kObjectMenuItems{{
 }};
 
 // 6. Effects Menu
-inline constexpr std::array<MenuItem, 7> kEffectsMenuItems{{
+inline constexpr std::array<MenuItem, 8> kEffectsMenuItems{{
     {MenuActionId::EffectsGaussianBlur, L"Gaussian Blur", L"Làm mờ Gaussian", L""},
     {MenuActionId::EffectsDropShadow, L"Drop Shadow", L"Đổ bóng", L""},
     {MenuActionId::Separator, L"", L"", L"", true},
-    {MenuActionId::EffectsContour, L"Contour (M2)…", L"Tạo viền Contour (M2)…", L"", false, true},
+    {MenuActionId::EffectsContour, L"Contour", L"Tạo viền Contour", L"Ctrl+F9", false, false},
+    {MenuActionId::EffectsBreakContourApart, L"Break Contour Apart", L"Rã khối viền Contour", L"Ctrl+K", false, false},
     {MenuActionId::EffectsExtrude, L"Extrude 3D (M2)…", L"Khối nổi Extrude 3D (M2)…", L"", false, true},
     {MenuActionId::EffectsBevel, L"Bevel (M2)…", L"Vát cạnh Bevel (M2)…", L"", false, true},
     {MenuActionId::EffectsClear, L"Clear Effects", L"Xóa hiệu ứng", L"", false, false}
@@ -469,7 +475,7 @@ inline constexpr std::array<MenuItem, 5> kTextMenuItems{{
 // 9. Tools Menu
 inline constexpr std::array<MenuItem, 11> kToolsMenuItems{{
     {MenuActionId::ToolPick, L"Pick Tool (Selection)", L"Công cụ chọn (Pick)", L"V"},
-    {MenuActionId::ToolNode, L"Node Edit Tool", L"Chỉnh sửa điểm (Node)", L"", false, true},
+    {MenuActionId::ToolNode, L"Node Edit Tool", L"Chỉnh sửa điểm (Node)", L""},
     {MenuActionId::ToolRectangle, L"Rectangle Tool", L"Vẽ hình chữ nhật", L"R"},
     {MenuActionId::ToolEllipse, L"Ellipse Tool", L"Vẽ hình elip / tròn", L"E"},
     {MenuActionId::ToolPolygon, L"Polygon Tool", L"Vẽ đa giác đều", L""},

@@ -353,6 +353,11 @@ bool NativeWindow::handle_key_down(WPARAM key) {
             trigger_break_contour_apart();
             return true;
         }
+        if (key == VK_F9) {
+            trigger_effects_contour();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
         if (key == 'B') {
             const auto& sel = root().vector_controller().selection().selected_ids();
             bool has_text = false;

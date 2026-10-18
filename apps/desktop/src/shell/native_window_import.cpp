@@ -1,0 +1,340 @@
+#include "pikdraw/desktop/shell/native_window.hpp"
+
+#include <atomic>
+#include <filesystem>
+#include <iomanip>
+#include <iterator>
+#include <mutex>
+#include <sstream>
+#include <thread>
+
+#ifdef _WIN32
+#include <commctrl.h>
+#include <commdlg.h>
+#endif
+
+namespace pikdraw::desktop {
+
+#ifdef _WIN32
+namespace {
+constexpr int kImportChoiceApply = 4101;
+constexpr int kImportChoiceCancel = 4102;
+
+std::wstring FormatNumber(double value) {
+    std::wostringstream text;
+    text << std::fixed << std::setprecision(2) << value;
+    return text.str();
+}
+
+}
+
+struct ImportJobSession {
+    std::jthread worker;
+    document::AsyncProposalMetadata metadata;
+    std::string target_tab_id;
+    std::atomic<ImportProgressStage> stage{ImportProgressStage::Snapshotting};
+    std::atomic<size_t> records_received{0};
+    std::atomic<bool> finished{false};
+    std::atomic<bool> cancel_requested{false};
+    std::mutex result_mutex;
+    std::optional<ImportWorkerResult> result;
+};
+
+bool NativeWindow::import_job_active() const noexcept {
+    return import_job_ && !import_job_->finished.load(std::memory_order_acquire);
+}
+
+void NativeWindow::open_import_dialog() {
+    if (import_job_active()) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đang nhập tệp khác · nhấn Esc để hủy"
+            : "Another import is running · press Esc to cancel";
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    if (import_job_) {
+        if (import_job_->worker.joinable()) import_job_->worker.join();
+        import_job_.reset();
+    }
+
+    std::wstring path(32768, L'\0');
+    const wchar_t* filter = language_ == UILanguage::Vietnamese
+        ? L"Vector SVG (*.svg)\0*.svg\0Tập con AutoCAD DXF 2D (*.dxf)\0*.dxf\0Tất cả tệp\0*.*\0\0"
+        : L"SVG vector (*.svg)\0*.svg\0AutoCAD DXF 2D subset (*.dxf)\0*.dxf\0All files\0*.*\0\0";
+    OPENFILENAMEW dialog{};
+    dialog.lStructSize = sizeof(dialog);
+    dialog.hwndOwner = hwnd_;
+    dialog.lpstrFilter = filter;
+    dialog.lpstrTitle = language_ == UILanguage::Vietnamese
+        ? L"Chọn tệp vector cần nhập" : L"Choose a vector file to import";
+    dialog.lpstrFile = path.data();
+    dialog.nMaxFile = static_cast<DWORD>(path.size());
+    dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetOpenFileNameW(&dialog)) return;
+
+    static std::atomic<uint64_t> next_job_id{1};
+    auto session = std::make_shared<ImportJobSession>();
+    const uint64_t job_id = next_job_id.fetch_add(1, std::memory_order_relaxed);
+    if (job_id == 0) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Không thể bắt đầu thêm tác vụ nhập tệp"
+            : "No import job identifiers remain";
+        return;
+    }
+    try {
+        session->metadata = workflow().begin_import_job(job_id);
+    } catch (...) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Không thể tạo phiên nhập cho tài liệu hiện tại"
+            : "Could not start an import job for this document";
+        return;
+    }
+    session->target_tab_id = active_tab().id;
+    const std::wstring extension = std::filesystem::path(path).extension().wstring();
+    const ImportFormat format = _wcsicmp(extension.c_str(), L".dxf") == 0
+        ? ImportFormat::Dxf : ImportFormat::Svg;
+    const HWND notify_window = hwnd_;
+    const auto metadata = session->metadata;
+    session->worker = std::jthread([raw = session.get(), path = std::move(path), format,
+                                    metadata, notify_window](std::stop_token cancellation) {
+        auto result = run_import_worker_job(path, format, metadata, cancellation,
+            [raw, notify_window](ImportProgress progress) {
+                raw->stage.store(progress.stage, std::memory_order_release);
+                raw->records_received.store(progress.records_received, std::memory_order_release);
+                (void)PostMessageW(notify_window, kImportWorkerMessage, 0, 0);
+            });
+        {
+            std::lock_guard lock(raw->result_mutex);
+            raw->result.emplace(std::move(result));
+        }
+        raw->finished.store(true, std::memory_order_release);
+        (void)PostMessageW(notify_window, kImportWorkerMessage, 1, 0);
+    });
+    import_job_ = std::move(session);
+    status_msg_ = language_ == UILanguage::Vietnamese
+        ? "Đang chuẩn bị tệp nhập · nhấn Esc để hủy"
+        : "Preparing import source · press Esc to cancel";
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void NativeWindow::request_cancel_import_job() {
+    if (!import_job_active()) return;
+    import_job_->cancel_requested.store(true, std::memory_order_release);
+    import_job_->worker.request_stop();
+    status_msg_ = language_ == UILanguage::Vietnamese
+        ? "Đang hủy tác vụ nhập…"
+        : "Cancelling import…";
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void NativeWindow::cancel_import_job() {
+    if (!import_job_) return;
+    import_job_->cancel_requested.store(true, std::memory_order_release);
+    import_job_->worker.request_stop();
+    if (import_job_->worker.joinable()) import_job_->worker.join();
+    for (auto& tab : tabs_) {
+        if (tab.id != import_job_->target_tab_id || !tab.workflow) continue;
+        try { tab.workflow->cancel_import_job(import_job_->metadata.job_id); } catch (...) {}
+        break;
+    }
+    import_job_.reset();
+}
+
+void NativeWindow::handle_import_worker_message(WPARAM kind) {
+    if (!import_job_) return;
+    if (kind == 0) {
+        if (import_job_active()) {
+            const auto stage = import_job_->stage.load(std::memory_order_acquire);
+            const size_t count = import_job_->records_received.load(std::memory_order_acquire);
+            switch (stage) {
+            case ImportProgressStage::Snapshotting:
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Đang kiểm tra và chuẩn bị tệp nhập… · Esc để hủy"
+                    : "Checking and staging import source… · Esc to cancel";
+                break;
+            case ImportProgressStage::StartingWorker:
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Đang khởi chạy worker cách ly… · Esc để hủy"
+                    : "Starting isolated worker… · Esc to cancel";
+                break;
+            case ImportProgressStage::Reading:
+                status_msg_ = (language_ == UILanguage::Vietnamese
+                    ? "Đang nhập · đã nhận " : "Importing · received ") +
+                    std::to_string(count) + (language_ == UILanguage::Vietnamese
+                        ? " bản ghi · Esc để hủy" : " records · Esc to cancel");
+                break;
+            case ImportProgressStage::Validating:
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Đang kiểm tra cấu trúc và báo cáo độ trung thực… · Esc để hủy"
+                    : "Validating structure and fidelity report… · Esc to cancel";
+                break;
+            case ImportProgressStage::Complete:
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Đã kiểm tra đề xuất nhập" : "Import proposal validated";
+                break;
+            }
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        return;
+    }
+
+    auto session = import_job_;
+    if (session->worker.joinable()) session->worker.join();
+    std::optional<ImportWorkerResult> result;
+    {
+        std::lock_guard lock(session->result_mutex);
+        result = std::move(session->result);
+    }
+    const auto close_session = [&] {
+        import_job_.reset();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    };
+    DocumentTab* target = nullptr;
+    size_t target_index = 0;
+    for (size_t i = 0; i < tabs_.size(); ++i) {
+        if (tabs_[i].id == session->target_tab_id) {
+            target = &tabs_[i];
+            target_index = i;
+            break;
+        }
+    }
+    if (!result || !target || !target->workflow || !target->root) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Tác vụ nhập đã kết thúc nhưng tài liệu đích không còn mở"
+            : "The import ended after its target document was closed";
+        close_session();
+        return;
+    }
+    if (session->cancel_requested.load(std::memory_order_acquire) || result->cancelled) {
+        try { target->workflow->cancel_import_job(session->metadata.job_id); } catch (...) {}
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Đã hủy nhập; tài liệu không đổi"
+                                                          : "Import cancelled; document unchanged";
+        close_session();
+        return;
+    }
+    if (!result->success) {
+        try { target->workflow->cancel_import_job(session->metadata.job_id); } catch (...) {}
+        const auto message = NativeWindow::utf8_to_wide(result->error_message);
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Nhập tệp thất bại" : "Import failed";
+        MessageBoxW(hwnd_, message.c_str(),
+            language_ == UILanguage::Vietnamese ? L"Không thể nhập tệp" : L"Could not import file",
+            MB_OK | MB_ICONWARNING);
+        close_session();
+        return;
+    }
+
+    const auto snapshot = target->root->document().current_snapshot();
+    if (!snapshot || snapshot->document_id() != session->metadata.document_id ||
+        snapshot->epoch() != session->metadata.epoch || snapshot->revision() != session->metadata.base_revision) {
+        try { target->workflow->cancel_import_job(session->metadata.job_id); } catch (...) {}
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Tài liệu đã thay đổi trong lúc nhập · hãy chạy lại Import"
+            : "The document changed during import · run Import again";
+        close_session();
+        return;
+    }
+
+    const size_t object_count = result->proposal.objects.size();
+    const size_t layer_count = result->proposal.layers.size();
+    const auto& proposal = result->proposal;
+    std::wostringstream content;
+    content << (language_ == UILanguage::Vietnamese ? L"Nguồn: " : L"Source: ")
+            << NativeWindow::utf8_to_wide(proposal.format_name).c_str() << L" · "
+            << (language_ == UILanguage::Vietnamese ? L"trang nguồn " : L"source page ")
+            << FormatNumber(proposal.source_page_width_mm) << L" × "
+            << FormatNumber(proposal.source_page_height_mm) << L" mm\n"
+            << object_count << (language_ == UILanguage::Vietnamese ? L" đối tượng chỉnh sửa được · " : L" editable objects · ")
+            << layer_count << (language_ == UILanguage::Vietnamese ? L" layer nguồn\n" : L" source layers\n")
+            << (language_ == UILanguage::Vietnamese ? L"Độ bao phủ: một phần · Hiển thị: chưa xác minh · Sẵn sàng sản xuất: chưa đánh giá."
+                                                    : L"Coverage: partial · Appearance: unverified · Production: not assessed.");
+
+    std::wstring details = language_ == UILanguage::Vietnamese
+        ? L"Các đơn vị SVG được quy đổi sang mm. DXF dùng $INSUNITS của nguồn; thiếu đơn vị được hỗ trợ thì từ chối.\n"
+          L"Khổ trang tài liệu hiện tại không đổi. Geometry và layer nguồn sẽ được thêm vào trang hiện tại.\n"
+          L"File nguồn và báo cáo fidelity không được lưu cùng tài liệu .pikdraw. Import không chứng minh export ngược hoặc khả năng sản xuất."
+        : L"SVG source units are converted to mm. DXF uses source $INSUNITS; unsupported or missing units are rejected.\n"
+          L"The current document page size stays unchanged. Source geometry and layers are added to its current page.\n"
+          L"The source file and fidelity report are not stored in the .pikdraw document. Import does not prove round-trip export or production readiness.";
+    for (const auto& issue : proposal.issues) {
+        details += L"\n• ";
+        if (issue.feature_code == "font_resolution") {
+            details += language_ == UILanguage::Vietnamese
+                ? L"Giữ tên font; hình thức chữ chưa được xác minh."
+                : L"Font family is retained; text appearance is unverified.";
+        } else if (issue.feature_code == "aci_color_7_context") {
+            details += language_ == UILanguage::Vietnamese
+                ? L"Màu DXF ACI 7 phụ thuộc nền CAD; preview dùng màu trắng."
+                : L"DXF ACI 7 depends on CAD background; preview uses white.";
+        } else {
+            details += language_ == UILanguage::Vietnamese
+                ? L"Có chẩn đoán giới hạn subset trong báo cáo nhập."
+                : L"The import report contains an additional subset diagnostic.";
+        }
+    }
+
+    const std::wstring title = language_ == UILanguage::Vietnamese ? L"Xem lại kết quả nhập" : L"Review import fidelity";
+    const std::wstring instruction = language_ == UILanguage::Vietnamese
+        ? L"Chỉ nhập các đối tượng được biểu diễn trong subset hiện tại?"
+        : L"Import only the objects represented by the current subset?";
+    const std::wstring apply_label = language_ == UILanguage::Vietnamese
+        ? L"Nhập đối tượng" : L"Import editable subset";
+    const std::wstring cancel_label = language_ == UILanguage::Vietnamese ? L"Hủy" : L"Cancel";
+    const TASKDIALOG_BUTTON buttons[]{{kImportChoiceApply, apply_label.c_str()},
+                                      {kImportChoiceCancel, cancel_label.c_str()}};
+    const std::wstring content_text = content.str();
+    TASKDIALOGCONFIG config{};
+    config.cbSize = sizeof(config);
+    config.hwndParent = hwnd_;
+    config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_EXPAND_FOOTER_AREA;
+    config.pszWindowTitle = title.c_str();
+    config.pszMainInstruction = instruction.c_str();
+    config.pszContent = content_text.c_str();
+    config.pszExpandedInformation = details.c_str();
+    config.cButtons = static_cast<UINT>(std::size(buttons));
+    config.pButtons = buttons;
+    config.nDefaultButton = kImportChoiceCancel;
+    int choice = kImportChoiceCancel;
+    using TaskDialogFunction = HRESULT(WINAPI*)(const TASKDIALOGCONFIG*, int*, int*, BOOL*);
+    HMODULE common_controls = LoadLibraryW(L"comctl32.dll");
+    const auto task_dialog = common_controls ? reinterpret_cast<TaskDialogFunction>(
+        GetProcAddress(common_controls, "TaskDialogIndirect")) : nullptr;
+    const HRESULT dialog_result = task_dialog
+        ? task_dialog(&config, &choice, nullptr, nullptr) : E_NOTIMPL;
+    if (common_controls) FreeLibrary(common_controls);
+    if (FAILED(dialog_result)) {
+        const std::wstring fallback = content.str() + L"\n\n" + details;
+        choice = MessageBoxW(hwnd_, fallback.c_str(), title.c_str(), MB_YESNO | MB_ICONWARNING) == IDYES
+            ? kImportChoiceApply : kImportChoiceCancel;
+    }
+    if (choice != kImportChoiceApply) {
+        try { target->workflow->cancel_import_job(session->metadata.job_id); } catch (...) {}
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Đã hủy nhập; tài liệu không đổi"
+                                                          : "Import cancelled; document unchanged";
+        close_session();
+        return;
+    }
+
+    const auto committed = target->workflow->commit_import_proposal(
+        session->metadata, std::move(result->proposal));
+    if (committed == document::ProposalStatus::Accepted) {
+        const std::string count_text = std::to_string(object_count);
+        const bool target_active = target_index == active_tab_index_;
+        if (target_active) {
+            status_msg_ = (language_ == UILanguage::Vietnamese ? "Đã nhập " : "Imported ") +
+                count_text + (language_ == UILanguage::Vietnamese
+                    ? " đối tượng · một bước Ctrl+Z · khổ trang giữ nguyên"
+                    : " objects · one Ctrl+Z step · page size unchanged");
+        }
+    } else {
+        status_msg_ = committed == document::ProposalStatus::StaleRevision
+            ? (language_ == UILanguage::Vietnamese ? "Tài liệu đã thay đổi · đề xuất nhập bị từ chối"
+                                                  : "Document changed · import proposal rejected")
+            : (language_ == UILanguage::Vietnamese ? "Không thể áp dụng đề xuất nhập"
+                                                  : "Could not apply import proposal");
+    }
+    close_session();
+}
+
+#endif
+
+} // namespace pikdraw::desktop

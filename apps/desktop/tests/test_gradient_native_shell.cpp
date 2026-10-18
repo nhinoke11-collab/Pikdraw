@@ -152,12 +152,13 @@ void test_toolbox_appearance_flyout_activation() {
     window.handle_toolbox_key(VK_DOWN, true);
     assert(window.toolbox_open_group() == 3);
 
-    // In group 3: 4 items (0: Properties, 1: Gaussian Blur, 2: Drop Shadow, 3: Gradient)
-    // Press Down 3 times to navigate to item 3
+    // The current Appearance group also includes Contour before Gradient.
+    // Traverse every preceding item so keyboard routing remains covered.
     window.handle_toolbox_key(VK_DOWN, false); // item 1
     window.handle_toolbox_key(VK_DOWN, false); // item 2
-    window.handle_toolbox_key(VK_DOWN, false); // item 3 (Gradient)
-    assert(window.toolbox_flyout_index() == 3);
+    window.handle_toolbox_key(VK_DOWN, false); // item 3 (Contour)
+    window.handle_toolbox_key(VK_DOWN, false); // item 4 (Gradient)
+    assert(window.toolbox_flyout_index() == 4);
 
     // Press Enter to activate tool 13
     window.handle_toolbox_key(VK_RETURN, false);

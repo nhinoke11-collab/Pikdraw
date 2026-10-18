@@ -14,11 +14,42 @@
 #include <cmath>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <unordered_set>
 #include <variant>
 
 namespace pikdraw::desktop::detail {
+
+// Keep only a valid UTF-8 prefix; malformed/incomplete input ends the preview.
+inline std::string utf8_truncate_codepoints(std::string_view text, std::size_t max_codepoints) {
+    std::size_t end = 0;
+    for (std::size_t count = 0; count < max_codepoints && end < text.size(); ++count) {
+        const auto lead = static_cast<unsigned char>(text[end]);
+        std::size_t length = 0;
+        if (lead <= 0x7f) length = 1;
+        else if (lead >= 0xc2 && lead <= 0xdf) length = 2;
+        else if (lead >= 0xe0 && lead <= 0xef) length = 3;
+        else if (lead >= 0xf0 && lead <= 0xf4) length = 4;
+        else break;
+        if (length > text.size() - end) break;
+        bool valid = true;
+        for (std::size_t index = 1; index < length; ++index) {
+            const auto byte = static_cast<unsigned char>(text[end + index]);
+            if ((byte & 0xc0) != 0x80) valid = false;
+        }
+        if (length >= 3) {
+            const auto second = static_cast<unsigned char>(text[end + 1]);
+            // Exclude overlong sequences, surrogate codepoints and values > U+10FFFF.
+            if ((lead == 0xe0 && second < 0xa0) || (lead == 0xed && second >= 0xa0) ||
+                (lead == 0xf0 && second < 0x90) || (lead == 0xf4 && second >= 0x90))
+                valid = false;
+        }
+        if (!valid) break;
+        end += length;
+    }
+    return std::string(text.substr(0, end));
+}
 
 inline color::RGBColor parse_hex_color(const std::string& hex) {
     if (hex.length() >= 7 && hex[0] == '#') {

@@ -74,7 +74,54 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
         return;
 
     auto& camera = root().renderer().camera();
+    camera.set_viewport_size(canvas_width, canvas_height);
     const auto snapshot = workflow().snapshot_for_canvas();
+    if (!snapshot)
+        return;
+
+    const bool view_is_stable = canvas_cache_valid_
+        && cached_canvas_dc_ && cached_canvas_bmp_
+        && canvas_width == cached_canvas_w_
+        && canvas_height == cached_canvas_h_
+        && color_preview_ == cached_canvas_profile_
+        && camera.zoom() == cached_zoom_
+        && camera.center().x == cached_camera_x_
+        && camera.center().y == cached_camera_y_
+        && theme_ == cached_theme_;
+    bool partial_update = false;
+    RECT dirty_area{0, 0, canvas_width, canvas_height};
+    if (view_is_stable && cached_canvas_snapshot_
+        && snapshot != cached_canvas_snapshot_) {
+        damage_tracker_.update(*cached_canvas_snapshot_, *snapshot, camera.zoom());
+        if (damage_tracker_.has_damage() && !damage_tracker_.is_full_damage()) {
+            const auto& damage = damage_tracker_.damage_rect();
+            const auto first = camera.world_to_screen({damage.x, damage.y + damage.height});
+            const auto second = camera.world_to_screen({damage.x + damage.width, damage.y});
+            if (std::isfinite(first.x) && std::isfinite(first.y)
+                && std::isfinite(second.x) && std::isfinite(second.y)) {
+                const auto clamp_pixel = [](double coordinate, int extent) {
+                    return static_cast<int>(std::clamp(
+                        coordinate, 0.0, static_cast<double>(extent)));
+                };
+                const int left = clamp_pixel(
+                    std::floor(std::min(first.x, second.x)) - 1.0, canvas_width);
+                const int top = clamp_pixel(
+                    std::floor(std::min(first.y, second.y)) - 1.0, canvas_height);
+                const int right = clamp_pixel(
+                    std::ceil(std::max(first.x, second.x)) + 1.0, canvas_width);
+                const int bottom = clamp_pixel(
+                    std::ceil(std::max(first.y, second.y)) + 1.0, canvas_height);
+                dirty_area = RECT{left, top, right, bottom};
+                const int64_t dirty_pixels = static_cast<int64_t>(right - left)
+                    * static_cast<int64_t>(bottom - top);
+                const int64_t total_pixels = static_cast<int64_t>(canvas_width)
+                    * static_cast<int64_t>(canvas_height);
+                partial_update = dirty_pixels == 0 || dirty_pixels * 4 < total_pixels * 3;
+            }
+        }
+    }
+    if (!view_is_stable)
+        damage_tracker_.reset();
 
     // Check if the canvas bitmap cache needs to be regenerated
     const bool cache_needs_rebuild = !canvas_cache_valid_
@@ -100,44 +147,61 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
             cached_canvas_old_bmp_ = nullptr;
         }
         if (!cached_canvas_bmp_) {
-            cached_canvas_bmp_ = CreateCompatibleBitmap(dc, canvas_width, canvas_height);
+            cached_canvas_bmp_ = CreateCompatibleBitmap(dc, dip(canvas_width), dip(canvas_height));
             cached_canvas_old_bmp_ = SelectObject(cached_canvas_dc_, cached_canvas_bmp_);
         }
+
+        configure_ui_dc(cached_canvas_dc_);
 
         // Ensure backend rasterizer clears with active theme's pasteboard color
         root().renderer().backend().set_canvas_background(canvas_background_color());
 
-        // Fill background of cached canvas
-        RECT local_area{0, 0, canvas_width, canvas_height};
-        HBRUSH background = CreateSolidBrush(canvas_background_colorref());
-        FillRect(cached_canvas_dc_, &local_area, background);
-        DeleteObject(background);
+        // Preserve unchanged pixels when damage stays within a small viewport region.
+        if (!partial_update) {
+            RECT local_area{0, 0, canvas_width, canvas_height};
+            HBRUSH background = CreateSolidBrush(canvas_background_colorref());
+            FillRect(cached_canvas_dc_, &local_area, background);
+            DeleteObject(background);
+        }
 
-        // Render document snapshot using zero-allocation buffer
-        workflow().render_snapshot(canvas_width, canvas_height, reusable_rgba_buffer_);
-        const size_t expected = static_cast<size_t>(canvas_width) * static_cast<size_t>(canvas_height) * 4;
-        if (reusable_rgba_buffer_.size() == expected) {
-            if (reusable_bgra_buffer_.size() != expected) {
-                reusable_bgra_buffer_.resize(expected);
-            }
-            // Fast 32-bit swap from little-endian RGBA to BGRA
-            const uint32_t* src32 = reinterpret_cast<const uint32_t*>(reusable_rgba_buffer_.data());
-            uint32_t* dst32 = reinterpret_cast<uint32_t*>(reusable_bgra_buffer_.data());
-            const size_t count = expected / 4;
-            for (size_t index = 0; index < count; ++index) {
-                const uint32_t px = src32[index];
-                dst32[index] = (px & 0xFF00FF00) | ((px & 0x00FF0000) >> 16) | ((px & 0x000000FF) << 16);
-            }
+        // Render the captured snapshot directly so incomplete GPU frames cannot
+        // be mistaken for the previous reusable buffer contents.
+        const int raster_w = dip(canvas_width), raster_h = dip(canvas_height);
+        const size_t expected = static_cast<size_t>(raster_w) * raster_h * 4;
+        bool frame_rendered = false;
+        if (static_cast<uint64_t>(raster_w) * static_cast<uint64_t>(raster_h)
+            <= 33554432ULL) {
+            if (reusable_bgra_buffer_.size() != expected)
+                reusable_bgra_buffer_.resize(expected, 0);
+            rendering::PixelBufferTarget render_target{
+                nullptr, raster_w, raster_h, raster_w * 4};
+            render_target.bgra_pixels = reinterpret_cast<uint32_t*>(reusable_bgra_buffer_.data());
+            const auto logical_camera = camera;
+            camera.set_zoom(camera.zoom() * dpi_scale_);
+            frame_rendered = root().renderer().render_frame(*snapshot, render_target);
+            camera = logical_camera;
+        }
+        if (frame_rendered) {
             BITMAPINFO bitmap{};
             bitmap.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-            bitmap.bmiHeader.biWidth = canvas_width;
-            bitmap.bmiHeader.biHeight = -canvas_height;
+            bitmap.bmiHeader.biWidth = raster_w;
+            bitmap.bmiHeader.biHeight = -raster_h;
             bitmap.bmiHeader.biPlanes = 1;
             bitmap.bmiHeader.biBitCount = 32;
             bitmap.bmiHeader.biCompression = BI_RGB;
-            StretchDIBits(cached_canvas_dc_, 0, 0, canvas_width, canvas_height,
-                          0, 0, canvas_width, canvas_height, reusable_bgra_buffer_.data(), &bitmap,
-                          DIB_RGB_COLORS, SRCCOPY);
+            if (!partial_update || (dirty_area.left < dirty_area.right
+                && dirty_area.top < dirty_area.bottom)) {
+                const int dst_x = partial_update ? dirty_area.left : 0;
+                const int dst_y = partial_update ? dirty_area.top : 0;
+                const int copy_width = partial_update
+                    ? dirty_area.right - dirty_area.left : canvas_width;
+                const int copy_height = partial_update
+                    ? dirty_area.bottom - dirty_area.top : canvas_height;
+                StretchDIBits(cached_canvas_dc_, dst_x, dst_y, copy_width, copy_height,
+                              dip(dst_x), dip(dst_y), dip(copy_width), dip(copy_height),
+                              reusable_bgra_buffer_.data(), &bitmap,
+                              DIB_RGB_COLORS, SRCCOPY);
+            }
         } else {
             SetBkMode(cached_canvas_dc_, TRANSPARENT);
             SetTextColor(cached_canvas_dc_, RGB(180, 90, 80));
@@ -182,7 +246,11 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
         cached_canvas_w_ = canvas_width;
         cached_canvas_h_ = canvas_height;
         cached_theme_ = theme_;
-        canvas_cache_valid_ = true;
+        canvas_cache_valid_ = frame_rendered;
+        if (frame_rendered)
+            damage_tracker_.clear_damage();
+        else
+            damage_tracker_.mark_full_damage();
     }
 
     // Fast blit from cached memory DC to destination DC!
@@ -296,58 +364,7 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
         DeleteObject(marker_pen);
     }
 
-    // 1. Render all TextObjects with Windows native GDI fonts onto canvas
-    for (const auto& [id, obj_var] : snapshot->objects().all()) {
-        if (const auto* to = std::get_if<document::TextObject>(&obj_var)) {
-            if (!to->visible || to->text.empty()) continue;
-            if (is_inline_text_editing_ && inline_editing_text_id_ == id) continue;
-
-            auto pt_screen = camera.world_to_screen(to->position);
-            int sx = area.left + static_cast<int>(std::floor(pt_screen.x));
-            int sy = area.top + static_cast<int>(std::floor(pt_screen.y));
-
-            int font_px = std::max(8, static_cast<int>(std::lround(to->font.size_pt * camera.zoom() * 1.333)));
-            int weight = to->font.weight;
-            BOOL italic = to->font.italic ? TRUE : FALSE;
-            BOOL underline = to->underline ? TRUE : FALSE;
-
-            std::wstring wfamily(to->font.family_name.begin(), to->font.family_name.end());
-            HFONT hfont = CreateFontW(
-                font_px, 0, 0, 0, weight, italic, underline, FALSE,
-                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-                wfamily.c_str()
-            );
-            HGDIOBJ old_f = SelectObject(dc, hfont);
-
-            auto rgb_val = color::to_preview_rgba(to->fill).to_device();
-            COLORREF text_color = RGB(rgb_val.r, rgb_val.g, rgb_val.b);
-            SetTextColor(dc, text_color);
-            SetBkMode(dc, TRANSPARENT);
-
-            int wlen = MultiByteToWideChar(CP_UTF8, 0, to->text.c_str(), -1, nullptr, 0);
-            if (wlen > 1) {
-                std::vector<wchar_t> wbuf(wlen);
-                MultiByteToWideChar(CP_UTF8, 0, to->text.c_str(), -1, wbuf.data(), wlen);
-
-                UINT flags = DT_LEFT | DT_NOPREFIX;
-                if (to->alignment == typography::TextAlignment::Center) flags = DT_CENTER | DT_NOPREFIX;
-                else if (to->alignment == typography::TextAlignment::Right) flags = DT_RIGHT | DT_NOPREFIX;
-
-                auto b = to->bounds();
-                auto b_screen = camera.world_to_screen({to->position.x + b.width, to->position.y + b.height});
-                int sw = std::max(40, static_cast<int>(std::ceil(b_screen.x - pt_screen.x)));
-                int sh = std::max(20, static_cast<int>(std::ceil(b_screen.y - pt_screen.y)));
-                RECT rc_text{sx, sy, sx + sw, sy + sh};
-                DrawTextW(dc, wbuf.data(), -1, &rc_text, flags);
-            }
-
-            SelectObject(dc, old_f);
-            DeleteObject(hfont);
-        }
-    }
-
-    // 2. Render active on-canvas inline text editing session
+    // Committed text is rendered once by ViewportRenderer; retain the active editor.
     if (is_inline_text_editing_) {
         auto pt_screen = camera.world_to_screen(inline_text_pos_mm_);
         int sx = area.left + static_cast<int>(std::floor(pt_screen.x));
@@ -577,278 +594,9 @@ void NativeWindow::paint_drawing_overlay(HDC dc) {
         paint_node_canvas_overlay(dc, width_, height_);
     if (active_tool_ == 12 && contour_tool_ && contour_tool_->active())
         paint_contour_canvas_overlay(dc, canvas_rect(width_, height_));
+    paint_drawing_tool_overlays(dc);
     if (active_tool_ == 13 && gradient_tool_ && gradient_tool_->active())
         paint_gradient_canvas_overlay(dc, canvas_rect(width_, height_));
-    if (!drawing_tool_) return;
-    const auto state = drawing_tool_->visual_state();
-    const RECT area = canvas_rect(width_, height_);
-    const auto& camera = root().renderer().camera();
-    const auto screen = [&](geometry::Point2D point) {
-        const auto local = camera.world_to_screen(point);
-        return POINT{area.left + static_cast<LONG>(std::lround(local.x)),
-                     area.top + static_cast<LONG>(std::lround(local.y))};
-    };
-    if (state.active && active_tool_ != 8) {
-        HPEN source_pen = CreatePen(PS_SOLID, 2, RGB(0, 242, 195));
-        HGDIOBJ old_pen = SelectObject(dc, source_pen);
-        for (size_t index = 1; index < state.points.size(); ++index) {
-            const auto first = screen(state.points[index - 1]);
-            const auto second = screen(state.points[index]);
-            MoveToEx(dc, first.x, first.y, nullptr);
-            LineTo(dc, second.x, second.y);
-        }
-        if (state.candidate && !state.points.empty()) {
-            HPEN preview_pen = CreatePen(PS_DASH, 1, RGB(0, 196, 255));
-            SelectObject(dc, preview_pen);
-            const auto start = screen(state.points.back());
-            const auto end = screen(*state.candidate);
-            MoveToEx(dc, start.x, start.y, nullptr);
-            LineTo(dc, end.x, end.y);
-            SelectObject(dc, source_pen);
-            DeleteObject(preview_pen);
-        }
-        SelectObject(dc, old_pen);
-        DeleteObject(source_pen);
-        HBRUSH anchor_brush = CreateSolidBrush(RGB(0, 242, 195));
-        HGDIOBJ old_brush = SelectObject(dc, anchor_brush);
-        for (const auto point : state.points) {
-            const auto marker = screen(point);
-            Ellipse(dc, marker.x - 3, marker.y - 3, marker.x + 4, marker.y + 4);
-        }
-        SelectObject(dc, old_brush);
-        DeleteObject(anchor_brush);
-        if (state.candidate) {
-            const auto marker = screen(*state.candidate);
-            HPEN marker_pen = CreatePen(PS_SOLID, 2,
-                state.snap_kind ? RGB(255, 190, 70) : RGB(0, 196, 255));
-            HGDIOBJ previous_pen = SelectObject(dc, marker_pen);
-            HGDIOBJ previous_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
-            Ellipse(dc, marker.x - 6, marker.y - 6, marker.x + 7, marker.y + 7);
-            MoveToEx(dc, marker.x - 9, marker.y, nullptr);
-            LineTo(dc, marker.x + 10, marker.y);
-            MoveToEx(dc, marker.x, marker.y - 9, nullptr);
-            LineTo(dc, marker.x, marker.y + 10);
-            SelectObject(dc, previous_brush);
-            SelectObject(dc, previous_pen);
-            DeleteObject(marker_pen);
-        }
-
-        if (state.candidate && !state.points.empty()) {
-            const auto base_pt = state.points.back();
-            const auto cand_pt = *state.candidate;
-            const double delta_x = cand_pt.x - base_pt.x;
-            const double delta_y = cand_pt.y - base_pt.y;
-            const double cand_dist = std::hypot(delta_x, delta_y);
-            if (cand_dist > 0.1) {
-                constexpr double kRadToDeg = 180.0 / 3.14159265358979323846;
-                constexpr double kDegToRad = 3.14159265358979323846 / 180.0;
-                double raw_deg = std::atan2(delta_y, delta_x) * kRadToDeg;
-                if (raw_deg < 0.0) raw_deg += 360.0;
-                double snap_deg = std::round(raw_deg / 15.0) * 15.0;
-                if (snap_deg >= 360.0) snap_deg -= 360.0;
-                double diff = std::abs(raw_deg - snap_deg);
-                if (diff > 180.0) diff = 360.0 - diff;
-                const bool is_snapped = (diff <= 0.5) || (active_num_field_ == NumericFieldId::PenAngle) || !pen_numeric_angle_.empty();
-
-                if (is_snapped) {
-                    const double ray_deg = (active_num_field_ == NumericFieldId::PenAngle || !pen_numeric_angle_.empty()) ? raw_deg : snap_deg;
-                    const double rad = ray_deg * kDegToRad;
-                    const geometry::Point2D ray_dir{std::cos(rad), std::sin(rad)};
-                    const auto ray_s_world = base_pt - geometry::Point2D{ray_dir.x * 200.0, ray_dir.y * 200.0};
-                    const auto ray_e_world = base_pt + geometry::Point2D{ray_dir.x * 3000.0, ray_dir.y * 3000.0};
-                    const POINT rs = screen(ray_s_world);
-                    const POINT re = screen(ray_e_world);
-                    HPEN track_pen = CreatePen(PS_DOT, 1, theme_ == ThemeMode::CyberDark ? RGB(56, 189, 248) : RGB(14, 165, 233));
-                    HGDIOBJ old_p = SelectObject(dc, track_pen);
-                    MoveToEx(dc, rs.x, rs.y, nullptr);
-                    LineTo(dc, re.x, re.y);
-                    SelectObject(dc, old_p);
-                    DeleteObject(track_pen);
-                }
-
-                const POINT end = screen(cand_pt);
-                const int hud_w = 176;
-                const int hud_h = 24;
-                int bx = end.x + 16;
-                int by = end.y - 28;
-                if (bx + hud_w > area.right - 8) bx = end.x - hud_w - 16;
-                if (bx < area.left + 8) bx = area.left + 8;
-                if (by < area.top + 8) by = end.y + 16;
-                if (by + hud_h > area.bottom - 8) by = area.bottom - hud_h - 8;
-
-                RECT badge_rc{bx, by, bx + hud_w, by + hud_h};
-                HBRUSH badge_bg = CreateSolidBrush(theme_ == ThemeMode::CyberDark ? RGB(15, 23, 42) : RGB(248, 250, 252));
-                HPEN badge_pen = CreatePen(PS_SOLID, 1, theme_ == ThemeMode::CyberDark ? RGB(56, 189, 248) : RGB(14, 165, 233));
-                HGDIOBJ old_bg = SelectObject(dc, badge_bg);
-                HGDIOBJ old_pn = SelectObject(dc, badge_pen);
-                RoundRect(dc, badge_rc.left, badge_rc.top, badge_rc.right, badge_rc.bottom, 4, 4);
-                SelectObject(dc, old_bg);
-                SelectObject(dc, old_pn);
-                DeleteObject(badge_bg);
-                DeleteObject(badge_pen);
-
-                const bool focus_len = (active_num_field_ == NumericFieldId::PenLength);
-                const bool focus_ang = (active_num_field_ == NumericFieldId::PenAngle);
-
-                RECT rc_len{bx + 3, by + 2, bx + 85, by + hud_h - 2};
-                RECT rc_ang{bx + 89, by + 2, bx + hud_w - 3, by + hud_h - 2};
-
-                if (focus_len || focus_ang) {
-                    RECT focused_rc = focus_len ? rc_len : rc_ang;
-                    HPEN focus_pen = CreatePen(PS_SOLID, 1, RGB(0, 242, 195));
-                    HGDIOBJ p = SelectObject(dc, focus_pen);
-                    HGDIOBJ b = SelectObject(dc, GetStockObject(NULL_BRUSH));
-                    RoundRect(dc, focused_rc.left, focused_rc.top, focused_rc.right, focused_rc.bottom, 2, 2);
-                    SelectObject(dc, b);
-                    SelectObject(dc, p);
-                    DeleteObject(focus_pen);
-                }
-
-                std::wostringstream wlen, wang;
-                if (focus_len) {
-                    wlen << L"L: " << utf8_to_wide(num_input_buffer_) << L"|";
-                } else if (!pen_numeric_length_.empty()) {
-                    wlen << L"L: " << utf8_to_wide(pen_numeric_length_);
-                } else {
-                    wlen << L"L: " << std::fixed << std::setprecision(1) << cand_dist;
-                }
-
-                if (focus_ang) {
-                    wang << L"∠ " << utf8_to_wide(num_input_buffer_) << L"°|";
-                } else if (!pen_numeric_angle_.empty()) {
-                    wang << L"∠ " << utf8_to_wide(pen_numeric_angle_) << L"°";
-                } else {
-                    wang << L"∠ " << std::fixed << std::setprecision(0) << (is_snapped ? snap_deg : raw_deg) << L"°";
-                }
-
-                HFONT hud_font = font_secondary_ ? font_secondary_ : font_be_vietnam_;
-                HGDIOBJ old_f = SelectObject(dc, hud_font);
-                SetBkMode(dc, TRANSPARENT);
-
-                SetTextColor(dc, focus_len ? RGB(0, 242, 195) : (theme_ == ThemeMode::CyberDark ? RGB(226, 232, 240) : RGB(15, 23, 42)));
-                const auto slen = wlen.str();
-                DrawTextW(dc, slen.c_str(), -1, &rc_len, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-                SetTextColor(dc, focus_ang ? RGB(0, 242, 195) : (theme_ == ThemeMode::CyberDark ? RGB(226, 232, 240) : RGB(15, 23, 42)));
-                const auto sang = wang.str();
-                DrawTextW(dc, sang.c_str(), -1, &rc_ang, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-                SelectObject(dc, old_f);
-            }
-        }
-
-        std::wostringstream hud;
-        const auto kind = state.kind == vector::tools::line::PathDrawingKind::Line
-            ? L"LINE" : L"POLYLINE";
-        hud << kind << L"  ·  " << state.points.size() << L" nodes";
-        if (state.candidate) {
-            hud << L"  ·  X " << std::fixed << std::setprecision(2)
-                << state.candidate->x << L" mm  Y " << state.candidate->y << L" mm";
-            if (!state.points.empty()) {
-                const auto delta = *state.candidate - state.points.back();
-                hud << L"  ·  L " << std::hypot(delta.x, delta.y) << L" mm"
-                    << L"  ∠ " << std::atan2(delta.y, delta.x) *
-                        180.0 / 3.14159265358979323846 << L"°";
-            }
-        }
-        if (!state.numeric_entry.empty())
-            hud << L"  ·  = " << NativeWindow::utf8_to_wide(state.numeric_entry);
-        const auto config = state.snap_config;
-        hud << L"  ·  Snap " << (config.master_enabled ? L"ON" : L"OFF")
-            << L"  ·  " << (config.direction.mode == vector::precision::snap::DirectionMode::Free
-                ? L"Free" : config.direction.mode == vector::precision::snap::DirectionMode::Ortho
-                ? L"Ortho" : L"Polar");
-        if (state.snap_index_failed) hud << L"  ·  Snap unavailable; raw input active";
-        else if (!state.snap_index_ready) hud << L"  ·  Index building";
-        RECT text{area.left + 264, area.top + 10, area.right - 12, area.top + 36};
-        SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, RGB(0, 242, 195));
-        const auto line = hud.str();
-        DrawTextW(dc, line.c_str(), -1, &text,
-                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-        const wchar_t* hint = language_ == UILanguage::Vietnamese
-            ? L"Nhấp: đặt điểm   Enter: kết thúc Polyline   Backspace: lùi điểm   Esc: hoàn tất/hủy"
-            : L"Click: place point   Enter: finish Polyline   Backspace: undo point   Esc: finish/cancel";
-        RECT hint_rect{area.left + 264, area.top + 34, area.right - 12, area.top + 54};
-        SetTextColor(dc, RGB(150, 170, 190));
-        DrawTextW(dc, hint, -1, &hint_rect,
-                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-    }
-
-    if (drawing_tool_->snap_panel_open_value()) {
-        const int left = area.left + 12, top = area.top + 12;
-        RECT panel{left, top, left + 250, top + 264};
-        HBRUSH panel_brush = CreateSolidBrush(theme_ == ThemeMode::CyberDark
-            ? RGB(13, 22, 34) : RGB(250, 252, 255));
-        HPEN panel_pen = CreatePen(PS_SOLID, 1, RGB(0, 196, 170));
-        HGDIOBJ previous_brush = SelectObject(dc, panel_brush);
-        HGDIOBJ previous_pen = SelectObject(dc, panel_pen);
-        RoundRect(dc, panel.left, panel.top, panel.right, panel.bottom, 8, 8);
-        SelectObject(dc, previous_brush);
-        SelectObject(dc, previous_pen);
-        DeleteObject(panel_brush);
-        DeleteObject(panel_pen);
-        SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, theme_ == ThemeMode::CyberDark ? RGB(0, 242, 195) : RGB(0, 120, 95));
-        RECT title{left + 12, top + 5, left + 238, top + 27};
-        DrawTextW(dc, language_ == UILanguage::Vietnamese ? L"BẮT ĐIỂM & HƯỚNG"
-                                                          : L"SNAP & DIRECTION",
-                  -1, &title, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        const auto config = state.snap_config;
-        const COLORREF text_color = theme_ == ThemeMode::CyberDark
-            ? RGB(220, 230, 240) : RGB(30, 41, 59);
-        SetTextColor(dc, text_color);
-        const auto option = [&](int y, const wchar_t* label, bool enabled) {
-            RECT row{left + 10, top + y, left + 240, top + y + 22};
-            HBRUSH row_brush = CreateSolidBrush(enabled ? RGB(18, 55, 60)
-                : (theme_ == ThemeMode::CyberDark ? RGB(20, 31, 45) : RGB(235, 240, 246)));
-            FillRect(dc, &row, row_brush);
-            DeleteObject(row_brush);
-            SetTextColor(dc, enabled ? RGB(0, 242, 195) : text_color);
-            DrawTextW(dc, label, -1, &row, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
-                      DT_NOPREFIX | DT_LEFT);
-        };
-        option(32, language_ == UILanguage::Vietnamese ? L"Bắt điểm tổng" : L"Master snapping",
-               config.master_enabled);
-        option(58, L"Endpoint", config.options[static_cast<size_t>(vector::precision::snap::SnapOption::Endpoint)]);
-        option(82, L"Source node", config.options[static_cast<size_t>(vector::precision::snap::SnapOption::SourceNode)]);
-        option(106, L"Line midpoint", config.options[static_cast<size_t>(vector::precision::snap::SnapOption::LineMidpoint)]);
-        option(130, L"Grid", config.options[static_cast<size_t>(vector::precision::snap::SnapOption::Grid)]);
-        const wchar_t* modes[] = {L"Free", L"Ortho", L"Polar"};
-        for (int index = 0; index < 3; ++index) {
-            RECT mode{left + 10 + index * 78, top + 156, left + 84 + index * 78, top + 178};
-            const auto selected = static_cast<int>(config.direction.mode) == index;
-            HBRUSH mode_brush = CreateSolidBrush(selected ? RGB(0, 125, 112)
-                : (theme_ == ThemeMode::CyberDark ? RGB(20, 31, 45) : RGB(235, 240, 246)));
-            FillRect(dc, &mode, mode_brush);
-            DeleteObject(mode_brush);
-            SetTextColor(dc, selected ? RGB(255, 255, 255) : text_color);
-            DrawTextW(dc, modes[index], -1, &mode, DT_CENTER | DT_VCENTER |
-                      DT_SINGLELINE | DT_NOPREFIX);
-        }
-        std::wostringstream polar;
-        polar << L"Polar step: " << config.direction.polar.step_degrees << L"°  · click to cycle";
-        RECT polar_row{left + 10, top + 182, left + 240, top + 204};
-        SetTextColor(dc, text_color);
-        DrawTextW(dc, polar.str().c_str(), -1, &polar_row,
-                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        std::wostringstream profile_label;
-        profile_label << L"Profile: " << NativeWindow::utf8_to_wide(state.profile)
-            << L" · Shift lock "
-            << (state.profile == "Corel" ? 15.0 : state.profile == "Custom"
-                ? config.direction.polar.step_degrees : 45.0) << L"° · click";
-        RECT profile{left + 10, top + 207, left + 240, top + 229};
-        SetTextColor(dc, text_color);
-        DrawTextW(dc, profile_label.str().c_str(), -1, &profile,
-            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        RECT unsupported{left + 10, top + 232, left + 240, top + 256};
-        SetTextColor(dc, RGB(150, 160, 175));
-        DrawTextW(dc, language_ == UILanguage::Vietnamese
-            ? L"Giao, tiếp tuyến, Bezier: chưa khả dụng"
-            : L"Intersection, tangent, Bezier: unavailable",
-            -1, &unsupported, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
-            DT_END_ELLIPSIS | DT_NOPREFIX);
-    }
 }
 
 #endif

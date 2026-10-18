@@ -35,15 +35,19 @@ public:
     }
     [[nodiscard]] const Page& page() const { require_writer(); return current_page_; }
     [[nodiscard]] const PersistentObjectMap& objects() const { require_writer(); return current_objects_; }
+    [[nodiscard]] const std::vector<DocumentPage>& pages() const { require_writer(); return pages_; }
+    [[nodiscard]] PageId active_page_id() const { require_writer(); return active_page_id_; }
 
     [[nodiscard]] bool can_undo() const { require_writer(); return history_.can_undo(); }
     [[nodiscard]] bool can_redo() const { require_writer(); return history_.can_redo(); }
     [[nodiscard]] bool is_dirty() const {
         require_writer();
-        return epoch_ != saved_epoch_ || revision_ != saved_revision_;
+        return recovery_pending_save_ || epoch_ != saved_epoch_ || revision_ != saved_revision_;
     }
 
     void mark_saved(uint64_t epoch, uint64_t revision);
+    /// Recovered data has no durable user-selected file until the next save.
+    void mark_recovered_unsaved();
 
     CommandResult execute_command(CommandPtr cmd);
     bool undo();
@@ -65,6 +69,10 @@ public:
 
     /// Internal method for commands to apply state mutations
     void apply_mutation(Page page, PersistentObjectMap objects);
+    /// Replaces page roots as part of an executing command.
+    void apply_page_collection(std::vector<DocumentPage> pages, PageId active_page_id);
+    /// Changes the visible page without creating an edit or undo record.
+    [[nodiscard]] bool set_active_page(PageId page_id);
 
     /// Replaces document state as a new lifecycle, clearing history and invalidating old jobs.
     [[nodiscard]] bool reset_from_snapshot(SnapshotPtr snapshot);
@@ -82,9 +90,12 @@ private:
     uint64_t revision_{0};
     uint64_t saved_epoch_{1};
     uint64_t saved_revision_{0};
+    bool recovery_pending_save_{false};
 
     Page current_page_;
     PersistentObjectMap current_objects_;
+    std::vector<DocumentPage> pages_;
+    PageId active_page_id_{kInvalidPageId};
     SnapshotPtr current_snapshot_;
     const std::thread::id writer_thread_{std::this_thread::get_id()};
     bool busy_{false};

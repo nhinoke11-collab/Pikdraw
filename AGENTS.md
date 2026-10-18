@@ -9,11 +9,11 @@
 
 ## Mã và hành vi
 
-- Runtime desktop hiện tại là C++20/Win32/GDI. Qt/Skia và các workspace chưa làm vẫn là thiết kế, không phải năng lực runtime.
+- Runtime desktop hiện tại là C++20 / Win32 Native Shell: Direct2D 1.1 / D3D11 hardware hoặc WARP dựng canvas qua ViewportRenderer; frame được staging/readback về pixel buffer rồi GDI chép vào backbuffer và vẽ overlays. SoftwareRasterizer là CPU fallback/oracle. Qt 6 và Skia vẫn là thiết kế định hướng chờ toolchain đồng nhất ABI.
 - Đọc registry/modules.json để biết dependency. Core/module không phụ thuộc ngược vào apps/desktop.
 - Document writes đi qua command/transaction và một writer logic. Giữ stable IDs, undo/redo, đơn vị thật, Unicode, màu nguồn và metadata. Async result phải bị từ chối khi revision/epoch/job generation đã cũ.
 - Importer và plugin ngoài process trả dữ liệu chưa tin cậy; host kiểm tra capability, kích thước, revision và nội dung trước khi áp dụng.
-- **Ngưỡng độ dài file (Tối đa 800 dòng)**: Mỗi file code chuẩn dài **300–700 dòng**, tối đa **800 dòng** (nằm trọn trong 1 khung đọc `view_file` của AI). **Tuyệt đối không nối đuôi (append)** tính năng mới vào các file đã vượt 800 dòng; phải tách file theo nhóm tính năng/domain rõ ràng. Xem `docs/development/code-organization.md` và `docs/roadmap/code-modularization-800loc-plan.md`.
+- **Ngưỡng độ dài file (Tối đa 800 dòng)**: Mỗi file code chuẩn dài **300–700 dòng**, tối đa **800 dòng** (nằm trọn trong 1 khung đọc `view_file` của AI). **Tuyệt đối không nối đuôi (append)** tính năng mới vào các file đã vượt 800 dòng; phải tách file theo nhóm tính năng/domain rõ ràng. Xem `docs/development/code-organization.md` và `docs/roadmap/architecture-remediation-plan-20261018.md`.
 
 ## Lập kế hoạch tính năng dùng tài nguyên vector
 

@@ -35,14 +35,13 @@ ComPtr<ID2D1PathGeometry> D2DGeometryCache::get_or_create_path(
     document::ObjectId id,
     uint64_t revision,
     const geometry::Path2D &path,
-    double camera_center_x,
-    double camera_center_y) {
+    uint8_t kind) {
   if (!factory)
     return nullptr;
 
   evict_stale(revision);
 
-  CacheKey key{id, revision, camera_center_x, camera_center_y};
+  CacheKey key{id, revision, kind, path.winding_rule() == geometry::WindingRule::EvenOdd};
   auto it = cache_.find(key);
   if (it != cache_.end()) {
     return it->second;
@@ -70,67 +69,55 @@ ComPtr<ID2D1PathGeometry> D2DGeometryCache::get_or_create_path(
       if (figure_open) {
         sink->EndFigure(D2D1_FIGURE_END_OPEN);
       }
-      D2D1_POINT_2F pt = camera_relative_point(el.pt.x, el.pt.y,
-                                               camera_center_x, camera_center_y);
+      D2D1_POINT_2F pt = D2D1::Point2F(static_cast<float>(el.pt.x), static_cast<float>(el.pt.y));
       sink->BeginFigure(pt, D2D1_FIGURE_BEGIN_FILLED);
       figure_open = true;
       break;
     }
     case geometry::PathVerb::LineTo: {
       if (!figure_open) {
-        D2D1_POINT_2F pt = camera_relative_point(el.pt.x, el.pt.y,
-                                                 camera_center_x, camera_center_y);
+        D2D1_POINT_2F pt = D2D1::Point2F(static_cast<float>(el.pt.x), static_cast<float>(el.pt.y));
         sink->BeginFigure(pt, D2D1_FIGURE_BEGIN_FILLED);
         figure_open = true;
       } else {
-        D2D1_POINT_2F pt = camera_relative_point(el.pt.x, el.pt.y,
-                                                 camera_center_x, camera_center_y);
+        D2D1_POINT_2F pt = D2D1::Point2F(static_cast<float>(el.pt.x), static_cast<float>(el.pt.y));
         sink->AddLine(pt);
       }
       break;
     }
     case geometry::PathVerb::QuadTo: {
       if (!figure_open) {
-        D2D1_POINT_2F pt = camera_relative_point(el.ctrl1.x, el.ctrl1.y,
-                                                 camera_center_x, camera_center_y);
+        D2D1_POINT_2F pt = D2D1::Point2F(static_cast<float>(el.ctrl1.x), static_cast<float>(el.ctrl1.y));
         sink->BeginFigure(pt, D2D1_FIGURE_BEGIN_FILLED);
         figure_open = true;
       }
       D2D1_QUADRATIC_BEZIER_SEGMENT seg{};
-      seg.point1 = camera_relative_point(el.ctrl1.x, el.ctrl1.y,
-                                         camera_center_x, camera_center_y);
-      seg.point2 = camera_relative_point(el.pt.x, el.pt.y,
-                                         camera_center_x, camera_center_y);
+      seg.point1 = D2D1::Point2F(static_cast<float>(el.ctrl1.x), static_cast<float>(el.ctrl1.y));
+      seg.point2 = D2D1::Point2F(static_cast<float>(el.pt.x), static_cast<float>(el.pt.y));
       sink->AddQuadraticBezier(&seg);
       break;
     }
     case geometry::PathVerb::CubicTo: {
       if (!figure_open) {
-        D2D1_POINT_2F pt = camera_relative_point(el.ctrl1.x, el.ctrl1.y,
-                                                 camera_center_x, camera_center_y);
+        D2D1_POINT_2F pt = D2D1::Point2F(static_cast<float>(el.ctrl1.x), static_cast<float>(el.ctrl1.y));
         sink->BeginFigure(pt, D2D1_FIGURE_BEGIN_FILLED);
         figure_open = true;
       }
       D2D1_BEZIER_SEGMENT seg{};
-      seg.point1 = camera_relative_point(el.ctrl1.x, el.ctrl1.y,
-                                         camera_center_x, camera_center_y);
-      seg.point2 = camera_relative_point(el.ctrl2.x, el.ctrl2.y,
-                                         camera_center_x, camera_center_y);
-      seg.point3 = camera_relative_point(el.pt.x, el.pt.y,
-                                         camera_center_x, camera_center_y);
+      seg.point1 = D2D1::Point2F(static_cast<float>(el.ctrl1.x), static_cast<float>(el.ctrl1.y));
+      seg.point2 = D2D1::Point2F(static_cast<float>(el.ctrl2.x), static_cast<float>(el.ctrl2.y));
+      seg.point3 = D2D1::Point2F(static_cast<float>(el.pt.x), static_cast<float>(el.pt.y));
       sink->AddBezier(&seg);
       break;
     }
     case geometry::PathVerb::ArcTo: {
       if (!figure_open) {
-        D2D1_POINT_2F pt = camera_relative_point(el.pt.x, el.pt.y,
-                                                 camera_center_x, camera_center_y);
+        D2D1_POINT_2F pt = D2D1::Point2F(static_cast<float>(el.pt.x), static_cast<float>(el.pt.y));
         sink->BeginFigure(pt, D2D1_FIGURE_BEGIN_FILLED);
         figure_open = true;
       }
       D2D1_ARC_SEGMENT arc{};
-      arc.point = camera_relative_point(el.pt.x, el.pt.y,
-                                        camera_center_x, camera_center_y);
+      arc.point = D2D1::Point2F(static_cast<float>(el.pt.x), static_cast<float>(el.pt.y));
       arc.size = D2D1::SizeF(static_cast<float>(el.rx), static_cast<float>(el.ry));
       arc.rotationAngle = static_cast<float>(el.rotation_deg);
       arc.sweepDirection = el.sweep ? D2D1_SWEEP_DIRECTION_CLOCKWISE

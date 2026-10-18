@@ -28,4 +28,4 @@ Với UI, review đường truy cập, action, các trạng thái người dùng
 
 Build và chạy các regression liên quan trên source tích hợp; kiểm tra license, định dạng công bố, known limits và dữ liệu lưu/mở lại. Chỉ gọi một gate là pass khi có bằng chứng đúng revision.
 
-Không có giới hạn LOC tự động. File khoảng 1.000 dòng hoặc lớn hơn được review theo trách nhiệm và khả năng kiểm thử, không bị từ chối theo kích thước.
+Tuân thủ quy chuẩn độ dài file <= 800 dòng (chuẩn 300–700 dòng/file) theo `docs/development/code-organization.md`. Không nối đuôi tính năng mới vào các file đã vượt 800 dòng.

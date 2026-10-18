@@ -349,6 +349,13 @@ void draw_tool_icon_gdiplus(GdiplusApi* api, GpGraphics* g, int tool, float cx, 
         api->FillEllipse(g, fill_brush, cx - 7.5f, cy + 3.0f, 3.5f, 3.5f);
         api->FillEllipse(g, fill_brush, cx + 4.0f, cy - 6.0f, 3.5f, 3.5f);
         api->FillEllipse(g, fill_brush, cx - 1.2f, cy - 1.2f, 2.4f, 2.4f);
+    } else if (tool == 14) {
+        // Tool 14: Contour: concentric inset and outset perimeter boundary lines
+        api->DrawRectangle(g, pen, cx - 7.5f, cy - 7.5f, 15.0f, 15.0f);
+        GpPen* inner_pen = nullptr;
+        api->CreatePen1(MakeGdiplusARGB(color, 160), 1.0f, kUnitPixel, &inner_pen);
+        api->DrawRectangle(g, inner_pen, cx - 3.5f, cy - 3.5f, 7.0f, 7.0f);
+        api->DeletePen(inner_pen);
     }
 
     api->DeleteBrush(fill_brush);
@@ -437,6 +444,9 @@ void draw_tool_icon_gdi_fallback(HDC dc, int tool, int center_x, int center_y, C
         LineTo(dc, center_x + 6, center_y - 4);
         Ellipse(dc, center_x - 7, center_y + 2, center_x - 4, center_y + 5);
         Ellipse(dc, center_x + 4, center_y - 5, center_x + 7, center_y - 2);
+    } else if (tool == 14) {
+        Rectangle(dc, center_x - 7, center_y - 7, center_x + 8, center_y + 8);
+        Rectangle(dc, center_x - 3, center_y - 3, center_x + 4, center_y + 4);
     }
     SelectObject(dc, old_brush);
     SelectObject(dc, old_pen);

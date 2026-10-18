@@ -34,7 +34,7 @@ public:
                   RenderMetric *out_metric = nullptr) override;
 
   /// Returns true if rendering is currently utilizing a hardware GPU device.
-  [[nodiscard]] bool is_hardware_accelerated() const noexcept;
+  [[nodiscard]] bool is_hardware_accelerated() const noexcept override;
 
 private:
   struct Impl;

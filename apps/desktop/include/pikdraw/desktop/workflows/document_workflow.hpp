@@ -15,9 +15,52 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <stop_token>
 #include <vector>
 
 namespace pikdraw::desktop {
+
+enum class ImportFormat : uint8_t { Svg, Dxf };
+enum class ImportProgressStage : uint8_t { Snapshotting, StartingWorker, Reading, Validating, Complete };
+
+struct ImportProgress {
+    ImportProgressStage stage{ImportProgressStage::Snapshotting};
+    size_t records_received{0};
+};
+
+struct ImportIssueSummary {
+    std::string feature_code;
+    std::string diagnostic_code;
+};
+
+struct ImportedContentProposal {
+    std::string format_name;
+    std::string profile_id;
+    uint64_t source_bytes{0};
+    double source_page_width_mm{0};
+    double source_page_height_mm{0};
+    std::string coverage_status;
+    std::string appearance_status;
+    std::string editability_status;
+    std::string production_status;
+    std::vector<ImportIssueSummary> issues;
+    std::vector<document::Layer> layers;
+    std::vector<document::ObjectVariant> objects;
+};
+
+struct ImportWorkerResult {
+    bool success{false};
+    bool cancelled{false};
+    std::string error_message;
+    ImportedContentProposal proposal;
+};
+
+[[nodiscard]] ImportWorkerResult run_import_worker_job(
+    const std::wstring& source_path,
+    ImportFormat format,
+    const document::AsyncProposalMetadata& job,
+    std::stop_token cancellation,
+    const std::function<void(ImportProgress)>& on_progress = {});
 
 /// High-level user workflows implementing the M1 end-to-end vector pipeline
 class DocumentWorkflow {
@@ -363,6 +406,12 @@ public:
 
     /// Import SVG XML subset
     bool import_svg(const std::string& svg_xml);
+
+    /// Capture, cancel and atomically commit a background SVG/DXF import job.
+    [[nodiscard]] document::AsyncProposalMetadata begin_import_job(uint64_t job_id);
+    void cancel_import_job(uint64_t job_id);
+    [[nodiscard]] document::ProposalStatus commit_import_proposal(
+        document::AsyncProposalMetadata metadata, ImportedContentProposal proposal);
 
     /// Export SVG XML string
     [[nodiscard]] std::string export_svg();

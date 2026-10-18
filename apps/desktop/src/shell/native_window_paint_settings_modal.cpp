@@ -13,8 +13,9 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
 
     // 1. Modal backdrop dimming (semi-transparent)
     HDC dim_dc = CreateCompatibleDC(mem_dc);
-    HBITMAP dim_bmp = CreateCompatibleBitmap(mem_dc, w, h);
+    HBITMAP dim_bmp = CreateCompatibleBitmap(mem_dc, dip(w), dip(h));
     HGDIOBJ old_dim_bmp = SelectObject(dim_dc, dim_bmp);
+    configure_ui_dc(dim_dc);
     HBRUSH br_dim = CreateSolidBrush(RGB(2, 4, 8));
     RECT rc_dim = { 0, 0, w, h };
     FillRect(dim_dc, &rc_dim, br_dim);
@@ -512,12 +513,12 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
             L"• Renderer Backend: DirectX / Skia GPU Rasterizer (Probed: Windows D3D11)\n"
             L"• Bộ nhớ đệm đồ họa (RAM Cache): 512 MB (Tự động dọn rác bộ nhớ)\n"
             L"• Tần số làm tươi: 120 FPS / Tự động đồng bộ V-Sync màn hình\n"
-            L"• Tự động sao lưu dự phòng: Mỗi 5 phút vào %LOCALAPPDATA%/PikDraw/\n"
+            L"• Bản phục hồi tự động: Mỗi 60 giây vào %LOCALAPPDATA%/PikDraw/Recovery\n"
             L"• Giới hạn lịch sử thao tác: 50 bước Undo/Redo" :
             L"• Renderer Backend: DirectX / Skia GPU Rasterizer (Probed: Windows D3D11)\n"
             L"• Raster Cache RAM Budget: 512 MB with automatic garbage collection\n"
             L"• Refresh Rate: 120 FPS / V-Sync hardware synchronized\n"
-            L"• Autosave Interval: Every 5 minutes to %LOCALAPPDATA%/PikDraw/\n"
+            L"• Auto-recovery: Every 60 seconds to %LOCALAPPDATA%/PikDraw/Recovery\n"
             L"• Undo/Redo Depth: 50 atomic command revisions";
         DrawTextW(mem_dc, sys_text, -1, &rc_sys_b, DT_LEFT | DT_NOPREFIX);
 

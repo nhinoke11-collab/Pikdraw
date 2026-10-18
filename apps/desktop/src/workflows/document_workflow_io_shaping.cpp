@@ -161,13 +161,13 @@ bool DocumentWorkflow::boolean_operation_selected(
     document::PathObject new_obj;
     new_obj.id = document::generate_object_id();
     switch (op) {
-        case geometry::BooleanOp::Union: new_obj.name = "H├án (Weld)"; break;
-        case geometry::BooleanOp::Difference: new_obj.name = "X├⌐n (Trim)"; break;
+        case geometry::BooleanOp::Union: new_obj.name = "Hàn (Weld)"; break;
+        case geometry::BooleanOp::Difference: new_obj.name = "Cắt (Trim)"; break;
         case geometry::BooleanOp::Intersection: new_obj.name = "Giao (Intersect)"; break;
-        case geometry::BooleanOp::Xor: new_obj.name = "Rß╗ùng (Exclude)"; break;
-        case geometry::BooleanOp::BackMinusFront: new_obj.name = "Trß╗½ d╞░ß╗¢i (Back Minus Front)"; break;
-        case geometry::BooleanOp::Boundary: new_obj.name = "─É╞░ß╗¥ng bao (Boundary)"; break;
-        default: new_obj.name = "Tß║ío h├¼nh (Shaping)"; break;
+        case geometry::BooleanOp::Xor: new_obj.name = "Rỗng (Exclude)"; break;
+        case geometry::BooleanOp::BackMinusFront: new_obj.name = "Trừ dưới (Back Minus Front)"; break;
+        case geometry::BooleanOp::Boundary: new_obj.name = "Đường bao (Boundary)"; break;
+        default: new_obj.name = "Tạo hình (Shaping)"; break;
     }
     new_obj.path = std::move(result->path);
     new_obj.transform = geometry::Transform2D::identity();
@@ -247,7 +247,7 @@ bool DocumentWorkflow::split_objects_by_line(
                 for (auto& piece_path : pieces) {
                     document::PathObject piece_obj;
                     piece_obj.id = document::generate_object_id();
-                    piece_obj.name = po->name + " (Mß║únh " + std::to_string(idx) + ")";
+                    piece_obj.name = po->name + " (Mảnh " + std::to_string(idx) + ")";
                     piece_obj.path = std::move(piece_path);
                     if (idx == 1) {
                         piece_obj.fill = po->fill;
@@ -290,7 +290,7 @@ bool DocumentWorkflow::split_objects_by_line(
 
                 document::ImageObject im1;
                 im1.id = document::generate_object_id();
-                im1.name = im->name + " (Mß║únh 1)";
+                im1.name = im->name + " (Mảnh 1)";
                 im1.bounds_rect = r1;
                 im1.width_px = w_px1;
                 im1.height_px = h_px;
@@ -304,7 +304,7 @@ bool DocumentWorkflow::split_objects_by_line(
 
                 document::ImageObject im2;
                 im2.id = document::generate_object_id();
-                im2.name = im->name + " (Mß║únh 2)";
+                im2.name = im->name + " (Mảnh 2)";
                 im2.bounds_rect = r2;
                 im2.width_px = w_px2;
                 im2.height_px = h_px;
@@ -341,7 +341,7 @@ bool DocumentWorkflow::split_objects_by_line(
                 for (auto& piece_path : pieces) {
                     document::PathObject piece_obj;
                     piece_obj.id = document::generate_object_id();
-                    piece_obj.name = to->name + " (Mß║únh " + std::to_string(idx) + ")";
+                    piece_obj.name = to->name + " (Mảnh " + std::to_string(idx) + ")";
                     piece_obj.path = std::move(piece_path);
                     piece_obj.fill = to->fill;
                     piece_obj.stroke = color::ColorValue{color::RGBColor{0.0, 0.0, 0.0, 1.0}};

@@ -1,4 +1,5 @@
 #include "pikdraw/document/document.hpp"
+#include <algorithm>
 #include <limits>
 #include <stdexcept>
 
@@ -28,11 +29,11 @@ public:
     void set_after(SnapshotPtr after) noexcept { after_ = std::move(after); }
     std::string_view name() const noexcept override { return "Committed transaction"; }
     CommandResult execute(Document& doc) override {
-        doc.apply_mutation(after_->page(), after_->objects());
+        doc.apply_page_collection(after_->pages(), after_->active_page_id());
         return CommandResult::ok();
     }
     CommandResult undo(Document& doc) override {
-        doc.apply_mutation(before_->page(), before_->objects());
+        doc.apply_page_collection(before_->pages(), before_->active_page_id());
         return CommandResult::ok();
     }
 private:
@@ -53,8 +54,10 @@ Document::Document(std::string document_id, Page page)
     if (document_id_.empty()) throw std::invalid_argument("Document ID cannot be empty");
     saved_epoch_ = epoch_;
     validate_page(current_page_);
+    pages_.push_back(make_document_page("Page 1", current_page_, current_objects_));
+    active_page_id_ = pages_.front().id;
     current_snapshot_ = std::make_shared<const DocumentSnapshot>(
-        epoch_, revision_, current_page_, current_objects_, document_id_);
+        epoch_, revision_, pages_, active_page_id_, document_id_);
 }
 
 void Document::require_writer() const {
@@ -65,13 +68,15 @@ void Document::require_writer() const {
 Document::Document(const DocumentSnapshot& saved) : Document(saved.document_id()) {
     epoch_ = allocate_epoch(saved.epoch());
     saved_epoch_ = epoch_;
+    pages_ = saved.pages();
+    active_page_id_ = saved.active_page_id();
     current_page_ = saved.page();
     current_objects_ = saved.objects();
     revision_ = saved.revision();
     saved_revision_ = revision_;
     if (!current_objects_.empty()) reserve_object_id((*current_objects_.all().rbegin()).first);
     current_snapshot_ = std::make_shared<const DocumentSnapshot>(
-        epoch_, revision_, current_page_, current_objects_, document_id_);
+        epoch_, revision_, pages_, active_page_id_, document_id_);
 }
 
 void Document::require_idle_writer() const {
@@ -83,9 +88,13 @@ void Document::require_idle_writer() const {
 CommandResult Document::prepare_command(DocumentCommand& cmd, bool reverse, SnapshotPtr& next) {
     Page before_page = current_page_;
     const auto before_objects = current_objects_;
+    const auto before_pages = pages_;
+    const auto before_active_page_id = active_page_id_;
     auto restore = [&] {
         current_page_ = std::move(before_page);
         current_objects_ = before_objects;
+        pages_ = before_pages;
+        active_page_id_ = before_active_page_id;
     };
     try {
         BusyScope execution(executing_);
@@ -103,7 +112,7 @@ CommandResult Document::prepare_command(DocumentCommand& cmd, bool reverse, Snap
             return CommandResult::fail("Document revision exhausted");
         }
         next = std::make_shared<const DocumentSnapshot>(
-            epoch_, revision_ + 1, current_page_, current_objects_, document_id_);
+            epoch_, revision_ + 1, pages_, active_page_id_, document_id_);
         return result;
     } catch (const std::exception& error) {
         restore();
@@ -161,7 +170,50 @@ void Document::apply_mutation(Page page, PersistentObjectMap objects) {
     validate_page(page);
     current_page_ = std::move(page);
     current_objects_ = std::move(objects);
+    const auto active = std::find_if(pages_.begin(), pages_.end(), [&](const auto& item) {
+        return item.id == active_page_id_;
+    });
+    if (active == pages_.end()) throw std::logic_error("Active page root is missing");
+    active->layout = current_page_;
+    active->objects = current_objects_;
     if (!current_objects_.empty()) reserve_object_id((*current_objects_.all().rbegin()).first);
+}
+
+void Document::apply_page_collection(std::vector<DocumentPage> pages, PageId active_page_id) {
+    require_writer();
+    if (!open_ || !executing_)
+        throw std::logic_error("Page collection mutation requires an executing document command");
+    // Validate the entire replacement before publishing any part of it.
+    DocumentSnapshot validation{epoch_, revision_, pages, active_page_id, document_id_};
+    const auto* active = validation.find_page(active_page_id);
+    if (!active) throw std::invalid_argument("Active page ID is not present in the document");
+    pages_ = std::move(pages);
+    active_page_id_ = active_page_id;
+    current_page_ = active->layout;
+    current_objects_ = active->objects;
+    for (const auto& page : pages_)
+        if (!page.objects.empty()) reserve_object_id((*page.objects.all().rbegin()).first);
+}
+
+bool Document::set_active_page(PageId page_id) {
+    try { require_idle_writer(); }
+    catch (...) { return false; }
+    if (page_id == active_page_id_) return true;
+    const auto target = std::find_if(pages_.begin(), pages_.end(), [&](const auto& page) {
+        return page.id == page_id;
+    });
+    if (target == pages_.end()) return false;
+    try {
+        auto next = std::make_shared<const DocumentSnapshot>(
+            epoch_, revision_, pages_, page_id, document_id_);
+        active_page_id_ = page_id;
+        current_page_ = target->layout;
+        current_objects_ = target->objects;
+        publish_snapshot(std::move(next));
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 bool Document::reset_from_snapshot(SnapshotPtr snapshot) {
@@ -174,22 +226,23 @@ bool Document::reset_from_snapshot(SnapshotPtr snapshot) {
         // Prepare the replacement completely before changing the live document.
         auto next_document_id = snapshot->document_id().empty()
             ? document_id_ : snapshot->document_id();
-        auto next_page = snapshot->page();
-        auto next_objects = snapshot->objects();
+        auto next_pages = snapshot->pages();
+        auto next_active_page_id = snapshot->active_page_id();
         const auto next_revision = snapshot->revision();
-        validate_page(next_page);
         const auto next_epoch = allocate_epoch(epoch_);
         auto next = std::make_shared<const DocumentSnapshot>(
-            next_epoch, next_revision, next_page, next_objects, next_document_id);
+            next_epoch, next_revision, next_pages, next_active_page_id, next_document_id);
 
-        if (!next_objects.empty()) reserve_object_id((*next_objects.all().rbegin()).first);
         document_id_ = std::move(next_document_id);
         epoch_ = next_epoch;
-        current_page_ = std::move(next_page);
-        current_objects_ = std::move(next_objects);
+        pages_ = std::move(next_pages);
+        active_page_id_ = next_active_page_id;
+        current_page_ = next->page();
+        current_objects_ = next->objects();
         history_.clear();
         saved_epoch_ = next_epoch;
         saved_revision_ = next_revision;
+        recovery_pending_save_ = false;
         publish_snapshot(std::move(next));
         return true;
     } catch (...) {
@@ -219,7 +272,15 @@ void Document::mark_saved(uint64_t epoch, uint64_t revision) {
     if (epoch == epoch_ && revision == revision_) {
         saved_epoch_ = epoch;
         saved_revision_ = revision;
+        recovery_pending_save_ = false;
     }
+}
+
+void Document::mark_recovered_unsaved() {
+    require_idle_writer();
+    if (!open_)
+        throw std::logic_error("Cannot mark a closed document as recovered");
+    recovery_pending_save_ = true;
 }
 
 } // namespace pikdraw::document

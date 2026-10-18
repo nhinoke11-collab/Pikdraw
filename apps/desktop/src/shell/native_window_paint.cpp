@@ -23,103 +23,28 @@ namespace pikdraw::desktop {
 
 #ifdef _WIN32
 
-void NativeWindow::paint_document_tab_bar(HDC mem_dc, int w, int topbar_h, int tabbar_h) {
-    bool is_dark = (theme_ == ThemeMode::CyberDark);
-    COLORREF col_tab_bar_bg = is_dark ? RGB(10, 16, 25) : RGB(241, 245, 249);
-    COLORREF col_tab_active = is_dark ? RGB(18, 28, 42) : RGB(255, 255, 255);
-    COLORREF col_tab_inactive = is_dark ? RGB(12, 19, 29) : RGB(226, 232, 240);
-    COLORREF col_border = is_dark ? RGB(29, 38, 54) : RGB(203, 213, 225);
-    COLORREF col_teal = is_dark ? RGB(0, 242, 195) : RGB(0, 135, 106);
-    COLORREF col_text_mut = is_dark ? RGB(148, 163, 184) : RGB(100, 116, 139);
-
-    RECT rc_bar = { 0, topbar_h, w, topbar_h + tabbar_h };
-    HBRUSH br_bar = CreateSolidBrush(col_tab_bar_bg);
-    FillRect(mem_dc, &rc_bar, br_bar);
-    DeleteObject(br_bar);
-
-    HPEN pen_bdr = CreatePen(PS_SOLID, 1, col_border);
-    HGDIOBJ old_pen = SelectObject(mem_dc, pen_bdr);
-    MoveToEx(mem_dc, 0, topbar_h + tabbar_h, NULL);
-    LineTo(mem_dc, w, topbar_h + tabbar_h);
-
-    int cur_x = 10;
-    int tab_w = 210;
-    ensure_ui_fonts();
-    HFONT font_tab = font_tab_;
-    HFONT font_tab_bold = font_tab_bold_;
-    HGDIOBJ old_font = SelectObject(mem_dc, font_tab);
-
-    for (size_t i = 0; i < tabs_.size(); ++i) {
-        const auto& tab = tabs_[i];
-        bool is_act = (i == active_tab_index_);
-        RECT rc_tab = { cur_x, topbar_h + 2, cur_x + tab_w, topbar_h + tabbar_h };
-
-        HBRUSH br_t = CreateSolidBrush(is_act ? col_tab_active : col_tab_inactive);
-        HPEN pen_t = CreatePen(PS_SOLID, 1, is_act ? col_teal : col_border);
-        SelectObject(mem_dc, pen_t);
-        SelectObject(mem_dc, br_t);
-        RoundRect(mem_dc, rc_tab.left, rc_tab.top, rc_tab.right, rc_tab.bottom + 2, 4, 4);
-        DeleteObject(pen_t);
-        DeleteObject(br_t);
-
-        if (is_act) {
-            HPEN pen_top = CreatePen(PS_SOLID, 2, col_teal);
-            SelectObject(mem_dc, pen_top);
-            MoveToEx(mem_dc, rc_tab.left + 2, rc_tab.top, NULL);
-            LineTo(mem_dc, rc_tab.right - 2, rc_tab.top);
-            DeleteObject(pen_top);
-        }
-
-        SelectObject(mem_dc, is_act ? font_tab_bold : font_tab);
-        SetTextColor(mem_dc, is_act ? col_teal : col_text_mut);
-        std::wstring wtitle = L"📄 " + utf8_to_wide(tab.title);
-        std::wstring wmode = utf8_to_wide(tab.color_mode);
-        if (wtitle.find(wmode) == std::wstring::npos) {
-            wtitle += L" (" + wmode + L")";
-        }
-        RECT rc_txt = { rc_tab.left + 8, rc_tab.top, rc_tab.right - 24, rc_tab.bottom };
-        DrawTextW(mem_dc, wtitle.c_str(), -1, &rc_txt, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
-
-        RECT rc_cls = { rc_tab.right - 22, rc_tab.top + 2, rc_tab.right - 4, rc_tab.bottom - 2 };
-        SetTextColor(mem_dc, col_text_mut);
-        DrawTextW(mem_dc, L"✕", -1, &rc_cls, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-        cur_x += tab_w + 4;
-    }
-
-    RECT rc_new_tab = { cur_x, topbar_h + 3, cur_x + 26, topbar_h + tabbar_h - 2 };
-    HBRUSH br_nt = CreateSolidBrush(col_tab_inactive);
-    SelectObject(mem_dc, br_nt);
-    RoundRect(mem_dc, rc_new_tab.left, rc_new_tab.top, rc_new_tab.right, rc_new_tab.bottom, 4, 4);
-    DeleteObject(br_nt);
-    SelectObject(mem_dc, font_tab_bold);
-    SetTextColor(mem_dc, col_teal);
-    DrawTextW(mem_dc, L"+", -1, &rc_new_tab, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-    SelectObject(mem_dc, old_font);
-    SelectObject(mem_dc, old_pen);
-    DeleteObject(pen_bdr);
-}
-
 void NativeWindow::paint(HDC hdc, int w, int h) {
     ensure_ui_fonts();
+    const int device_w = dip(w), device_h = dip(h);
 
     if (!backbuffer_dc_) {
         backbuffer_dc_ = CreateCompatibleDC(hdc);
     }
-    if (backbuffer_bmp_ && (w != backbuffer_w_ || h != backbuffer_h_)) {
+    if (backbuffer_bmp_ && (device_w != backbuffer_w_ || device_h != backbuffer_h_)) {
         SelectObject(backbuffer_dc_, backbuffer_old_bmp_);
         DeleteObject(backbuffer_bmp_);
         backbuffer_bmp_ = nullptr;
         backbuffer_old_bmp_ = nullptr;
     }
     if (!backbuffer_bmp_) {
-        backbuffer_bmp_ = CreateCompatibleBitmap(hdc, w, h);
+        backbuffer_bmp_ = CreateCompatibleBitmap(hdc, device_w, device_h);
         backbuffer_old_bmp_ = SelectObject(backbuffer_dc_, backbuffer_bmp_);
-        backbuffer_w_ = w;
-        backbuffer_h_ = h;
+        backbuffer_w_ = device_w;
+        backbuffer_h_ = device_h;
     }
     HDC mem_dc = backbuffer_dc_;
+    const int saved_dc = SaveDC(mem_dc);
+    configure_ui_dc(mem_dc);
 
     HFONT font_be_vietnam = font_be_vietnam_;
     HFONT font_be_vietnam_bold = font_be_vietnam_bold_;
@@ -135,7 +60,6 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
     COLORREF col_canvas = canvas_background_colorref();
     COLORREF col_header = is_dark ? RGB(12, 19, 29) : RGB(255, 255, 255);
     COLORREF col_ribbon = is_dark ? RGB(14, 22, 34) : RGB(248, 250, 252);
-    COLORREF col_statusbar = is_dark ? RGB(7, 11, 16) : RGB(226, 232, 240);
     COLORREF col_border = is_dark ? RGB(29, 38, 54) : RGB(203, 213, 225);
     COLORREF col_teal = is_dark ? RGB(0, 242, 195) : RGB(0, 135, 106);
     COLORREF col_text_white = is_dark ? RGB(241, 245, 249) : RGB(15, 23, 42);
@@ -765,72 +689,7 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
 
     paint_main_menu_bar(mem_dc, w, topbar_h);
 
-    // 7. Bottom Status Bar (Always at bottom)
-    HBRUSH br_status = CreateSolidBrush(col_statusbar);
-    RECT rc_status = { 0, h - status_h, w, h };
-    FillRect(mem_dc, &rc_status, br_status);
-    DeleteObject(br_status);
-
-    HPEN pen_st_bdr = CreatePen(PS_SOLID, 1, col_border);
-    HGDIOBJ old_st_bdr = SelectObject(mem_dc, pen_st_bdr);
-    MoveToEx(mem_dc, 0, h - status_h, NULL); LineTo(mem_dc, w, h - status_h);
-    SelectObject(mem_dc, old_st_bdr);
-    DeleteObject(pen_st_bdr);
-
-    // Live coordinates
-    SelectObject(mem_dc, font_mono);
-    SetTextColor(mem_dc, col_text_muted);
-    std::wostringstream wcoord;
-    wcoord << L"X: " << std::fixed << std::setprecision(1) << cursor_mm_x_ << L" mm   "
-           << L"Y: " << std::fixed << std::setprecision(1) << cursor_mm_y_ << L" mm";
-    std::wstring coord_str = wcoord.str();
-    RECT rc_st_coord = { 16, h - status_h, 210, h };
-    DrawTextW(mem_dc, coord_str.c_str(), -1, &rc_st_coord, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-    // Theme Mode Badge Chip (bo nhẹ 5px)
-    SelectObject(mem_dc, font_be_vietnam);
-    HBRUSH br_tbadge = CreateSolidBrush(col_btn_bg);
-    HPEN p_tb = CreatePen(PS_SOLID, 1, col_btn_bdr);
-    SelectObject(mem_dc, p_tb);
-    SelectObject(mem_dc, br_tbadge);
-    RoundRect(mem_dc, 215, h - status_h + 3, 400, h - 3, 5, 5);
-    DeleteObject(p_tb);
-    DeleteObject(br_tbadge);
-    SetTextColor(mem_dc, col_teal);
-    const wchar_t* thm_badge = is_dark ? L"Theme: Dark Mode (Obsidian)" : L"Theme: Light Mode (Silver)";
-    RECT rc_tbadge = { 215, h - status_h + 3, 400, h - 3 };
-    DrawTextW(mem_dc, thm_badge, -1, &rc_tbadge, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-    // Live status message
-    SetTextColor(mem_dc, col_text_white);
-    std::wstring wmsg = utf8_to_wide(status_msg_);
-    RECT rc_st_msg = { 410, h - status_h, w - 230, h };
-    DrawTextW(mem_dc, wmsg.c_str(), -1, &rc_st_msg, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-    // Zoom buttons [-] 100% [+] (bo nhẹ 5px)
-    SelectObject(mem_dc, font_mono);
-    SetTextColor(mem_dc, col_text_white);
-    std::wstring wzoom = std::to_wstring(zoom_level_) + L"%";
-    RECT rc_zm_fit = { w - 210, h - status_h + 3, w - 145, h - 3 };
-    RECT rc_zm_btn_minus = { w - 120, h - status_h + 3, w - 95, h - 3 };
-    RECT rc_zm_txt = { w - 90, h - status_h, w - 50, h };
-    RECT rc_zm_btn_plus = { w - 45, h - status_h + 3, w - 20, h - 3 };
-
-    HBRUSH br_zm_btn = CreateSolidBrush(col_btn_bg);
-    HPEN p_zm = CreatePen(PS_SOLID, 1, col_btn_bdr);
-    SelectObject(mem_dc, p_zm);
-    SelectObject(mem_dc, br_zm_btn);
-    RoundRect(mem_dc, rc_zm_fit.left, rc_zm_fit.top, rc_zm_fit.right, rc_zm_fit.bottom, 5, 5);
-    RoundRect(mem_dc, rc_zm_btn_minus.left, rc_zm_btn_minus.top, rc_zm_btn_minus.right, rc_zm_btn_minus.bottom, 5, 5);
-    RoundRect(mem_dc, rc_zm_btn_plus.left, rc_zm_btn_plus.top, rc_zm_btn_plus.right, rc_zm_btn_plus.bottom, 5, 5);
-    DeleteObject(p_zm);
-    DeleteObject(br_zm_btn);
-
-    DrawTextW(mem_dc, L"-", -1, &rc_zm_btn_minus, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-    DrawTextW(mem_dc, is_vi ? L"Vừa trang" : L"Fit page", -1, &rc_zm_fit,
-              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-    DrawTextW(mem_dc, wzoom.c_str(), -1, &rc_zm_txt, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-    DrawTextW(mem_dc, L"+", -1, &rc_zm_btn_plus, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    paint_status_bar(mem_dc, w, h, status_h);
 
     // 8. Paint Settings Modal Dialog if open
     if (show_settings_modal_) {
@@ -840,6 +699,10 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
     // 8b. Paint New Document Modal Dialog if open
     if (show_new_doc_modal_) {
         paint_new_document_modal(mem_dc, w, h);
+    }
+
+    if (show_recovery_modal_) {
+        paint_recovery_modal(mem_dc, w, h);
     }
 
     // 9. Paint the selected main-menu dropdown.
@@ -909,9 +772,11 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
         DrawTextW(mem_dc, tooltip_.text.c_str(), -1, &rc_text, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
 
-    BitBlt(hdc, 0, 0, w, h, mem_dc, 0, 0, SRCCOPY);
+    SetMapMode(mem_dc, MM_TEXT);
+    BitBlt(hdc, 0, 0, device_w, device_h, mem_dc, 0, 0, SRCCOPY);
 
     SelectObject(mem_dc, old_font);
+    RestoreDC(mem_dc, saved_dc);
 }
 
 #endif

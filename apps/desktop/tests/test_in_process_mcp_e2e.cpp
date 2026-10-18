@@ -171,12 +171,26 @@ auto pump_until_ready(Future& future) {
 
 class ClipboardTextSnapshot final {
 public:
+    static bool is_safe_format(UINT format) {
+        if (format == CF_UNICODETEXT || format == CF_TEXT || format == CF_OEMTEXT || format == CF_LOCALE)
+            return true;
+        wchar_t name[256] = {};
+        if (GetClipboardFormatNameW(format, name, 256) > 0) {
+            std::wstring_view sv(name);
+            if (sv == L"DataObject" || sv == L"Ole Private Data" || sv == L"System.String" ||
+                sv == L"CanIncludeInClipboardHistory" || sv == L"CanUploadToCloudClipboard" ||
+                sv == L"PikDraw.DocumentSnapshot.v1" || sv == L"image/svg+xml")
+                return true;
+        }
+        return false;
+    }
+
     explicit ClipboardTextSnapshot(HWND owner) : owner_(owner) {
         if (!OpenClipboard(owner_)) return;
         UINT format = 0;
         bool safe = true;
         while ((format = EnumClipboardFormats(format)) != 0) {
-            if (format != CF_UNICODETEXT) {
+            if (!is_safe_format(format)) {
                 safe = false;
                 break;
             }

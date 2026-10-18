@@ -13,7 +13,7 @@ To eliminate floating-point jitter and precision loss when rendering objects loc
 - **World Geometry**: Maintained strictly in millimeters with binary64 `double` coordinates $(X_w, Y_w)$.
 - **Camera Anchor**: Camera center $(C_x, C_y)$ is maintained in binary64 `double` mm.
 - **Local Float Conversion**:
-  Prior to submitting coordinates to the rasterizer (Skia, Vulkan, Direct3D), coordinates are translated relative to the camera center in `double`, and only the offset is downcast to single-precision IEEE-754 `float`:
+  In the current Direct2D path, path/text geometry coordinates are translated relative to the camera center in `double`, and only the offset is downcast to single-precision IEEE-754 `float` before they reach the D2D geometry sink:
   $$x_{\text{local}} = \text{static\_cast<float>}(X_w - C_x)$$
   $$y_{\text{local}} = \text{static\_cast<float>}(Y_w - C_y)$$
 - All rendering matrix transformations (zoom, canvas rotation, viewport aspect) operate purely on this camera-relative float coordinate space.
@@ -38,9 +38,9 @@ The viewport snapshot provides:
 - **Visible World Bounds (AABB)**:
   The viewport calculates an axis-aligned bounding box in world space enclosing the visible view frustum.
 - **Hierarchical Culling**:
-  Objects or layers whose pre-computed world bounds do not intersect the visible frustum AABB are culled before rasterization or path tessellation.
+  Objects or layers whose pre-computed world bounds do not intersect the visible frustum AABB are culled before rasterization or path tessellation. Implemented via `SpatialIndex` (Bounding Volume Hierarchy).
 - **Damage Rectangle (Invalidation)**:
-  Document mutations compute a dirty bounding rectangle `dirty_rect_world: Rect2D`. The renderer only repaints or invalidates tile caches intersecting this damage rectangle.
+  `DamageTracker` unions old/new visual bounds between the cached and current immutable snapshots. NativeWindow clips that rectangle to the viewport and converts/copies only a small dirty pixel region into its GDI bitmap cache when camera, size, theme and profile are stable. Direct2D still renders and reads back the full frame; GPU partial-render and tile caches are not implemented.
 
 ---
 
@@ -61,7 +61,7 @@ The viewport snapshot provides:
 
 ## 6. Native appearance effects (implementation status, extension 1.3)
 
-This section records the renderer contract and current implementation boundary for C9's native basic appearance profile. The software renderer applies it to Path and Text objects with real glyph outlines. It does not certify vendor equivalence or support for group, image, layer, mask, isolation, pass-through, knockout, or source clipping semantics; those remain outside this extension.
+This section records the renderer contract and current implementation boundary for C9's native basic appearance profile. Direct2D 1.1 (hardware or WARP) and the software reference renderer evaluate Path/Text appearance effects. Image objects draw their bitmap and Group objects traverse children with inherited transforms; those object types do not carry an `Appearance` payload in the current document model. A non-Normal blend on a Drop Shadow node is rejected by the GPU backend because the effect requires scene-backdrop input not yet supported by that node path.
 
 - Rendering consumes an immutable document snapshot. Filter evaluation creates transient surfaces and never writes pixels, bounds, caches, or normalized parameters back into the document.
 - The authored pipeline is source fill/stroke on transparent pixels, with their own opacity factors; ordered effect nodes in object-local millimeters; the object affine transform; object opacity once over the entire premultiplied result; the object blend mode against the painter-order backdrop; then viewport clipping. Effect bounds do not replace source geometry bounds used by selection, hit-testing, or production geometry.

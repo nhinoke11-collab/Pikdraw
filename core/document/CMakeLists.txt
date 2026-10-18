@@ -14,6 +14,7 @@ add_library(pikdraw_document STATIC
     src/commands/pen_path_extension_command.cpp
     src/commands/node_commands.cpp
     src/commands/contour_commands.cpp
+    src/commands/import_content_command.cpp
     src/commands/dimension_commands.cpp
     src/annotations/dimension_style.cpp
     src/annotations/dimension_layout.cpp
@@ -69,6 +70,7 @@ if(PIKDRAW_BUILD_TESTS)
     add_doc_test(test_pikdraw_document_writer_safety tests/async/test_writer_safety.cpp)
     add_doc_test(test_pikdraw_document_storage tests/storage/test_storage.cpp)
     add_doc_test(test_pikdraw_document_storage_fidelity tests/storage/test_storage_fidelity.cpp)
+    target_sources(test_pikdraw_document_storage_fidelity PRIVATE tests/storage/test_storage_appearance_migration.cpp)
     add_doc_test(test_pikdraw_document_clone_utils tests/model/test_clone_utils.cpp)
     add_doc_test(test_pikdraw_document_dimension_model tests/annotations/test_dimension_model.cpp)
     add_doc_test(test_pikdraw_document_dimension_commands tests/commands/test_dimension_commands.cpp)

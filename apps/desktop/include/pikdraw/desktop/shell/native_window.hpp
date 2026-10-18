@@ -5,15 +5,18 @@
 #include "pikdraw/desktop/workflows/document_workflow.hpp"
 #include "pikdraw/desktop/presenters/object_style.hpp"
 #include "pikdraw/color/preview/color_transform.hpp"
+#include "pikdraw/document/storage/save_recovery.hpp"
 
 #include <string>
 #include <memory>
 #include <optional>
 #include <cstddef>
 #include <cstdint>
-#include <vector>
+#include <cmath>
+#include <unordered_set>
 #include "pikdraw/geometry/primitives/point.hpp"
 #include "pikdraw/geometry/primitives/bounds.hpp"
+#include "pikdraw/rendering/damage_tracker.hpp"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -26,6 +29,10 @@
 namespace pikdraw::desktop {
 struct CanvasFrameCache;
 struct NativeWindowAutomationRuntime;
+#ifdef _WIN32
+inline constexpr UINT kImportWorkerMessage = WM_APP + 0x37;
+#endif
+struct ImportJobSession;
 enum class MenuActionId;
 namespace tools { class DrawingToolController; class PenToolController; class NodeToolController; class ContourToolController; class GradientToolController; }
 
@@ -52,6 +59,11 @@ public:
     [[nodiscard]] const std::string& mcp_error_message() const noexcept;
 
     void capture_screenshot_bmp(const std::string& path);
+    static constexpr std::uintptr_t kAutoSaveTimerId = 0x504B;
+    // Shell coordinates are DIP; only Win32 device boundaries use physical pixels.
+    [[nodiscard]] int dip(int value) const noexcept {
+        return static_cast<int>(std::lround(value * dpi_scale_));
+    }
 
     [[nodiscard]] static std::wstring utf8_to_wide(const std::string& utf8);
     [[nodiscard]] static std::string wide_to_utf8(const std::wstring& wide);
@@ -152,6 +164,10 @@ public:
         std::string id{"doc-1"};
         std::string title{"Bản vẽ 1"};
         std::string file_path{""};
+        std::string recovery_directory;
+        uint64_t recovery_epoch{0};
+        uint64_t recovery_revision{0};
+        bool recovery_written{false};
         double page_width_mm{297.0};
         double page_height_mm{210.0};
         std::string color_mode{"CMYK"}; // CMYK or RGB
@@ -165,6 +181,8 @@ public:
     [[nodiscard]] size_t tab_count() const noexcept { return tabs_.size(); }
     [[nodiscard]] size_t active_tab_index() const noexcept { return active_tab_index_; }
     [[nodiscard]] const std::vector<DocumentTab>& tabs() const noexcept { return tabs_; }
+    [[nodiscard]] bool is_recovery_modal_open() const noexcept { return show_recovery_modal_; }
+    [[nodiscard]] size_t recovery_candidate_count() const noexcept { return recovery_candidates_.size(); }
     [[nodiscard]] DocumentTab& active_tab() noexcept;
     [[nodiscard]] const DocumentTab& active_tab() const noexcept;
 
@@ -408,16 +426,30 @@ private:
 
     bool start_mcp_gateway();
     void discard_ai_connections_choices() noexcept;
+    [[nodiscard]] std::string recovery_root_path() const;
+    void scan_recovery_checkpoints(bool show_when_found = true);
+    void close_recovery_modal() noexcept;
+    void recover_selected_checkpoint();
+    void discard_selected_checkpoint();
+    [[nodiscard]] bool handle_recovery_key(WPARAM key);
+    [[nodiscard]] bool handle_recovery_mouse_down(int x, int y);
     static constexpr int kStylePanelTop = 162;
     static constexpr int kAppearanceBlendTop = 616;
     static constexpr int kAppearanceEffectsTop = 708;
     static constexpr int kAppearanceEffectListTop = 794;
 #ifdef _WIN32
     static LRESULT CALLBACK window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+    void open_import_dialog();
+    void request_cancel_import_job();
+    void cancel_import_job();
+    void handle_import_worker_message(WPARAM kind);
+    [[nodiscard]] bool import_job_active() const noexcept;
     void paint(HDC hdc, int width, int height);
     void paint_settings_modal(HDC mem_dc, int width, int height);
     void paint_new_document_modal(HDC mem_dc, int width, int height);
+    void paint_recovery_modal(HDC mem_dc, int width, int height);
     void paint_document_tab_bar(HDC mem_dc, int w, int topbar_h, int tabbar_h);
+    void paint_status_bar(HDC mem_dc, int width, int height, int status_height);
     void paint_left_toolbox(HDC mem_dc, int w, int h);
     void paint_right_inspector_dock(HDC mem_dc, int w, int h);
     void paint_main_menu_bar(HDC mem_dc, int w, int topbar_h);
@@ -451,10 +483,13 @@ private:
     void load_color_preferences();
     void open_document_dialog();
     void save_document_dialog(bool force_save_as = false);
+    void autosave_documents();
+    [[nodiscard]] std::string recovery_directory_for_tab(DocumentTab& tab);
     void export_svg_dialog();
     void paint_canvas_rulers(HDC dc, int width, int height);
     void paint_drawing_overlay(HDC dc);
     void paint_pen_overlay(HDC dc);
+    void paint_drawing_tool_overlays(HDC dc);
     bool handle_drawing_panel_click(int x, int y);
     bool handle_drawing_click(int x, int y, unsigned modifiers);
     bool handle_drawing_character(char value);
@@ -478,9 +513,19 @@ private:
     void paint_page_preset_dropdown(HDC dc, int x, int y, int width);
 
     HWND hwnd_{nullptr};
+    void configure_ui_dc(HDC dc) const noexcept {
+        SetMapMode(dc, MM_ANISOTROPIC);
+        SetWindowExtEx(dc, 96, 96, nullptr);
+        const int dpi = static_cast<int>(std::lround(dpi_scale_ * 96));
+        SetViewportExtEx(dc, dpi, dpi, nullptr);
+    }
     HWND tooltip_hwnd_{nullptr};
     HINSTANCE hinstance_{nullptr};
 #endif
+    float dpi_scale_{1.0f};
+    [[nodiscard]] int logical_pixel(int value) const noexcept {
+        return static_cast<int>(std::lround(value / dpi_scale_));
+    }
     bool apply_style_patch(const vector::StylePatch &patch);
     int width_{1440};
     int height_{900};
@@ -526,6 +571,15 @@ private:
     int new_doc_dpi_{300}; // 300, 150, 72
     int new_doc_unit_{0}; // 0: mm, 1: cm, 2: m, 3: inch
     int next_doc_counter_{2};
+
+    // Recovery Review modal state; candidates contain metadata from validated snapshots.
+    std::vector<document::RecoveryInfo> recovery_candidates_;
+    std::unordered_set<std::string> restored_recovery_paths_;
+    bool recovery_candidates_truncated_{false};
+    bool show_recovery_modal_{false};
+    size_t recovery_selected_index_{0};
+    size_t recovery_first_visible_{0};
+    int recovery_focus_index_{1}; // 0: list, 1: Recover, 2: Discard, 3: Later
 
     // Page Preset Dropdown List State (Corel / Illustrator Property Bar)
     bool show_page_preset_dropdown_{false};
@@ -639,6 +693,9 @@ private:
     std::unique_ptr<tools::NodeToolController> node_tool_;
     std::unique_ptr<tools::ContourToolController> contour_tool_;
     std::unique_ptr<tools::GradientToolController> gradient_tool_;
+#ifdef _WIN32
+    std::shared_ptr<ImportJobSession> import_job_;
+#endif
     std::string pen_numeric_buffer_;
     std::string pen_numeric_length_;
     std::string pen_numeric_angle_;
@@ -683,6 +740,9 @@ private:
     double quick_dimension_drag_dir_y_{1.0};
     double quick_dimension_initial_w_{0.0};
     double quick_dimension_initial_h_{0.0};
+
+    // Damage Tracker for fast incremental culling
+    rendering::DamageTracker damage_tracker_;
 
     // Canvas Viewport Cache (Fast zero-allocation redraw during interaction)
     bool canvas_cache_valid_{false};

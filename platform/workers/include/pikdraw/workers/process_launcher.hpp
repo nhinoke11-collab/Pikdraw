@@ -9,6 +9,7 @@
 #include <functional>
 #include <optional>
 #include <span>
+#include <stop_token>
 
 namespace pikdraw::workers {
 
@@ -50,7 +51,8 @@ public:
         std::span<const uint8_t> request_bytes,
         std::chrono::milliseconds timeout,
         const pikdraw::interop::V2ProposalStreamLimits& limits,
-        const std::function<bool(const pikdraw::interop::IpcV2Frame&)>& consumer);
+        const std::function<bool(const pikdraw::interop::IpcV2Frame&)>& consumer,
+        std::stop_token cancellation = {});
 
     // Sends framed packet and waits for response up to timeout
     [[nodiscard]] std::optional<std::vector<uint8_t>> TransactBinaryPayload(

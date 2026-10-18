@@ -55,7 +55,7 @@ void NativeWindow::choose_stroke_width(int x, int y) {
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, 200,
                 language_ == UILanguage::Vietnamese ? L"Nhập kích thước…" : L"Custom width…");
-    POINT point{x, y};
+    POINT point{dip(x), dip(y)};
     ClientToScreen(hwnd_, &point);
     const auto chosen =
         TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, point.x, point.y, 0, hwnd_, nullptr);

@@ -352,7 +352,8 @@ bool WorkerProcessHost::TransactV2ProposalStream(
     std::span<const uint8_t> request_bytes,
     std::chrono::milliseconds timeout,
     const pikdraw::interop::V2ProposalStreamLimits& limits,
-    const std::function<bool(const pikdraw::interop::IpcV2Frame&)>& consumer) {
+    const std::function<bool(const pikdraw::interop::IpcV2Frame&)>& consumer,
+    std::stop_token cancellation) {
     using namespace pikdraw::interop;
     last_transport_failure_ = "none";
     last_worker_exit_code_ = STILL_ACTIVE;
@@ -370,7 +371,7 @@ bool WorkerProcessHost::TransactV2ProposalStream(
     std::string_view failure;
     if (!TransactV2ProposalStreamProcess(
             stdin_write_handle_.Get(), stdout_read_handle_.Get(), process_handle_.Get(),
-            *request, request_bytes, timeout, limits, consumer, failure)) {
+            *request, request_bytes, timeout, limits, consumer, failure, cancellation)) {
         if (process_handle_.IsValid()) (void)GetExitCodeProcess(process_handle_.Get(), &last_worker_exit_code_);
         Terminate();
         last_transport_failure_ = failure.data();

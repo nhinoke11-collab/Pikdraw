@@ -1,6 +1,6 @@
 # Kiến trúc PikDraw
 
-Đây là kiến trúc đích và ranh giới thiết kế, không phải bản kê đầy đủ các năng lực hiện có. Runtime desktop hiện tại là C++20/Win32/GDI; Qt/Skia cùng một số workspace vẫn là phương án nghiên cứu. Xem [README](../../README.md), [project state](../project-state.json) và [sơ đồ source](../development/code-organization.md) để biết phần đã có; ADR giữ quyết định và giả thuyết theo thời điểm.
+Đây là kiến trúc đích và ranh giới thiết kế, không phải bản kê đầy đủ các năng lực hiện có. Runtime hiện tại là C++20 / Win32 Native Shell kết hợp Direct2D 1.1 / D3D11 hardware hoặc WARP qua `ViewportRenderer`: staging/readback toàn frame về BGRA, GDI chép vào backbuffer và vẽ overlays. SoftwareRasterizer là CPU fallback/oracle; Qt 6/Skia và một số workspace vẫn là hướng nghiên cứu. Xem [README](../../README.md), [project state](../project-state.json) và [sơ đồ source](../development/code-organization.md); ADR giữ quyết định và giả thuyết theo thời điểm.
 
 ## Nguyên tắc
 
@@ -67,11 +67,14 @@ flowchart TD
 | scene3d | document, geometry, color |
 | interop | document, geometry, color, typography |
 | plugin-sdk | document |
-| workers | interop, plugin-sdk |
-| desktop | document, rendering, vector, raster, production, scene3d, interop, plugin-sdk, workers |
+| automation | document, vector, geometry, typography |
+| mcp-server | automation |
+| com-server | mcp-server |
+| workers | interop |
+| desktop | document, rendering, vector, interop, automation, workers, color, geometry, typography, mcp-server |
 | harness | Không phụ thuộc module ứng dụng |
 
-Document dùng kiểu/public API của geometry, color và typography để giữ dữ liệu nhất quán; không gọi mọi phép xử lý nặng khi sửa node. Module thực hiện phép tính từ snapshot rồi gửi transaction đã kiểm tra. Các implementation text/color được inject tại composition root. Renderer nhận display-list contributions qua registry; không link trực tiếp từng module chuyên môn.
+Document dùng kiểu/public API của geometry, color và typography để giữ dữ liệu nhất quán; không gọi mọi phép xử lý nặng khi sửa node. Module thực hiện phép tính từ snapshot rồi gửi transaction đã kiểm tra. Renderer hiện duyệt immutable snapshot qua backend/compositor, không link UI. Gate đối chiếu public header với dependency trực tiếp; `test_dependencies` chỉ cho phép test COM tích hợp dùng automation/desktop, không tạo cạnh runtime từ COM sang UI.
 
 `platform/workers` là phần host/lifecycle. Executable chuyển đổi hoặc plugin ngoài process nhận schema/RPC contracts; không đồng nghĩa phải link dependency đầy đủ của host hay nhận document pointer. `packages/plugin-sdk` dùng public document DTO khi xây adapter, còn giao diện công khai với plugin ngoài vẫn là schema/RPC. Mọi thay đổi theo sơ đồ phải cập nhật registry cùng ADR nếu vượt phạm vi task.
 
@@ -90,7 +93,7 @@ Mỗi node có ID ổn định, type và schema version, transform, style, metad
 - Text giữ Unicode/font identity/layout và liên kết outline; màu giữ RGB/CMYK/spot/ICC/overprint. Texture RGBA hoặc PDF nhìn đúng không chứng minh print separations hoặc khả năng sửa chữ.
 - COW/persistent structures theo chunk và shared immutable assets là ứng viên; không clone graph mỗi frame. Camera/selection/drag preview thuộc interaction state. Đo prepare/validate/commit/invalidation và cleanup/history retention, không chỉ pointer publication.
 
-Định dạng native đề xuất là container có manifest, document graph, assets và bảng schema versions. Cần migration có kiểm thử, lưu nguyên tử, checksum và giới hạn kích thước/nesting. Chưa chốt hậu tố hoặc định dạng binary/text trước ADR về storage.
+Định dạng hiện tại là container nhị phân `.pikdraw` Native v5 (`kCurrentFormatVersion = 5`), đọc tương thích v2/v3/v4, có checksum và quota. SaveRecoveryService lưu nguyên tử/checkpoint; migration và source metadata có kiểm thử storage. Đề xuất manifest/asset graph mở rộng vẫn cần version/capability riêng, không hạ writer xuống v4 theo mô tả cũ của roadmap.
 
 ## Plugin và worker
 
@@ -106,7 +109,7 @@ Process isolation giúp giới hạn sự cố, **không tự tạo security san
 
 ## Render và tác vụ nặng
 
-Render facade chọn GPU/software theo capability probe, feature limits và driver/build đã kiểm chứng, không theo nhãn GPU rời/onboard. Chọn rõ implementation Ganesh/Graphite hoặc candidate khác, giữ GPU owner/lifetime theo API và Qt present prototype. CPU fallback có budget/chất lượng riêng. Recoverable device-loss có rebuild policy từ snapshot/assets; native driver crash/hang cùng process cần recovery hoặc GPU-process spike, chưa có bảo đảm switch CPU.
+Render facade hiện chọn Direct2D hardware/WARP hoặc SoftwareRasterizer. D2D cache target/staging theo kích thước, geometry ở tọa độ object-local và upload ảnh theo ID/revision, tối đa 64 ảnh/256 MiB. Shell nhận BGRA trực tiếp; DamageTracker giới hạn phần chép GDI, GPU vẫn dựng/readback toàn frame. Qt present và Ganesh/Graphite là hướng tương lai. CPU fallback có budget riêng; lỗi GPU giữa frame được báo và từ chối frame chưa hoàn chỉnh, không phát lại để che lỗi. Recoverable device-loss dọn resource/cache trước khôi phục; driver crash/hang chưa có bảo đảm switch CPU.
 
 Spatial index cùng revision có bounds stroke/effects. Object culling không giải quyết zoom-to-fit hoặc một path nhiều segment; khảo sát chunking/LOD và tile cache. Cache key có dependency revision, viewport/scale/DPI/profile, clip/effect và backend generation; compositing order và halo filter phải đúng. Atlas resources/layer caches có memory cap, không là nguồn xuất sản xuất.
 

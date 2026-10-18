@@ -13,8 +13,9 @@ void NativeWindow::paint_new_document_modal(HDC mem_dc, int w, int h) {
 
     // 1. Semi-transparent backdrop
     HDC dim_dc = CreateCompatibleDC(mem_dc);
-    HBITMAP dim_bmp = CreateCompatibleBitmap(mem_dc, w, h);
+    HBITMAP dim_bmp = CreateCompatibleBitmap(mem_dc, dip(w), dip(h));
     HGDIOBJ old_dim_bmp = SelectObject(dim_dc, dim_bmp);
+    configure_ui_dc(dim_dc);
     HBRUSH br_dim = CreateSolidBrush(RGB(2, 4, 8));
     RECT rc_dim = { 0, 0, w, h };
     FillRect(dim_dc, &rc_dim, br_dim);

@@ -24,13 +24,15 @@ namespace pikdraw::desktop {
 #ifdef _WIN32
 
 bool NativeWindow::handle_modal_and_home_mouse_down(int x, int y) {
+    if (show_recovery_modal_)
+        return handle_recovery_mouse_down(x, y);
     int w = width_;
     int h = height_;
     if (hwnd_) {
         RECT client_rc;
         if (GetClientRect(hwnd_, &client_rc)) {
-            w = client_rc.right - client_rc.left;
-            h = client_rc.bottom - client_rc.top;
+            w = logical_pixel(client_rc.right - client_rc.left);
+            h = logical_pixel(client_rc.bottom - client_rc.top);
         }
     }
 

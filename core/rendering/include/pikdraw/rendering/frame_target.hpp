@@ -16,9 +16,21 @@ struct PixelBufferTarget {
   int32_t height{0};
   int32_t stride_bytes{0};
   float *premultiplied_rgba{nullptr};
+  uint32_t *bgra_pixels{nullptr};
+
+  [[nodiscard]] uint8_t *byte_pixel(int32_t x, int32_t y) const noexcept {
+    auto *bytes = bgra_pixels ? reinterpret_cast<uint8_t *>(bgra_pixels) : pixels;
+    return bytes + static_cast<size_t>(y) * stride_bytes + static_cast<size_t>(x) * 4;
+  }
+  [[nodiscard]] size_t channel_index(size_t rgba_channel) const noexcept {
+    return bgra_pixels && rgba_channel < 3 ? 2 - rgba_channel : rgba_channel;
+  }
 
   [[nodiscard]] bool is_valid() const noexcept {
     if (width <= 0 || height <= 0 || stride_bytes <= 0)
+      return false;
+    if (static_cast<int>(pixels != nullptr) + static_cast<int>(bgra_pixels != nullptr) +
+        static_cast<int>(premultiplied_rgba != nullptr) != 1)
       return false;
     if (premultiplied_rgba)
       return pixels == nullptr && stride_bytes % sizeof(float) == 0 &&
@@ -29,7 +41,7 @@ struct PixelBufferTarget {
                      static_cast<uint64_t>(height) <=
                  static_cast<uint64_t>(
                      std::numeric_limits<std::ptrdiff_t>::max());
-    return pixels && static_cast<int64_t>(stride_bytes) >=
+    return (pixels || bgra_pixels) && (!bgra_pixels || stride_bytes % 4 == 0) && static_cast<int64_t>(stride_bytes) >=
                          static_cast<int64_t>(width) * 4 &&
            static_cast<uint64_t>(stride_bytes) *
                    static_cast<uint64_t>(height) <=
@@ -62,12 +74,10 @@ struct PixelBufferTarget {
       px[3] = alpha;
       return;
     }
-    auto *px = pixels +
-               static_cast<size_t>(y) * static_cast<size_t>(stride_bytes) +
-               static_cast<size_t>(x) * 4;
-    px[0] = r;
+    auto *px = byte_pixel(x, y);
+    px[channel_index(0)] = r;
     px[1] = g;
-    px[2] = b;
+    px[channel_index(2)] = b;
     px[3] = a;
   }
 
@@ -83,16 +93,15 @@ struct PixelBufferTarget {
           static_cast<float>(b) / 255.0f * alpha, alpha);
       return;
     }
-    auto *px = pixels +
-               static_cast<size_t>(y) * static_cast<size_t>(stride_bytes) +
-               static_cast<size_t>(x) * 4;
+    auto *px = byte_pixel(x, y);
     const uint32_t alpha = static_cast<uint32_t>(a) * 255 +
                            static_cast<uint32_t>(px[3]) * (255 - a);
     const uint8_t src[3]{r, g, b};
     for (size_t i = 0; i < 3; ++i) {
+      const auto channel = channel_index(i);
       const uint32_t value = static_cast<uint32_t>(src[i]) * a * 255 +
-                             static_cast<uint32_t>(px[i]) * px[3] * (255 - a);
-      px[i] = static_cast<uint8_t>((value + alpha / 2) / alpha);
+                             static_cast<uint32_t>(px[channel]) * px[3] * (255 - a);
+      px[channel] = static_cast<uint8_t>((value + alpha / 2) / alpha);
     }
     px[3] = static_cast<uint8_t>((alpha + 127) / 255);
   }
@@ -122,20 +131,18 @@ struct PixelBufferTarget {
       px[3] = alpha + px[3] * remaining;
       return;
     }
-    auto *px = pixels +
-               static_cast<size_t>(y) * static_cast<size_t>(stride_bytes) +
-               static_cast<size_t>(x) * 4;
+    auto *px = byte_pixel(x, y);
     const float destination_alpha = static_cast<float>(px[3]) / 255.0f;
     const float remaining = 1.0f - alpha;
     const float out_alpha = alpha + destination_alpha * remaining;
-    const float destination[3]{static_cast<float>(px[0]) / 255.0f,
+    const float destination[3]{static_cast<float>(px[channel_index(0)]) / 255.0f,
                                static_cast<float>(px[1]) / 255.0f,
-                               static_cast<float>(px[2]) / 255.0f};
+                               static_cast<float>(px[channel_index(2)]) / 255.0f};
     for (size_t i = 0; i < 3; ++i) {
       const float premultiplied =
           source[i] + destination[i] * destination_alpha * remaining;
       const float straight = out_alpha > 0.0f ? premultiplied / out_alpha : 0.0f;
-      px[i] = static_cast<uint8_t>(
+      px[channel_index(i)] = static_cast<uint8_t>(
           std::lround(std::clamp(straight, 0.0f, 1.0f) * 255.0f));
     }
     px[3] = static_cast<uint8_t>(

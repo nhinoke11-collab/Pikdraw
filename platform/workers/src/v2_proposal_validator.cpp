@@ -65,13 +65,14 @@ bool TransferV2(
     uint8_t* bytes,
     size_t count,
     bool write,
-    std::chrono::steady_clock::time_point deadline) noexcept {
+    std::chrono::steady_clock::time_point deadline,
+    std::stop_token cancellation = {}) noexcept {
     ScopedHandle event(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     if (!event.IsValid()) return false;
     while (count > 0) {
         const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
             deadline - std::chrono::steady_clock::now());
-        if (remaining.count() <= 0) return false;
+        if (remaining.count() <= 0 || cancellation.stop_requested()) return false;
         ResetEvent(event.Get());
         OVERLAPPED operation{};
         operation.hEvent = event.Get();
@@ -83,8 +84,23 @@ bool TransferV2(
         if (!immediate) {
             if (GetLastError() != ERROR_IO_PENDING) return false;
             const HANDLE waits[] = {event.Get(), process};
-            const DWORD wait_ms = static_cast<DWORD>(std::min<int64_t>(remaining.count(), MAXDWORD - 1));
-            if (WaitForMultipleObjects(2, waits, FALSE, wait_ms) != WAIT_OBJECT_0) {
+            for (;;) {
+                if (cancellation.stop_requested()) {
+                    CancelIoEx(pipe, &operation);
+                    GetOverlappedResult(pipe, &operation, &transferred, TRUE);
+                    return false;
+                }
+                const auto wait_remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    deadline - std::chrono::steady_clock::now());
+                if (wait_remaining.count() <= 0) {
+                    CancelIoEx(pipe, &operation);
+                    GetOverlappedResult(pipe, &operation, &transferred, TRUE);
+                    return false;
+                }
+                const DWORD wait_ms = static_cast<DWORD>(std::min<int64_t>(wait_remaining.count(), 100));
+                const DWORD waited = WaitForMultipleObjects(2, waits, FALSE, wait_ms);
+                if (waited == WAIT_OBJECT_0) break;
+                if (waited == WAIT_TIMEOUT) continue;
                 CancelIoEx(pipe, &operation);
                 GetOverlappedResult(pipe, &operation, &transferred, TRUE);
                 return false;
@@ -105,14 +121,15 @@ bool ReadV2Payload(
     std::chrono::steady_clock::time_point deadline,
     const pikdraw::interop::V2FrameIdentity* expected_identity,
     std::vector<uint8_t>& payload,
-    std::string_view& failure) noexcept {
+    std::string_view& failure,
+    std::stop_token cancellation = {}) noexcept {
     using namespace pikdraw::interop;
     if (header.payload_bytes < IPC_V2_IDENTITY_PREFIX_BYTES) {
         failure = "v2 frame omitted identity prefix";
         return false;
     }
     std::array<uint8_t, IPC_V2_IDENTITY_PREFIX_BYTES> prefix_bytes{};
-    if (!TransferV2(pipe, process, prefix_bytes.data(), prefix_bytes.size(), false, deadline)) {
+    if (!TransferV2(pipe, process, prefix_bytes.data(), prefix_bytes.size(), false, deadline, cancellation)) {
         failure = "v2 identity prefix read failed/timeout";
         return false;
     }
@@ -133,7 +150,7 @@ bool ReadV2Payload(
     std::copy(prefix_bytes.begin(), prefix_bytes.end(), payload.begin());
     const size_t remainder = payload.size() - prefix_bytes.size();
     if (remainder > 0 && !TransferV2(
-            pipe, process, payload.data() + prefix_bytes.size(), remainder, false, deadline)) {
+            pipe, process, payload.data() + prefix_bytes.size(), remainder, false, deadline, cancellation)) {
         failure = "v2 payload read failed/timeout";
         return false;
     }
@@ -305,7 +322,8 @@ bool TransactV2ProposalStreamProcess(
     std::chrono::milliseconds timeout,
     const pikdraw::interop::V2ProposalStreamLimits& limits,
     const std::function<bool(const pikdraw::interop::IpcV2Frame&)>& consumer,
-    std::string_view& failure) noexcept {
+    std::string_view& failure,
+    std::stop_token cancellation) noexcept {
     using namespace pikdraw::interop;
     failure = "none";
     if (stdin_pipe == INVALID_HANDLE_VALUE || stdout_pipe == INVALID_HANDLE_VALUE ||
@@ -337,8 +355,8 @@ bool TransactV2ProposalStreamProcess(
         }
 
         const auto deadline = std::chrono::steady_clock::now() + timeout;
-        if (!TransferV2(stdin_pipe, process, const_cast<uint8_t*>(request_bytes.data()), request_bytes.size(), true, deadline)) {
-            failure = "v2 import begin write failed/timeout";
+        if (!TransferV2(stdin_pipe, process, const_cast<uint8_t*>(request_bytes.data()), request_bytes.size(), true, deadline, cancellation)) {
+            failure = cancellation.stop_requested() ? "v2 import cancelled" : "v2 import begin write failed/timeout";
             return false;
         }
         V2ProposalStreamValidator validator(
@@ -351,9 +369,13 @@ bool TransactV2ProposalStreamProcess(
         uint64_t received_bytes = 0;
         uint32_t expected_sequence = request_header.sequence_id;
         for (uint32_t index = 0; index < limits.max_response_frames; ++index) {
+            if (cancellation.stop_requested()) {
+                failure = "v2 import cancelled";
+                return false;
+            }
             IpcHeader header{};
-            if (!TransferV2(stdout_pipe, process, reinterpret_cast<uint8_t*>(&header), sizeof(header), false, deadline)) {
-                failure = "v2 response header failed/timeout";
+            if (!TransferV2(stdout_pipe, process, reinterpret_cast<uint8_t*>(&header), sizeof(header), false, deadline, cancellation)) {
+                failure = cancellation.stop_requested() ? "v2 import cancelled" : "v2 response header failed/timeout";
                 return false;
             }
             const auto type = static_cast<MessageType>(header.message_type);
@@ -373,7 +395,10 @@ bool TransactV2ProposalStreamProcess(
             if (!ReadV2Payload(
                     stdout_pipe, process, header, deadline,
                     type == MessageType::V2ErrorResponse ? nullptr : &expected_identity,
-                    payload, failure)) return false;
+                    payload, failure, cancellation)) {
+                if (cancellation.stop_requested()) failure = "v2 import cancelled";
+                return false;
+            }
             received_bytes += frame_bytes;
 
             if (type == MessageType::V2ErrorResponse) {

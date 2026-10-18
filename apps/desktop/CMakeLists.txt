@@ -22,8 +22,11 @@ add_library(pikdraw_desktop STATIC
     src/runtime/composition_root.cpp
     src/workflows/document_workflow.cpp
     src/workflows/document_workflow_clipboard_transform.cpp
+    src/workflows/document_workflow_group_transform.cpp
     src/workflows/document_workflow_appearance.cpp
+    src/workflows/document_workflow_effect_draft.cpp
     src/workflows/document_workflow_io_shaping.cpp
+    src/workflows/document_workflow_import.cpp
     src/clipboard/native_clipboard.cpp
     src/tools/drawing_preferences.cpp
     src/tools/drawing_tool_controller.cpp
@@ -36,19 +39,25 @@ add_library(pikdraw_desktop STATIC
     src/tools/snap_status_controller.cpp
     src/tools/dimension_tool_controller.cpp
     src/shell/native_window.cpp
+    src/shell/native_window_isolation_menus.cpp
     src/shell/native_window_settings.cpp
     src/shell/native_window_text_align.cpp
     src/shell/native_window_tooltips_guides.cpp
     src/shell/native_window_numeric_input.cpp
+    src/shell/native_window_numeric_edit.cpp
+    src/shell/native_window_array_quickdim.cpp
     src/automation/automation_pipe_host.cpp
     src/automation/native_window_automation.cpp
     src/shell/native_window_events.cpp
+    src/shell/native_window_menu_actions.cpp
+    src/shell/native_window_pointer_dispatch.cpp
     src/shell/native_window_tool_events.cpp
     src/shell/native_window_modal_clicks.cpp
     src/shell/native_window_chrome_clicks.cpp
     src/shell/native_window_shortcuts.cpp
     src/shell/native_window_canvas.cpp
     src/shell/native_window_canvas_overlays.cpp
+    src/shell/native_window_canvas_snap.cpp
     src/shell/native_window_selection.cpp
     src/shell/native_window_selection_paint.cpp
     src/shell/native_window_style.cpp
@@ -57,9 +66,12 @@ add_library(pikdraw_desktop STATIC
     src/shell/native_window_color_profiles.cpp
     src/shell/native_style_dialog.cpp
     src/shell/native_window_files.cpp
+    src/shell/native_window_import.cpp
+    src/shell/native_window_recovery.cpp
     src/shell/native_window_paint_icons.cpp
     src/shell/native_window_paint_docks.cpp
     src/shell/native_window_paint.cpp
+    src/shell/native_window_paint_status.cpp
     src/shell/native_window_paint_menu.cpp
     src/shell/native_window_paint_home.cpp
     src/shell/native_window_paint_modal.cpp
@@ -83,6 +95,7 @@ target_link_libraries(pikdraw_desktop PUBLIC
 )
 
 if(WIN32)
+    target_link_libraries(pikdraw_desktop PUBLIC pikdraw_worker_common)
     target_link_libraries(pikdraw_desktop PUBLIC user32 gdi32 msimg32 comdlg32 comctl32)
     if(MSVC)
         target_compile_options(pikdraw_desktop PRIVATE /utf-8)
@@ -94,14 +107,37 @@ add_executable(pikdraw
     src/main.cpp
 )
 
+if(WIN32 AND TARGET spike_worker)
+    add_dependencies(pikdraw spike_worker)
+    add_custom_command(TARGET pikdraw POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:pikdraw>/workers"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:spike_worker>"
+                "$<TARGET_FILE_DIR:pikdraw>/workers/spike_worker.exe"
+        VERBATIM
+    )
+endif()
+
 target_link_libraries(pikdraw PRIVATE
     pikdraw_desktop
 )
 
 # Native unit and lifecycle tests
 if(PIKDRAW_BUILD_TESTS)
+    add_executable(test_pikdraw_save_recovery tests/test_save_recovery.cpp)
+    target_link_libraries(test_pikdraw_save_recovery PRIVATE pikdraw_desktop)
+    add_test(NAME test_pikdraw_save_recovery COMMAND test_pikdraw_save_recovery)
+    add_executable(test_pikdraw_desktop_import tests/test_svg_dxf_import.cpp)
+    target_link_libraries(test_pikdraw_desktop_import PRIVATE pikdraw_desktop)
+    if(WIN32 AND TARGET pikdraw)
+        add_dependencies(test_pikdraw_desktop_import pikdraw)
+    endif()
+    add_test(NAME test_pikdraw_desktop_import COMMAND test_pikdraw_desktop_import)
+    set_tests_properties(test_pikdraw_desktop_import PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE LABELS "windows;isolated-import")
     add_executable(test_pikdraw_desktop_shell
         tests/test_desktop_shell.cpp
+        tests/test_desktop_shell_align_boolean.cpp
+        tests/test_desktop_shell_appearance.cpp
+        tests/test_desktop_shell_text_settings.cpp
     )
     target_link_libraries(test_pikdraw_desktop_shell PRIVATE
         pikdraw_desktop
@@ -169,7 +205,7 @@ if(PIKDRAW_BUILD_TESTS)
     add_executable(benchmark_pikdraw_editor_tools tests/benchmark_editor_tools.cpp)
     target_link_libraries(benchmark_pikdraw_editor_tools PRIVATE pikdraw_desktop)
 
-    add_executable(test_pikdraw_drawing_tool_controller tests/test_drawing_tool_controller.cpp)
+    add_executable(test_pikdraw_drawing_tool_controller tests/test_drawing_tool_controller.cpp tests/test_drawing_tool_snap_input.cpp)
     target_link_libraries(test_pikdraw_drawing_tool_controller PRIVATE pikdraw_desktop)
     add_test(NAME test_pikdraw_drawing_tool_controller COMMAND test_pikdraw_drawing_tool_controller)
 

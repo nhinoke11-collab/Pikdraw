@@ -29,8 +29,8 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
     if (hwnd_) {
         RECT client_rc;
         if (GetClientRect(hwnd_, &client_rc)) {
-            w = client_rc.right - client_rc.left;
-            h = client_rc.bottom - client_rc.top;
+            w = logical_pixel(client_rc.right - client_rc.left);
+            h = logical_pixel(client_rc.bottom - client_rc.top);
         }
     }
     (void)h;
@@ -286,12 +286,12 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
         const int group_row = toolbox_open_group_ == 1 ? 1
                             : toolbox_open_group_ == 2 ? 2 : 6;
         const int flyout_top = 112 + group_row * 42;
-        const int flyout_height = toolbox_open_group_ == 3 ? 145 : 116;
+        const int flyout_height = toolbox_open_group_ == 3 ? 174 : 116;
         const bool inside_flyout = x >= 54 && x <= 242 &&
             y >= flyout_top && y < flyout_top + flyout_height;
         if (inside_flyout && y >= flyout_top + 26) {
             const int item = (y - flyout_top - 26) / 29;
-            const int max_items = toolbox_open_group_ == 3 ? 4 : 3;
+            const int max_items = toolbox_open_group_ == 3 ? 5 : 3;
             if (item >= 0 && item < max_items) {
                 if (toolbox_open_group_ == 3) {
                     activate_toolbox_effect_item(item);

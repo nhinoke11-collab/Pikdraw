@@ -58,6 +58,11 @@ if(PIKDRAW_BUILD_TESTS)
     )
     target_compile_definitions(pikdraw_worker_test_support PRIVATE PIKDRAW_WORKER_TEST_HOOKS=1)
 
+    add_executable(test_pikdraw_worker_sandbox tests/test_worker_sandbox.cpp)
+    target_link_libraries(test_pikdraw_worker_sandbox PRIVATE pikdraw_worker_test_support)
+    add_test(NAME test_pikdraw_worker_sandbox COMMAND test_pikdraw_worker_sandbox)
+    set_tests_properties(test_pikdraw_worker_sandbox PROPERTIES TIMEOUT 30)
+
     add_executable(spike_worker_test
         src/worker_main.cpp
         src/v2_worker_protocol.cpp

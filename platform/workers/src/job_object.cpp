@@ -33,6 +33,14 @@ bool JobObjectGuard::Create(const JobLimitsConfig& config) {
         return false;
     }
 
+    JOBOBJECT_BASIC_UI_RESTRICTIONS ui{};
+    ui.UIRestrictionsClass = JOB_OBJECT_UILIMIT_HANDLES |
+        JOB_OBJECT_UILIMIT_GLOBALATOMS | JOB_OBJECT_UILIMIT_WRITECLIPBOARD;
+    if (!SetInformationJobObject(job_handle_.Get(), JobObjectBasicUIRestrictions,
+                                 &ui, sizeof(ui))) {
+        job_handle_.Close();
+        return false;
+    }
     return true;
 }
 

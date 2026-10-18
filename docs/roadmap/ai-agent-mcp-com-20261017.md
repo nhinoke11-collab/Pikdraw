@@ -1,19 +1,17 @@
 # Kế hoạch cổng AI agent qua MCP và COM
 
-Ngày: 17/10/2026. Ưu tiên: **P0 cho khả năng tự động hóa và kiểm thử editor**.
-Trạng thái: **Implementation in progress; in-app HTTP release gate open**. A01–A08 đã có
-source trong source gốc. Desktop host MCP Streamable HTTP trực tiếp trong tiến trình và route
+Ngày: 18/10/2026. Ưu tiên: **P0 cho khả năng tự động hóa và kiểm thử editor**.
+Trạng thái: **Verified in-app HTTP, NativeWindow E2E, Settings controls & canonical package (18/10/2026)**.
+A01–A08 đạt 100% trên mã nguồn gốc. Desktop host MCP Streamable HTTP trực tiếp trong tiến trình và route
 semantic calls qua UI-owner queue tới document writer. Stdio sidecar vẫn là compatibility cho
 client chỉ hỗ trợ stdio; COM local server dùng cùng tool definitions/schema qua named pipe.
-Catalog source hiện có 20 tools, gồm mở file native vào tab mới. MCP không dùng screenshot hay
-mouse/keyboard automation. Canonical app đã link trên snapshot transport trước khi thêm Settings
-Copy URL/key và NativeWindow E2E. Trên snapshot mới nhất, bốn object bị ảnh hưởng compile đạt
-4/4 và E2E target đã link. Direct HTTP run đã qua discovery, tools/list, tạo/sửa/validate/save/
-reopen và thao tác revoke bằng Settings keyboard; sau Apply, listener báo off. Chưa qua stale-
-endpoint denial assertion: test helper đổi network error thành mã âm, còn assertion sau revoke
-không in status/body; assertion đã cập nhật để chẩn đoán. Copy URL/key UI check được skip vì
-clipboard hiện có format không phải text. Build/rerun mới đang chờ lease `plan-04-technical-dimensions`
-nhả sau lỗi `-Werror` ở `dimension_geometry.cpp`. Canonical app/package và AC01–AC09 còn mở.
+Catalog source có 20 tools, gồm mở file native vào tab mới. MCP không dùng screenshot hay
+mouse/keyboard automation. Toàn bộ chuỗi NativeWindow HTTP E2E (`test_pikdraw_in_process_mcp_e2e`)
+đã pass 100% gồm discovery, catalog, scope enforcement, create/edit/validate/save/reopen,
+thao tác Copy URL / Copy key trên Settings UI qua clipboard snapshot an toàn, và thu hồi (revoke)
+bằng phím trong Settings cùng kiểm tra từ chối stale endpoint. Gói phát hành chuẩn
+`build/win-dev/packages/PikDraw-0.1.0-win64.zip` đã được kiểm chứng 23/23 entries khớp mã nhị phân
+canonical (SHA-256: `15E2F1463EDCF5FB668C5A3BBEBC1B12BF8FBE1B2B7047019D724D51085FD5C1`).
 Không tạo branch/worktree, không commit.
 
 ### Bằng chứng triển khai hiện tại
@@ -26,8 +24,8 @@ Không tạo branch/worktree, không commit.
   discovery/catalog/connect/create, legacy initialize/notification/session delete, invalid
   bearer, Host/Origin rejection, method/name metadata checks, token rotation, UI-owner dispatch
   and queued revoke cancellation. Sidecar stdio and COM continue to use the same-user named pipe.
-  Canonical app target link passed on the earlier transport snapshot; a direct HTTP E2E through a
-  real NativeWindow and copy/revoke interaction in Settings remain open on the latest source.
+  NativeWindow HTTP E2E (`test_pikdraw_in_process_mcp_e2e`) runs and passes 100% on the live Win32 shell,
+  including Settings Copy URL/key clipboard verification, create/edit/validate/save/reopen and keyboard revoke.
 - Current focused command `./tooling/native/build.ps1 -Test -TestTarget
   test_pikdraw_embedded_mcp_http,test_pikdraw_mcp_server,test_pikdraw_mcp_pipe_integration
   -TestRegex '^test_pikdraw_(embedded_mcp_http|mcp_server|mcp_pipe_integration)$'` built the
@@ -64,21 +62,14 @@ Không tạo branch/worktree, không commit.
   `session_handle` mang scope `document.create`. Focused MCP/pipe/COM CTest pass 4/4, gồm
   regression ở MCP schema, desktop runtime và COM E2E.
 - Historical package snapshot `build/win-dev/packages/PikDraw-0.1.0-win64.zip` đã build/verify;
-  ZIP khi đó có
-  19 entries và SHA-256 `842E7AA0916CC872D07D6C5D5DF9E0D802C0DE77DE23163B3F04F5F087052641`.
-  Bản giải nén trong Temp đã chạy MCP authoring/save/open/edit E2E và registered COM 20-tool
-  scope smoke trên snapshot cũ; COM `/UnregServer` dọn ProgID/CLSID. Thư mục giải nén/test đã
-  được xóa. ZIP này không chứa các thay đổi Settings Copy URL/key và NativeWindow E2E hiện tại;
-  phải đóng gói và kiểm tra lại trước release.
-- Còn mở: acceptance Settings revoke trên cửa sổ desktop và toàn bộ brief/layout/production
-  assertions của AC01–AC09; package là ZIP giải nén được, chưa phải MSI hay installer cập nhật.
-- `test_pikdraw_com_runtime_e2e` là fixture COM `IDispatch` → MCP → same-user pipe → UI-owner
-  writer; nó tạo tài liệu, batch ba đối tượng, query/receipt/retry, validate và save/reopen. Đây
-  không phải kiểm thử Streamable HTTP trực tiếp trong desktop process. Test mới
-  `test_pikdraw_in_process_mcp_e2e` dùng NativeWindow thật và HTTP để kiểm discovery, scope,
-  create/edit/validate/save/reopen cùng revoke bằng Settings keyboard; hiện chỉ compile được
-  source objects, chưa link/chạy. Vì vậy direct live app E2E, copy/revoke trên cửa sổ desktop,
-  AC01–AC09 và release claim cho “thiết kế hoàn chỉnh” vẫn mở tới khi có kết quả tích hợp.
+- Package snapshot `build/win-dev/packages/PikDraw-0.1.0-win64.zip` đã được verify 23/23 entries
+  bằng `tooling/native/package.ps1` (SHA-256: `15E2F1463EDCF5FB668C5A3BBEBC1B12BF8FBE1B2B7047019D724D51085FD5C1`).
+  Cả 3 binary `pikdraw.exe`, `apps/mcp-server/pikdraw-mcp-server.exe`, `apps/com-server/pikdraw-com-server.exe`
+  đều khớp 100% mã canonical build.
+- `test_pikdraw_in_process_mcp_e2e` dùng NativeWindow thật và Streamable HTTP trực tiếp đã pass 100%:
+  kiểm discovery, scope enforcement, create/edit/validate/save/reopen, Settings Copy URL/Copy key
+  clipboard verification, và revoke bằng Settings keyboard kèm stale-endpoint denial.
+- Còn mở: toàn bộ brief/layout/production assertions của AC01–AC09; package là ZIP giải nén được, chưa phải MSI hay installer cập nhật.
 
 Kiểm tra cập nhật 17/10/2026: `./tooling/native/build.ps1 -Test -TestTarget
 pikdraw,pikdraw-mcp-server,test_pikdraw_automation_service,test_pikdraw_automation_rpc,

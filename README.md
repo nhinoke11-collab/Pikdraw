@@ -2,7 +2,7 @@
 
 PikDraw là ứng dụng desktop chỉnh sửa vector cho thiết kế, in quảng cáo và sản xuất.
 
-Runtime hiện tại dùng C++20 và Win32/GDI. Nhiều phần của editor và document đã chạy, nhưng M1, hiệu năng đồ họa, độ chính xác sản xuất và độ tương thích định dạng chưa được nghiệm thu đầy đủ. Phạm vi đã làm và bằng chứng nằm trong docs/project-state.json.
+Runtime hiện tại dùng C++20 / Win32 Native Shell kết hợp Direct2D 1.1 / D3D11 hardware hoặc WARP qua `ViewportRenderer`. Frame được staging/readback về BGRA rồi GDI trình bày canvas và overlays; SoftwareRasterizer là CPU fallback/oracle. Qt 6/Skia vẫn là định hướng tương lai. Nhiều phần của editor và document đã chạy, nhưng M1, hiệu năng thiết bị, độ chính xác sản xuất và tương thích định dạng chưa được nghiệm thu đầy đủ. Phạm vi đã làm và bằng chứng nằm trong docs/project-state.json.
 
 ## Bắt đầu
 

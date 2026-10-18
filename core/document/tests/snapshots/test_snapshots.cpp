@@ -1,4 +1,5 @@
 #include "pikdraw/document/document.hpp"
+#include "pikdraw/document/commands/page_commands.hpp"
 #include <algorithm>
 #include <cassert>
 #include <iostream>
@@ -222,12 +223,65 @@ void test_document_effect_node_limit() {
     expect_snapshot_rejected(std::move(page), std::move(objects));
 }
 
+void test_page_roots_are_isolated_and_undoable() {
+    Document doc("doc-pages-test");
+    const auto first_page_id = doc.active_page_id();
+    auto second_page = make_document_page("Page 2", Page::make_default());
+    const auto second_page_id = second_page.id;
+    assert(doc.execute_command(std::make_unique<AddPageCommand>(second_page)).success);
+    assert(doc.current_snapshot()->page_count() == 2);
+    assert(doc.active_page_id() == second_page_id);
+
+    PathObject second_object;
+    second_object.id = generate_object_id();
+    assert(doc.execute_command(std::make_unique<AddObjectCommand>(second_object)).success);
+    const auto revision_after_edit = doc.revision();
+    assert(doc.set_active_page(first_page_id));
+    assert(doc.revision() == revision_after_edit);
+    assert(doc.is_dirty());
+    assert(doc.objects().empty());
+    assert(doc.current_snapshot()->find_page(second_page_id)->objects.contains(second_object.id));
+
+    assert(doc.execute_command(std::make_unique<RemovePageCommand>(second_page_id)).success);
+    assert(doc.current_snapshot()->page_count() == 1);
+    assert(doc.undo());
+    assert(doc.current_snapshot()->page_count() == 2);
+    assert(doc.current_snapshot()->find_page(second_page_id)->objects.contains(second_object.id));
+    assert(doc.redo());
+    assert(doc.current_snapshot()->page_count() == 1);
+}
+
+void test_stable_object_ids_are_unique_across_pages() {
+    constexpr ObjectId duplicate_id = 900001;
+    PathObject first_object;
+    first_object.id = duplicate_id;
+    PathObject second_object;
+    second_object.id = duplicate_id;
+    auto first = make_document_page("Page 1");
+    auto second = make_document_page("Page 2");
+    first.layout.layers.front().object_ids.push_back(duplicate_id);
+    first.objects = first.objects.set(duplicate_id, first_object);
+    second.layout.layers.front().object_ids.push_back(duplicate_id);
+    second.objects = second.objects.set(duplicate_id, second_object);
+    bool rejected = false;
+    try {
+        DocumentSnapshot snapshot{1, 0, std::vector<DocumentPage>{first, second},
+                                  first.id};
+        (void)snapshot;
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    assert(rejected);
+}
+
 int main() {
     std::cout << "[test_snapshots] Running snapshot tests...\n";
     test_snapshot_immutability();
     test_listener_notification();
     test_effect_ids_share_document_stable_id_namespace();
     test_document_effect_node_limit();
+    test_page_roots_are_isolated_and_undoable();
+    test_stable_object_ids_are_unique_across_pages();
     std::cout << "[test_snapshots] All tests passed!\n";
     return 0;
 }

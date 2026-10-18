@@ -94,14 +94,11 @@ BlendPixel read_target_pixel(const PixelBufferTarget &target, int32_t x,
     return {pixel[0], pixel[1], pixel[2], pixel[3]};
   }
 
-  const auto *pixel = target.pixels +
-                      static_cast<size_t>(y) *
-                          static_cast<size_t>(target.stride_bytes) +
-                      static_cast<size_t>(x) * 4;
+  const auto *pixel = target.byte_pixel(x, y);
   const float alpha = static_cast<float>(pixel[3]) / 255.0f;
-  return {static_cast<float>(pixel[0]) / 255.0f * alpha,
+  return {static_cast<float>(pixel[target.channel_index(0)]) / 255.0f * alpha,
           static_cast<float>(pixel[1]) / 255.0f * alpha,
-          static_cast<float>(pixel[2]) / 255.0f * alpha, alpha};
+          static_cast<float>(pixel[target.channel_index(2)]) / 255.0f * alpha, alpha};
 }
 
 void write_target_pixel(PixelBufferTarget &target, int32_t x, int32_t y,
@@ -119,15 +116,12 @@ void write_target_pixel(PixelBufferTarget &target, int32_t x, int32_t y,
     return;
   }
 
-  auto *destination = target.pixels +
-                      static_cast<size_t>(y) *
-                          static_cast<size_t>(target.stride_bytes) +
-                      static_cast<size_t>(x) * 4;
+  auto *destination = target.byte_pixel(x, y);
   const float inverse_alpha = pixel.a > 0.0f ? 1.0f / pixel.a : 0.0f;
   const float straight[3]{pixel.r * inverse_alpha, pixel.g * inverse_alpha,
                           pixel.b * inverse_alpha};
   for (size_t channel = 0; channel < 3; ++channel) {
-    destination[channel] = static_cast<uint8_t>(std::lround(
+    destination[target.channel_index(channel)] = static_cast<uint8_t>(std::lround(
         std::clamp(straight[channel], 0.0f, 1.0f) * 255.0f));
   }
   destination[3] = static_cast<uint8_t>(

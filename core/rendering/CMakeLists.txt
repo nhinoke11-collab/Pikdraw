@@ -25,11 +25,8 @@ add_library(pikdraw_rendering STATIC
     src/gpu/d2d/d2d_device_manager.cpp
     src/gpu/d2d/d2d_geometry_cache.cpp
     src/gpu/d2d/d2d_effects_pipeline.cpp
+    src/gpu/d2d/d2d_scene_compositor.cpp
     src/gpu/d2d/d2d_render_backend.cpp
-    src/gpu/skia/skia_context_d3d12.cpp
-    src/gpu/skia/skia_path_converter.cpp
-    src/gpu/skia/skia_effects_compositor.cpp
-    src/gpu/skia/skia_render_backend.cpp
 )
 
 target_include_directories(pikdraw_rendering PUBLIC
@@ -108,14 +105,7 @@ if(PIKDRAW_BUILD_TESTS)
     add_rendering_test(test_pikdraw_rendering_gradient tests/rasterizer/test_gradient_pixels.cpp)
     add_rendering_test(test_pikdraw_rendering_gradient_compositor tests/effects/test_gradient_compositor.cpp)
 
-    # A header probe alone does not mean a Skia runtime is linked. Keep this
-    # independent fallback contract enabled until CMake wires up that runtime.
-    if(NOT PIKDRAW_SKIA_RUNTIME_ENABLED)
-        add_rendering_test(test_pikdraw_skia_fallback_contract_independent
-            tests/gpu_independent/test_skia_fallback_contract.cpp)
-        set_tests_properties(test_pikdraw_skia_fallback_contract_independent
-            PROPERTIES ENVIRONMENT "PIKDRAW_RENDER_BACKEND=auto")
-    endif()
+
 
     # Explicitly built performance probe; not registered as a normal CTest test.
     add_executable(benchmark_pikdraw_rendering_effects

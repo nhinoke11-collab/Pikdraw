@@ -19,8 +19,13 @@ struct SaveResult {
 
 struct RecoveryInfo {
   std::string path;
+  std::string document_id;
   uint64_t epoch{0};
   uint64_t revision{0};
+  size_t object_count{0};
+  double page_width_mm{0.0};
+  double page_height_mm{0.0};
+  std::chrono::system_clock::time_point modified_at{};
   std::string timestamp;
 };
 
@@ -52,6 +57,18 @@ public:
   [[nodiscard]] static std::optional<RecoveryInfo>
   find_latest_checkpoint(const std::string &recovery_dir,
                          const std::string &doc_id);
+
+  /// Lists valid checkpoints under a recovery root and its per-document folders.
+  /// The result is newest first and bounded to 128 records.
+  [[nodiscard]] static std::vector<RecoveryInfo>
+  list_recovery_checkpoints(const std::string &recovery_root,
+                            bool *out_truncated = nullptr);
+
+  /// Removes one valid checkpoint only when it is an immediate child of the
+  /// recovery root or one of its direct per-document folders.
+  [[nodiscard]] static bool discard_recovery_checkpoint(
+      const std::string &recovery_root, const std::string &checkpoint_path,
+      std::string *out_error = nullptr);
 
   /// Removes recovery checkpoints after clean save
   static void cleanup_checkpoints(const std::string &recovery_dir,

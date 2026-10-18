@@ -41,15 +41,15 @@
   },
   "current_capabilities": {
     "geometry_and_vector": "Analytical curves/arcs, adaptive flattening, cubic/quadratic intersections, dynamic offset/contour, OSnap & inference engine, Pen/Line/Polyline/Quick Shapes, Node editing, Contour and Dimension controllers.",
-    "document_and_color": "Immutable snapshots, single-writer transactions, Undo/Redo, RGB/CMYK/Spot + Linear/Radial Gradient paint (ADR 0012), appearance effect graph (Gaussian Blur, Drop Shadow, Blend Mode, Opacity), native v2 lossless storage.",
-    "rendering": "CPU SoftwareRasterizer in premultiplied linear-sRGB with SSE2/AVX Gaussian Blur dispatch, Drop Shadow, Blend operators, and linear/radial gradient sampling.",
-    "desktop_shell": "Win32/GDI native shell with Toolbox flyouts, Contextual Property Bar, Object/Style/Align Inspector, Quick Shape pick & SketchUp-style dimension input, and embedded MCP Streamable HTTP endpoint.",
-    "automation_ecosystem": "Shared typed AutomationService, in-process MCP HTTP endpoint, stdio MCP sidecar (pikdraw-mcp-server), and Windows COM IDispatch local server (pikdraw-com-server)."
+    "document_and_color": "Immutable snapshots, single-writer transactions, Undo/Redo, RGB/CMYK/Spot + Linear/Radial Gradient paint (ADR 0012), appearance effect graph (Gaussian Blur, Drop Shadow, Blend Mode, Opacity), Native v5 storage (kCurrentFormatVersion=5), backward-compatible v2/v3/v4 reading.",
+    "rendering": "Windows ViewportRenderer uses Direct2D 1.1 / D3D11 hardware or WARP; full-frame staging/readback writes BGRA directly for GDI. Target/staging bitmaps are reused by size; object-local geometry survives pan/zoom, image uploads are bounded to 64 images/256 MiB. ICC preview and white page rendering are connected. SpatialIndex culls snapshots; DamageTracker limits GDI dirty copies. SoftwareRasterizer supports BGRA as CPU fallback/oracle; viewport guard is 32 MP.",
+    "desktop_shell": "Win32 Native Shell uses a shared DIP coordinate space for painting and hit testing, physical-resolution canvas targets, and WM_DPICHANGED font/cache/window updates. Page resizing preserves Undo/Redo; tool previews and per-tab save paths have regression coverage. Dirty tabs checkpoint every 60s under LOCALAPPDATA/PikDraw/Recovery with isolated per-session paths; successful save cleans only that tab.",
+    "automation_ecosystem": "Shared typed AutomationService, in-process MCP Streamable HTTP endpoint (verified NativeWindow E2E with Settings Copy URL/key and keyboard revoke), stdio MCP sidecar (pikdraw-mcp-server), and Windows COM IDispatch local server (pikdraw-com-server)."
   },
   "known_limitations": [
-    "CPU SoftwareRasterizer only (no GPU Direct2D/D3D/Skia backend yet); GroupObject and ImageObject rendering in SoftwareRasterizer are not yet wired.",
-    "Full-resolution linear-sRGB float Gaussian Blur on older 2-core CPUs (e.g. i7-3537U) is memory/CPU bound (~50 ms for 640x480); interactive dragging uses draft preview, and further speedup requires pyramid/downsampled blur or GPU.",
-    "NodeToolController (11), ContourToolController (12), and DimensionToolController need dedicated non-overlapping Tool IDs and Toolbox/Menu entry points in NativeWindow.",
-    "Desktop UI layout uses fixed pixel metrics and needs Per-Monitor V2 DPI scaling, Status Bar vertical text centering, and Style Inspector scroll clip rect."
+    "Qt 6 and Skia backends are future architectural targets pending unified MinGW/MSVC toolchain ABI; runtime currently standardizes on Win32 Native Shell + Direct2D 1.1 / D3D11 + WARP.",
+    "Interactive dragging reuses the cached native canvas and updates a small dirty copy when object bounds change; each changed snapshot is still fully rendered/read back by Direct2D. No GPU partial render, tile cache or direct swap-chain presentation is implemented.",
+    "DPI coverage uses synthetic 120/144/192/96 DPI events and native captures; physical monitor switching, reference-device latency and production fidelity remain unverified.",
+    "Autosave checkpoints use the UI writer synchronously; startup recovery selection UI is not implemented. Job Object memory/process/UI limits do not by themselves prove filesystem/network containment."
   ]
 }

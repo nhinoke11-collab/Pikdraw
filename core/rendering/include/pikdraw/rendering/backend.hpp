@@ -19,6 +19,9 @@ struct RenderDiagnostic {
 };
 
 struct RenderMetric {
+  // True only when this frame was rendered by a GPU backend. A CPU fallback
+  // and metrics from SoftwareRasterizer leave this false.
+  bool used_gpu{false};
   uint64_t snapshot_revision{0};
   size_t total_objects{0};
   size_t culled_objects{0};
@@ -63,6 +66,7 @@ public:
 
   [[nodiscard]] virtual DeviceLossStatus device_status() const noexcept = 0;
   virtual bool recover_device() = 0;
+  [[nodiscard]] virtual bool is_hardware_accelerated() const noexcept { return false; }
   virtual bool set_color_preview(std::shared_ptr<const color::IccPreview>) { return false; }
   virtual bool set_canvas_background(color::DeviceRGBA) { return false; }
 

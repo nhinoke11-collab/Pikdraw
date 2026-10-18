@@ -4,14 +4,107 @@
 #include "pikdraw/document/async/async_proposal.hpp"
 #include "pikdraw/document/commands/appearance_commands.hpp"
 #include "pikdraw/document/storage/native_format.hpp"
+#include "../src/workflows/document_workflow_internal.hpp"
 #include <iostream>
 #include <cassert>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 
 using namespace pikdraw;
 using namespace pikdraw::desktop;
+
+void test_page_size_preserves_history_and_dirty_state() {
+    CompositionRoot root;
+    root.initialize();
+    DocumentWorkflow workflow(root);
+    auto& doc = root.document();
+    const auto before = doc.current_snapshot();
+    assert(!doc.is_dirty());
+
+    // AC-R02-01: Given a drawing, resize the page; Undo/Redo must retain both edits.
+    const auto id = workflow.add_rectangle(10.0, 20.0, 30.0, 40.0);
+    workflow.select_object(id);
+    const auto drawn = doc.current_snapshot();
+    workflow.set_page_size(420.0, 297.0);
+    const auto resized = doc.current_snapshot();
+    assert(resized->page().width_mm == 420.0 && resized->page().height_mm == 297.0);
+    assert(resized->objects().contains(id));
+    assert(resized->page().layers[0].object_ids == drawn->page().layers[0].object_ids);
+    assert(root.vector_controller().selection().is_selected(id));
+    assert(resized->epoch() == before->epoch());
+    assert(resized->revision() == drawn->revision() + 1);
+    assert(doc.is_dirty());
+    assert(workflow.undo());
+    assert(doc.page().width_mm == before->page().width_mm);
+    assert(doc.page().height_mm == before->page().height_mm);
+    assert(doc.objects().contains(id));
+    assert(workflow.undo());
+    assert(doc.current_snapshot()->object_count() == 0);
+    assert(!workflow.undo());
+    assert(workflow.redo());
+    assert(doc.objects().contains(id));
+    assert(workflow.redo());
+    assert(doc.page().width_mm == 420.0 && doc.page().height_mm == 297.0);
+    assert(!workflow.redo());
+
+    // AC-R02-02: Invalid/unchanged sizes are no-ops and retain pending Redo.
+    assert(workflow.undo());
+    const auto undone = doc.current_snapshot();
+    workflow.set_page_size(undone->page().width_mm, undone->page().height_mm);
+    workflow.set_page_size(-1.0, 297.0);
+    workflow.set_page_size(std::numeric_limits<double>::quiet_NaN(), 297.0);
+    workflow.set_page_size(420.0, std::numeric_limits<double>::infinity());
+    assert(doc.current_snapshot() == undone);
+    assert(doc.can_redo());
+    assert(workflow.redo());
+
+    // A clean document must become dirty on page resize without changing its lifecycle.
+    doc.mark_saved(doc.epoch(), doc.revision());
+    assert(!doc.is_dirty());
+    workflow.set_page_size(500.0, 300.0);
+    assert(doc.is_dirty());
+    assert(doc.epoch() == before->epoch());
+    assert(workflow.undo());
+    assert(doc.page().width_mm == 420.0 && doc.page().height_mm == 297.0);
+    std::cout << "[PASS] AC-R02-01/02: Page resize preserves history, lifecycle and dirty state\n";
+}
+
+void test_utf8_document_names_preserve_codepoint_boundaries() {
+    CompositionRoot root;
+    root.initialize();
+    DocumentWorkflow workflow(root);
+    // AC-R02-03: Long Vietnamese source stays intact; previews end at whole codepoints.
+    const std::string prefix(15, 'a');
+    const std::string text = prefix + "ếếếếếếếếếế";
+    const auto id = workflow.add_vietnamese_text(10.0, 20.0, text, "Segoe UI", 12.0);
+    const auto object = root.document().current_snapshot()->objects().get(id);
+    assert(object);
+    const auto& original = std::get<document::TextObject>(*object);
+    assert(original.text == text);
+    assert(original.name == "Văn bản: " + prefix + "ếếếếế");
+    assert(workflow.convert_text_to_curves(id));
+    assert(root.document().current_snapshot()->object_count() == 1);
+    const auto selected = root.vector_controller().selection().selected_ids();
+    assert(selected.size() == 1);
+    const auto curves = root.document().current_snapshot()->objects().get(selected.front());
+    assert(curves && std::get<document::PathObject>(*curves).name == "Đường cong: " + prefix + "ế");
+    assert(workflow.undo());
+    const auto restored = root.document().current_snapshot()->objects().get(id);
+    assert(restored && std::get<document::TextObject>(*restored).text == text);
+
+    // Boundary coverage for valid 1/2/3/4-byte sequences and malformed prefixes.
+    using detail::utf8_truncate_codepoints;
+    assert(utf8_truncate_codepoints("Aéế😀Z", 4) == "Aéế😀");
+    assert(utf8_truncate_codepoints("ế", 0).empty());
+    assert(utf8_truncate_codepoints("ế", 2) == "ế");
+    for (const std::string& bad : {std::string("\x80"), std::string("\xc0\xaf"),
+                                 std::string("\xe1\x80"), std::string("\xed\xa0\x80"),
+                                 std::string("\xf4\x90\x80\x80"), std::string("\xe0\x80\x80")})
+        assert(utf8_truncate_codepoints("A" + bad + "Z", 20) == "A");
+    std::cout << "[PASS] AC-R02-03: UTF-8 names and text-to-curves previews preserve whole codepoints\n";
+}
 
 void test_e2e_m01_to_m05_shapes_text_undo_save(const std::string& temp_file) {
     CompositionRoot root;
@@ -209,6 +302,8 @@ int main() {
     std::cout << "===========================================================\n";
 
     const std::string temp_file = "test_e2e_m1_workspace.pikdraw";
+    test_page_size_preserves_history_and_dirty_state();
+    test_utf8_document_names_preserve_codepoint_boundaries();
     test_e2e_m01_to_m05_shapes_text_undo_save(temp_file);
     test_e2e_m06_m07_interop_and_diagnostics();
     test_e2e_svg_save_preserves_existing_target_on_unsupported_appearance();

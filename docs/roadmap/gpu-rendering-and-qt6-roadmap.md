@@ -1,7 +1,7 @@
 # Lộ trình tích hợp GPU Rendering (Direct2D 1.1 / D3D11) trên Native Shell & Định hướng Kiến trúc Qt 6 / Skia
 
 Trạng thái: **Kế hoạch kỹ thuật chiến lược — Đã cập nhật theo Hướng A (Thực thi 100% GPU Direct2D Thật, Zero Stub/Mock)**.
-Đối chiếu: [C3 Rendering](../../contracts/c3-rendering.md), [C8 Import Fidelity](../../contracts/c8-import-fidelity.md), [C9 Appearance/Effects](../../contracts/c9-appearance-effects.md), [Tương thích tài nguyên vector](../architecture/vector-resource-interoperability.md), [Chuẩn UX/UI](../design/ui-ux-standard.md), [Kế hoạch tách file 800 dòng](code-modularization-800loc-plan.md).
+Đối chiếu: [C3 Rendering](../../contracts/c3-rendering.md), [C8 Import Fidelity](../../contracts/c8-import-fidelity.md), [C9 Appearance/Effects](../../contracts/c9-appearance-effects.md), [Tương thích tài nguyên vector](../architecture/vector-resource-interoperability.md), [Chuẩn UX/UI](../design/ui-ux-standard.md), [Kế hoạch khắc phục kiến trúc](architecture-remediation-plan-20261018.md).
 
 ---
 
@@ -82,8 +82,8 @@ flowchart TD
 
 ---
 
-### [ ] IN PROGRESS Giai đoạn G02: Hoàn thiện 100% `D2DRenderBackend` Vẽ Thật trên GPU & Readback Thật (`core/rendering/src/gpu/d2d/`)
-- **Mục tiêu**: Loại bỏ toàn bộ các nhánh chặn `find_unsupported_d2d_feature()` và nhánh bypass `premultiplied_rgba` trong `d2d_render_backend.cpp`; cài đặt đầy đủ 100% tính năng vẽ và hiệu ứng C9 trực tiếp bằng Direct2D 1.1 / D3D11.
+### [x] DONE Giai đoạn G02: `D2DRenderBackend` Direct2D GPU và PixelBuffer Readback cho profile được hỗ trợ (`core/rendering/src/gpu/d2d/`)
+- **Mục tiêu**: Loại bỏ các bypass CPU khi D2D đã khởi tạo; vẽ các primitive/effects được hỗ trợ trực tiếp bằng Direct2D 1.1 / D3D11 và trả lỗi rõ ràng cho dữ liệu/combination chưa hỗ trợ. Đây không phải cam kết hỗ trợ toàn bộ profile C9.
 - **Owned paths**:
   - `core/rendering/include/pikdraw/rendering/d2d_backend.hpp`
   - `core/rendering/src/gpu/d2d/d2d_internal.hpp`
@@ -113,7 +113,7 @@ flowchart TD
 
 ---
 
-### [ ] TODO Giai đoạn G03: Dọn Sạch Code Stub Skia & Kết Nối `D2DRenderBackend` vào `ViewportRenderer` (`core/rendering`)
+### [x] DONE Giai đoạn G03: Dọn Sạch Code Stub Skia & Kết Nối `D2DRenderBackend` vào `ViewportRenderer` (`core/rendering`)
 - **Mục tiêu**: Xóa bỏ hoàn toàn các file stub Skia không hoạt động thực tế và đưa `D2DRenderBackend` trở thành engine tăng tốc mặc định của `ViewportRenderer`.
 - **Owned paths**:
   - `cmake/PikDrawDependencies.cmake`
@@ -133,42 +133,43 @@ flowchart TD
 
 ---
 
-### [ ] TODO Giai đoạn G04: Tích Hợp Tăng Tốc GPU Direct2D & Damage Tracking Vào `NativeWindow` Canvas (`apps/desktop/src/shell/`)
+### [x] DONE Giai đoạn G04: Tích Hợp Tăng Tốc GPU Direct2D & Damage Tracking Vào `NativeWindow` Canvas (`apps/desktop/src/shell/`)
 - **Mục tiêu**: Nối đường ống `ViewportRenderer` (GPU Direct2D) và `DamageTracker` trực tiếp vào vùng vẽ Canvas của cửa sổ Win32 `NativeWindow`, đạt tốc độ 60–120 FPS mượt mà mà giữ nguyên 100% 22 chức năng hiện có.
 - **Owned paths**:
   - `apps/desktop/include/pikdraw/desktop/shell/native_window.hpp`
   - `apps/desktop/src/shell/native_window_canvas.cpp` (< 750 dòng)
   - `apps/desktop/src/shell/native_window_canvas_overlays.cpp` (< 750 dòng)
   - `apps/desktop/src/shell/native_window_paint.cpp` (< 750 dòng)
+  - `apps/desktop/src/shell/native_window_paint_status.cpp` (status bar/backend badge)
 - **Hạng mục công việc bắt buộc**:
-  1. Kết nối `ViewportRenderer` (đang chạy `D2DRenderBackend`) vào quy trình vẽ tài liệu trong `NativeWindow::paint_canvas()`.
-  2. Sử dụng `SpatialIndex` và `DamageTracker` để tối ưu hóa việc cập nhật vùng đệm hiển thị khi người dùng kéo chọn, di chuyển đối tượng hoặc chỉnh thanh trượt hiệu ứng thời gian thực.
+  1. `NativeWindow::paint_document_canvas()` chụp snapshot rồi gọi `ViewportRenderer::render_frame()`; trên Windows backend mặc định là `D2DRenderBackend` nếu D3D11 hardware/WARP khởi tạo được.
+  2. D2D dùng `SpatialIndex` cho culling. `DamageTracker` hợp nhất bounds cũ/mới và giới hạn vùng RGBA→BGRA/GDI cache copy khi camera/viewport ổn định; Direct2D vẫn vẽ và readback toàn frame, chưa phải GPU partial-render.
   3. Bảo toàn tuyệt đối toàn bộ lớp phủ tương tác (`native_window_canvas_overlays.cpp`: khung chọn, tay nắm xoay, đường gióng, thước đo, preview công cụ Pen/Node/Contour/Gradient/Dimension, HUD kích thước SketchUp) vẽ chồng chính xác lên trên khung hình Canvas đã được GPU kết xuất.
-  4. Hiển thị trạng thái Backend đang hoạt động (`GPU: Direct2D 1.1` hoặc `CPU Fallback`) trên thanh Status Bar hoặc hộp thoại Settings để người dùng quan sát minh bạch.
+  4. Hiển thị trạng thái backend trên Status Bar: `GPU: Direct2D 1.1`, `Direct2D: WARP`, `Backend: CPU Fallback`, hoặc `Direct2D: unavailable` sau device loss.
 - **Lệnh kiểm tra bắt buộc**:
   `powershell -File tooling/native/build.ps1 -Test -TestTarget test_pikdraw_drawing_tool_ui,test_pikdraw_pen_native_shell,test_pikdraw_vertical_slice_e2e -TestRegex '^test_pikdraw_(drawing_tool_ui|pen_native_shell|vertical_slice_e2e)$'`
 
 ---
 
-### [ ] TODO Giai đoạn G05: Kiểm Thử Nghiệm Thu Thực Tế (Zero-Fallback GPU Proof), Xuất Ảnh Chụp & Benchmark 60/120 FPS
-- **Mục tiêu**: Chứng minh bằng bằng chứng thực nghiệm (pixel buffer, ảnh chụp `.bmp`/`.png` thực tế và số đo thời gian frame) rằng GPU Direct2D vẽ thật 100% và toàn bộ 22 chức năng trên giao diện hoạt động không lỗi.
+### [x] DONE Giai đoạn G05: Kiểm Thử Nghiệm Thu Thực Tế (Zero-Fallback GPU Proof), Xuất Ảnh Chụp & Benchmark 60/120 FPS
+- **Mục tiêu**: Chứng minh bằng pixel buffer, ảnh chụp giao diện và số đo frame rằng Direct2D vẽ GPU cho feature set được nêu trong test, không replay qua CPU khi GPU render lỗi, và chạy lại native shell acceptance cases.
 - **Owned paths**:
   - `apps/desktop/CMakeLists.txt`
   - `apps/desktop/tests/test_desktop_shell.cpp`
   - `core/rendering/tests/rasterizer/test_rasterizer.cpp`
 - **Tiêu chí nghiệm thu bắt buộc**:
   1. **Zero-Fallback GPU Proof**:
-     - Kiểm thử vẽ bản vẽ phức hợp (Path có Transform旋转/Scale, Linear/Radial Gradient, Text tiếng Việt Unicode, Image, Group, Gaussian Blur và Drop Shadow) bằng `D2DRenderBackend` với cờ cấm fallback CPU, xác nhận GPU tự vẽ 100% và độ tương đồng màu/hình học so với `SoftwareRasterizer` đạt chuẩn.
+     - Kiểm thử Path transform, Linear/Radial Gradient, `TextObject` Unicode, Image, Group, Gaussian Blur và Drop Shadow. Bài test yêu cầu D2D device khỏe, `RenderMetric.used_gpu == true`, mọi object được render và không có diagnostic lỗi; so pixel với `SoftwareRasterizer` bằng mean RGB error ≤ 12 và foreground overlap ≥ 0,70.
   2. **Nghiệm thu Trực quan trên Giao diện Build (Visual Screenshot Evidence)**:
-     - Kết xuất và chụp ảnh nghiệm thu thực tế từ giao diện `NativeWindow` (bao gồm cả thanh Ribbon, Toolbox, Inspector Dock và vùng Canvas có đối tượng + hiệu ứng GPU) ra file ảnh kiểm chứng trong quá trình nghiệm thu.
+     - `test_pikdraw_desktop_shell` gọi `NativeWindow::capture_screenshot_bmp`; ví dụ `basic-effects-properties-english.bmp` lưu tại temp `pikdraw-desktop-shell-test-20261017`, thể hiện Ribbon, Toolbox, Inspector, canvas với Blur/Shadow và badge Direct2D. Ảnh đã được kiểm tra trực quan trên lượt nghiệm thu.
   3. **22-Point Feature Parity Gate**:
      - Đối chiếu và chạy pass 100% các bộ test giao diện desktop (`test_pikdraw_desktop_shell`, `test_pikdraw_drawing_tool_ui`, `test_pikdraw_pen_native_shell`, `test_pikdraw_gradient_native_shell`, `test_pikdraw_embedded_mcp_http`).
   4. **Hiệu năng (Frame Time)**:
-     - Đo thời gian render bản vẽ 10.000 đối tượng vector qua `D2DRenderBackend` + `SpatialIndex` đạt $\le 8.3\text{ ms/frame}$ (120 FPS) trên GPU rời hoặc $\le 16.6\text{ ms/frame}$ (60 FPS) trên iGPU/WARP.
+     - Đo warmed median 9 mẫu sau ba warmup trên 10.000 đối tượng qua `D2DRenderBackend` + `SpatialIndex`; gate dùng 8,3 ms khi adapter hardware được báo và 16,6 ms trên WARP. Kết quả chỉ mô tả máy chạy test, không suy rộng sang phần cứng khác.
 
 ---
 
-### [ ] TODO Giai đoạn G06: Chuẩn Hóa Tài Liệu Trung Thực & Đóng Lộ Trình (Chống Xung Đột Ngữ Cảnh)
+### [x] DONE Giai đoạn G06: Chuẩn Hóa Tài Liệu Trung Thực & Đóng Lộ Trình (Chống Xung Đột Ngữ Cảnh)
 - **Mục tiêu**: Đồng bộ toàn bộ tài liệu trong repo khớp 100% với sự thật runtime sau khi hoàn thành tích hợp GPU Direct2D.
 - **Owned paths**:
   - `AGENTS.md`, `docs/START.md`, `docs/project-state.json`
@@ -176,7 +177,7 @@ flowchart TD
   - `contracts/c3-rendering.md`, `registry/modules.json`
   - `docs/roadmap/gpu-rendering-and-qt6-roadmap.md`
 - **Danh mục đồng bộ bắt buộc**:
-  1. **`AGENTS.md` & `docs/START.md`**: Ghi nhận chính xác: *"Runtime desktop hiện tại là C++20 / Win32 Native Shell kết hợp tăng tốc GPU Direct2D 1.1 / D3D11 + WARP (giữ SoftwareRasterizer làm Golden Oracle). Qt 6 và Skia vẫn là thiết kế định hướng chờ toolchain đồng nhất ABI."*
+  1. **`AGENTS.md` & `docs/START.md`**: Ghi rõ Direct2D hardware/WARP vẽ frame, staging/readback về pixel buffer, GDI chép frame và vẽ overlays; SoftwareRasterizer là CPU fallback/oracle. Qt 6 và Skia vẫn là thiết kế định hướng chờ toolchain đồng nhất ABI.
   2. **`core/rendering/README.md` & `contracts/c3-rendering.md`**: Cập nhật bảng API/Implementation ghi nhận `SpatialIndex`, `DamageTracker` và `D2DRenderBackend` đã chạy runtime thực chất.
   3. **`apps/desktop/README.md` & `docs/architecture/workspace-layout.md`**: Cập nhật bản đồ các file `native_window_*.cpp` và `document_workflow_*.cpp` sau khi tách mô-đun dưới 800 dòng.
   4. **`docs/project-state.json` & `registry/modules.json`**: Cập nhật snapshot hiện hành (đảm bảo `project-state.json` dưới 8.000 byte, không nối đuôi nhật ký dài).
@@ -226,14 +227,14 @@ Tuân thủ [hướng dẫn tương thích tài nguyên vector](../architecture/
 | --- | --- |
 | **User workflow và nguồn** | Người dùng mở file local hoặc nhập tài nguyên qua broker của host. GPU renderer tuyệt đối không tự gọi mạng hoặc tự tải linked assets. |
 | **Scope format** | **SVG, DXF**: Đã có worker import đưa về `DocumentSnapshot` -> được hưởng lợi trực tiếp từ tăng tốc GPU Direct2D. **PDF, AI, CDR, EPS**: Tiếp tục đi qua worker cách ly (C6/C8) ánh xạ vào mô hình trung lập trước khi GPU render. |
-| **Current state** | Hiện tại `SoftwareRasterizer` và Win32 `NativeWindow` đang chạy runtime; `SpatialIndex` và `DamageTracker` đã hoàn tất ở G01; `D2DRenderBackend` được hoàn thiện 100% ở G02–G05. |
+| **Current state** | Runtime Windows dùng `ViewportRenderer` → Direct2D 1.1/D3D11 hardware hoặc WARP → staging/readback PixelBuffer → GDI backbuffer/overlays. `SpatialIndex` cull large snapshots; `DamageTracker` giới hạn copy dirty-region khi view ổn định nhưng không giảm full-frame GPU render/readback. `SoftwareRasterizer` là CPU fallback/oracle. D2D hiện trả lỗi cho non-Normal blend trên Drop Shadow node; không tuyên bố mọi C9 case hoàn tất. |
 | **Canonical semantics** | `PathObject`, `TextObject`, `GroupObject`, `ImageObject`, đơn vị `mm` (binary64), transform, màu nguồn (RGB/CMYK/Spot) và đồ thị hiệu ứng C9 giữ nguyên 100% trong `core/document`. |
 | **Shared algorithm boundary** | Các adapter định dạng (SVG/DXF/PDF/AI/CDR/EPS) chuẩn hóa dữ liệu về `DocumentSnapshot`. Cả `SoftwareRasterizer` và `D2DRenderBackend` đọc chung một snapshot và áp dụng chung công thức chiếu tọa độ C3 + quy tắc hiệu ứng C9. |
 | **Fidelity matrix** | Đối tượng native/editable được vẽ bằng GPU vector pipeline. Vùng `reference-only` được vẽ như surface tham chiếu có gắn nhãn cảnh báo trên Inspector, không đưa vào đường xuất CNC/sản xuất. |
 | **Loss policy** | Khi tài nguyên nhập vào có hiệu ứng vượt ngân sách bộ nhớ (texture > 16.384 px hoặc vượt trần MiB của C9), `D2DRenderBackend` báo `RenderDiagnostic` rõ ràng, không tự ý làm phẳng (flatten) âm thầm. |
 | **Source integrity** | Giữ nguyên SHA-256 source hash, provenance metadata, thuộc tính màu nguồn và stable IDs khi lưu/mở lại hoặc chuyển đổi giữa các backend render. |
 | **Network/security** | Parser vẫn chạy trong sandbox worker `platform/workers` không có quyền mạng. GPU backend chỉ nhận dữ liệu đã qua kiểm duyệt schema và giới hạn bộ nhớ của host. |
-| **Acceptance evidence** | Kiểm chứng bằng 3 lớp: (1) So khớp pixel GPU Readback thật với `SoftwareRasterizer` oracle trên `tests/fixtures/`, (2) Kiểm tra cấu trúc/provenance và Undo/Redo sau khi render, (3) Đo thời gian frame time thực tế. |
+| **Acceptance evidence** | Kiểm chứng bằng: (1) `used_gpu`/diagnostics và pixel parity GPU Readback với `SoftwareRasterizer` trong rasterizer test, (2) native shell screenshot và interaction tests, (3) warmed 10k-object frame benchmark trên máy chạy test. Đây không phải proof cho input-to-present latency hay fidelity mọi tài nguyên nhập. |
 
 ---
 

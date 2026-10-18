@@ -1,7 +1,7 @@
 # PikDraw Desktop
 
-Adapter đang chạy là **Win32/GDI**, dùng ViewportRenderer software và document C++20.
-Canvas hiển thị snapshot thật; chỉnh sửa đi qua command của document. Qt/QSS và bốn workspace
+Adapter đang chạy là **Win32 Native Shell** kết hợp **Direct2D 1.1 / D3D11 hardware hoặc WARP** qua `ViewportRenderer`.
+Canvas dựng snapshot bằng GPU rồi đọc frame về pixel buffer; GDI chép ảnh vào backbuffer và vẽ lớp phủ. Qt/QSS và bốn workspace
 là kế hoạch kiến trúc; không suy ra các workflow đó đã chạy từ bản vẽ UI tham chiếu.
 
 ## Quy tắc thiết kế cho thay đổi tiếp theo
@@ -39,12 +39,23 @@ Tái dùng các bề mặt và action/value hiện có; không thêm bar/panel h
 
 | Nhóm | API / triển khai | Kiểm thử |
 | --- | --- | --- |
-| Canvas & input | native_window_canvas.cpp, native_window_selection.cpp, native_window_shortcuts.cpp | test_canvas_view.cpp, test_editor_tools.cpp |
+| Canvas & input | native_window_canvas.cpp, native_window_canvas_snap.cpp, native_window_selection.cpp, native_window_shortcuts.cpp | test_pikdraw_drawing_tool_ui, test_pikdraw_pen_native_shell, test_pikdraw_vertical_slice_e2e |
 | Khung chọn & preview | native_window_selection_geometry.hpp, native_window_selection_paint.cpp | input native và ảnh từ test_editor_tools |
-| Frame cache | native_canvas_frame.hpp; key root/camera/size/profile/theme, giữ một frame | native CPU paint benchmark và ảnh |
+| Render cache | native_window_canvas.cpp: snapshot/camera/size/profile/theme, dọn khi DPI đổi; nhận BGRA trực tiếp, `DamageTracker` chép vùng dirty nhỏ vào GDI bitmap, D2D vẫn render/readback toàn frame | `test_pikdraw_desktop_shell`; không phải GPU partial-render |
+| Shell paint/status | native_window_paint.cpp, native_window_paint_status.cpp, native_window_canvas_overlays.cpp | desktop shell screenshot and interaction tests |
 | Fill/stroke | presenters/object_style.hpp, object_style.cpp, native_window_style*.cpp, native_style_dialog.* | palette, hộp nhập và Undo tests |
 | ICC preview | native_window_color_profiles.cpp → color::IccPreview → render backend | ICC test và pixel consumer |
 | Document I/O | DocumentWorkflow, native_window_files.cpp | save/reopen và source-channel assertions |
+| Menu, pointer, window events | native_window_menu_actions.cpp, native_window_pointer_dispatch.cpp, native_window_events.cpp | drawing_tool_ui và desktop_shell |
+| Isolation & numeric | native_window_isolation_menus.cpp, native_window_numeric_input.cpp, native_window_numeric_edit.cpp, native_window_array_quickdim.cpp | desktop_shell và drawing_tool_ui |
+| Workflow | document_workflow_appearance.cpp, document_workflow_effect_draft.cpp, document_workflow_clipboard_transform.cpp, document_workflow_group_transform.cpp | effect_draft, drawing_tool_controller và desktop_shell |
+| DPI | DIP chung cho paint/hit-test; WM_DPICHANGED dựng lại font/cache; canvas buffer theo pixel vật lý | drawing_tool_ui: thông điệp 120/144/192/96 DPI; chưa nghiệm thu chuyển màn hình thật |
+| Phục hồi | native_window_files.cpp; timer 60 giây, checkpoint riêng mỗi phiên/tab dưới Recovery; Save thành công dọn đúng tab | test_pikdraw_save_recovery |
+
+`test_pikdraw_desktop_shell` dùng bốn translation unit (`test_desktop_shell`,
+`_align_boolean`, `_appearance`, `_text_settings`) và `desktop_shell_test_helpers.hpp`.
+Drawing controller giữ cùng target, thêm `test_drawing_tool_snap_input.cpp`;
+storage fidelity thêm `test_storage_appearance_migration.cpp` trong core/document.
 
 ## Build và xác minh
 
@@ -65,5 +76,5 @@ native, mở và thao tác hộp màu thật, kiểm tra source/Undo/ICC pixels/
 
 ## Giới hạn hiện tại
 
-Pick/transform/style hỗ trợ root path/text có thể sửa; đã có tay nắm xoay (rotation handle), lật đối xứng (flip), Pen/Quick Shapes/Gradient, cùng các bộ điều khiển `NodeToolController`, `ContourToolController`, `DimensionToolController` (cần đồng bộ thêm lối vào trên Toolbox/Menu và hoàn thiện render `GroupObject`/`ImageObject` trong `SoftwareRasterizer`).
-ICC hiện là preview của máy; Native v2 giữ RGB/CMYK/spot/gradient/overprint.
+Pick/transform/style hỗ trợ root path/text có thể sửa; đã có tay nắm xoay (rotation handle), lật đối xứng (flip), Pen/Quick Shapes/Gradient, cùng các bộ điều khiển `NodeToolController`, `ContourToolController`, `DimensionToolController`. `GroupObject` và `ImageObject` có đường vẽ trong SoftwareRasterizer và D2D; điều đó không khẳng định mọi thao tác chỉnh sửa nhóm/ảnh đã có trên shell.
+ICC hiện là preview của máy; `.pikdraw` ghi Native v5 (`kCurrentFormatVersion = 5`), đọc tương thích v2/v3/v4. Native v5 giữ RGB/CMYK/spot/gradient/overprint và appearance qua codec đã kiểm thử. Plan R10 ghi v4 nhưng source HEAD đã là v5; không hạ phiên bản writer. Autosave giữ dirty/Undo; hiện chưa có màn hình tự đề nghị phục hồi lúc khởi động.

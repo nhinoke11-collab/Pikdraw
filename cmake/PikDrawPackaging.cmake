@@ -4,6 +4,9 @@ if(NOT WIN32)
 endif()
 
 set(PIKDRAW_PACKAGE_TARGETS pikdraw pikdraw-mcp-server pikdraw-com-server)
+if(TARGET spike_worker)
+    list(APPEND PIKDRAW_PACKAGE_TARGETS spike_worker)
+endif()
 foreach(target IN LISTS PIKDRAW_PACKAGE_TARGETS)
     if(NOT TARGET ${target})
         message(FATAL_ERROR "PikDraw Windows package is incomplete: missing target '${target}'.")
@@ -15,6 +18,12 @@ install(TARGETS pikdraw
     RUNTIME DESTINATION .
     COMPONENT Runtime
 )
+if(TARGET spike_worker)
+    install(TARGETS spike_worker
+        RUNTIME DESTINATION workers
+        COMPONENT Runtime
+    )
+endif()
 install(TARGETS pikdraw-mcp-server
     RUNTIME_DEPENDENCY_SET PikDrawMcpRuntime
     RUNTIME DESTINATION apps/mcp-server

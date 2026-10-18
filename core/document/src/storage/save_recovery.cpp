@@ -1,9 +1,13 @@
 #include "byte_codec.hpp"
 #include "file_io.hpp"
 #include <atomic>
+#include <algorithm>
 #include <chrono>
+#include <ctime>
 #include <fstream>
+#include <iomanip>
 #include <iterator>
+#include <sstream>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -18,6 +22,37 @@ namespace pikdraw::document {
 using namespace storage_detail;
 namespace {
 std::atomic<uint64_t> next_temp{0};
+constexpr size_t kRecoveryCandidateLimit = 128;
+constexpr size_t kRecoveryScanEntryLimit = 4096;
+
+std::string recovery_timestamp(std::filesystem::file_time_type file_time) {
+  const auto system_time = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+      std::chrono::file_clock::to_sys(file_time));
+  const auto raw = std::chrono::system_clock::to_time_t(system_time);
+  std::tm local{};
+#ifdef _WIN32
+  if (localtime_s(&local, &raw) != 0)
+    return {};
+#else
+  if (!localtime_r(&raw, &local))
+    return {};
+#endif
+  std::ostringstream formatted;
+  formatted << std::put_time(&local, "%Y-%m-%d %H:%M");
+  return formatted.str();
+}
+
+RecoveryInfo describe_checkpoint(const std::filesystem::path &path,
+                                const DocumentSnapshot &snapshot,
+                                std::filesystem::file_time_type modified) {
+  return RecoveryInfo{path_utf8(path), snapshot.document_id(), snapshot.epoch(),
+                      snapshot.revision(), snapshot.object_count(),
+                      snapshot.page().width_mm, snapshot.page().height_mm,
+                      std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                          std::chrono::file_clock::to_sys(modified)),
+                      recovery_timestamp(modified)};
+}
+
 std::string temp_suffix() {
 #ifdef _WIN32
   const auto pid = GetCurrentProcessId();
@@ -157,15 +192,152 @@ SaveRecoveryService::find_latest_checkpoint(const std::string &recovery_dir,
         continue;
       const auto time = entry.last_write_time();
       if (!latest || time > latest_time ||
-          (time == latest_time && filename > latest->timestamp)) {
+          (time == latest_time && filename >
+              path_utf8(utf8_path(latest->path).filename()))) {
         latest_time = time;
-        latest = RecoveryInfo{path_utf8(entry.path()), snapshot->epoch(),
-                              snapshot->revision(), filename};
+        latest = describe_checkpoint(entry.path(), *snapshot, time);
       }
     }
     return latest;
   } catch (...) {
     return std::nullopt;
+  }
+}
+
+std::vector<RecoveryInfo> SaveRecoveryService::list_recovery_checkpoints(
+    const std::string &recovery_root, bool *out_truncated) {
+  if (out_truncated)
+    *out_truncated = false;
+  std::vector<RecoveryInfo> candidates;
+  try {
+    const auto root = utf8_path(recovery_root);
+    const auto root_status = std::filesystem::symlink_status(root);
+    if (std::filesystem::is_symlink(root_status) ||
+        !std::filesystem::is_directory(root_status))
+      return candidates;
+
+    size_t scanned = 0;
+    bool scan_limit_reached = false;
+    const auto inspect_file = [&](const std::filesystem::directory_entry &entry) {
+      std::error_code error;
+      const auto status = entry.symlink_status(error);
+      if (error || std::filesystem::is_symlink(status) ||
+          !std::filesystem::is_regular_file(status) ||
+          entry.path().extension() != ".pkdr")
+        return;
+      const auto snapshot = load(path_utf8(entry.path()));
+      if (!snapshot || snapshot->document_id().empty())
+        return;
+      const auto modified = entry.last_write_time(error);
+      if (error)
+        return;
+      candidates.push_back(describe_checkpoint(entry.path(), *snapshot, modified));
+    };
+
+    std::error_code error;
+    for (std::filesystem::directory_iterator it(
+             root, std::filesystem::directory_options::skip_permission_denied,
+             error), end;
+         !error && it != end; it.increment(error)) {
+      if (scanned >= kRecoveryScanEntryLimit) {
+        scan_limit_reached = true;
+        break;
+      }
+      ++scanned;
+      const auto entry = *it;
+      const auto status = entry.symlink_status(error);
+      if (error) {
+        error.clear();
+        continue;
+      }
+      if (std::filesystem::is_symlink(status))
+        continue;
+      if (std::filesystem::is_regular_file(status)) {
+        inspect_file(entry);
+      } else if (std::filesystem::is_directory(status)) {
+        std::error_code child_error;
+        for (std::filesystem::directory_iterator child(
+                 entry.path(),
+                 std::filesystem::directory_options::skip_permission_denied,
+                 child_error), child_end;
+             !child_error && child != child_end; child.increment(child_error)) {
+          if (scanned >= kRecoveryScanEntryLimit) {
+            scan_limit_reached = true;
+            break;
+          }
+          ++scanned;
+          inspect_file(*child);
+          if (scan_limit_reached)
+            break;
+        }
+      }
+      if (scan_limit_reached)
+        break;
+    }
+
+    std::sort(candidates.begin(), candidates.end(),
+              [](const RecoveryInfo &left, const RecoveryInfo &right) {
+                if (left.modified_at != right.modified_at)
+                  return left.modified_at > right.modified_at;
+                return left.path > right.path;
+              });
+    const bool truncated = scan_limit_reached ||
+                           candidates.size() > kRecoveryCandidateLimit;
+    if (candidates.size() > kRecoveryCandidateLimit)
+      candidates.resize(kRecoveryCandidateLimit);
+    if (out_truncated)
+      *out_truncated = truncated;
+  } catch (...) {
+    candidates.clear();
+  }
+  return candidates;
+}
+
+bool SaveRecoveryService::discard_recovery_checkpoint(
+    const std::string &recovery_root, const std::string &checkpoint_path,
+    std::string *out_error) {
+  if (out_error)
+    out_error->clear();
+  try {
+    const auto root = std::filesystem::absolute(utf8_path(recovery_root)).lexically_normal();
+    const auto target = std::filesystem::absolute(utf8_path(checkpoint_path)).lexically_normal();
+    const auto relative = target.lexically_relative(root);
+    if (relative.empty() || relative.is_absolute() || relative.extension() != ".pkdr" ||
+        std::any_of(relative.begin(), relative.end(), [](const auto &part) {
+          return part == "..";
+        }))
+      throw std::invalid_argument("Checkpoint is outside the recovery folder");
+    const auto component_count = static_cast<size_t>(
+        std::distance(relative.begin(), relative.end()));
+    if (component_count < 1 || component_count > 2)
+      throw std::invalid_argument("Checkpoint path is not a recovery entry");
+
+    const auto root_status = std::filesystem::symlink_status(root);
+    const auto target_status = std::filesystem::symlink_status(target);
+    if (std::filesystem::is_symlink(root_status) ||
+        std::filesystem::is_symlink(target_status) ||
+        !std::filesystem::is_regular_file(target_status))
+      throw std::invalid_argument("Checkpoint is not a regular recovery file");
+    if (component_count == 2) {
+      const auto folder_status = std::filesystem::symlink_status(target.parent_path());
+      if (std::filesystem::is_symlink(folder_status) ||
+          !std::filesystem::is_directory(folder_status))
+        throw std::invalid_argument("Checkpoint folder is not valid");
+    }
+    const auto snapshot = load(path_utf8(target));
+    if (!snapshot || snapshot->document_id().empty())
+      throw std::invalid_argument("Checkpoint is no longer valid");
+    if (!std::filesystem::remove(target))
+      throw std::runtime_error("Checkpoint could not be removed");
+    return true;
+  } catch (const std::exception &error) {
+    if (out_error)
+      *out_error = error.what();
+    return false;
+  } catch (...) {
+    if (out_error)
+      *out_error = "Unknown recovery checkpoint removal failure";
+    return false;
   }
 }
 

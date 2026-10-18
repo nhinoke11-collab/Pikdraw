@@ -80,7 +80,7 @@
       "owned_paths": [
         "core/rendering"
       ],
-      "purpose": "Viewport rendering, retained cache, incremental invalidation and output fidelity."
+      "purpose": "Viewport rendering, Direct2D/GDI pixel-buffer presentation, spatial culling, dirty-region cache updates, and output fidelity."
     },
     {
       "id": "vector",
@@ -104,7 +104,7 @@
       "id": "automation",
       "path": "modules/automation",
       "status": "implemented",
-      "dependencies": ["document", "vector"],
+      "dependencies": ["document", "vector", "geometry", "typography"],
       "context": ["modules/automation/README.md"],
       "owned_paths": ["modules/automation"],
       "purpose": "Typed application service for automation adapters: capability discovery, snapshot inspection, object queries and validated semantic commands. MCP/COM transports and authorization are separate adapters."
@@ -123,6 +123,7 @@
       "path": "apps/com-server",
       "status": "implemented",
       "dependencies": ["mcp-server"],
+      "test_dependencies": ["automation", "desktop"],
       "context": ["apps/com-server/CMakeLists.txt", "apps/com-server/README.md"],
       "owned_paths": ["apps/com-server"],
       "purpose": "Per-user Windows COM local server exposing late-bound IDispatch methods over the same MCP semantic tools, application sessions and authorization policy."
@@ -240,7 +241,11 @@
         "vector",
         "interop",
         "automation",
-        "workers"
+        "workers",
+        "color",
+        "geometry",
+        "typography",
+        "mcp-server"
       ],
       "context": [
         "apps/desktop/README.md",

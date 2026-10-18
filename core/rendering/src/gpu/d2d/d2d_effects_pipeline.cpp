@@ -8,53 +8,12 @@ namespace {
 
 constexpr float kMaxTextureDimensionPx = 16384.0f;
 
-D2D1_COLOR_F extract_rgb(const color::ColorValue &color, float opacity) {
-  float r = 0.0f, g = 0.0f, b = 0.0f, a = 1.0f;
-  std::visit(
-      [&](const auto &c) {
-        using T = std::decay_t<decltype(c)>;
-        if constexpr (std::is_same_v<T, color::RGBColor>) {
-          r = static_cast<float>(c.r);
-          g = static_cast<float>(c.g);
-          b = static_cast<float>(c.b);
-          a = static_cast<float>(c.a);
-        } else if constexpr (std::is_same_v<T, color::CMYKColor>) {
-          // Standard naive CMYK to RGB preview conversion
-          r = static_cast<float>((1.0 - c.c) * (1.0 - c.k));
-          g = static_cast<float>((1.0 - c.m) * (1.0 - c.k));
-          b = static_cast<float>((1.0 - c.y) * (1.0 - c.k));
-          a = static_cast<float>(c.a);
-        } else if constexpr (std::is_same_v<T, color::GrayscaleColor>) {
-          r = g = b = static_cast<float>(c.gray);
-          a = static_cast<float>(c.a);
-        } else if constexpr (std::is_same_v<T, color::SpotColor>) {
-          r = static_cast<float>(c.alternate_rgb.r);
-          g = static_cast<float>(c.alternate_rgb.g);
-          b = static_cast<float>(c.alternate_rgb.b);
-          a = static_cast<float>(c.alternate_rgb.a * c.tint);
-        }
-      },
-      color.payload());
-
-  return D2D1::ColorF(r, g, b, std::clamp(a * opacity, 0.0f, 1.0f));
-}
-
-[[maybe_unused]] D2D1_BLEND_MODE to_d2d_blend_mode(document::BlendMode mode) {
-  switch (mode) {
-  case document::BlendMode::Multiply:
-    return D2D1_BLEND_MODE_MULTIPLY;
-  case document::BlendMode::Screen:
-    return D2D1_BLEND_MODE_SCREEN;
-  case document::BlendMode::Overlay:
-    return D2D1_BLEND_MODE_OVERLAY;
-  case document::BlendMode::Darken:
-    return D2D1_BLEND_MODE_DARKEN;
-  case document::BlendMode::Lighten:
-    return D2D1_BLEND_MODE_LIGHTEN;
-  case document::BlendMode::Normal:
-  default:
-    return D2D1_BLEND_MODE_MULTIPLY; // D2D standard blend uses compositing mode
-  }
+D2D1_COLOR_F extract_rgb(const color::ColorValue &source, float opacity,
+                         const color::IccPreview *color_preview) {
+  const auto preview = color_preview ? color_preview->convert(source)
+                                     : color::to_preview_rgba(source);
+  return D2D1::ColorF(preview.r, preview.g, preview.b,
+                      std::clamp(preview.a * opacity, 0.0f, 1.0f));
 }
 
 } // namespace
@@ -66,11 +25,12 @@ D2DEffectsPipeline::~D2DEffectsPipeline() = default;
 ComPtr<ID2D1Brush> D2DEffectsPipeline::create_brush(
     ID2D1DeviceContext *context,
     const color::ColorValue &color,
-    float opacity) {
+    float opacity,
+    const color::IccPreview *color_preview) {
   if (!context)
     return nullptr;
 
-  D2D1_COLOR_F d2d_color = extract_rgb(color, opacity);
+  D2D1_COLOR_F d2d_color = extract_rgb(color, opacity, color_preview);
   ComPtr<ID2D1SolidColorBrush> brush;
   HRESULT hr = context->CreateSolidColorBrush(d2d_color, brush.ReleaseAndGetAddressOf());
   if (FAILED(hr))
@@ -85,9 +45,11 @@ bool D2DEffectsPipeline::apply_effects(
     ID2D1DeviceContext *context,
     ID2D1Image *source_image,
     const document::Appearance &appearance,
+    document::ObjectId object_id,
     double camera_zoom,
     ComPtr<ID2D1Image> &out_image,
-    std::vector<RenderDiagnostic> &diagnostics) {
+    std::vector<RenderDiagnostic> &diagnostics,
+    const color::IccPreview *color_preview) {
   if (!context || !source_image)
     return false;
 
@@ -106,7 +68,7 @@ bool D2DEffectsPipeline::apply_effects(
             const float std_dev = std::max(sigma_x_px, sigma_y_px);
 
             if (std_dev * 4.0f > kMaxTextureDimensionPx) {
-              diagnostics.push_back({document::kInvalidObjectId, true,
+              diagnostics.push_back({object_id, true,
                                      "Gaussian blur support exceeds texture budget (16384 px)"});
               return false;
             }
@@ -114,8 +76,11 @@ bool D2DEffectsPipeline::apply_effects(
             ComPtr<ID2D1Effect> blur;
             HRESULT hr = context->CreateEffect(CLSID_D2D1GaussianBlur,
                                                blur.ReleaseAndGetAddressOf());
-            if (FAILED(hr))
+            if (FAILED(hr)) {
+              diagnostics.push_back({object_id, true,
+                                     "Direct2D Gaussian blur effect creation failed"});
               return false;
+            }
 
             blur->SetInput(0, current_image.Get());
             blur->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, std_dev);
@@ -131,7 +96,7 @@ bool D2DEffectsPipeline::apply_effects(
             const float dy_px = static_cast<float>(effect.dy_mm * camera_zoom);
 
             if (sigma_px * 4.0f > kMaxTextureDimensionPx) {
-              diagnostics.push_back({document::kInvalidObjectId, true,
+              diagnostics.push_back({object_id, true,
                                      "Drop shadow support exceeds texture budget (16384 px)"});
               return false;
             }
@@ -139,11 +104,14 @@ bool D2DEffectsPipeline::apply_effects(
             ComPtr<ID2D1Effect> shadow;
             HRESULT hr = context->CreateEffect(CLSID_D2D1Shadow,
                                                shadow.ReleaseAndGetAddressOf());
-            if (FAILED(hr))
+            if (FAILED(hr)) {
+              diagnostics.push_back({object_id, true,
+                                     "Direct2D drop shadow effect creation failed"});
               return false;
+            }
 
             D2D1_COLOR_F shadow_color = extract_rgb(
-                effect.color, static_cast<float>(effect.opacity));
+                effect.color, static_cast<float>(effect.opacity), color_preview);
             shadow->SetInput(0, current_image.Get());
             shadow->SetValue(D2D1_SHADOW_PROP_BLUR_STANDARD_DEVIATION, sigma_px);
             shadow->SetValue(D2D1_SHADOW_PROP_COLOR, shadow_color);
@@ -156,8 +124,11 @@ bool D2DEffectsPipeline::apply_effects(
             ComPtr<ID2D1Effect> transform_effect;
             hr = context->CreateEffect(CLSID_D2D12DAffineTransform,
                                        transform_effect.ReleaseAndGetAddressOf());
-            if (FAILED(hr))
+            if (FAILED(hr)) {
+              diagnostics.push_back({object_id, true,
+                                     "Direct2D shadow transform effect creation failed"});
               return false;
+            }
 
             transform_effect->SetInput(0, shadow_img.Get());
             D2D1_MATRIX_3X2_F translation = D2D1::Matrix3x2F::Translation(dx_px, dy_px);
@@ -171,8 +142,17 @@ bool D2DEffectsPipeline::apply_effects(
             ComPtr<ID2D1Effect> composite;
             hr = context->CreateEffect(CLSID_D2D1Composite,
                                        composite.ReleaseAndGetAddressOf());
-            if (FAILED(hr))
+            if (FAILED(hr)) {
+              diagnostics.push_back({object_id, true,
+                                     "Direct2D shadow composite effect creation failed"});
               return false;
+            }
+
+            if (effect.blend_mode != document::BlendMode::Normal) {
+              diagnostics.push_back({object_id, true,
+                                     "GPU drop-shadow blend mode requires a scene backdrop input"});
+              return false;
+            }
 
             composite->SetInput(0, translated_shadow.Get());
             composite->SetInput(1, current_image.Get());
@@ -197,15 +177,15 @@ bool D2DEffectsPipeline::apply_effects(
 ComPtr<ID2D1Brush> D2DEffectsPipeline::create_gradient_brush(
     ID2D1DeviceContext *context,
     const document::GradientPaint &gradient,
-    const Camera2D &camera,
-    float opacity) {
+    float opacity,
+    const color::IccPreview *color_preview) {
   if (!context || gradient.stops.empty())
     return nullptr;
 
   std::vector<D2D1_GRADIENT_STOP> d2d_stops;
   d2d_stops.reserve(gradient.stops.size());
   for (const auto &stop : gradient.stops) {
-    D2D1_COLOR_F color = extract_rgb(stop.color, static_cast<float>(stop.opacity * opacity));
+    D2D1_COLOR_F color = extract_rgb(stop.color, static_cast<float>(stop.opacity * opacity), color_preview);
     d2d_stops.push_back(D2D1::GradientStop(static_cast<float>(stop.offset), color));
   }
 
@@ -236,8 +216,8 @@ ComPtr<ID2D1Brush> D2DEffectsPipeline::create_gradient_brush(
     p0 = gradient.gradient_to_object.map_point(p0);
     p1 = gradient.gradient_to_object.map_point(p1);
 
-    D2D1_POINT_2F start = camera_relative_point(p0.x, p0.y, camera.center().x, camera.center().y);
-    D2D1_POINT_2F end = camera_relative_point(p1.x, p1.y, camera.center().x, camera.center().y);
+    D2D1_POINT_2F start = D2D1::Point2F(static_cast<float>(p0.x), static_cast<float>(p0.y));
+    D2D1_POINT_2F end = D2D1::Point2F(static_cast<float>(p1.x), static_cast<float>(p1.y));
 
     D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES props{};
     props.startPoint = start;
@@ -254,7 +234,7 @@ ComPtr<ID2D1Brush> D2DEffectsPipeline::create_gradient_brush(
   } else {
     geometry::Point2D center{0.5, 0.5};
     center = gradient.gradient_to_object.map_point(center);
-    D2D1_POINT_2F d2d_center = camera_relative_point(center.x, center.y, camera.center().x, camera.center().y);
+    D2D1_POINT_2F d2d_center = D2D1::Point2F(static_cast<float>(center.x), static_cast<float>(center.y));
 
     geometry::Point2D edge{1.0, 0.5};
     edge = gradient.gradient_to_object.map_point(edge);

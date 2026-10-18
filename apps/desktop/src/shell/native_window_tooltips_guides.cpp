@@ -240,7 +240,8 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
                             : toolbox_open_group_ == 2 ? 2 : 6;
         const int flyout_top = content_top + 10 + group_row * 42;
         const int item = (mouse_y - flyout_top) / 30;
-        if (mouse_y >= flyout_top && item >= 0 && item < 3) {
+        const int max_items = toolbox_open_group_ == 3 ? 5 : 3;
+        if (mouse_y >= flyout_top && item >= 0 && item < max_items) {
             if (toolbox_open_group_ == 1) {
                 if (item == 0)
                     tip_text = is_vi ? L"Hình chữ nhật · Shift vuông · Ctrl từ tâm"
@@ -256,16 +257,26 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
                     tip_text = is_vi
                         ? L"Mở Properties > Style để chỉnh Blend, Opacity và stack hiệu ứng"
                         : L"Open Properties > Style for Blend, Opacity and the effect stack";
-                } else if (workflow().can_add_selected_effect()) {
-                    tip_text = item == 1
+                } else if (item == 1) {
+                    tip_text = workflow().can_add_selected_effect()
                         ? (is_vi ? L"Thêm Gaussian Blur cuối stack · Path/Text không khóa · Ctrl+Z hoàn tác"
                                  : L"Append Gaussian Blur · unlocked Path/Text only · Ctrl+Z undoes")
-                        : (is_vi ? L"Thêm Drop Shadow cuối stack · Path/Text không khóa · Ctrl+Z hoàn tác"
-                                 : L"Append Drop Shadow · unlocked Path/Text only · Ctrl+Z undoes");
+                        : (is_vi ? L"Đang tắt: chọn Path/Text không khóa và còn chỗ trong stack"
+                                 : L"Disabled: select unlocked Path/Text with available stack capacity");
+                } else if (item == 2) {
+                    tip_text = workflow().can_add_selected_effect()
+                        ? (is_vi ? L"Thêm Drop Shadow cuối stack · Path/Text không khóa · Ctrl+Z hoàn tác"
+                                 : L"Append Drop Shadow · unlocked Path/Text only · Ctrl+Z undoes")
+                        : (is_vi ? L"Đang tắt: chọn Path/Text không khóa và còn chỗ trong stack"
+                                 : L"Disabled: select unlocked Path/Text with available stack capacity");
+                } else if (item == 3) {
+                    tip_text = is_vi
+                        ? L"Công cụ Contour · Tạo viền bao quanh đối tượng · Ctrl+F9"
+                        : L"Contour Tool · Create offset outline around object · Ctrl+F9";
                 } else {
                     tip_text = is_vi
-                        ? L"Đang tắt: chọn Path/Text không khóa và còn chỗ trong stack"
-                        : L"Disabled: select unlocked Path/Text with available stack capacity";
+                        ? L"Công cụ chuyển sắc tương tác (Gradient)"
+                        : L"Interactive Gradient Tool";
                 }
             } else if (item == 0) {
                 tip_text = is_vi ? L"Đoạn thẳng · L" : L"Line · L";

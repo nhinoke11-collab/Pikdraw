@@ -1,10 +1,13 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "pikdraw/document/storage/save_recovery.hpp"
+#include "../utf8_path.hpp"
 
 #include <algorithm>
 #include <cmath>
 
 #ifdef _WIN32
 #include <commdlg.h>
+#include <objbase.h>
 #endif
 
 namespace pikdraw::desktop {
@@ -30,6 +33,55 @@ namespace {
 constexpr wchar_t kPikdrawFilter[] =
     L"PikDraw document (*.pikdraw)\0*.pikdraw\0All files\0*.*\0\0";
 
+}
+
+std::string NativeWindow::recovery_directory_for_tab(DocumentTab& tab) {
+    const auto epoch = tab.root->document().epoch();
+    if (!tab.recovery_directory.empty() && tab.recovery_epoch == epoch)
+        return tab.recovery_directory;
+    const DWORD size = GetEnvironmentVariableW(L"LOCALAPPDATA", nullptr, 0);
+    if (!size) return {};
+    std::wstring local(size, L'\0');
+    const auto copied = GetEnvironmentVariableW(L"LOCALAPPDATA", local.data(), size);
+    if (!copied || copied >= size) return {};
+    local.resize(copied);
+    GUID token{};
+    if (FAILED(CoCreateGuid(&token))) return {};
+    wchar_t guid[40]{};
+    if (!StringFromGUID2(token, guid, 40)) return {};
+    const auto directory = std::filesystem::path(local) / L"PikDraw" / L"Recovery" / guid;
+    const auto utf8 = directory.u8string();
+    tab.recovery_directory.assign(utf8.begin(), utf8.end());
+    tab.recovery_epoch = epoch;
+    tab.recovery_written = false;
+    return tab.recovery_directory;
+}
+
+void NativeWindow::autosave_documents() {
+    using document::SaveRecoveryService;
+    // All writes run on the document's existing UI writer, from immutable snapshots.
+    for (auto& tab : tabs_) {
+        auto& doc = tab.root->document();
+        if (!doc.is_dirty() || (tab.recovery_written && tab.recovery_epoch == doc.epoch()
+            && tab.recovery_revision == doc.revision())) continue;
+        const auto directory = recovery_directory_for_tab(tab);
+        if (directory.empty()) continue;
+        const auto snapshot = doc.current_snapshot();
+        const auto previous = SaveRecoveryService::find_latest_checkpoint(directory, doc.id());
+        std::string error;
+        if (!SaveRecoveryService::write_recovery_checkpoint(directory, doc.id(), *snapshot, &error)) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Không thể tạo bản phục hồi tự động" : "Could not write auto-recovery checkpoint";
+            continue;
+        }
+        tab.recovery_revision = snapshot->revision();
+        tab.recovery_written = true;
+        // Keep the last successful checkpoint until its replacement is safely on disk.
+        if (previous) {
+            std::error_code ignored;
+            std::filesystem::remove(detail::path_from_utf8(previous->path), ignored);
+        }
+    }
 }
 
 void NativeWindow::open_document_dialog() {
@@ -60,6 +112,7 @@ void NativeWindow::open_document_dialog() {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Không thể mở tệp PikDraw" : "Could not open PikDraw file";
     } else {
+        active_tab().file_path = utf8_path;
         document_path_ = utf8_path;
         root().vector_controller().selection().clear();
         set_active_tool(0);
@@ -71,7 +124,7 @@ void NativeWindow::open_document_dialog() {
 }
 
 void NativeWindow::save_document_dialog(bool force_save_as) {
-    std::string path = document_path_;
+    std::string path = active_tab().file_path;
     if (path.empty() || force_save_as) {
         std::wstring wide_path(32768, L'\0');
         OPENFILENAMEW dialog{};
@@ -91,7 +144,12 @@ void NativeWindow::save_document_dialog(bool force_save_as) {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Không thể lưu tài liệu" : "Could not save document";
     } else {
+        active_tab().file_path = path;
         document_path_ = path;
+        const auto directory = recovery_directory_for_tab(active_tab());
+        if (!directory.empty())
+            document::SaveRecoveryService::cleanup_checkpoints(directory, root().document().id());
+        active_tab().recovery_written = false;
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Đã lưu tài liệu PikDraw" : "PikDraw document saved";
     }

@@ -46,6 +46,48 @@ inline D2D1_COLOR_F to_d2d_color(float r, float g, float b, float a = 1.0f) noex
   return D2D1::ColorF(r, g, b, a);
 }
 
+// Per-device image uploads, bounded to 64 images / 256 MiB.
+class D2DImageCache {
+public:
+  void clear() { images_.clear(); bytes_ = 0; }
+  ComPtr<ID2D1Bitmap1> get(ID2D1DeviceContext* context,
+                          const document::ImageObject& image, uint64_t revision) {
+    if (revision_ != revision) { clear(); revision_ = revision; }
+    if (const auto it = images_.find(image.id); it != images_.end()) return it->second;
+    constexpr size_t budget = 256ULL * 1024 * 1024;
+    const size_t bytes = image.pixels_rgba.size() * sizeof(uint32_t);
+    if (bytes > budget) return nullptr;
+    if (images_.size() >= 64 || bytes_ > budget - bytes) clear();
+    std::vector<uint32_t> bgra(image.pixels_rgba.size());
+    for (int32_t y = 0; y < image.height_px; ++y) {
+      for (int32_t x = 0; x < image.width_px; ++x) {
+        const auto rgba = image.pixels_rgba[
+            static_cast<size_t>(image.height_px - 1 - y) * image.width_px + x];
+        const uint32_t a = rgba & 255;
+        const uint32_t r = ((rgba >> 24) & 255) * a / 255;
+        const uint32_t g = ((rgba >> 16) & 255) * a / 255;
+        const uint32_t b = ((rgba >> 8) & 255) * a / 255;
+        bgra[static_cast<size_t>(y) * image.width_px + x] =
+            (a << 24) | (r << 16) | (g << 8) | b;
+      }
+    }
+    D2D1_BITMAP_PROPERTIES1 props{};
+    props.pixelFormat = {DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED};
+    props.dpiX = props.dpiY = 96;
+    ComPtr<ID2D1Bitmap1> bitmap;
+    if (FAILED(context->CreateBitmap(D2D1::SizeU(image.width_px, image.height_px),
+        bgra.data(), image.width_px * 4, &props, bitmap.ReleaseAndGetAddressOf())))
+      return nullptr;
+    images_.emplace(image.id, bitmap);
+    bytes_ += bytes;
+    return bitmap;
+  }
+private:
+  std::unordered_map<document::ObjectId, ComPtr<ID2D1Bitmap1>> images_;
+  uint64_t revision_{};
+  size_t bytes_{};
+};
+
 class D2DDeviceManager {
 public:
   D2DDeviceManager();
@@ -94,20 +136,18 @@ public:
       document::ObjectId id,
       uint64_t revision,
       const geometry::Path2D &path,
-      double camera_center_x,
-      double camera_center_y);
+      uint8_t kind = 0);
 
 private:
   struct CacheKey {
     document::ObjectId id{document::kInvalidObjectId};
     uint64_t revision{0};
-    double center_x{0.0};
-    double center_y{0.0};
+    uint8_t kind{0};
+    bool even_odd{false};
 
     bool operator==(const CacheKey &other) const noexcept {
       return id == other.id && revision == other.revision &&
-             std::abs(center_x - other.center_x) < 1e-4 &&
-             std::abs(center_y - other.center_y) < 1e-4;
+             kind == other.kind && even_odd == other.even_odd;
     }
   };
 
@@ -115,7 +155,9 @@ private:
     size_t operator()(const CacheKey &k) const noexcept {
       size_t h1 = std::hash<uint64_t>{}(k.id);
       size_t h2 = std::hash<uint64_t>{}(k.revision);
-      return h1 ^ (h2 << 1);
+      size_t result = h1 ^ (h2 << 1);
+      result ^= std::hash<uint8_t>{}(k.kind) + (result << 6) + (result >> 2);
+      return result ^ (std::hash<bool>{}(k.even_odd) + (result << 6) + (result >> 2));
     }
   };
 
@@ -132,20 +174,23 @@ public:
       ID2D1DeviceContext *context,
       ID2D1Image *source_image,
       const document::Appearance &appearance,
+      document::ObjectId object_id,
       double camera_zoom,
       ComPtr<ID2D1Image> &out_image,
-      std::vector<RenderDiagnostic> &diagnostics);
+      std::vector<RenderDiagnostic> &diagnostics,
+      const color::IccPreview *color_preview = nullptr);
 
   ComPtr<ID2D1Brush> create_brush(
       ID2D1DeviceContext *context,
       const color::ColorValue &color,
-      float opacity);
+      float opacity,
+      const color::IccPreview *color_preview = nullptr);
 
   ComPtr<ID2D1Brush> create_gradient_brush(
       ID2D1DeviceContext *context,
       const document::GradientPaint &gradient,
-      const Camera2D &camera,
-      float opacity);
+      float opacity,
+      const color::IccPreview *color_preview = nullptr);
 };
 
 } // namespace pikdraw::rendering::d2d

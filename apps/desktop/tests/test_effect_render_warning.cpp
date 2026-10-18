@@ -48,6 +48,12 @@ void test_over_budget_blur_warning_is_localized_and_keeps_source() {
     assert(std::get<pikdraw::document::GaussianBlurEffect>(
                appearance.effects.front().parameters).sigma_x_mm == 300.0);
 
+    // Exercise a real limit in either backend: at 64x, the 4-sigma GPU support
+    // exceeds 16384 px as well as the software filter budget. Default fit zoom
+    // only exceeded the old CPU budget and is renderable by Direct2D.
+    window.root().renderer().camera().set_zoom(64.0);
+    window.root().renderer().camera().set_center({52.0, 51.0});
+
     window.set_language(UILanguage::English);
     force_canvas_paint(window);
     const auto english_status = window.status_message();
