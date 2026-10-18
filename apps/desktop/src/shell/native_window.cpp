@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "pikdraw/desktop/shell/native_font_picker.hpp"
 #include "../automation/native_window_automation.hpp"
 #include "pikdraw/desktop/actions/action_id.hpp"
 #include "native_window_menus.hpp"

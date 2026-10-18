@@ -62,7 +62,10 @@ std::string CanvasTextEditor::selected_text() const {
     return draft.text.substr(first(), last() - first());
 }
 void CanvasTextEditor::remember() {
-    undo.push_back({draft, caret, anchor});
+    push_undo(draft);
+}
+void CanvasTextEditor::push_undo(const document::TextObject& baseline) {
+    undo.push_back({baseline, caret, anchor});
     if (undo.size() > 128) undo.erase(undo.begin());
     redo.clear();
     desired_x.reset();

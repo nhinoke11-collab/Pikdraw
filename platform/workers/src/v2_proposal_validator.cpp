@@ -4,6 +4,7 @@
 
 #include <bcrypt.h>
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <new>
@@ -410,6 +411,15 @@ bool TransactV2ProposalStreamProcess(
             received_bytes += frame_bytes;
 
             if (type == MessageType::V2ErrorResponse) {
+                if (payload.size() >= 46) {
+                    const uint16_t diag_len = static_cast<uint16_t>(payload[44] | (static_cast<uint16_t>(payload[45]) << 8));
+                    if (payload.size() >= 46 + diag_len) {
+                        char buf[512]{};
+                        const size_t copy_len = (std::min)(static_cast<size_t>(diag_len), sizeof(buf) - 1);
+                        std::memcpy(buf, payload.data() + 46, copy_len);
+                        std::fprintf(stderr, "\n>>> WORKER ERROR DIAGNOSTIC: %s <<<\n\n", buf);
+                    }
+                }
                 failure = "worker returned v2 error response";
                 return false;
             }

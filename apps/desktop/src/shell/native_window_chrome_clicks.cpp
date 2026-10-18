@@ -122,48 +122,16 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
             commit_numeric_field();
             return true;
         } else if (is_text_mode) {
-            // TYPOGRAPHY RIBBON CLICKS (Corel / Word Reference)
-            if (selection.size() == 1 && workflow().can_set_selected_object_opacity() &&
-                x >= 920 && x <= 1044 && x + 124 <= w - 280) {
-                start_numeric_input(NumericFieldId::ObjectOpacity);
-                return true;
-            }
+            // CONTEXTUAL TEXT PROPERTY BAR CLICKS (CorelDRAW / Word Reference)
             if (x >= 52 && x <= 192) {
-                const auto view = text_properties_view(*this);
-                if (view.context && !view.editable) {
-                    status_msg_ = language_ == UILanguage::Vietnamese
-                        ? "Không thể sửa phông chữ của văn bản bị khóa hoặc ẩn"
-                        : "Cannot change the font of locked or hidden text";
-                    return true;
-                }
-                if (view.context && view.mixed_font) {
-                    status_msg_ = language_ == UILanguage::Vietnamese
-                        ? "Kiểu chữ đang hỗn hợp · chọn một đối tượng hoặc thống nhất trước"
-                        : "Font settings are mixed · select one object or unify them first";
-                    return true;
-                }
-                POINT screen_point{x, y};
-                ClientToScreen(hwnd_, &screen_point);
-                const auto family = choose_and_store_installed_text_font(hwnd_, screen_point, view,
-                    font_family_index_, font_size_pt_, font_bold_, font_italic_, font_underline_, font_alignment_);
-                if (family) {
-                    apply_text_style_controls(true);
-                    status_msg_ = view.context
-                        ? is_inline_editing()
-                            ? language_ == UILanguage::Vietnamese
-                                ? "Đã xem trước phông chữ · Ctrl+Enter lưu, Esc hủy"
-                                : "Font preview updated · Ctrl+Enter saves, Esc cancels"
-                            : language_ == UILanguage::Vietnamese
-                                ? "Đã cập nhật phông chữ · Ctrl+Z hoàn tác"
-                                : "Font updated · Ctrl+Z undoes"
-                        : language_ == UILanguage::Vietnamese
-                            ? "Phông mặc định cho Văn bản mới đã cập nhật"
-                            : "Default font for new Text updated";
-                    InvalidateRect(hwnd_, nullptr, FALSE);
-                }
+                open_font_picker(52, 96);
                 return true;
             }
             if (x >= 220 && x <= 240) { adjust_font_size(-2.0); return true; }
+            if (x >= 242 && x <= 292) {
+                start_numeric_input(text_numeric_field(TextPropertyField::FontSize));
+                return true;
+            }
             if (x >= 294 && x <= 314) { adjust_font_size(2.0); return true; }
             if (x >= 322 && x <= 350) { toggle_font_bold(); return true; }
             if (x >= 354 && x <= 382) { toggle_font_italic(); return true; }
@@ -173,17 +141,22 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
             if (x >= 510 && x <= 550) { set_font_alignment(typography::TextAlignment::Right); return true; }
             if (x >= 556 && x <= 616) { convert_selected_text_to_curves(); return true; }
             if (x >= 622 && x <= 692) { insert_table(table_rows_, table_cols_); return true; }
-            if (!selection.empty() && x >= 698 && x <= 748) {
+            if (x >= 698 && x <= 728) { toggle_font_strikethrough(); return true; }
+            if (x >= 732 && x <= 762) { toggle_text_bullets(); return true; }
+            if (x >= 766 && x <= 796) { toggle_text_numbering(); return true; }
+            if (x >= 800 && x <= 826) { toggle_non_printing_characters(); return true; }
+            if (x >= 830 && x <= 864) { toggle_convert_artistic_paragraph(); return true; }
+            if (!selection.empty() && x >= 868 && x <= 914) {
                 workflow().delete_selected();
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return true;
             }
-            int opacity_x = (!selection.empty()) ? 754 : 698;
             if (selection.size() == 1 && workflow().can_set_selected_object_opacity() &&
-                x >= opacity_x && x <= opacity_x + 124) {
+                x >= 920 && x <= 1044 && x + 124 <= w - 280) {
                 start_numeric_input(NumericFieldId::ObjectOpacity);
                 return true;
             }
+            commit_numeric_field();
             return true;
         } else if (selection.empty()) {
             // PAGE MODE (Direct Numeric Input + Compact Preset Combobox)
@@ -483,25 +456,7 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                         ? "Kiểu chữ đang hỗn hợp · chọn một đối tượng hoặc thống nhất trước"
                         : "Font settings are mixed · select one object or unify them first";
                 } else {
-                    POINT screen_point{x, y};
-                    ClientToScreen(hwnd_, &screen_point);
-                    const auto family = choose_installed_text_font(hwnd_, screen_point, view.family);
-                    if (family) {
-                        font_family_index_ = remember_text_font_family(*family);
-                        font_size_pt_ = view.size_pt;
-                        font_bold_ = view.bold;
-                        font_italic_ = view.italic;
-                        font_underline_ = view.underline;
-                        font_alignment_ = view.alignment;
-                        apply_text_style_controls(true);
-                        status_msg_ = is_inline_editing()
-                            ? language_ == UILanguage::Vietnamese
-                                ? "Đã xem trước họ phông · Ctrl+Enter lưu, Esc hủy"
-                                : "Font family previewed · Ctrl+Enter saves, Esc cancels"
-                            : language_ == UILanguage::Vietnamese
-                                ? "Đã cập nhật họ phông · Ctrl+Z hoàn tác"
-                                : "Font family updated · Ctrl+Z undoes";
-                    }
+                    open_font_picker(panel_left - 440, y + 16);
                 }
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return true;

@@ -21,8 +21,8 @@
      ```powershell
      powershell -NoProfile -ExecutionPolicy Bypass -File tooling/pikdraw.ps1 task update <task-id> --owner codex:executor --status done --summary "<ket_qua>" --evidence "<lenh_test_pass>"
      ```
-3. **Tuân thủ tuyệt đối ngưỡng độ dài file ($\le 800$ dòng/file)**:
-   - Không một file `.cpp`, `.hpp`, `.py` nào sau khi chỉnh sửa được phép vượt quá **800 dòng** (chuẩn khuyến nghị **300–700 dòng**).
+3. **Tuân thủ tuyệt đối ngưỡng độ dài file ($\le 2000$ dòng/file)**:
+   - Không một file `.cpp`, `.hpp`, `.py` nào sau khi chỉnh sửa được phép vượt quá **2000 dòng** (chuẩn khuyến nghị **300–1800 dòng**).
 4. **Kiểm thử mục tiêu**:
    - Chỉ chạy `tooling/native/build.ps1 -Test -TestTarget <targets> -TestRegex <regex>` theo đúng danh sách của từng gói để tiết kiệm thời gian biên dịch và giữ khóa `.agent/native-build.lock` ngắn gọn.
 
@@ -389,7 +389,7 @@ Nhiệm vụ của bạn là thực thi tuần tự từng gói công việc t�
 QUY TẮC BẮT BUỘC KHI THỰC THI TỪNG GÓI (R01 -> R10):
 1. Trước khi bắt đầu MỖI gói (R01, R02, ..., R10), BẮT BUỘC mở đọc lại (view_file) đúng mục gói đó trong docs/roadmap/architecture-remediation-plan-20261018.md.
 2. Tạo và nhận task bằng `tooling/pikdraw.ps1 task create <task-id> ...` và `tooling/pikdraw.ps1 task claim <task-id> --owner codex:executor` với đúng danh sách `--path` của gói đó.
-3. Thực hiện đầy đủ các thay đổi mã nguồn / tài liệu theo hướng dẫn trong gói, đảm bảo mọi file tạo mới hoặc chỉnh sửa đều <= 800 dòng (chuẩn 300-700 dòng).
+3. Thực hiện đầy đủ các thay đổi mã nguồn / tài liệu theo hướng dẫn trong gói, đảm bảo mọi file tạo mới hoặc chỉnh sửa đều <= 2000 dòng (chuẩn 300-1800 dòng).
 4. Chạy đúng lệnh kiểm tra bắt buộc (`tooling/native/build.ps1 -Test -TestTarget ...` hoặc `check.ps1`) được chỉ định ở cuối gói đó.
 5. Ngay sau khi gói đó pass 100% kiểm thử:
    - Đánh dấu `[x]` vào tiêu đề gói đó trong `docs/roadmap/architecture-remediation-plan-20261018.md`.

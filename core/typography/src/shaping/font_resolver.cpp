@@ -1,4 +1,7 @@
 #include "system_font.hpp"
+#include <algorithm>
+#include <cctype>
+
 namespace pikdraw::typography {
 FontResolver::FontResolver() = default;
 ResolvedFont FontResolver::resolve(const FontIdentity &requested) const {
@@ -52,6 +55,51 @@ bool FontResolver::is_font_available(const std::string &family_name) const {
     return false;
 #endif
 }
+
+std::vector<std::string> FontResolver::available_font_families() const {
+#ifdef _WIN32
+    system_font::ComPtr<IDWriteFontCollection> collection;
+    if (FAILED(system_font::factory()->GetSystemFontCollection(collection.put())) || !collection.get())
+        return {"Be Vietnam Pro", "Segoe UI", "Arial", "Times New Roman", "JetBrains Mono"};
+    const UINT32 count = collection->GetFontFamilyCount();
+    std::vector<std::string> result;
+    result.reserve(count);
+    WCHAR locale_name[LOCALE_NAME_MAX_LENGTH]{};
+    GetUserDefaultLocaleName(locale_name, LOCALE_NAME_MAX_LENGTH);
+
+    for (UINT32 i = 0; i < count; ++i) {
+        system_font::ComPtr<IDWriteFontFamily> family;
+        if (FAILED(collection->GetFontFamily(i, family.put()))) continue;
+        system_font::ComPtr<IDWriteLocalizedStrings> names;
+        if (FAILED(family->GetFamilyNames(names.put()))) continue;
+        UINT32 index = 0;
+        BOOL exists = FALSE;
+        if (FAILED(names->FindLocaleName(locale_name, &index, &exists)) || !exists) {
+            if (FAILED(names->FindLocaleName(L"en-us", &index, &exists)) || !exists)
+                index = 0;
+        }
+        UINT32 length = 0;
+        if (FAILED(names->GetStringLength(index, &length)) || length == 0) continue;
+        std::wstring name_w(length + 1, L'\0');
+        if (FAILED(names->GetString(index, name_w.data(), length + 1))) continue;
+        name_w.resize(length);
+        const std::string name = system_font::utf8(name_w);
+        if (!name.empty()) result.push_back(name);
+    }
+    std::sort(result.begin(), result.end(), [](const std::string& a, const std::string& b) {
+        return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(),
+            [](char c1, char c2) {
+                return std::tolower(static_cast<unsigned char>(c1)) <
+                       std::tolower(static_cast<unsigned char>(c2));
+            });
+    });
+    result.erase(std::unique(result.begin(), result.end()), result.end());
+    return result;
+#else
+    return {"Be Vietnam Pro", "Segoe UI", "Arial", "Times New Roman", "JetBrains Mono"};
+#endif
+}
+
 FontResolver &FontResolver::instance() {
     static FontResolver resolver;
     return resolver;

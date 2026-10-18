@@ -69,12 +69,14 @@ bool NativeWindow::import_file_to_tab(const std::wstring& path, bool is_open_act
                _wcsicmp(extension.c_str(), L".jpeg") == 0 ||
                _wcsicmp(extension.c_str(), L".tif") == 0 ||
                _wcsicmp(extension.c_str(), L".tiff") == 0 ||
-               _wcsicmp(extension.c_str(), L".cdr") == 0) {
+               _wcsicmp(extension.c_str(), L".cdr") == 0 ||
+               _wcsicmp(extension.c_str(), L".ai") == 0 ||
+               _wcsicmp(extension.c_str(), L".pdf") == 0) {
         format = ImportFormat::Svg;
     } else {
         status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Định dạng này chưa có bộ nhập. Hỗ trợ SVG, DXF 2D, CDR và ảnh PNG/JPEG/TIFF."
-            : "No reader is enabled for this format. SVG, 2D DXF, CDR and PNG/JPEG/TIFF are supported.";
+            ? "Định dạng này chưa có bộ nhập. Hỗ trợ SVG, DXF 2D, CDR, AI, PDF và ảnh PNG/JPEG/TIFF."
+            : "No reader is enabled for this format. SVG, 2D DXF, CDR, AI, PDF and PNG/JPEG/TIFF are supported.";
         InvalidateRect(hwnd_, nullptr, FALSE);
         return false;
     }
@@ -147,8 +149,20 @@ void NativeWindow::open_import_dialog() {
     }
     std::wstring path(32768, L'\0');
     const wchar_t* filter = language_ == UILanguage::Vietnamese
-        ? L"Tất cả tệp hỗ trợ (*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr)\0*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr\0Ảnh PNG/JPEG/TIFF (*.png;*.jpg;*.jpeg;*.tif;*.tiff)\0*.png;*.jpg;*.jpeg;*.tif;*.tiff\0Vector SVG (*.svg)\0*.svg\0Tập con AutoCAD DXF 2D (*.dxf)\0*.dxf\0CorelDRAW (*.cdr)\0*.cdr\0Tất cả tệp\0*.*\0\0"
-        : L"All Supported Files (*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr)\0*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr\0PNG/JPEG/TIFF images (*.png;*.jpg;*.jpeg;*.tif;*.tiff)\0*.png;*.jpg;*.jpeg;*.tif;*.tiff\0SVG vector (*.svg)\0*.svg\0AutoCAD DXF 2D subset (*.dxf)\0*.dxf\0CorelDRAW (*.cdr)\0*.cdr\0All files\0*.*\0\0";
+        ? L"Tất cả tệp hỗ trợ (*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr;*.ai;*.pdf)\0*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr;*.ai;*.pdf\0"
+          L"Adobe Illustrator & PDF (*.ai;*.pdf)\0*.ai;*.pdf\0"
+          L"Bản vẽ CorelDRAW (*.cdr)\0*.cdr\0"
+          L"Ảnh PNG/JPEG/TIFF (*.png;*.jpg;*.jpeg;*.tif;*.tiff)\0*.png;*.jpg;*.jpeg;*.tif;*.tiff\0"
+          L"Vector SVG (*.svg)\0*.svg\0"
+          L"Tập con AutoCAD DXF 2D (*.dxf)\0*.dxf\0"
+          L"Tất cả tệp\0*.*\0\0"
+        : L"All Supported Files (*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr;*.ai;*.pdf)\0*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr;*.ai;*.pdf\0"
+          L"Adobe Illustrator & PDF (*.ai;*.pdf)\0*.ai;*.pdf\0"
+          L"CorelDRAW Files (*.cdr)\0*.cdr\0"
+          L"PNG/JPEG/TIFF images (*.png;*.jpg;*.jpeg;*.tif;*.tiff)\0*.png;*.jpg;*.jpeg;*.tif;*.tiff\0"
+          L"SVG vector (*.svg)\0*.svg\0"
+          L"AutoCAD DXF 2D subset (*.dxf)\0*.dxf\0"
+          L"All files\0*.*\0\0";
     OPENFILENAMEW dialog{};
     dialog.lStructSize = sizeof(dialog);
     dialog.hwndOwner = hwnd_;

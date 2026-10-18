@@ -66,9 +66,9 @@ public:
             case FormatType::Jpeg:
             case FormatType::Tiff:
             case FormatType::Cdr:
-                return true;
             case FormatType::Pdf:
             case FormatType::Ai:
+                return true;
             case FormatType::Eps:
                 return false; // Reported as unsupported without silent flattening
         }
@@ -83,14 +83,14 @@ public:
             case FormatType::Dxf:
                 return profile == "dxf-entities-v1";
             case FormatType::Pdf:
-                return false;
+            case FormatType::Ai:
+                return profile == "pdf-ai-preview-v1" || profile == "raster-rgba8-v1";
             case FormatType::Png:
             case FormatType::Jpeg:
             case FormatType::Tiff:
                 return profile == "raster-rgba8-v1";
             case FormatType::Cdr:
                 return profile == "cdr-preview-v1" || profile == "raster-rgba8-v1";
-            case FormatType::Ai:
             case FormatType::Eps:
                 return false;
         }

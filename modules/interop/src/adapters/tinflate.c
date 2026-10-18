@@ -615,6 +615,28 @@ int tinf_uncompress(void *dest, unsigned int *destLen,
 	return TINF_OK;
 }
 
+int tinf_zlib_uncompress(void *dest, unsigned int *destLen,
+                         const void *source, unsigned int sourceLen)
+{
+	const unsigned char *src = (const unsigned char *) source;
+	if (sourceLen < 6) {
+		return TINF_DATA_ERROR;
+	}
+	if ((src[0] & 0x0f) != 8) {
+		return TINF_DATA_ERROR;
+	}
+	if ((src[0] >> 4) > 7) {
+		return TINF_DATA_ERROR;
+	}
+	if ((src[0] * 256 + src[1]) % 31 != 0) {
+		return TINF_DATA_ERROR;
+	}
+	if (src[1] & 0x20) {
+		return TINF_DATA_ERROR;
+	}
+	return tinf_uncompress(dest, destLen, src + 2, sourceLen - 6);
+}
+
 /* clang -g -O1 -fsanitize=fuzzer,address -DTINF_FUZZING tinflate.c */
 #if defined(TINF_FUZZING)
 #include <limits.h>

@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "pikdraw/desktop/shell/native_font_picker.hpp"
 #include "native_window_paint_icons.hpp"
 #include "native_window_text_properties.hpp"
 #include "native_window_file_menu.hpp"
@@ -416,62 +417,7 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
                       : L"3–256 sides · Shift snaps angle to 15° · Ctrl draws from center · see Properties for advanced settings",
                 -1, &hint, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
         } else if (is_text_mode) {
-            // TYPOGRAPHY & TEXT PROPERTY BAR (CorelDRAW v25 / MS Word)
-            SelectObject(mem_dc, font_be_vietnam_bold);
-            SetTextColor(mem_dc, col_teal);
-            RECT rc_t_lbl = { 10, topbar_h + tabbar_h, 48, content_top };
-            DrawTextW(mem_dc, is_vi ? L"Chữ:" : L"Text:", -1, &rc_t_lbl, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-            // 1. Font Family Selector Button
-            const auto text_view = text_properties_view(*this);
-            const auto family = text_view.context
-                ? (text_view.mixed_font ? std::string{"Mixed fonts"} : text_view.family)
-                : text_font_family_at(font_family_index_);
-            const auto actual_font = utf8_to_wide(family) + L" ▾";
-            draw_rib_btn(52, 192, actual_font.c_str(), false, col_text_white);
-
-            // 2. Font Size pt Controls
-            RECT rc_sz_lbl = { 198, topbar_h + tabbar_h, 218, content_top };
-            SetTextColor(mem_dc, col_text_muted);
-            DrawTextW(mem_dc, L"Pt:", -1, &rc_sz_lbl, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-            draw_rib_btn(220, 240, L"-", false, col_teal);
-            std::wstring sz_str = text_view.context
-                ? text_view.mixed_font ? L"Mixed" : std::to_wstring(static_cast<int>(text_view.size_pt)) + L" pt"
-                : std::to_wstring(static_cast<int>(font_size_pt_)) + L" pt";
-            RECT rc_sz_val = { 242, topbar_h + tabbar_h, 292, content_top };
-            SetTextColor(mem_dc, col_text_white);
-            DrawTextW(mem_dc, sz_str.c_str(), -1, &rc_sz_val, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-            draw_rib_btn(294, 314, L"+", false, col_teal);
-
-            // 3. Styles: B, I, U
-            draw_rib_btn(322, 350, L"B", font_bold_, font_bold_ ? col_teal : col_text_white);
-            draw_rib_btn(354, 382, L"I", font_italic_, font_italic_ ? col_teal : col_text_white);
-            draw_rib_btn(386, 414, L"U", font_underline_, font_underline_ ? col_teal : col_text_white);
-
-            draw_rib_btn(422, 462, L"|◀ L", font_alignment_ == typography::TextAlignment::Left, font_alignment_ == typography::TextAlignment::Left ? col_teal : col_text_white);
-            draw_rib_btn(466, 506, L"▶|◀ C", font_alignment_ == typography::TextAlignment::Center, font_alignment_ == typography::TextAlignment::Center ? col_teal : col_text_white);
-            draw_rib_btn(510, 550, L"▶| R", font_alignment_ == typography::TextAlignment::Right, font_alignment_ == typography::TextAlignment::Right ? col_teal : col_text_white);
-
-            // 5. Convert to Curves (CorelDRAW Ctrl+Q) - Compact icon
-            draw_rib_btn(556, 616, L"⤹ Q", false, col_teal);
-
-            // 6. Table Tool Button (CorelDRAW v25 Table) - Compact icon
-            draw_rib_btn(622, 692, L"▦ Table", false, col_teal);
-
-            // 7. Delete button if text is selected
-            if (!selection.empty()) {
-                draw_rib_btn(698, 748, is_vi ? L"✕ Xóa" : L"✕ Del", false, RGB(239, 68, 68));
-            }
-
-            // 8. Opacity field if single text object is selected
-            int opacity_x = (!selection.empty()) ? 754 : 698;
-            if (selection.size() == 1 && workflow().can_set_selected_object_opacity() &&
-                opacity_x + 124 <= w - inspect_w) {
-                const auto appearance = selection_appearance(*snapshot, selection);
-                draw_num_input(opacity_x, opacity_x + 124, is_vi ? L"Độ mờ:" : L"Opacity:",
-                               opacity_percent_text(appearance.object_opacity),
-                               NumericFieldId::ObjectOpacity, false);
-            }
+            paint_text_property_bar(mem_dc, w, content_top, topbar_h, tabbar_h);
         } else if (selection.empty()) {
             // PAGE SIZING MODE (CorelDRAW Page Property Bar - Direct Numeric Input + Compact Preset Combobox)
             SelectObject(mem_dc, font_be_vietnam_bold);
@@ -754,37 +700,25 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
         }
         if (tip_y < 8) tip_y = 8;
 
-        // Drop shadow
         RECT rc_shadow = { tip_x + 2, tip_y + 2, tip_x + tip_w + 2, tip_y + tip_h + 2 };
-        HBRUSH br_shadow = CreateSolidBrush(RGB(15, 23, 42));
-        HPEN pen_shadow = CreatePen(PS_SOLID, 1, RGB(15, 23, 42));
-        HGDIOBJ old_psh = SelectObject(mem_dc, pen_shadow);
-        HGDIOBJ old_bsh = SelectObject(mem_dc, br_shadow);
+        const HBRUSH br_s = CreateSolidBrush(RGB(15, 23, 42));
+        const HPEN p_s = CreatePen(PS_SOLID, 1, RGB(15, 23, 42));
+        const auto op_s = SelectObject(mem_dc, p_s), ob_s = SelectObject(mem_dc, br_s);
         RoundRect(mem_dc, rc_shadow.left, rc_shadow.top, rc_shadow.right, rc_shadow.bottom, 6, 6);
-        SelectObject(mem_dc, old_psh);
-        SelectObject(mem_dc, old_bsh);
-        DeleteObject(pen_shadow);
-        DeleteObject(br_shadow);
+        SelectObject(mem_dc, op_s); SelectObject(mem_dc, ob_s); DeleteObject(p_s); DeleteObject(br_s);
 
-        // Tooltip container (Obsidian Dark with Cyber Mint glow border)
-        COLORREF col_tip_bg = RGB(24, 24, 27);
-        COLORREF col_tip_bdr = RGB(0, 242, 195);
-        HBRUSH br_tip = CreateSolidBrush(col_tip_bg);
-        HPEN pen_tip = CreatePen(PS_SOLID, 1, col_tip_bdr);
-        HGDIOBJ old_pt = SelectObject(mem_dc, pen_tip);
-        HGDIOBJ old_bt = SelectObject(mem_dc, br_tip);
+        const HBRUSH br_t = CreateSolidBrush(RGB(24, 24, 27));
+        const HPEN p_t = CreatePen(PS_SOLID, 1, RGB(0, 242, 195));
+        const auto op_t = SelectObject(mem_dc, p_t), ob_t = SelectObject(mem_dc, br_t);
         RoundRect(mem_dc, tip_x, tip_y, tip_x + tip_w, tip_y + tip_h, 6, 6);
-        SelectObject(mem_dc, old_pt);
-        SelectObject(mem_dc, old_bt);
-        DeleteObject(pen_tip);
-        DeleteObject(br_tip);
+        SelectObject(mem_dc, op_t); SelectObject(mem_dc, ob_t); DeleteObject(p_t); DeleteObject(br_t);
 
-        // Text inside tooltip
         RECT rc_text = { tip_x + tip_pad_x, tip_y + tip_pad_y, tip_x + tip_w - tip_pad_x, tip_y + tip_h - tip_pad_y };
         SetBkMode(mem_dc, TRANSPARENT);
         SetTextColor(mem_dc, RGB(255, 255, 255));
         DrawTextW(mem_dc, tooltip_.text.c_str(), -1, &rc_text, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
+    if (font_picker_ && font_picker_->is_open()) font_picker_->paint(mem_dc);
 
     SetMapMode(mem_dc, MM_TEXT);
     BitBlt(hdc, 0, 0, device_w, device_h, mem_dc, 0, 0, SRCCOPY);

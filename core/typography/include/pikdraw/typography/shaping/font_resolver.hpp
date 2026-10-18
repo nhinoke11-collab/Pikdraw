@@ -21,6 +21,7 @@ class FontResolver {
     void register_available_font(std::string family_name);
 
     [[nodiscard]] bool is_font_available(const std::string &family_name) const;
+    [[nodiscard]] std::vector<std::string> available_font_families() const;
 
     static FontResolver &instance();
 };

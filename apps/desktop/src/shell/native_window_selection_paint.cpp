@@ -48,15 +48,18 @@ void NativeWindow::paint_selection_overlay(HDC dc) {
     };
     if (is_inline_text_editing_ && text_editor_) {
         const auto& editor = *text_editor_;
-        if (!editor.draft.text.empty() && editor.composition.empty()) {
+        if (editor.composition.empty()) {
             const auto bounds = editor.parent_transform.map_rect(editor.draft.bounds());
             const auto rect = rect_for(bounds);
+            const COLORREF frame_col = theme_ == ThemeMode::CyberDark
+                ? RGB(0, 242, 195) : RGB(14, 165, 233);
+            outline(dc, rect, frame_col, PS_DOT);
             const auto handle_pts = selection_ui::handles(rect);
             const COLORREF border = theme_ == ThemeMode::CyberDark
                 ? RGB(148, 163, 184) : RGB(100, 116, 139);
             for (const auto point : handle_pts) {
-                fill_rect(dc, {point.x - 5, point.y - 5, point.x + 5, point.y + 5}, border);
-                fill_rect(dc, {point.x - 4, point.y - 4, point.x + 4, point.y + 4}, RGB(255, 255, 255));
+                fill_rect(dc, {point.x - 4, point.y - 4, point.x + 4, point.y + 4}, border);
+                fill_rect(dc, {point.x - 3, point.y - 3, point.x + 3, point.y + 3}, RGB(255, 255, 255));
             }
         }
         RestoreDC(dc, saved_dc);

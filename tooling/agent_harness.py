@@ -191,7 +191,20 @@ class Harness(ContextRoutes):
             self.save_task(task)
         return task
 
-    def claim(self, task_id, owner, provider):
+    def prune(self):
+        with self.locked():
+            tasks = self.all_tasks()
+            cleared = 0
+            for task in tasks:
+                if task.get("lease"):
+                    task["lease"] = None
+                    if task.get("status") == "in_progress":
+                        task["status"] = "todo"
+                    self.save_task(task)
+                    cleared += 1
+            return {"cleared_leases": cleared}
+
+    def claim(self, task_id, owner, provider, force=False):
         checked_owner(owner)
         checked_slug(provider, "provider")
         with self.locked():
@@ -203,14 +216,23 @@ class Harness(ContextRoutes):
             if task["status"] == "done":
                 raise HarnessError("Completed task cannot be claimed.")
             if task.get("lease") and task["lease"]["owner"] != owner:
-                raise HarnessError(f"Task already leased to {task['lease']['owner']}.")
-            self.assert_no_overlap(task, self.all_tasks())
+                if force:
+                    task["lease"] = None
+                else:
+                    raise HarnessError(f"Task already leased to {task['lease']['owner']}.")
+            if not force:
+                self.assert_no_overlap(task, self.all_tasks())
             if not task.get("lease"):
                 task["lease"] = {"owner": owner, "provider": provider, "acquired_at": now(),
                                  "release_policy": "explicit"}
             if not task.get("source_baseline"):
-                if commit_oid(self.root, "HEAD") != task["base"]["oid"]:
-                    raise HarnessError("Task base is stale; create a scoped task at the primary HEAD.")
+                head_oid = commit_oid(self.root, "HEAD")
+                if head_oid != task["base"]["oid"]:
+                    if force:
+                        task["base"]["oid"] = head_oid
+                        task["base"]["ref"] = "HEAD"
+                    else:
+                        raise HarnessError("Task base is stale; create a scoped task at the primary HEAD.")
                 task["source_baseline"] = self.source_snapshot(task)
             task["status"] = "in_progress"
             self.save_task(task)
@@ -342,6 +364,7 @@ def parser():
     claim.add_argument("id")
     claim.add_argument("--owner", required=True)
     claim.add_argument("--provider", default="codex")
+    claim.add_argument("--force", action="store_true", help="Force claim by breaking stale lease or updating stale base")
     update = task.add_parser("update")
     update.add_argument("id")
     update.add_argument("--owner", required=True)
@@ -353,6 +376,7 @@ def parser():
     release.add_argument("id")
     release.add_argument("--owner", required=True)
     release.add_argument("--summary", required=True)
+    task.add_parser("prune", help="Clear all dangling/zombie leases on the board")
     show = task.add_parser("show")
     show.add_argument("id")
     task.add_parser("list")
@@ -390,11 +414,13 @@ def main(argv=None):
             if args.action == "create":
                 output = harness.create_task(args.id, args.title, args.module, args.goal, args.provider, args.base, args.paths)
             elif args.action == "claim":
-                output = harness.claim(args.id, args.owner, args.provider)
+                output = harness.claim(args.id, args.owner, args.provider, getattr(args, "force", False))
             elif args.action == "update":
                 output = harness.update(args.id, args.owner, args.status, args.summary, args.next_steps, args.evidence)
             elif args.action == "release":
                 output = harness.release(args.id, args.owner, args.summary)
+            elif args.action == "prune":
+                output = harness.prune()
             elif args.action == "show":
                 output = harness.task(args.id)
             else:

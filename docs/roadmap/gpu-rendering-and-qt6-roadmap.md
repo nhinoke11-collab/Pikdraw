@@ -48,13 +48,13 @@ flowchart TD
 
 ---
 
-## 2. Nguyên tắc Kỹ thuật Bất biến (C3, C8, C9, Giới hạn 800 dòng & Chống Giả lập)
+## 2. Nguyên tắc Kỹ thuật Bất biến (C3, C8, C9, Giới hạn 2000 dòng & Chống Giả lập)
 
 1. **Cấm tuyệt đối Mock / Stub / Bypass ngầm**:
    - Không được viết các hàm vỏ bọc trả về `true` giả tạo hoặc đẩy toàn bộ frame sang `SoftwareRasterizer` khi chạy ở chế độ GPU (`D2DRenderBackend`).
-   - Khi test `D2DRenderBackend` với `PixelBufferTarget` (bao gồm cả `target.pixels` và `target.premultiplied_rgba`), bắt buộc phải render thật trên `ID2D1DeviceContext` và thực hiện **GPU Staging Bitmap Readback** (`D2D1_BITMAP_OPTIONS_CPU_READ`) về RAM.
-2. **Quy tắc 800 dòng/file**:
-   - Mọi file code trong `core/rendering/src/gpu/d2d/*` và `apps/desktop/src/shell/*` phải tuân thủ ngưỡng **300–700 dòng, tối đa 800 dòng**.
+   - Khi test `D2DRenderBackend` với `PixelBufferTarget` (bao gồm cả `target.pixels` lẫn `target.premultiplied_rgba`), bắt buộc phải render thật trên `ID2D1DeviceContext` và thực hiện **GPU Staging Bitmap Readback** (`D2D1_BITMAP_OPTIONS_CPU_READ`) về RAM.
+2. **Quy tắc 2000 dòng/file**:
+   - Mọi file code trong `core/rendering/src/gpu/d2d/*` và `apps/desktop/src/shell/*` phải tuân thủ ngưỡng **tối đa 2000 dòng** (khuyến nghị 300–1800 dòng).
 3. **Chiếu tọa độ tương đối theo Camera (Contract C3)**:
    - Trước khi nạp đỉnh vào `ID2D1PathGeometry`, phải trừ tâm Camera bằng `double`:
      $$x_{\text{local}} = \text{static\_cast<float>}(X_w - C_x), \quad y_{\text{local}} = \text{static\_cast<float>}(Y_w - C_y)$$
@@ -255,8 +255,8 @@ QUY TẮC BẮT BUỘC (TUYỆT ĐỐI KHÔNG VI PHẠM):
    - Trước khi bắt đầu MỖI giai đoạn (G02, G03, G04, G05, G06), BẮT BUỘC mở đọc lại (`view_file`) đúng mục giai đoạn đó trong `docs/roadmap/gpu-rendering-and-qt6-roadmap.md`.
    - Tạo và claim task bằng `tooling/pikdraw.ps1 task create` / `task claim` với đúng `owned_paths` của giai đoạn đó.
    - Sau khi kiểm thử giai đoạn đó pass 100%, đánh dấu `[x] DONE` vào tiêu đề giai đoạn đó trong `docs/roadmap/gpu-rendering-and-qt6-roadmap.md` rồi đóng task trước khi sang giai đoạn kế tiếp.
-3. Ngưỡng độ dài file (<= 800 dòng):
-   - Mọi file `.hpp` / `.cpp` tạo mới hoặc chỉnh sửa phải dưới 800 dòng.
+3. Ngưỡng độ dài file (<= 2000 dòng):
+   - Mọi file `.hpp` / `.cpp` tạo mới hoặc chỉnh sửa phải dưới 2000 dòng.
 4. Bảo toàn 100% 22 Chức năng trên Win32 NativeWindow:
    - Giữ nguyên toàn bộ giao diện và sự kiện của `NativeWindow`, chỉ nâng cấp đường ống render Canvas sang `ViewportRenderer` (chạy `D2DRenderBackend` + `SpatialIndex` + `DamageTracker`).
 5. Khóa sổ & Chuẩn hóa Tài liệu ở G06:

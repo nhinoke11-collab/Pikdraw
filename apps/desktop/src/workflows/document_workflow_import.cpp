@@ -27,7 +27,7 @@ constexpr uint64_t kMaxImportRecords = 40002;
 constexpr uint32_t kMaxImportChunks = 64;
 constexpr uint32_t kMaxImportFrames = 65;
 
-enum class DetectedImportFormat { Svg, Dxf, Png, Jpeg, Tiff, Cdr };
+enum class DetectedImportFormat { Svg, Dxf, Png, Jpeg, Tiff, Cdr, Ai, Pdf };
 
 struct SourceSignature {
     DetectedImportFormat format{DetectedImportFormat::Svg};
@@ -58,6 +58,15 @@ SourceSignature DetectSignature(HANDLE source) {
         return {DetectedImportFormat::Tiff, true};
     if (starts_with({'P', 'K', 0x03, 0x04}))
         return {DetectedImportFormat::Cdr, true};
+    if (starts_with({'%', 'P', 'D', 'F', '-'})) {
+        std::string_view pdf_text(reinterpret_cast<const char*>(bytes.data()), count);
+        if (pdf_text.find("Illustrator") != std::string_view::npos ||
+            pdf_text.find("AIPrivateData") != std::string_view::npos ||
+            pdf_text.find("xmpGImg") != std::string_view::npos) {
+            return {DetectedImportFormat::Ai, true};
+        }
+        return {DetectedImportFormat::Pdf, true};
+    }
     std::string_view text(reinterpret_cast<const char*>(bytes.data()), count);
     if (text.starts_with("\xef\xbb\xbf")) text.remove_prefix(3);
     const auto svg = text.find("<svg");
@@ -106,7 +115,9 @@ const char* FormatName(DetectedImportFormat format) noexcept {
     case DetectedImportFormat::Png: return "PNG";
     case DetectedImportFormat::Jpeg: return "JPEG";
     case DetectedImportFormat::Tiff: return "TIFF";
-    case DetectedImportFormat::Cdr: return "CDR";
+    case DetectedImportFormat::Cdr: return "CorelDRAW";
+    case DetectedImportFormat::Ai: return "AI";
+    case DetectedImportFormat::Pdf: return "PDF";
     }
     return "Unknown";
 }
@@ -130,6 +141,8 @@ const wchar_t* ExpectedExtension(DetectedImportFormat format) noexcept {
     case DetectedImportFormat::Jpeg: return L".jpg";
     case DetectedImportFormat::Tiff: return L".tif";
     case DetectedImportFormat::Cdr: return L".cdr";
+    case DetectedImportFormat::Ai: return L".ai";
+    case DetectedImportFormat::Pdf: return L".pdf";
     }
     return L"";
 }
@@ -138,7 +151,9 @@ bool ExtensionMatches(DetectedImportFormat format, std::wstring_view extension) 
     if (extension == ExpectedExtension(format)) return true;
     return (format == DetectedImportFormat::Jpeg && extension == L".jpeg") ||
            (format == DetectedImportFormat::Tiff && extension == L".tiff") ||
-           (format == DetectedImportFormat::Cdr && extension == L".cdr");
+           (format == DetectedImportFormat::Cdr && extension == L".cdr") ||
+           (format == DetectedImportFormat::Ai && (extension == L".ai" || extension == L".pdf")) ||
+           (format == DetectedImportFormat::Pdf && (extension == L".pdf" || extension == L".ai"));
 }
 
 std::wstring WorkerExecutablePath() {
@@ -420,7 +435,8 @@ ImportWorkerResult run_import_worker_job(
         auto extension = std::filesystem::path(source_path).extension().wstring();
         std::transform(extension.begin(), extension.end(), extension.begin(),
             [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
-        const auto source_limit = (IsRasterExtension(extension) || extension == L".cdr")
+        const auto source_limit = (IsRasterExtension(extension) || extension == L".cdr" ||
+                                   extension == L".ai" || extension == L".pdf")
             ? 64ULL * 1024ULL * 1024ULL
             : DxfImporter::kMaxSourceBytes;
         SourceSnapshotFailure snapshot_failure{};
@@ -437,7 +453,7 @@ ImportWorkerResult run_import_worker_job(
             return result;
         }
         if (!ExtensionMatches(signature.format, extension)) {
-            result.error_message = "Use the matching .svg, .dxf or .cdr file extension for the detected source format.";
+            result.error_message = "Use the matching .svg, .dxf, .cdr, .ai or .pdf file extension for the detected source format.";
             return result;
         }
         if (cancellation.stop_requested()) { result.cancelled = true; return result; }
@@ -462,8 +478,7 @@ ImportWorkerResult run_import_worker_job(
         constexpr uint32_t required_features = IPC_V2_FEATURE_SOURCE_HANDLE |
                                                IPC_V2_FEATURE_CHECKED_PROPOSAL_STREAM;
         if (!host.NegotiateV2(required_features, std::chrono::seconds(3))) {
-            result.error_message = std::string("The isolated import worker did not negotiate the required protocol: ") +
-                host.LastTransportFailure() + " exit_code=" + std::to_string(host.LastWorkerExitCode());
+            result.error_message = "The isolated import worker did not negotiate the required protocol.";
             return result;
         }
         if (cancellation.stop_requested()) { result.cancelled = true; return result; }
@@ -480,7 +495,9 @@ ImportWorkerResult run_import_worker_job(
         begin.profile_id = IsRaster(signature.format) ? "raster-rgba8-v1"
             : signature.format == DetectedImportFormat::Svg ? "svg-hierarchy-v2"
             : signature.format == DetectedImportFormat::Cdr ? "cdr-preview-v1"
-                                                            : "dxf-entities-v1";
+            : (signature.format == DetectedImportFormat::Ai || signature.format == DetectedImportFormat::Pdf)
+                ? "pdf-ai-preview-v1"
+                : "dxf-entities-v1";
         const auto request = SerializeV2ImportBegin(begin, 1);
         const V2ProposalStreamLimits limits{kMaxImportResponseBytes, kMaxImportCanonicalBytes,
             kMaxImportRecords, kMaxImportChunks, kMaxImportFrames};
@@ -505,6 +522,10 @@ ImportWorkerResult run_import_worker_job(
                     result.error_message = "The raster file is malformed, exceeds the safe decode limits, or uses an unsupported frame/color profile.";
                 else if (signature.format == DetectedImportFormat::Svg)
                     result.error_message = "This file is malformed or uses features outside the supported static SVG subset.";
+                else if (signature.format == DetectedImportFormat::Cdr)
+                    result.error_message = "This CorelDRAW file is malformed, password-protected, or does not contain a supported preview.";
+                else if (signature.format == DetectedImportFormat::Ai || signature.format == DetectedImportFormat::Pdf)
+                    result.error_message = "This PDF/AI file is malformed, password-protected, or does not contain a supported preview.";
                 else
                     result.error_message = "This file is malformed or uses entities outside the supported 2D DXF profile; source units are required.";
             } else {

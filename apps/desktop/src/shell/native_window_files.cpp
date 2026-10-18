@@ -91,15 +91,17 @@ void NativeWindow::open_document_dialog() {
     dialog.lStructSize = sizeof(dialog);
     dialog.hwndOwner = hwnd_;
     dialog.lpstrFilter = language_ == UILanguage::Vietnamese
-        ? L"Tất cả định dạng hỗ trợ (*.pikdraw;*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr)\0*.pikdraw;*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr\0"
+        ? L"Tất cả định dạng hỗ trợ (*.pikdraw;*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr;*.ai;*.pdf)\0*.pikdraw;*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr;*.ai;*.pdf\0"
           L"Tài liệu PikDraw (*.pikdraw)\0*.pikdraw\0"
           L"Đồ họa Vector (*.svg;*.dxf)\0*.svg;*.dxf\0"
+          L"Adobe Illustrator & PDF (*.ai;*.pdf)\0*.ai;*.pdf\0"
           L"Bản vẽ CorelDRAW (*.cdr)\0*.cdr\0"
           L"Hình ảnh raster (*.png;*.jpg;*.jpeg;*.tif;*.tiff)\0*.png;*.jpg;*.jpeg;*.tif;*.tiff\0"
           L"Tất cả tệp (*.*)\0*.*\0\0"
-        : L"All Supported Files (*.pikdraw;*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr)\0*.pikdraw;*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr\0"
+        : L"All Supported Files (*.pikdraw;*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr;*.ai;*.pdf)\0*.pikdraw;*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr;*.ai;*.pdf\0"
           L"PikDraw Document (*.pikdraw)\0*.pikdraw\0"
           L"Vector Drawings (*.svg;*.dxf)\0*.svg;*.dxf\0"
+          L"Adobe Illustrator & PDF (*.ai;*.pdf)\0*.ai;*.pdf\0"
           L"CorelDRAW Files (*.cdr)\0*.cdr\0"
           L"Raster Images (*.png;*.jpg;*.jpeg;*.tif;*.tiff)\0*.png;*.jpg;*.jpeg;*.tif;*.tiff\0"
           L"All Files (*.*)\0*.*\0\0";

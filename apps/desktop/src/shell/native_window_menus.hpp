@@ -126,7 +126,17 @@ enum class MenuActionId {
     TextFont,
     TextBold,
     TextItalic,
+    TextUnderline,
+    TextStrikethrough,
+    TextAlignLeft,
+    TextAlignCenter,
+    TextAlignRight,
+    TextBullets,
+    TextNumbering,
+    TextNonPrinting,
+    TextConvertArtisticParagraph,
     TextConvertToCurves,
+    TextDocker,
     // Tools
     ToolPick,
     ToolNode,
@@ -468,14 +478,27 @@ inline constexpr std::array<MenuItem, 5> kBitmapsMenuItems{{
     {MenuActionId::BitmapsColorMask, L"Bitmap Color Mask…", L"Mặt nạ màu ảnh…", L"", false, true}
 }};
 
-// 8. Text Menu
-inline constexpr std::array<MenuItem, 6> kTextMenuItems{{
-    {MenuActionId::TextEdit, L"Edit Text", L"Sửa văn bản", L""},
-    {MenuActionId::TextFont, L"Choose Font…", L"Chọn phông chữ…", L""},
+// 8. Text Menu (CorelDRAW / Word Reference)
+inline constexpr std::array<MenuItem, 19> kTextMenuItems{{
+    {MenuActionId::TextEdit, L"Edit Text…", L"Sửa văn bản…", L"Ctrl+Shift+T"},
+    {MenuActionId::TextFont, L"Font Picker…", L"Chọn phông chữ…", L""},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::TextBold, L"Bold Font", L"Chữ đậm", L"Ctrl+B"},
     {MenuActionId::TextItalic, L"Italic Font", L"Chữ nghiêng", L"Ctrl+I"},
-    {MenuActionId::TextConvertToCurves, L"Convert Text to Curves", L"Chuyển chữ thành đường cong", L"Ctrl+Q"}
+    {MenuActionId::TextUnderline, L"Underline Font", L"Gạch chân chữ", L"Ctrl+U"},
+    {MenuActionId::TextStrikethrough, L"Strikethrough", L"Gạch ngang chữ", L""},
+    {MenuActionId::Separator, L"", L"", L"", true},
+    {MenuActionId::TextAlignLeft, L"Align Left", L"Căn lề trái", L""},
+    {MenuActionId::TextAlignCenter, L"Align Center", L"Căn giữa", L""},
+    {MenuActionId::TextAlignRight, L"Align Right", L"Căn phải", L""},
+    {MenuActionId::Separator, L"", L"", L"", true},
+    {MenuActionId::TextBullets, L"Bullets", L"Đầu dòng dấu chấm", L""},
+    {MenuActionId::TextNumbering, L"Numbering", L"Đầu dòng số thứ tự", L""},
+    {MenuActionId::TextNonPrinting, L"Show Non-Printing Characters", L"Hiện ký tự ẩn", L"Ctrl+Shift+8"},
+    {MenuActionId::TextConvertArtisticParagraph, L"Convert to Paragraph / Artistic Text", L"Đổi Văn bản Khung / Tự do", L"Ctrl+F8"},
+    {MenuActionId::Separator, L"", L"", L"", true},
+    {MenuActionId::TextConvertToCurves, L"Convert Text to Curves", L"Chuyển chữ thành đường cong", L"Ctrl+Q"},
+    {MenuActionId::TextDocker, L"Text Docker / Properties", L"Bảng điều khiển chữ (Docker)", L"Ctrl+T"}
 }};
 
 // 9. Tools Menu

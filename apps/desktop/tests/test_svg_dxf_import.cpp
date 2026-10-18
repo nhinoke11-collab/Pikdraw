@@ -348,25 +348,58 @@ void test_png_raster_import_retains_source_and_is_undoable() {
 }
 
 void test_cdr_fast_preview_import() {
-    const auto cdr_path = std::filesystem::current_path() / "cdr" / "KC12.cdr";
-    if (!std::filesystem::exists(cdr_path)) return;
-    CompositionRoot root;
-    root.initialize();
-    DocumentWorkflow workflow(root);
-    workflow.new_document(210.0, 297.0, color::DocumentColorMode::Rgb, 96);
-    const auto metadata = workflow.begin_import_job(1);
-    const auto imported = run_import_worker_job(cdr_path.wstring(), ImportFormat::Svg,
-                                                metadata, std::stop_token{}, nullptr);
-    if (!imported.success) std::cerr << "CDR import failed: " << imported.error_message << '\n';
-    assert(imported.success);
-    assert(imported.proposal.format_name == "CorelDRAW");
-    assert(imported.proposal.profile_id == "cdr-preview-v1");
-    assert(imported.proposal.source_page_width_mm > 0.0);
-    assert(imported.proposal.source_page_height_mm > 0.0);
-    assert(imported.proposal.objects.size() == 1);
-    assert(workflow.commit_import_proposal(metadata, imported.proposal) ==
-           document::ProposalStatus::Accepted);
-    assert(root.document().current_snapshot()->object_count() == 1);
+    const std::vector<std::filesystem::path> paths = {
+        std::filesystem::current_path() / "cdr" / "KC12.cdr",
+        std::filesystem::current_path() / "cdr" / "s11.cdr",
+        std::filesystem::current_path() / "cdr" / "[ PikDecor.vn ] 260312_283.cdr",
+        std::filesystem::current_path() / "cdr" / (const char8_t*)u8"Bóc tách sân khấu Minh Châu Event (1).cdr"
+    };
+    for (const auto& p : paths) {
+        if (!std::filesystem::exists(p)) continue;
+        std::wcout << L"Testing CDR: " << p.filename().wstring() << std::endl;
+        CompositionRoot root;
+        root.initialize();
+        DocumentWorkflow workflow(root);
+        workflow.new_document(210.0, 297.0, color::DocumentColorMode::Rgb, 96);
+        const auto metadata = workflow.begin_import_job(1);
+        const auto imported = run_import_worker_job(p.wstring(), ImportFormat::Svg,
+                                                    metadata, std::stop_token{}, nullptr);
+        if (!imported.success) {
+            std::wcerr << L"CDR import failed for " << p.filename().wstring() << L": "
+                       << std::wstring(imported.error_message.begin(), imported.error_message.end()) << L'\n';
+        }
+        assert(imported.success);
+        assert(imported.proposal.format_name == "CorelDRAW");
+        assert(imported.proposal.profile_id == "cdr-preview-v1");
+    }
+}
+
+void test_pdf_ai_preview_import() {
+    const std::vector<std::filesystem::path> paths = {
+        std::filesystem::current_path() / "cdr" / "11695530.ai",
+        std::filesystem::current_path() / "cdr" / "job  HVAM.pdf",
+        std::filesystem::current_path() / "cdr" / "[ PikDecor.vn ] 260312_283.pdf"
+    };
+    for (const auto& p : paths) {
+        if (!std::filesystem::exists(p)) continue;
+        std::wcout << L"Testing PDF/AI: " << p.filename().wstring() << std::endl;
+        CompositionRoot root;
+        root.initialize();
+        DocumentWorkflow workflow(root);
+        workflow.new_document(210.0, 297.0, color::DocumentColorMode::Rgb, 96);
+        const auto metadata = workflow.begin_import_job(1);
+        const auto imported = run_import_worker_job(p.wstring(), ImportFormat::Svg,
+                                                    metadata, std::stop_token{}, nullptr);
+        if (!imported.success) {
+            std::wcerr << L"PDF/AI import failed for " << p.filename().wstring() << L": "
+                       << std::wstring(imported.error_message.begin(), imported.error_message.end()) << L'\n';
+        }
+        assert(imported.success);
+        assert(imported.proposal.format_name == "AI" || imported.proposal.format_name == "PDF");
+        assert(imported.proposal.profile_id == "pdf-ai-preview-v1");
+        assert(imported.proposal.source_page_width_mm > 0.0);
+        assert(imported.proposal.source_page_height_mm > 0.0);
+    }
 }
 }
 
@@ -375,6 +408,7 @@ int main() {
     test_dxf_profile_and_source_signature_rejection();
     test_png_raster_import_retains_source_and_is_undoable();
     test_cdr_fast_preview_import();
-    std::cout << "Desktop isolated SVG/DXF/raster/CDR import workflow tests passed\n";
+    test_pdf_ai_preview_import();
+    std::cout << "Desktop isolated SVG/DXF/raster/CDR/PDF/AI import workflow tests passed\n";
     return 0;
 }

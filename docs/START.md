@@ -1,10 +1,10 @@
 # Bắt đầu task PikDraw
 
 1. Đọc AGENTS.md và docs/project-state.json để biết quy tắc cùng phạm vi đã xác nhận.
-2. Chạy .\tooling\pikdraw.ps1 task list. Nếu chưa có task phù hợp, tạo task với owned paths rõ ràng rồi claim trước khi sửa.
-3. Lấy context bằng .\tooling\pikdraw.ps1 context --task-id TASK. Chỉ đọc README, AGENTS và contract của module liên quan.
-4. Giữ local edits. Chỉ sửa paths đã claim; không tạo worktree hay nhánh riêng.
-5. Chạy kiểm tra phù hợp và bàn giao qua tooling/pikdraw.ps1 handoff. Ghi rõ giới hạn và những gì chưa chạy.
+2. Triển khai trực tiếp yêu cầu của người dùng trên mã nguồn gốc; không bắt buộc qua chu trình task create/claim/handoff trừ khi được yêu cầu rõ.
+3. Nếu sử dụng task coordinator, có thể dùng `tooling/pikdraw.ps1 task claim <id> --force` hoặc `tooling/pikdraw.ps1 task prune` để tự động giải phóng lease cũ.
+4. Giữ local edits của người dùng; không tạo worktree hay nhánh riêng.
+5. Chạy kiểm tra phù hợp qua `tooling/native/build.ps1 -Test` và commit sạch sẽ khi hoàn thành.
 
 Với task tạo hoặc sửa hành vi, agent tự xác định và thêm/cập nhật ca nghiệm thu phản ánh luồng dùng thật. Dùng cấu trúc chung và chọn phạm vi theo rủi ro trong [quy chuẩn nghiệm thu tính năng](quality/feature-acceptance.md); không mặc định chạy toàn bộ test suite cho mọi task.
 

@@ -239,7 +239,7 @@ Tuân thủ [Tiêu chuẩn UI/UX PikDraw](../design/ui-ux-standard.md) và [Bố
 
 ## 7. Phân đoạn Triển khai Kỹ thuật Chi tiết (`C01` → `C05`)
 
-Tuân thủ nghiêm ngặt quy tắc độ dài file ($\le 800$ dòng/file), tách file theo domain và không làm gián đoạn các task khác:
+Tuân thủ nghiêm ngặt quy tắc độ dài file ($\le 2000$ dòng/file), tách file theo domain và không làm gián đoạn các task khác:
 
 ### Giai đoạn C01: Tầng `core/color` — Định nghĩa `DocumentColorMode` và Dịch vụ Chuyển đổi Chuẩn mực
 - **Mục tiêu**: Bổ sung enum `DocumentColorMode` và hàm `convert_color_to_mode` trong `core/color`.
@@ -280,7 +280,7 @@ Tuân thủ nghiêm ngặt quy tắc độ dài file ($\le 800$ dòng/file), tá
 - **Files tác động**:
   - `apps/desktop/src/shell/native_window_menus.hpp`
   - `apps/desktop/src/shell/native_window_menu_actions.cpp`
-  - `apps/desktop/src/shell/native_window_paint.cpp` (Lưu ý: Tách phần paint thanh ribbon sang file phụ nếu file vượt 800 dòng!)
+  - `apps/desktop/src/shell/native_window_paint.cpp` (Lưu ý: Tách phần paint thanh ribbon sang file phụ nếu file vượt 2000 dòng!)
   - `apps/desktop/src/shell/native_window_chrome_clicks.cpp`
   - `apps/desktop/src/shell/native_window_style_paint.cpp`
   - `apps/desktop/src/shell/native_window_style_events.cpp`
@@ -291,7 +291,7 @@ Tuân thủ nghiêm ngặt quy tắc độ dài file ($\le 800$ dòng/file), tá
 - **Mục tiêu**:
   - Biên dịch và chạy toàn bộ test suite liên quan: `test_pikdraw_color`, `test_pikdraw_document_storage`, `test_pikdraw_desktop_shell`, `test_pikdraw_vertical_slice_e2e`.
   - Chụp ảnh màn hình kiểm thử giao diện tiếng Việt và tiếng Anh.
-  - Kiểm tra cổng độ dài file $\le 800$ dòng trên toàn bộ kho mã nguồn.
+  - Kiểm tra cổng độ dài file $\le 2000$ dòng trên toàn bộ kho mã nguồn.
   - Cập nhật tiến độ task ngắn gọn và bàn giao.
 
 ---

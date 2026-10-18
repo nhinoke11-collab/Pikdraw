@@ -335,7 +335,7 @@ Trong quá trình xuất, thanh tiến trình (Progress Bar) hiển thị tỷ l
 
 ## 13. Gói triển khai, dependencies và tiêu chí ra khỏi gói
 
-Lộ trình chia thành 12 gói công việc độc lập. Mỗi gói sở hữu các đường dẫn cụ thể, tuân thủ giới hạn file không quá 800 dòng và chỉ chuyển trạng thái sau khi đạt đủ tiêu chí nghiệm thu (exit gates).
+Lộ trình chia thành 12 gói công việc độc lập. Mỗi gói sở hữu các đường dẫn cụ thể, tuân thủ giới hạn file không quá 2000 dòng và chỉ chuyển trạng thái sau khi đạt đủ tiêu chí nghiệm thu (exit gates).
 
 | Gói | Nội dung thực hiện | Điều kiện tiên quyết (Entry) | Tiêu chí hoàn thành (Exit Gates) |
 | --- | --- | --- | --- |

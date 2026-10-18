@@ -1,5 +1,6 @@
 #include "desktop_shell_test_helpers.hpp"
 #include "../src/shell/native_window_selection_geometry.hpp"
+#include "pikdraw/desktop/shell/native_font_picker.hpp"
 
 void test_typography_inline_editing_ribbon_and_table() {
     NativeWindow win(1440, 900);
@@ -431,6 +432,264 @@ void test_typography_inline_editing_ribbon_and_table() {
     auto saved_paragraph = std::get<pikdraw::document::TextObject>(
         *frame.root().document().current_snapshot()->objects().get(paragraph->id));
     assert(saved_paragraph.frame_width_mm == paragraph->frame_width_mm);
+
+    // ----------------------------------------------------
+    // Item 5: Live Text Frame Move & Paragraph Edge Scale (Corel-style)
+    // ----------------------------------------------------
+    NativeWindow live_edit(1440, 900);
+    live_edit.set_active_tool(4);
+    auto& live_cam = live_edit.root().renderer().camera();
+    live_cam.set_viewport_size(1440 - 352, 900 - 148);
+    live_edit.start_inline_text_editing({50, 70});
+    for (char c : std::string("Corel live move"))
+        live_edit.handle_inline_text_character(static_cast<unsigned char>(c));
+    assert(live_edit.is_inline_editing());
+
+    auto snap_before = live_edit.workflow().snapshot_for_canvas();
+    std::optional<pikdraw::document::TextObject> txt_before;
+    for (const auto& [id, obj] : snap_before->objects().all()) {
+        (void)id;
+        if (const auto* t = std::get_if<pikdraw::document::TextObject>(&obj)) txt_before = *t;
+    }
+    assert(txt_before);
+
+    const auto screen_b = selection_ui::screen_bounds(live_cam, txt_before->bounds(), live_edit.canvas_rect(1440, 900));
+    const int top_edge_x = screen_b.left + (screen_b.right - screen_b.left) / 4;
+    const int top_edge_y = screen_b.top;
+    assert(live_edit.selection_handle_at(top_edge_x, top_edge_y) == 10);
+    assert(live_edit.canvas_cursor_at(top_edge_x, top_edge_y) == 32646); // IDC_SIZEALL
+
+    live_edit.handle_mouse_down(top_edge_x, top_edge_y);
+    assert(live_edit.is_inline_editing());
+    live_edit.handle_mouse_move(top_edge_x + 25, top_edge_y + 15);
+    live_edit.handle_mouse_up(top_edge_x + 25, top_edge_y + 15);
+    assert(live_edit.is_inline_editing());
+
+    auto snap_after_move = live_edit.workflow().snapshot_for_canvas();
+    std::optional<pikdraw::document::TextObject> txt_moved;
+    for (const auto& [id, obj] : snap_after_move->objects().all()) {
+        (void)id;
+        if (const auto* t = std::get_if<pikdraw::document::TextObject>(&obj)) txt_moved = *t;
+    }
+    assert(txt_moved);
+    assert(txt_moved->position.x != txt_before->position.x || txt_moved->position.y != txt_before->position.y);
+
+    assert(live_edit.handle_inline_text_character('!'));
+    assert(live_edit.inline_text_buffer().ends_with("!"));
+
+    assert(live_edit.handle_inline_text_key('Z', true, false)); // undo '!'
+    assert(live_edit.handle_inline_text_key('Z', true, false)); // undo move
+    auto snap_undone = live_edit.workflow().snapshot_for_canvas();
+    std::optional<pikdraw::document::TextObject> txt_undone;
+    for (const auto& [id, obj] : snap_undone->objects().all()) {
+        (void)id;
+        if (const auto* t = std::get_if<pikdraw::document::TextObject>(&obj)) txt_undone = *t;
+    }
+    assert(txt_undone);
+    assert(std::abs(txt_undone->position.x - txt_before->position.x) < 1e-3);
+    assert(std::abs(txt_undone->position.y - txt_before->position.y) < 1e-3);
+
+    // Paragraph frame width edge handle scaling
+    NativeWindow para_win(1440, 900);
+    para_win.set_active_tool(4);
+    auto& p_cam = para_win.root().renderer().camera();
+    p_cam.set_viewport_size(1440 - 352, 900 - 148);
+    const auto p_canvas_point = [&](pikdraw::geometry::Point2D world) {
+        const auto screen = p_cam.world_to_screen(world);
+        return std::pair<int, int>{72 + static_cast<int>(screen.x), 122 + static_cast<int>(screen.y)};
+    };
+    const auto [p_start_x, p_start_y] = p_canvas_point({30, 80});
+    const auto [p_end_x, p_end_y] = p_canvas_point({90, 50});
+    para_win.handle_mouse_down(p_start_x, p_start_y);
+    para_win.handle_mouse_move(p_end_x, p_end_y);
+    para_win.handle_mouse_up(p_end_x, p_end_y);
+    for (char c : std::string("Paragraph frame width adjustment"))
+        para_win.handle_inline_text_character(static_cast<unsigned char>(c));
+
+    auto p_snap = para_win.workflow().snapshot_for_canvas();
+    std::optional<pikdraw::document::TextObject> p_before;
+    for (const auto& [id, obj] : p_snap->objects().all()) {
+        (void)id;
+        if (const auto* t = std::get_if<pikdraw::document::TextObject>(&obj)) p_before = *t;
+    }
+    assert(p_before && p_before->frame_width_mm > 0);
+    const double initial_frame_w = p_before->frame_width_mm;
+    const double initial_font_pt = p_before->font.size_pt;
+
+    const auto p_screen = selection_ui::screen_bounds(p_cam, p_before->bounds(), para_win.canvas_rect(1440, 900));
+    const auto h3 = selection_ui::handles(p_screen)[3];
+    assert(para_win.selection_handle_at(h3.x, h3.y) == 3);
+    para_win.handle_mouse_down(h3.x, h3.y);
+    para_win.handle_mouse_move(h3.x + 35, h3.y);
+    para_win.handle_mouse_up(h3.x + 35, h3.y);
+    assert(para_win.is_inline_editing());
+
+    auto p_snap_after = para_win.workflow().snapshot_for_canvas();
+    std::optional<pikdraw::document::TextObject> p_after;
+    for (const auto& [id, obj] : p_snap_after->objects().all()) {
+        (void)id;
+        if (const auto* t = std::get_if<pikdraw::document::TextObject>(&obj)) p_after = *t;
+    }
+    assert(p_after);
+    assert(p_after->frame_width_mm > initial_frame_w);
+    assert(std::abs(p_after->font.size_pt - initial_font_pt) < 1e-4);
+
+    // ----------------------------------------------------
+    // Item 6: Native Font Picker Overlay Verification
+    // ----------------------------------------------------
+    {
+        pikdraw::desktop::NativeFontPicker picker;
+        assert(!picker.is_open());
+        picker.open(100, 100, 1440, 900, "Arial", "PikDraw Tiếng Việt Ánh Sáng");
+        assert(picker.is_open());
+        assert(picker.baseline_font() == "Arial");
+        assert(picker.bounds().left == 100);
+        assert(picker.bounds().top == 104);
+        assert(picker.filtered_count() > 0);
+
+        // Filter tests
+        picker.set_active_filter(pikdraw::desktop::FontCategoryFilter::SansSerif);
+        assert(picker.active_filter() == pikdraw::desktop::FontCategoryFilter::SansSerif);
+        picker.set_active_filter(pikdraw::desktop::FontCategoryFilter::All);
+        assert(picker.active_filter() == pikdraw::desktop::FontCategoryFilter::All);
+
+        // Search tests
+        const size_t total_count = picker.filtered_count();
+        picker.set_search_query("aria");
+        assert(picker.search_query() == "aria");
+        assert(picker.filtered_count() <= total_count);
+        picker.set_search_query("");
+        assert(picker.filtered_count() == total_count);
+
+        // Key navigation
+        if (picker.filtered_count() > 1) {
+            picker.handle_key_down(VK_DOWN, false, false);
+            assert(picker.selected_index() >= 0);
+        }
+
+        // Callbacks test
+        std::string previewed;
+        std::string selected;
+        bool cancelled = false;
+        picker.set_on_preview([&](const std::string& f) { previewed = f; });
+        picker.set_on_select([&](const std::string& f) { selected = f; });
+        picker.set_on_cancel([&]() { cancelled = true; });
+
+        picker.select_index(0);
+        assert(!previewed.empty());
+
+        picker.handle_key_down(VK_RETURN, false, false);
+        assert(!selected.empty());
+        assert(!picker.is_open());
+
+        // Reopen & cancel via ESC
+        picker.open(200, 200, 1440, 900, "Segoe UI");
+        assert(picker.is_open());
+        picker.handle_key_down(VK_ESCAPE, false, false);
+        assert(!picker.is_open());
+        assert(cancelled);
+
+        // Reopen & click outside to close
+        picker.open(300, 300, 1440, 900, "Segoe UI");
+        assert(picker.is_open());
+        bool handled_outside = picker.handle_mouse_down(10, 10);
+        assert(handled_outside);
+        assert(!picker.is_open());
+
+        // NativeWindow font picker integration
+        NativeWindow picker_win(1440, 900);
+        picker_win.set_active_tool(4);
+        assert(!picker_win.is_font_picker_open());
+        picker_win.open_font_picker(52, 96);
+        assert(picker_win.is_font_picker_open());
+        picker_win.close_font_picker();
+        assert(!picker_win.is_font_picker_open());
+
+        // Font picker during inline editing
+        auto& p_sel = picker_win.root().vector_controller().selection();
+        const auto p_text_id = picker_win.workflow().add_vietnamese_text(
+            40.0, 50.0, "Font Picker Test", "Be Vietnam Pro", 24.0, "#000000"
+        );
+        p_sel.select(p_text_id);
+        picker_win.open_font_picker(52, 96);
+        assert(picker_win.is_font_picker_open());
+        // Click outside closes and cancels picker
+        picker_win.handle_mouse_down(10, 10);
+        assert(!picker_win.is_font_picker_open());
+    }
+
+    // ----------------------------------------------------
+    // Item 7: Contextual Text Property Bar Controls
+    // ----------------------------------------------------
+    {
+        NativeWindow pbar_win(1440, 900);
+        pbar_win.set_active_tool(4);
+        auto& pb_sel = pbar_win.root().vector_controller().selection();
+        const auto txt_id = pbar_win.workflow().add_vietnamese_text(
+            50.0, 50.0, "Dong 1\nDong 2", "Arial", 18.0, "#000000"
+        );
+        pb_sel.select(txt_id);
+
+        // Strikethrough toggle via click at 710
+        pbar_win.handle_mouse_down(710, 80);
+        assert(pbar_win.status_message().find("Gạch ngang: Bật") != std::string::npos ||
+               pbar_win.status_message().find("Strikethrough: ON") != std::string::npos);
+
+        // Bullets toggle via click at 745
+        pbar_win.handle_mouse_down(745, 80);
+        assert(pbar_win.status_message().find("Bullets") != std::string::npos);
+
+        // Numbering toggle via click at 780
+        pbar_win.handle_mouse_down(780, 80);
+        assert(pbar_win.status_message().find("Numbering") != std::string::npos);
+
+        // Non-printing characters toggle via click at 815
+        pbar_win.handle_mouse_down(815, 80);
+        assert(pbar_win.status_message().find("Non-Printing") != std::string::npos);
+
+        // Artistic / Paragraph toggle via click at 845
+        pbar_win.handle_mouse_down(845, 80);
+        assert(pbar_win.status_message().find("Khung") != std::string::npos ||
+               pbar_win.status_message().find("Paragraph") != std::string::npos);
+        assert(pbar_win.workflow().undo());
+    }
+
+    // ----------------------------------------------------
+    // Item 8: Text Menu Actions & Typography Docker
+    // ----------------------------------------------------
+    {
+        NativeWindow menu_win(1440, 900);
+        auto& mwf = menu_win.workflow();
+        auto& msel = menu_win.root().vector_controller().selection();
+        const auto txt = mwf.add_vietnamese_text(
+            20.0, 20.0, "Menu Typography Test", "Segoe UI", 16.0, "#000000"
+        );
+        msel.select(txt);
+
+        // Alignment Center via Text Menu
+        menu_win.execute_menu_action(static_cast<int>(MenuActionId::TextAlignCenter));
+        assert(menu_win.status_message().find("Căn giữa") != std::string::npos ||
+               menu_win.status_message().find("Center") != std::string::npos);
+
+        // Underline and Strikethrough via Text Menu
+        menu_win.execute_menu_action(static_cast<int>(MenuActionId::TextUnderline));
+        assert(menu_win.status_message().find("Gạch chân: Bật") != std::string::npos ||
+               menu_win.status_message().find("Underline: ON") != std::string::npos);
+
+        menu_win.execute_menu_action(static_cast<int>(MenuActionId::TextStrikethrough));
+        assert(menu_win.status_message().find("Gạch ngang: Bật") != std::string::npos ||
+               menu_win.status_message().find("Strikethrough: ON") != std::string::npos);
+
+        // Non-printing characters toggle via Text Menu
+        menu_win.execute_menu_action(static_cast<int>(MenuActionId::TextNonPrinting));
+        assert(menu_win.status_message().find("Non-Printing") != std::string::npos ||
+               menu_win.status_message().find("Hiện ký tự ẩn") != std::string::npos);
+
+        // Text Docker (Inspector & Properties panel) via Text Menu
+        menu_win.execute_menu_action(static_cast<int>(MenuActionId::TextDocker));
+        assert(menu_win.status_message().find("thuộc tính") != std::string::npos ||
+               menu_win.status_message().find("Properties") != std::string::npos);
+    }
 
     std::cout << "[PASS] test_typography_inline_editing_ribbon_and_table\n";
 }

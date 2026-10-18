@@ -1,4 +1,6 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "pikdraw/desktop/shell/native_font_picker.hpp"
+#include "native_window_text_properties.hpp"
 #include "../automation/native_window_automation.hpp"
 #include "pikdraw/desktop/actions/action_id.hpp"
 #include "native_window_menus.hpp"
@@ -45,6 +47,67 @@ void NativeWindow::cycle_font_family() {
 #endif
 }
 
+void NativeWindow::open_font_picker(int anchor_x, int anchor_y) {
+    if (!font_picker_) font_picker_ = std::make_unique<NativeFontPicker>();
+    if (font_picker_->is_open()) {
+        close_font_picker();
+        return;
+    }
+    const std::string curr = is_inline_text_editing_ && text_editor_
+        ? text_editor_->draft.font.family_name : text_font_family_at(font_family_index_);
+    const std::string sample = is_inline_text_editing_ && text_editor_ && !text_editor_->draft.text.empty()
+        ? text_editor_->draft.text.substr(0, std::min<size_t>(60, text_editor_->draft.text.size()))
+        : "PikDraw Tiếng Việt Ánh Sáng 123";
+
+    font_picker_->set_on_preview([this](const std::string& fam) {
+        if (is_inline_text_editing_ && text_editor_) {
+            text_editor_->draft.font.family_name = fam;
+            refresh_inline_text_preview();
+        }
+        status_msg_ = (language_ == UILanguage::Vietnamese ? "Xem thử: " : "Preview: ") + fam;
+#ifdef _WIN32
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+    });
+
+    font_picker_->set_on_select([this](const std::string& fam) {
+        font_family_index_ = remember_text_font_family(fam);
+        apply_text_style_controls(true);
+        status_msg_ = (language_ == UILanguage::Vietnamese ? "Đã chọn: " : "Selected: ") + fam;
+#ifdef _WIN32
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+    });
+
+    font_picker_->set_on_cancel([this]() {
+        if (is_inline_text_editing_ && text_editor_ && font_picker_) {
+            text_editor_->draft.font.family_name = font_picker_->baseline_font();
+            refresh_inline_text_preview();
+        }
+#ifdef _WIN32
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+    });
+
+    font_picker_->open(anchor_x, anchor_y, width_, height_, curr, sample);
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::close_font_picker() {
+    if (font_picker_ && font_picker_->is_open()) {
+        font_picker_->close();
+#ifdef _WIN32
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+    }
+}
+
+bool NativeWindow::is_font_picker_open() const noexcept {
+    return font_picker_ && font_picker_->is_open();
+}
+
 void NativeWindow::adjust_font_size(double delta_pt) {
     font_size_pt_ = std::clamp(font_size_pt_ + delta_pt, 1.0, 2880.0);
     apply_text_style_controls();
@@ -76,6 +139,163 @@ void NativeWindow::toggle_font_underline() {
     font_underline_ = !font_underline_;
     apply_text_style_controls();
     status_msg_ = font_underline_ ? "Gạch chân: Bật (Underline: ON)" : "Gạch chân: Tắt (Underline: OFF)";
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::toggle_font_strikethrough() {
+    font_strikethrough_ = !font_strikethrough_;
+    apply_text_style_controls();
+    status_msg_ = font_strikethrough_ ? "Gạch ngang: Bật (Strikethrough: ON)" : "Gạch ngang: Tắt (Strikethrough: OFF)";
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::toggle_text_bullets() {
+    const auto toggle_line_bullets = [](std::string text) {
+        std::istringstream stream(text);
+        std::string line;
+        std::string result;
+        bool has_bullets = true;
+        std::vector<std::string> lines;
+        while (std::getline(stream, line)) {
+            lines.push_back(line);
+            if (line.rfind("• ", 0) != 0 && line.rfind("- ", 0) != 0) has_bullets = false;
+        }
+        for (size_t i = 0; i < lines.size(); ++i) {
+            if (has_bullets) {
+                if (lines[i].rfind("• ", 0) == 0) lines[i] = lines[i].substr(std::string("• ").size());
+                else if (lines[i].rfind("- ", 0) == 0) lines[i] = lines[i].substr(2);
+            } else {
+                lines[i] = "• " + lines[i];
+            }
+            result += lines[i];
+            if (i + 1 < lines.size() || (!text.empty() && text.back() == '\n')) result += "\n";
+        }
+        return result;
+    };
+
+    if (text_editor_ && is_inline_text_editing_) {
+        text_editor_->remember();
+        text_editor_->draft.text = toggle_line_bullets(text_editor_->draft.text);
+        refresh_inline_text_preview();
+    } else {
+        const auto& sel = root().vector_controller().selection().selected_ids();
+        auto snap = root().document().current_snapshot();
+        for (auto id : sel) {
+            const auto obj = snap->objects().get(id);
+            if (obj && std::holds_alternative<document::TextObject>(*obj)) {
+                auto t = std::get<document::TextObject>(*obj);
+                std::string updated = toggle_line_bullets(t.text);
+                workflow().update_text_content(id, updated);
+            }
+        }
+    }
+    status_msg_ = (language_ == UILanguage::Vietnamese)
+        ? "Đã chuyển đổi danh sách dấu chấm (Bullets · •=)"
+        : "Toggled bulleted list (Bullets · •=)";
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::toggle_text_numbering() {
+    const auto toggle_line_num = [](std::string text) {
+        std::istringstream stream(text);
+        std::string line;
+        std::vector<std::string> lines;
+        bool has_nums = true;
+        while (std::getline(stream, line)) {
+            lines.push_back(line);
+            size_t dot = line.find(". ");
+            if (dot == std::string::npos || dot == 0 || dot > 3) has_nums = false;
+            else {
+                for (size_t k = 0; k < dot; ++k) {
+                    if (!std::isdigit(static_cast<unsigned char>(line[k]))) has_nums = false;
+                }
+            }
+        }
+        std::string result;
+        for (size_t i = 0; i < lines.size(); ++i) {
+            if (has_nums) {
+                size_t dot = lines[i].find(". ");
+                if (dot != std::string::npos) lines[i] = lines[i].substr(dot + 2);
+            } else {
+                lines[i] = std::to_string(i + 1) + ". " + lines[i];
+            }
+            result += lines[i];
+            if (i + 1 < lines.size() || (!text.empty() && text.back() == '\n')) result += "\n";
+        }
+        return result;
+    };
+
+    if (text_editor_ && is_inline_text_editing_) {
+        text_editor_->remember();
+        text_editor_->draft.text = toggle_line_num(text_editor_->draft.text);
+        refresh_inline_text_preview();
+    } else {
+        const auto& sel = root().vector_controller().selection().selected_ids();
+        auto snap = root().document().current_snapshot();
+        for (auto id : sel) {
+            const auto obj = snap->objects().get(id);
+            if (obj && std::holds_alternative<document::TextObject>(*obj)) {
+                auto t = std::get<document::TextObject>(*obj);
+                std::string updated = toggle_line_num(t.text);
+                workflow().update_text_content(id, updated);
+            }
+        }
+    }
+    status_msg_ = (language_ == UILanguage::Vietnamese)
+        ? "Đã chuyển đổi danh sách số (Numbering · 1.)"
+        : "Toggled numbered list (Numbering · 1.)";
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::toggle_non_printing_characters() {
+    show_non_printing_characters_ = !show_non_printing_characters_;
+    status_msg_ = show_non_printing_characters_
+        ? (language_ == UILanguage::Vietnamese ? "Hiện ký tự ẩn (Show Non-Printing Characters: Bật)" : "Show Non-Printing Characters: ON")
+        : (language_ == UILanguage::Vietnamese ? "Ẩn ký tự không in (Show Non-Printing Characters: Tắt)" : "Show Non-Printing Characters: OFF");
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::toggle_convert_artistic_paragraph() {
+    if (text_editor_ && is_inline_text_editing_) {
+        text_editor_->remember();
+        if (text_editor_->draft.frame_width_mm > 0.0) {
+            text_editor_->draft.frame_width_mm = 0.0;
+            status_msg_ = (language_ == UILanguage::Vietnamese)
+                ? "Chuyển thành Văn bản Tự do (Artistic Text)"
+                : "Converted to Artistic Text";
+        } else {
+            text_editor_->draft.frame_width_mm = 100.0;
+            status_msg_ = (language_ == UILanguage::Vietnamese)
+                ? "Chuyển thành Văn bản Khung (Paragraph Text)"
+                : "Converted to Paragraph Text";
+        }
+        refresh_inline_text_preview();
+    } else {
+        const auto& sel = root().vector_controller().selection().selected_ids();
+        auto snap = root().document().current_snapshot();
+        for (auto id : sel) {
+            const auto obj = snap->objects().get(id);
+            if (obj && std::holds_alternative<document::TextObject>(*obj)) {
+                const auto& t = std::get<document::TextObject>(*obj);
+                double target_width = (t.frame_width_mm > 0.0) ? 0.0 : 100.0;
+                workflow().set_selected_text_layout(target_width, std::nullopt);
+                status_msg_ = (target_width == 0.0)
+                    ? (language_ == UILanguage::Vietnamese ? "Đã chuyển thành Văn bản Tự do (Artistic Text · Ctrl+F8)" : "Converted to Artistic Text (Ctrl+F8)")
+                    : (language_ == UILanguage::Vietnamese ? "Đã chuyển thành Văn bản Khung (Paragraph Text · Ctrl+F8)" : "Converted to Paragraph Text (Ctrl+F8)");
+                break;
+            }
+        }
+    }
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 #endif

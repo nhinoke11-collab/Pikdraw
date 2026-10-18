@@ -21,8 +21,14 @@ std::vector<FormatCapabilityEntry> FormatCapabilityRegistry::GetMatrix() {
          FormatCapabilityStatus::SupportedPrototype, FormatCapabilityStatus::UnsupportedReject,
          "built-in", "repository source", "not applicable", "worker process for import",
          "Import only for the explicit 2D entity/unit profile; no DXF export."},
-        unsupported("PDF", ".pdf", "No PDF adapter; IPC or preview output is not PDF support."),
-        unsupported("Adobe Illustrator", ".ai", "No AI source adapter or round-trip guarantee."),
+        {"PDF", ".pdf", "Fast reference preview pdf-ai-preview-v1",
+         FormatCapabilityStatus::SupportedPrototype, FormatCapabilityStatus::UnsupportedReject,
+         "PdfAiExtractor", "repository source", "not applicable", "isolated worker for import",
+         "Import only: fast reference preview from embedded page/thumbnail and metadata dimensions. No PDF export."},
+        {"Adobe Illustrator", ".ai", "Fast reference preview pdf-ai-preview-v1",
+         FormatCapabilityStatus::SupportedPrototype, FormatCapabilityStatus::UnsupportedReject,
+         "PdfAiExtractor", "repository source", "not applicable", "isolated worker for import",
+         "Import only: fast reference preview from embedded page/thumbnail and metadata dimensions. No AI export."},
         {"CorelDRAW", ".cdr", "Fast reference preview cdr-preview-v1",
          FormatCapabilityStatus::SupportedPrototype, FormatCapabilityStatus::UnsupportedReject,
          "CdrExtractor", "repository source", "not applicable", "isolated worker for import",
@@ -74,7 +80,12 @@ bool FormatCapabilityRegistry::IsFormatSupported(std::string_view format_name) n
            equal_ascii_case_insensitive(format_name, ".tiff") ||
            equal_ascii_case_insensitive(format_name, "CorelDRAW") ||
            equal_ascii_case_insensitive(format_name, "CDR") ||
-           equal_ascii_case_insensitive(format_name, ".cdr");
+           equal_ascii_case_insensitive(format_name, ".cdr") ||
+           equal_ascii_case_insensitive(format_name, "PDF") ||
+           equal_ascii_case_insensitive(format_name, ".pdf") ||
+           equal_ascii_case_insensitive(format_name, "Adobe Illustrator") ||
+           equal_ascii_case_insensitive(format_name, "AI") ||
+           equal_ascii_case_insensitive(format_name, ".ai");
 }
 std::string FormatCapabilityRegistry::GetDiagnosticForFormat(std::string_view format_name) {
     const auto matrix = GetMatrix();

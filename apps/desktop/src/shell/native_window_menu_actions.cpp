@@ -110,6 +110,14 @@ bool NativeWindow::is_menu_action_checked(MenuActionId action) const noexcept {
     switch (action) {
     case MenuActionId::ObjectToggleKeepSource: return keep_source_object_;
     case MenuActionId::ObjectToggleKeepTarget: return keep_target_object_;
+    case MenuActionId::TextBold: return font_bold_;
+    case MenuActionId::TextItalic: return font_italic_;
+    case MenuActionId::TextUnderline: return font_underline_;
+    case MenuActionId::TextStrikethrough: return font_strikethrough_;
+    case MenuActionId::TextAlignLeft: return font_alignment_ == typography::TextAlignment::Left;
+    case MenuActionId::TextAlignCenter: return font_alignment_ == typography::TextAlignment::Center;
+    case MenuActionId::TextAlignRight: return font_alignment_ == typography::TextAlignment::Right;
+    case MenuActionId::TextNonPrinting: return show_non_printing_characters_;
     default: return false;
     }
 }
@@ -430,42 +438,19 @@ void NativeWindow::execute_menu_action(int action_id) {
         set_active_tool(4);
         return;
     }
-    case MenuActionId::TextFont: {
-        const auto view = text_properties_view(*this);
-        if (view.context && !view.editable) {
-            status_msg_ = language_ == UILanguage::Vietnamese
-                ? "Không thể sửa phông chữ của văn bản bị khóa hoặc ẩn"
-                : "Cannot change the font of locked or hidden text";
-            return;
-        }
-        if (view.context && view.mixed_font) {
-            status_msg_ = language_ == UILanguage::Vietnamese
-                ? "Kiểu chữ đang hỗn hợp · chọn một đối tượng hoặc thống nhất trước"
-                : "Font settings are mixed · select one object or unify them first";
-            return;
-        }
-        POINT screen_point{}; GetCursorPos(&screen_point);
-        const auto family = choose_and_store_installed_text_font(hwnd_, screen_point, view,
-            font_family_index_, font_size_pt_, font_bold_, font_italic_, font_underline_, font_alignment_);
-        if (family) {
-            apply_text_style_controls(true);
-            status_msg_ = view.context
-                ? is_inline_editing()
-                    ? language_ == UILanguage::Vietnamese
-                        ? "Đã xem trước phông chữ · Ctrl+Enter lưu, Esc hủy"
-                        : "Font preview updated · Ctrl+Enter saves, Esc cancels"
-                    : language_ == UILanguage::Vietnamese
-                        ? "Đã cập nhật phông chữ · Ctrl+Z hoàn tác"
-                        : "Font updated · Ctrl+Z undoes"
-                : language_ == UILanguage::Vietnamese
-                    ? "Phông mặc định cho Văn bản mới đã cập nhật"
-                    : "Default font for new Text updated";
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        }
-        return;
-    }
+    case MenuActionId::TextFont: open_font_picker(200, 100); return;
     case MenuActionId::TextBold: toggle_font_bold(); return;
     case MenuActionId::TextItalic: toggle_font_italic(); return;
+    case MenuActionId::TextUnderline: toggle_font_underline(); return;
+    case MenuActionId::TextStrikethrough: toggle_font_strikethrough(); return;
+    case MenuActionId::TextAlignLeft: set_font_alignment(typography::TextAlignment::Left); return;
+    case MenuActionId::TextAlignCenter: set_font_alignment(typography::TextAlignment::Center); return;
+    case MenuActionId::TextAlignRight: set_font_alignment(typography::TextAlignment::Right); return;
+    case MenuActionId::TextBullets: toggle_text_bullets(); return;
+    case MenuActionId::TextNumbering: toggle_text_numbering(); return;
+    case MenuActionId::TextNonPrinting: toggle_non_printing_characters(); return;
+    case MenuActionId::TextConvertArtisticParagraph: toggle_convert_artistic_paragraph(); return;
+    case MenuActionId::TextDocker: open_inspector_properties_panel(); return;
     case MenuActionId::TextConvertToCurves: convert_selected_text_to_curves(); return;
     case MenuActionId::ToolPick: workflow().cancel_effect_draft(); set_active_tool(0); return;
     case MenuActionId::ToolNode: workflow().cancel_effect_draft(); set_active_tool(11); return;

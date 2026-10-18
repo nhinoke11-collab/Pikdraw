@@ -31,6 +31,7 @@ add_library(pikdraw_interop STATIC
     src/interop_types.cpp
     src/adapters/tinflate.c
     src/adapters/cdr_extractor.cpp
+    src/adapters/pdf_ai_extractor.cpp
     src/payload_validator.cpp
 )
 
@@ -49,7 +50,7 @@ target_link_libraries(pikdraw_interop PUBLIC
 )
 
 if(WIN32)
-    target_link_libraries(pikdraw_interop PUBLIC bcrypt ole32 windowscodecs uuid)
+    target_link_libraries(pikdraw_interop PUBLIC bcrypt windowscodecs uuid)
 endif()
 
 if(PIKDRAW_BUILD_TESTS)
@@ -80,4 +81,5 @@ if(PIKDRAW_BUILD_TESTS)
     add_interop_test(test_pikdraw_interop_export_report tests/writers/test_export_report.cpp)
     add_interop_test(test_pikdraw_interop_export_options tests/writers/test_export_options.cpp)
     add_interop_test(test_pikdraw_interop_atomic_export tests/writers/test_atomic_export.cpp)
+    add_interop_test(test_pikdraw_interop_pdf_ai_extractor tests/adapters/test_pdf_ai_extractor.cpp)
 endif()

@@ -93,9 +93,11 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
                     : L"Shift snaps direction to 15° · Ctrl uses the start point as center";
         } else if (is_text_mode) {
             if (mouse_x >= 52 && mouse_x <= 192) {
-                tip_text = is_vi ? L"Chọn phông đã cài trên Windows · mở hộp thoại font" : L"Choose an installed Windows font";
+                tip_text = is_vi ? L"Chọn phông chữ (Font Picker · Win32 WYSIWYG)" : L"Choose font (Font Picker)";
             } else if (mouse_x >= 220 && mouse_x <= 240) {
                 tip_text = is_vi ? L"Giảm cỡ chữ (-2 pt)" : L"Decrease Font Size (-2 pt)";
+            } else if (mouse_x >= 242 && mouse_x <= 292) {
+                tip_text = is_vi ? L"Cỡ chữ (Font Size · pt) · nhấp để nhập số" : L"Font Size (pt) · click to edit";
             } else if (mouse_x >= 294 && mouse_x <= 314) {
                 tip_text = is_vi ? L"Tăng cỡ chữ (+2 pt)" : L"Increase Font Size (+2 pt)";
             } else if (mouse_x >= 322 && mouse_x <= 350) {
@@ -116,12 +118,21 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
             } else if (mouse_x >= 622 && mouse_x <= 692) {
                 tip_text = is_vi ? L"Tạo bảng văn bản 3×3 (Table Tool - CorelDRAW Style)"
                                  : L"Insert 3×3 Text Table (CorelDRAW Style)";
-            } else if (!selection.empty() && mouse_x >= 698 && mouse_x <= 748) {
+            } else if (mouse_x >= 698 && mouse_x <= 728) {
+                tip_text = is_vi ? L"Gạch ngang thân chữ (Strikethrough)" : L"Strikethrough text";
+            } else if (mouse_x >= 732 && mouse_x <= 762) {
+                tip_text = is_vi ? L"Danh sách dấu chấm (Bullets · •=)" : L"Bulleted list (Bullets · •=)";
+            } else if (mouse_x >= 766 && mouse_x <= 796) {
+                tip_text = is_vi ? L"Danh sách số thứ tự (Numbering · 1.)" : L"Numbered list (Numbering · 1.)";
+            } else if (mouse_x >= 800 && mouse_x <= 826) {
+                tip_text = is_vi ? L"Bật/Tắt ký tự không in (Show Non-Printing Characters · ¶)" : L"Show/Hide Non-Printing Characters (¶)";
+            } else if (mouse_x >= 830 && mouse_x <= 864) {
+                tip_text = is_vi ? L"Chuyển đổi qua lại giữa Văn bản Tự do và Khung (Artistic / Paragraph · Ctrl+F8)" : L"Convert between Artistic and Paragraph text (Ctrl+F8)";
+            } else if (!selection.empty() && mouse_x >= 868 && mouse_x <= 914) {
                 tip_text = is_vi ? L"Xóa văn bản đang chọn (Delete)" : L"Delete selected text (Delete)";
             } else {
-                int opacity_x = (!selection.empty()) ? 754 : 698;
                 if (selection.size() == 1 && workflow().can_set_selected_object_opacity() &&
-                    mouse_x >= opacity_x && mouse_x <= opacity_x + 124 && opacity_x + 124 <= w - inspect_w) {
+                    mouse_x >= 920 && mouse_x <= 1044 && 920 + 124 <= w - inspect_w) {
                     tip_text = is_vi
                         ? L"Độ mờ toàn đối tượng 0–100% · nhập số · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
                         : L"Object opacity 0–100% · type a value · Enter applies · Esc cancels · Ctrl+Z undoes";

@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "pikdraw/desktop/shell/native_font_picker.hpp"
 #include "native_window_file_menu.hpp"
 #include "native_window_menus.hpp"
 #include "native_window_page_presets.hpp"
@@ -40,6 +41,12 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         if (self) self->handle_export_worker_message(wParam);
         return 0;
     case WM_CHAR:
+        if (self && self->is_font_picker_open()) {
+            if (self->font_picker()->handle_char_input(static_cast<wchar_t>(wParam))) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+        }
         if (self && self->show_recovery_modal_)
             return 0;
         if (self && self->show_settings_modal_ && self->settings_active_tab_ == 6)
@@ -158,6 +165,14 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         }
         break;
     case WM_KEYDOWN:
+        if (self && self->is_font_picker_open()) {
+            const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+            const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+            if (self->font_picker()->handle_key_down(static_cast<uint32_t>(wParam), ctrl, shift)) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+        }
         if (self && self->show_recovery_modal_ && self->handle_recovery_key(wParam))
             return 0;
         if (self && wParam == VK_ESCAPE && self->export_job_active()) {
@@ -429,6 +444,12 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
             ScreenToClient(hwnd, &point);
             point.x = self->logical_pixel(point.x);
             point.y = self->logical_pixel(point.y);
+            if (self->is_font_picker_open()) {
+                if (self->font_picker()->handle_mouse_wheel(GET_WHEEL_DELTA_WPARAM(wParam), point.x, point.y)) {
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                    return 0;
+                }
+            }
             if (self->show_settings_modal_ && self->settings_active_tab_ == 4) {
                 if (handle_shortcuts_settings_wheel(*self, GET_WHEEL_DELTA_WPARAM(wParam)))
                     return 0;

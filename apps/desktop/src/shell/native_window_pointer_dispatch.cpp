@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "pikdraw/desktop/shell/native_font_picker.hpp"
 #include "native_window_file_menu.hpp"
 #include "native_window_menus.hpp"
 #include "native_window_page_presets.hpp"
@@ -52,6 +53,12 @@ void NativeWindow::handle_mouse_down(int x, int y) {
 }
 
 void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
+    if (is_font_picker_open()) {
+        if (font_picker_->handle_mouse_down(x, y)) {
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+    }
     if (is_inline_text_editing_ && (active_tool_ != 4 || (x < 52 && y >= 122)))
         commit_inline_text_editing();
     int w = width_;
@@ -281,6 +288,13 @@ void NativeWindow::handle_mouse_move(int x, int y, unsigned modifiers) {
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
     }
 
+    if (is_font_picker_open()) {
+        if (font_picker_->handle_mouse_move(x, y)) {
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+    }
+
     if (resize_handle_ == -2) {
         const auto draft = workflow().effect_draft();
         const auto* source_shadow = draft ? std::get_if<document::DropShadowEffect>(
@@ -459,6 +473,12 @@ void NativeWindow::handle_mouse_up(int x, int y, unsigned modifiers) {
         }
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
         return;
+    }
+    if (is_font_picker_open()) {
+        if (font_picker_->handle_mouse_up(x, y)) {
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
     }
     if (is_panning_) {
         is_panning_ = false;

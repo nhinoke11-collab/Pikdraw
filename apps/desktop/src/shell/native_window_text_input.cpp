@@ -88,7 +88,9 @@ bool NativeWindow::handle_inline_text_key(uint32_t key, bool control, bool shift
             try { if (!editor.replace(*text)) status_msg_ = "Text exceeds the 1 MiB limit"; }
             catch (const std::exception&) { status_msg_ = "Clipboard text is not valid Unicode"; }
         }
-    } else if (control && (key == 'Z' || key == 'Y')) editor.restore(key == 'Y' || shift);
+    } else if (control && (key == 'Z' || key == 'Y')) {
+        if (editor.restore(key == 'Y' || shift)) sync_inline_text_controls();
+    }
     else if (control && key == 'B') toggle_font_bold();
     else if (control && key == 'I') { toggle_font_italic(); editor.suppress_character = 9; }
     else if (control && key == 'U') toggle_font_underline();

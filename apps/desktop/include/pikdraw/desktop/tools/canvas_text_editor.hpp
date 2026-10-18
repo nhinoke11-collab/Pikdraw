@@ -41,6 +41,10 @@ struct CanvasTextEditor {
     geometry::Point2D live_scale_anchor_local{};
     geometry::Point2D live_scale_start_world{};
     uint64_t live_scale_last_update_ms{};
+    bool is_moving_frame{};
+    geometry::Point2D live_move_start_pos{};
+    geometry::Point2D live_move_start_world{};
+    std::optional<document::TextObject> live_move_baseline;
     std::vector<State> undo, redo;
 
     [[nodiscard]] geometry::Transform2D local_to_world() const {
@@ -54,6 +58,7 @@ struct CanvasTextEditor {
     [[nodiscard]] bool has_selection() const { return caret != anchor; }
     [[nodiscard]] std::string selected_text() const;
     void remember();
+    void push_undo(const document::TextObject& baseline);
     bool replace(std::string value);
     bool erase(bool backward, bool by_word = false);
     bool restore(bool forward);

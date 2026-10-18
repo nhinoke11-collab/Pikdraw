@@ -38,6 +38,7 @@ inline constexpr UINT kExportWorkerMessage = WM_APP + 0x38;
 struct ImportJobSession;
 struct ExportJobSession;
 enum class MenuActionId;
+class NativeFontPicker;
 namespace tools { class DrawingToolController; class PenToolController; class NodeToolController; class ContourToolController; class GradientToolController; }
 
 enum class UILanguage {
@@ -238,10 +239,8 @@ public:
     bool trigger_boolean_operation(geometry::BooleanOp op);
     [[nodiscard]] bool keep_source_object() const noexcept { return keep_source_object_; }
     [[nodiscard]] bool keep_target_object() const noexcept { return keep_target_object_; }
-    void toggle_keep_source() noexcept { keep_source_object_ = !keep_source_object_; }
-    void toggle_keep_target() noexcept { keep_target_object_ = !keep_target_object_; }
-    void set_keep_source_object(bool keep) noexcept { keep_source_object_ = keep; }
-    void set_keep_target_object(bool keep) noexcept { keep_target_object_ = keep; }
+    void toggle_keep_source() noexcept { keep_source_object_ = !keep_source_object_; } void toggle_keep_target() noexcept { keep_target_object_ = !keep_target_object_; }
+    void set_keep_source_object(bool k) noexcept { keep_source_object_ = k; } void set_keep_target_object(bool k) noexcept { keep_target_object_ = k; }
     bool trigger_auto_weld();
 
     // Typography & Inline Editing (Corel / Word Reference)
@@ -257,15 +256,19 @@ public:
 #ifdef _WIN32
     void paint_inline_text_overlay(HDC dc);
     bool handle_inline_text_ime(LPARAM flags);
+    void paint_text_property_bar(HDC mem_dc, int w, int content_top, int topbar_h, int tabbar_h);
 #endif
     void cycle_font_family();
     void adjust_font_size(double delta_pt);
-    void toggle_font_bold();
-    void toggle_font_italic();
-    void toggle_font_underline();
+    void toggle_font_bold(); void toggle_font_italic(); void toggle_font_underline(); void toggle_font_strikethrough();
+    void toggle_text_bullets(); void toggle_text_numbering(); void toggle_non_printing_characters(); void toggle_convert_artistic_paragraph();
     void set_font_alignment(typography::TextAlignment align);
     void convert_selected_text_to_curves();
     void insert_table(int rows = 3, int cols = 3);
+    void open_font_picker(int anchor_x, int anchor_y);
+    void close_font_picker();
+    [[nodiscard]] bool is_font_picker_open() const noexcept;
+    [[nodiscard]] NativeFontPicker* font_picker() noexcept;
     [[nodiscard]] bool is_text_object_selected() const;
     [[nodiscard]] bool is_inline_editing() const noexcept { return is_inline_text_editing_; }
     [[nodiscard]] bool is_inline_text_editing() const noexcept { return is_inline_text_editing_; }
@@ -273,9 +276,7 @@ public:
     [[nodiscard]] const std::string& status_message() const noexcept { return status_msg_; }
     void set_status_message(std::string message) { status_msg_ = std::move(message); }
     [[nodiscard]] int shortcut_profile() const noexcept { return shortcut_profile_; }
-    void set_shortcut_profile(int profile) noexcept {
-        shortcut_profile_ = profile < 0 ? 0 : profile > 2 ? 2 : profile;
-    }
+    void set_shortcut_profile(int p) noexcept { shortcut_profile_ = std::clamp(p, 0, 2); }
 
     // Align & Distribute (CorelDRAW & Illustrator Style)
     void align_selected_objects(geometry::AlignMode mode);
@@ -441,10 +442,8 @@ private:
     void handle_import_worker_message(WPARAM kind);
     [[nodiscard]] bool import_job_active() const noexcept;
     void export_svg_dialog(bool selected_objects, bool all_pages);
-    [[nodiscard]] bool start_svg_export(const std::string& file_path,
-                                        bool selected_objects,
-                                        bool allow_replace_existing,
-                                        bool all_pages);
+    [[nodiscard]] bool start_svg_export(const std::string& file_path, bool selected_objects,
+                                        bool allow_replace_existing, bool all_pages);
     void request_cancel_export_job();
     void cancel_export_job();
     void handle_export_worker_message(WPARAM kind);
@@ -611,9 +610,10 @@ private:
     geometry::Point2D inline_text_pos_mm_{};
     int font_family_index_{0}; // 0: "Be Vietnam Pro", 1: "Segoe UI", 2: "Arial", 3: "Times New Roman", 4: "JetBrains Mono"
     double font_size_pt_{24.0};
-    bool font_bold_{false}, font_italic_{false}, font_underline_{false};
+    bool font_bold_{false}, font_italic_{false}, font_underline_{false}, font_strikethrough_{false}, show_non_printing_characters_{false};
     typography::TextAlignment font_alignment_{typography::TextAlignment::Left};
     int table_rows_{3}, table_cols_{3};
+    std::unique_ptr<NativeFontPicker> font_picker_;
 
     // Align & Distribute State (Corel / Illustrator)
     geometry::AlignReference align_reference_{geometry::AlignReference::Selection};

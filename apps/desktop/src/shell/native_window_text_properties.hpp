@@ -2,6 +2,7 @@
 
 #include "pikdraw/desktop/shell/native_window.hpp"
 #include "pikdraw/desktop/tools/canvas_text_editor.hpp"
+#include "pikdraw/typography/shaping/font_resolver.hpp"
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
@@ -64,8 +65,16 @@ struct TextPropertiesView {
 };
 
 inline std::vector<std::string>& text_font_registry() {
-    static std::vector<std::string> families{
-        "Be Vietnam Pro", "Segoe UI", "Arial", "Times New Roman", "JetBrains Mono"};
+    static std::vector<std::string> families = []() {
+        std::vector<std::string> base = typography::FontResolver::instance().available_font_families();
+        const std::vector<std::string> priority = {"Be Vietnam Pro", "Segoe UI", "Arial", "Times New Roman", "JetBrains Mono"};
+        for (auto it = priority.rbegin(); it != priority.rend(); ++it) {
+            auto found = std::find(base.begin(), base.end(), *it);
+            if (found != base.end()) base.erase(found);
+            base.insert(base.begin(), *it);
+        }
+        return base;
+    }();
     return families;
 }
 

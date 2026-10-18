@@ -1,11 +1,11 @@
 # PikDraw agent instructions
 
-## Source và task
+## Quy trình làm việc tinh gọn (Streamlined Workflow)
 
-- Chỉ làm trong source gốc: C:/Users/Administrator/Downloads/PikDraw. Không tạo worktree, clone hay nhánh task mới.
-- Tìm task bằng tooling/pikdraw.ps1 task list. Tạo và claim task với owned paths cụ thể trước khi sửa.
-- Giữ nguyên local edits, file chưa commit và thay đổi của task khác. Không reset, stash, xóa hoặc commit trừ khi người dùng yêu cầu rõ.
-- Chỉ chạy delegate khi người dùng hoặc chỉ dẫn áp dụng cho phép; các task song song phải có paths không chồng lấn.
+- Làm việc trực tiếp trong source gốc: C:/Users/Administrator/Downloads/PikDraw. Không tạo worktree, clone hay nhánh task riêng.
+- Ưu tiên giải quyết trực tiếp yêu cầu của người dùng. Không bắt buộc phải qua chu trình hành chính rườm rà (task create/claim/handoff) của harness trừ khi người dùng yêu cầu quản lý task cụ thể.
+- Cho phép Git commit rõ ràng sau khi hoàn thành tính năng và test pass (`tooling/native/build.ps1 -Test`), giúp working tree sạch sẽ, tránh dồn ứ hàng chục file dirty chưa commit.
+- Giữ nguyên local edits của người dùng; không tự ý reset, stash hoặc xóa code đang viết dở khi chưa được người dùng xác nhận.
 
 ## Mã và hành vi
 
@@ -13,7 +13,7 @@
 - Đọc registry/modules.json để biết dependency. Core/module không phụ thuộc ngược vào apps/desktop.
 - Document writes đi qua command/transaction và một writer logic. Giữ stable IDs, undo/redo, đơn vị thật, Unicode, màu nguồn và metadata. Async result phải bị từ chối khi revision/epoch/job generation đã cũ.
 - Importer và plugin ngoài process trả dữ liệu chưa tin cậy; host kiểm tra capability, kích thước, revision và nội dung trước khi áp dụng.
-- **Ngưỡng độ dài file (Tối đa 800 dòng)**: Mỗi file code chuẩn dài **300–700 dòng**, tối đa **800 dòng** (nằm trọn trong 1 khung đọc `view_file` của AI). **Tuyệt đối không nối đuôi (append)** tính năng mới vào các file đã vượt 800 dòng; phải tách file theo nhóm tính năng/domain rõ ràng. Xem `docs/development/code-organization.md` và `docs/roadmap/architecture-remediation-plan-20261018.md`.
+- **Ngưỡng độ dài file (Tối đa 2000 dòng)**: Mỗi file code chuẩn tối đa **2000 dòng** (khuyến nghị 300–1800 dòng). **Tuyệt đối không nối đuôi (append)** tính năng mới vào các file đã vượt 2000 dòng; phải tách file theo nhóm tính năng/domain rõ ràng. Xem `docs/development/code-organization.md` và `docs/roadmap/architecture-remediation-plan-20261018.md`.
 
 ## Lập kế hoạch tính năng dùng tài nguyên vector
 

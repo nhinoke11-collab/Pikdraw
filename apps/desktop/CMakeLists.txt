@@ -45,6 +45,8 @@ add_library(pikdraw_desktop STATIC
     src/shell/native_window_isolation_menus.cpp
     src/shell/native_window_settings.cpp
     src/shell/native_window_text_align.cpp
+    src/shell/native_font_picker.cpp
+    src/shell/native_window_text_property_bar_paint.cpp
     src/shell/native_window_text_editor.cpp
     src/shell/native_window_text_input.cpp
     src/shell/native_window_text_overlay.cpp
@@ -162,6 +164,14 @@ if(PIKDRAW_BUILD_TESTS)
         pikdraw_desktop
     )
     add_test(NAME test_pikdraw_desktop_shell COMMAND test_pikdraw_desktop_shell)
+
+    add_executable(test_pikdraw_style_dialog
+        tests/test_desktop_shell_style_dialog.cpp
+    )
+    target_link_libraries(test_pikdraw_style_dialog PRIVATE
+        pikdraw_desktop
+    )
+    add_test(NAME test_pikdraw_style_dialog COMMAND test_pikdraw_style_dialog)
 
     add_executable(test_pikdraw_effect_draft
         tests/test_effect_draft.cpp

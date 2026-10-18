@@ -1,6 +1,7 @@
 #include "v2_worker_protocol.hpp"
 
 #include "pikdraw/interop/adapters/cdr_extractor.hpp"
+#include "pikdraw/interop/adapters/pdf_ai_extractor.hpp"
 #include "pikdraw/interop/adapters/dxf_importer.hpp"
 #include "pikdraw/interop/adapters/dxf_worker_adapter.hpp"
 #include "pikdraw/interop/adapters/raster_worker_adapter.hpp"
@@ -279,13 +280,19 @@ bool HandleImportBegin(
         FormatCapabilities::is_worker_import_profile_supported(
             is_png ? FormatType::Png : is_jpeg ? FormatType::Jpeg : FormatType::Tiff,
             request->profile_id);
-    const bool is_cdr = request->format_id == "CDR" &&
+    const bool is_cdr = (request->format_id == "CDR" || request->format_id == "CorelDRAW") &&
         FormatCapabilities::is_worker_import_profile_supported(
             FormatType::Cdr, request->profile_id);
-    if (!is_svg && !is_dxf && !is_raster && !is_cdr) {
+    const bool is_ai = (request->format_id == "AI" || request->format_id == "Adobe Illustrator") &&
+        FormatCapabilities::is_worker_import_profile_supported(
+            FormatType::Ai, request->profile_id);
+    const bool is_pdf = request->format_id == "PDF" &&
+        FormatCapabilities::is_worker_import_profile_supported(
+            FormatType::Pdf, request->profile_id);
+    if (!is_svg && !is_dxf && !is_raster && !is_cdr && !is_ai && !is_pdf) {
         return SendError(output, header.sequence_id, 1, "unsupported format or profile");
     }
-    const uint64_t source_limit = (is_raster || is_cdr) ? 64ULL * 1024ULL * 1024ULL
+    const uint64_t source_limit = (is_raster || is_cdr || is_ai || is_pdf) ? 64ULL * 1024ULL * 1024ULL
         : is_dxf ? DxfImporter::kMaxSourceBytes : SvgImporter::kMaxSourceBytes;
     if (request->source_bytes > source_limit) {
         return SendError(output, header.sequence_id, 4, "source exceeds import profile byte limit");
@@ -315,10 +322,64 @@ bool HandleImportBegin(
                     records.front() = std::move(*encoded);
                 }
             }
+            if (!records.empty()) {
+                ImportFidelityReportRecord report;
+                report.coverage_profile = "cdr-preview-v1";
+                report.parse_outcome = ImportParseOutcome::CompleteWithDiagnostics;
+                report.coverage = ImportCoverage::Partial;
+                report.appearance = ImportAppearance::Partial;
+                report.editability = ImportEditability::ExplicitConversion;
+                report.production = ImportProduction::NotAssessed;
+                report.issue_count = 1;
+                auto encoded = SerializeImportRecord(report);
+                if (encoded) {
+                    records.back() = std::move(*encoded);
+                }
+            }
             return true;
         };
         return SendImportProposal(output, *request, source_bytes, header.sequence_id,
             "CorelDRAW", 80, build_cdr);
+    }
+    if (is_ai || is_pdf) {
+        const auto build_pdf_ai = [](std::span<const uint8_t> source,
+                                     std::vector<CanonicalImportRecord>& records,
+                                     std::string& diagnostic) -> bool {
+            auto extracted = PdfAiExtractor::extract_preview(source);
+            if (!extracted.success || extracted.thumbnail_png.empty()) {
+                diagnostic = extracted.error_message.empty()
+                    ? "Failed to extract preview from PDF/AI document"
+                    : extracted.error_message;
+                return false;
+            }
+            if (!BuildRasterImportRecords(extracted.thumbnail_png, records, diagnostic)) {
+                return false;
+            }
+            if (extracted.page_width_mm > 0.0 && extracted.page_height_mm > 0.0 && !records.empty()) {
+                ImportPageRecord page_record{extracted.page_width_mm, extracted.page_height_mm};
+                auto encoded = SerializeImportRecord(page_record);
+                if (encoded) {
+                    records.front() = std::move(*encoded);
+                }
+            }
+            if (!records.empty()) {
+                ImportFidelityReportRecord report;
+                report.coverage_profile = "pdf-ai-preview-v1";
+                report.parse_outcome = ImportParseOutcome::CompleteWithDiagnostics;
+                report.coverage = ImportCoverage::Partial;
+                report.appearance = ImportAppearance::Partial;
+                report.editability = ImportEditability::ExplicitConversion;
+                report.production = ImportProduction::NotAssessed;
+                report.issue_count = 1;
+                auto encoded = SerializeImportRecord(report);
+                if (encoded) {
+                    records.back() = std::move(*encoded);
+                }
+            }
+            return true;
+        };
+        return SendImportProposal(output, *request, source_bytes, header.sequence_id,
+            is_ai ? "AI" : "PDF", 80, build_pdf_ai);
     }
     if (is_dxf) {
         return SendImportProposal(output, *request, source_bytes, header.sequence_id,

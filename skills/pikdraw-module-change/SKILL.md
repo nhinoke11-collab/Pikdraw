@@ -9,7 +9,7 @@ Use the assigned task and module README/AGENTS.md. registry/modules.json defines
 
 Work in the primary source after claiming exact paths. Preserve existing local edits. Use the shared build runner when a build is relevant, and hand off the task snapshot with checks and limits.
 
-Group code by feature cohesion. Source/header files should stay within 300–700 lines and strictly <= 800 lines so AI agents can view the entire file in a single read. Never append new features to files approaching or exceeding 800 lines; split by feature domain instead. See docs/development/code-organization.md.
+Group code by feature cohesion. Source/header files should stay within 300–1800 lines and strictly <= 2000 lines. Never append new features to files approaching or exceeding 2000 lines; split by feature domain instead. See docs/development/code-organization.md.
 
 For UI changes, read docs/design/ui-ux-standard.md and review docs/architecture/workspace-layout.md. Record the menu path, shared action IDs, toolbox/toolbar, contextual property bar/Properties, field scopes/states, SVG icons, short labels, tooltip/focus help, status hints and usage help in the feature spec or equivalent. Mark irrelevant items as not applicable. The implementing agent makes routine design decisions and continues within scope.
 

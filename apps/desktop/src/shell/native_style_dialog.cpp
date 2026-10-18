@@ -1,12 +1,10 @@
 #include "native_style_dialog.hpp"
+#include "native_style_dialog_math.hpp"
 #include "pikdraw/desktop/shell/native_style_color_model.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cwchar>
-#include <cwctype>
-#include <iomanip>
-#include <sstream>
+#include <iostream>
 #include <vector>
 #ifdef _WIN32
 #include <windowsx.h>
@@ -16,12 +14,23 @@ namespace pikdraw::desktop {
 #ifdef _WIN32
 namespace {
 using source_color::Model;
-enum class ViewerMode : int { Hsb, Hsl, Rgb, Cmyk };
+using namespace style_dialog_math;
+
+enum class DragTarget : int { None, Plane, Hue };
+
+constexpr int kClientWidth = 484;
+constexpr int kClientHeight = 326;
+
+constexpr RECT picker_plane{16, 60, 206, 250};
+constexpr RECT picker_hue{16, 256, 206, 268};
+constexpr int kOverprintId = 260;
+
 struct EditorState {
     color::ColorValue original, draft;
     double width{0.0};
     bool stroke{false}, vi{false}, mixed_color{false}, mixed_overprint{false};
-    bool dark{false}, dragging_picker{false};
+    bool dark{false};
+    DragTarget drag_target{DragTarget::None};
     ColorEditContext context{ColorEditContext::Generic};
     Model model{Model::Rgb};
     ViewerMode viewer{ViewerMode::Hsb};
@@ -30,316 +39,163 @@ struct EditorState {
     bool initial_overprint{false}, overprint_changed{false};
     std::optional<StyleEditorResult> result;
     COLORREF background{RGB(249, 250, 252)}, text{RGB(29, 37, 48)};
-    COLORREF muted{RGB(100, 112, 128)}, border{RGB(218, 224, 232)};
-    COLORREF edit_background{RGB(255, 255, 255)}, accent{RGB(38, 125, 230)};
+    COLORREF muted{RGB(100, 112, 128)}, border{RGB(200, 208, 220)};
+    COLORREF edit_background{RGB(255, 255, 255)}, accent{RGB(30, 112, 232)};
     HBRUSH background_brush{nullptr}, edit_brush{nullptr};
+    HFONT font{nullptr}, font_bold{nullptr}, font_small{nullptr};
+
+    double current_hue{0.0};
+    double current_sat{1.0};
+    double current_val{1.0};
+    double current_alpha{1.0};
+
+    std::vector<DWORD> cached_plane;
+    double cached_hue{-1.0};
+    ViewerMode cached_viewer{ViewerMode::Hsb};
+    int cached_plane_w{0};
+    int cached_plane_h{0};
+
+    std::vector<DWORD> cached_hue_pixels;
+    int cached_hue_w{0};
+
+    HWND edit_rgb[3]{};
+    HWND edit_hex{};
+    HWND edit_hsb[3]{};
+    HWND edit_cmyk[4]{};
+    HWND edit_hsl[3]{};
+    HWND edit_lab[3]{};
+    HWND edit_opacity{};
+    HWND edit_width{};
 };
 
 HWND control(HWND dialog, const wchar_t *type, const wchar_t *text, DWORD style,
-             int x, int y, int width, int height, int id) {
-    const auto child = CreateWindowExW(std::wcscmp(type, L"EDIT") == 0 ? WS_EX_CLIENTEDGE : 0,
-        type, text, WS_CHILD | WS_VISIBLE | style, x, y, width, height, dialog,
+             int x, int y, int width, int height, int id, HFONT font) {
+    const bool is_edit = (std::wcscmp(type, L"EDIT") == 0);
+    const auto child = CreateWindowExW(0, type, text,
+        WS_CHILD | WS_VISIBLE | (is_edit ? WS_BORDER : 0) | style,
+        x, y, width, height, dialog,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), GetModuleHandleW(nullptr), nullptr);
-    SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
-    if (std::wcscmp(type, L"EDIT") == 0 && width > 12 && height > 12) {
-        const auto region = CreateRoundRectRgn(0, 0, width + 1, height + 1, 8, 8);
-        if (!SetWindowRgn(child, region, TRUE))
-            DeleteObject(region);
+    if (font) {
+        SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
     }
     return child;
 }
 
-struct Hsv { double h{0}, s{0}, v{0}; };
-struct Hsl { double h{0}, s{0}, l{0}; };
+bool has_overprint(ColorEditContext context) noexcept {
+    return context == ColorEditContext::Fill || context == ColorEditContext::Stroke;
+}
+bool stroke_overprint(ColorEditContext context) noexcept { return context == ColorEditContext::Stroke; }
 
-color::RGBColor hsv_to_rgb(double hue, double saturation, double value, double alpha = 1) {
-    hue = std::fmod(std::fmod(hue, 360.0) + 360.0, 360.0);
-    saturation = std::clamp(saturation, 0.0, 1.0);
-    value = std::clamp(value, 0.0, 1.0);
-    const double chroma = value * saturation;
-    const double sector = hue / 60.0;
-    const double x = chroma * (1.0 - std::abs(std::fmod(sector, 2.0) - 1.0));
-    double r = 0, g = 0, b = 0;
-    if (sector < 1) { r = chroma; g = x; }
-    else if (sector < 2) { r = x; g = chroma; }
-    else if (sector < 3) { g = chroma; b = x; }
-    else if (sector < 4) { g = x; b = chroma; }
-    else if (sector < 5) { r = x; b = chroma; }
-    else { r = chroma; b = x; }
-    const double m = value - chroma;
-    return {r + m, g + m, b + m, alpha};
+std::optional<double> read_number_from_hwnd(HWND edit, double maximum) {
+    if (!edit) return std::nullopt;
+    wchar_t buffer[128]{};
+    GetWindowTextW(edit, buffer, 128);
+    return parse_number(buffer, maximum);
 }
 
-color::RGBColor hsl_to_rgb(double hue, double saturation, double lightness, double alpha = 1) {
-    hue = std::fmod(std::fmod(hue, 360.0) + 360.0, 360.0);
-    saturation = std::clamp(saturation, 0.0, 1.0);
-    lightness = std::clamp(lightness, 0.0, 1.0);
-    const double chroma = (1.0 - std::abs(2.0 * lightness - 1.0)) * saturation;
-    const double sector = hue / 60.0;
-    const double x = chroma * (1.0 - std::abs(std::fmod(sector, 2.0) - 1.0));
-    double r = 0, g = 0, b = 0;
-    if (sector < 1) { r = chroma; g = x; }
-    else if (sector < 2) { r = x; g = chroma; }
-    else if (sector < 3) { g = chroma; b = x; }
-    else if (sector < 4) { g = x; b = chroma; }
-    else if (sector < 5) { r = x; b = chroma; }
-    else { r = chroma; b = x; }
-    const double m = lightness - chroma / 2.0;
-    return {r + m, g + m, b + m, alpha};
-}
-
-color::RGBColor rgb_from(const color::ColorValue &value) {
-    const auto preview = color::to_preview_rgba(value);
-    return {preview.r, preview.g, preview.b, preview.a};
-}
-
-Hsv to_hsv(color::RGBColor rgb) {
-    const double maximum = std::max({rgb.r, rgb.g, rgb.b});
-    const double minimum = std::min({rgb.r, rgb.g, rgb.b});
-    const double delta = maximum - minimum;
-    double hue = 0;
-    if (delta > 1e-12) {
-        if (maximum == rgb.r) hue = 60.0 * std::fmod((rgb.g - rgb.b) / delta, 6.0);
-        else if (maximum == rgb.g) hue = 60.0 * ((rgb.b - rgb.r) / delta + 2.0);
-        else hue = 60.0 * ((rgb.r - rgb.g) / delta + 4.0);
-    }
-    return {std::fmod(hue + 360.0, 360.0), maximum > 0 ? delta / maximum : 0, maximum};
-}
-
-Hsl to_hsl(color::RGBColor rgb) {
-    const double maximum = std::max({rgb.r, rgb.g, rgb.b});
-    const double minimum = std::min({rgb.r, rgb.g, rgb.b});
-    const double delta = maximum - minimum;
-    const double lightness = (maximum + minimum) / 2.0;
-    double hue = 0, saturation = 0;
-    if (delta > 1e-12) {
-        if (maximum == rgb.r) hue = 60.0 * std::fmod((rgb.g - rgb.b) / delta, 6.0);
-        else if (maximum == rgb.g) hue = 60.0 * ((rgb.b - rgb.r) / delta + 2.0);
-        else hue = 60.0 * ((rgb.r - rgb.g) / delta + 4.0);
-        saturation = delta / (1.0 - std::abs(2.0 * lightness - 1.0));
-    }
-    return {std::fmod(hue + 360.0, 360.0), saturation, lightness};
-}
-
-bool is_hsl(ViewerMode mode) { return mode == ViewerMode::Hsl; }
-bool uses_picker(Model model) { return model == Model::Rgb || model == Model::Cmyk; }
-std::optional<double> read_number(HWND dialog, int id, double maximum);
-
-ViewerMode viewer_from_index(int index) {
-    return static_cast<ViewerMode>(std::clamp(index, 0, 3));
-}
-
-void select_viewer(HWND combo, ViewerMode mode) {
-    for (int i = 0; i < SendMessageW(combo, CB_GETCOUNT, 0, 0); ++i)
-        if (SendMessageW(combo, CB_GETITEMDATA, i, 0) == static_cast<LRESULT>(mode))
-            SendMessageW(combo, CB_SETCURSEL, i, 0);
-}
-
-std::optional<color::ColorValue> process_color_from_view(HWND dialog, const EditorState &state) {
-    const auto alpha = read_number(dialog, 207, 100);
-    if (!alpha) return std::nullopt;
-    color::ColorValue displayed;
-    if (state.viewer == ViewerMode::Rgb) {
-        const auto r = read_number(dialog, 201, 255);
-        const auto g = read_number(dialog, 202, 255);
-        const auto b = read_number(dialog, 203, 255);
-        if (!r || !g || !b) return std::nullopt;
-        displayed = color::ColorValue::make_rgb(*r / 255, *g / 255, *b / 255, *alpha / 100);
-    } else if (state.viewer == ViewerMode::Cmyk) {
-        std::array<double, 4> channel{};
-        for (int i = 0; i < 4; ++i) {
-            const auto value = read_number(dialog, 201 + i, 100);
-            if (!value) return std::nullopt;
-            channel[static_cast<size_t>(i)] = *value / 100;
-        }
-        displayed = color::ColorValue::make_cmyk(channel[0], channel[1], channel[2], channel[3], *alpha / 100);
-    } else {
-        const auto hue = read_number(dialog, 201, 360);
-        const auto saturation = read_number(dialog, 202, 100);
-        const auto third = read_number(dialog, 203, 100);
-        if (!hue || !saturation || !third) return std::nullopt;
-        const auto rgb = is_hsl(state.viewer)
-            ? hsl_to_rgb(*hue, *saturation / 100, *third / 100, *alpha / 100)
-            : hsv_to_rgb(*hue, *saturation / 100, *third / 100, *alpha / 100);
-        displayed = color::ColorValue::make_rgb(rgb.r, rgb.g, rgb.b, rgb.a);
-    }
-    return source_color::convert(displayed, state.model);
+void set_edit_text_if_changed(HWND edit, const std::wstring &text) {
+    if (!edit) return;
+    wchar_t current[64]{};
+    GetWindowTextW(edit, current, 64);
+    if (text != current) SetWindowTextW(edit, text.c_str());
 }
 
 COLORREF colorref_from(const color::ColorValue &value) {
     const auto rgb = rgb_from(value);
-    return RGB(static_cast<BYTE>(std::clamp(std::lround(rgb.r * 255), 0L, 255L)),
-               static_cast<BYTE>(std::clamp(std::lround(rgb.g * 255), 0L, 255L)),
-               static_cast<BYTE>(std::clamp(std::lround(rgb.b * 255), 0L, 255L)));
+    return RGB(static_cast<BYTE>(std::clamp(std::lround(rgb.r * 255.0), 0L, 255L)),
+               static_cast<BYTE>(std::clamp(std::lround(rgb.g * 255.0), 0L, 255L)),
+               static_cast<BYTE>(std::clamp(std::lround(rgb.b * 255.0), 0L, 255L)));
 }
 
-std::wstring number(double value) {
-    std::wostringstream text;
-    text << std::setprecision(10) << value;
-    return text.str();
+void assign_viewer_ids(EditorState &state) {
+    for (int i = 0; i < 3; ++i) SetWindowLongPtrW(state.edit_rgb[i], GWLP_ID, state.viewer == ViewerMode::Rgb ? 201 + i : 211 + i);
+    SetWindowLongPtrW(state.edit_hex, GWLP_ID, 214);
+    for (int i = 0; i < 4; ++i) SetWindowLongPtrW(state.edit_cmyk[i], GWLP_ID, state.viewer == ViewerMode::CMYK ? 201 + i : 221 + i);
+    for (int i = 0; i < 3; ++i) SetWindowLongPtrW(state.edit_hsb[i], GWLP_ID, state.viewer == ViewerMode::Hsb ? 201 + i : 231 + i);
+    for (int i = 0; i < 3; ++i) SetWindowLongPtrW(state.edit_hsl[i], GWLP_ID, state.viewer == ViewerMode::Hsl ? 201 + i : 241 + i);
+    for (int i = 0; i < 3; ++i) SetWindowLongPtrW(state.edit_lab[i], GWLP_ID, 251 + i);
+    SetWindowLongPtrW(state.edit_width, GWLP_ID, 206);
+    SetWindowLongPtrW(state.edit_opacity, GWLP_ID, 207);
 }
 
-std::optional<double> read_number(HWND dialog, int id, double maximum) {
-    wchar_t buffer[128]{};
-    GetDlgItemTextW(dialog, id, buffer, 128);
-    std::wstring text(buffer);
-    std::replace(text.begin(), text.end(), L',', L'.');
-    wchar_t *end = nullptr;
-    const double result = std::wcstod(text.c_str(), &end);
-    while (end && std::iswspace(*end)) ++end;
-    if (end == text.c_str() || !end || *end || !std::isfinite(result) || result < 0 || result > maximum)
-        return std::nullopt;
-    return result;
+void select_viewer(HWND combo, EditorState &state, ViewerMode mode) {
+    for (int i = 0; i < SendMessageW(combo, CB_GETCOUNT, 0, 0); ++i)
+        if (SendMessageW(combo, CB_GETITEMDATA, i, 0) == static_cast<LRESULT>(mode))
+            SendMessageW(combo, CB_SETCURSEL, i, 0);
+    state.viewer = mode;
+    assign_viewer_ids(state);
 }
 
-std::optional<std::string> read_spot_name(HWND dialog) {
-    const int length = GetWindowTextLengthW(GetDlgItem(dialog, 201));
-    if (length < 1 || length > 128) return std::nullopt;
-    std::wstring text(static_cast<size_t>(length) + 1, L'\0');
-    GetDlgItemTextW(dialog, 201, text.data(), length + 1);
-    text.resize(static_cast<size_t>(length));
-    while (!text.empty() && std::iswspace(text.front())) text.erase(text.begin());
-    while (!text.empty() && std::iswspace(text.back())) text.pop_back();
-    if (text.empty()) return std::nullopt;
-    const int bytes = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(),
-        static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
-    if (bytes < 1 || bytes > 512) return std::nullopt;
-    std::string result(static_cast<size_t>(bytes), '\0');
-    if (!WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(),
-        static_cast<int>(text.size()), result.data(), bytes, nullptr, nullptr)) return std::nullopt;
-    return result;
-}
-
-bool has_overprint(ColorEditContext context) {
-    return context == ColorEditContext::Fill || context == ColorEditContext::Stroke;
-}
-bool stroke_overprint(ColorEditContext context) { return context == ColorEditContext::Stroke; }
-int model_index(Model model) { return static_cast<int>(model); }
-Model model_from_index(int index) { return static_cast<Model>(std::clamp(index, 0, 3)); }
 void select_model(HWND combo, Model model) {
     for (int i = 0; i < SendMessageW(combo, CB_GETCOUNT, 0, 0); ++i)
         if (SendMessageW(combo, CB_GETITEMDATA, i, 0) == model_index(model))
             SendMessageW(combo, CB_SETCURSEL, i, 0);
 }
 
-std::optional<color::ColorValue> read_color(HWND dialog, const EditorState &state) {
-    color::ColorValue result;
-    if (uses_picker(state.model)) {
-        const auto viewed = process_color_from_view(dialog, state);
-        if (!viewed) return std::nullopt;
-        result = *viewed;
-    } else if (state.model == Model::Spot) {
-        const auto name = read_spot_name(dialog);
-        const auto tint = read_number(dialog, 202, 100);
-        const auto r = read_number(dialog, 203, 255), g = read_number(dialog, 204, 255);
-        const auto b = read_number(dialog, 205, 255);
-        const auto *spot = std::get_if<color::SpotColor>(&state.draft.payload());
-        if (!name || !tint || !r || !g || !b || !spot) return std::nullopt;
-        result = color::ColorValue{color::SpotColor{*name, *tint / 100,
-            {*r / 255, *g / 255, *b / 255, spot->alternate_rgb.a}, spot->overprint}};
-    } else {
-        const auto alpha = read_number(dialog, 207, 100);
-        const auto gray = read_number(dialog, 201, 100);
-        if (!gray || !alpha) return std::nullopt;
-        result = color::ColorValue{color::GrayscaleColor{*gray / 100, *alpha / 100}};
-    }
-    result.set_overprint(state.draft.overprint());
-    if (has_overprint(state.context)) {
-        const auto check = SendDlgItemMessageW(dialog, 208, BM_GETCHECK, 0, 0);
-        if (check != BST_INDETERMINATE)
-            result = source_color::with_overprint(std::move(result), stroke_overprint(state.context),
-                                                   check == BST_CHECKED);
-    }
-    return result;
-}
-
 void set_overprint_caption(HWND dialog, const EditorState &state) {
     if (!has_overprint(state.context)) return;
-    const auto check = SendDlgItemMessageW(dialog, 208, BM_GETCHECK, 0, 0);
+    const auto check = SendDlgItemMessageW(dialog, kOverprintId, BM_GETCHECK, 0, 0);
     std::wstring caption = stroke_overprint(state.context)
         ? (state.vi ? L"Overprint viền" : L"Overprint stroke")
         : (state.vi ? L"Overprint tô" : L"Overprint fill");
-    caption += check == BST_INDETERMINATE ? (state.vi ? L" · Nhiều giá trị" : L" · Mixed")
+    caption += check == BST_INDETERMINATE ? (state.vi ? L" · Mixed" : L" · Mixed")
              : check == BST_CHECKED ? (state.vi ? L" · Bật" : L" · On")
                                     : (state.vi ? L" · Tắt" : L" · Off");
-    SetDlgItemTextW(dialog, 208, caption.c_str());
+    SetDlgItemTextW(dialog, kOverprintId, caption.c_str());
 }
 
-void populate(HWND dialog, EditorState &state) {
+color::RGBColor current_active_rgb(const EditorState &state) {
+    return hsv_to_rgb(state.current_hue, state.current_sat, state.current_val, state.current_alpha);
+}
+
+void sync_inputs_from_state(HWND dialog, EditorState &state) {
+    (void)dialog;
     state.populating = true;
-    std::array<std::wstring, 5> labels{}, values{};
-    int rows = 0;
-    std::wstring alpha_label = state.model == Model::Spot
-        ? (state.vi ? L"Alpha RGB thay thế (%)" : L"Alternate RGB alpha (%)")
-        : state.vi ? L"Độ đục (%)" : L"Opacity (%)";
-    std::wstring alpha_value = L"100";
-    if (uses_picker(state.model)) {
-        const auto rgb = rgb_from(state.draft);
-        alpha_value = number(rgb.a * 100);
-        if (state.viewer == ViewerMode::Rgb) {
-            labels = {L"R (0–255)", L"G (0–255)", L"B (0–255)", L"", L""};
-            values = {number(rgb.r * 255), number(rgb.g * 255), number(rgb.b * 255), L"", L""};
-            rows = 3;
-        } else if (state.viewer == ViewerMode::Cmyk) {
-            const auto cmyk_value = source_color::convert(state.draft, Model::Cmyk);
-            const auto *cmyk = std::get_if<color::CMYKColor>(&cmyk_value.payload());
-            if (cmyk) {
-                labels = {L"C (%)", L"M (%)", L"Y (%)", L"K (%)", L""};
-                values = {number(cmyk->c * 100), number(cmyk->m * 100), number(cmyk->y * 100),
-                          number(cmyk->k * 100), L""};
-                alpha_value = number(cmyk->a * 100);
-                rows = 4;
-            }
-        } else if (is_hsl(state.viewer)) {
-            const auto hsl = to_hsl(rgb);
-            labels = {L"H (°)", L"S (%)", L"L (%)", L"", L""};
-            values = {number(hsl.h), number(hsl.s * 100), number(hsl.l * 100), L"", L""};
-            rows = 3;
-        } else {
-            const auto hsv = to_hsv(rgb);
-            labels = {L"H (°)", L"S (%)", L"B (%)", L"", L""};
-            values = {number(hsv.h), number(hsv.s * 100), number(hsv.v * 100), L"", L""};
-            rows = 3;
+    const auto rgb = current_active_rgb(state);
+    auto cmyk = rgb_to_cmyk(rgb);
+    if (state.model == Model::Cmyk) {
+        if (const auto *c = std::get_if<color::CMYKColor>(&state.draft.payload())) {
+            cmyk = {c->c, c->m, c->y, c->k};
         }
-    } else if (const auto *spot = std::get_if<color::SpotColor>(&state.draft.payload());
-               state.model == Model::Spot && spot) {
-        wchar_t name[260]{};
-        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, spot->spot_name.data(),
-            static_cast<int>(spot->spot_name.size()), name, 260);
-        labels = state.vi
-            ? std::array<std::wstring, 5>{L"Tên Spot", L"Tint (%)", L"R thay thế", L"G thay thế", L"B thay thế"}
-            : std::array<std::wstring, 5>{L"Spot name", L"Tint (%)", L"Alternate R", L"Alternate G", L"Alternate B"};
-        values = {name, number(spot->tint * 100), number(spot->alternate_rgb.r * 255),
-                  number(spot->alternate_rgb.g * 255), number(spot->alternate_rgb.b * 255)};
-        alpha_value = number(spot->alternate_rgb.a * 100); rows = 5;
-    } else if (const auto *gray = std::get_if<color::GrayscaleColor>(&state.draft.payload());
-               state.model == Model::Grayscale && gray) {
-        labels = {state.vi ? L"Xám (%)" : L"Gray (%)", L"", L"", L"", L""};
-        values = {number(gray->gray * 100), L"", L"", L"", L""};
-        alpha_value = number(gray->a * 100); rows = 1;
     }
-    for (int i = 0; i < 5; ++i) {
-        SetDlgItemTextW(dialog, 101 + i, labels[static_cast<size_t>(i)].c_str());
-        SetDlgItemTextW(dialog, 201 + i, values[static_cast<size_t>(i)].c_str());
-        ShowWindow(GetDlgItem(dialog, 101 + i), i < rows ? SW_SHOW : SW_HIDE);
-        ShowWindow(GetDlgItem(dialog, 201 + i), i < rows ? SW_SHOW : SW_HIDE);
+    const auto hsl = to_hsl(rgb, state.current_hue);
+    const auto lab = rgb_to_lab(rgb);
+
+    set_edit_text_if_changed(state.edit_rgb[0], format_channel_number(rgb.r * 255.0, 0));
+    set_edit_text_if_changed(state.edit_rgb[1], format_channel_number(rgb.g * 255.0, 0));
+    set_edit_text_if_changed(state.edit_rgb[2], format_channel_number(rgb.b * 255.0, 0));
+    set_edit_text_if_changed(state.edit_hex, format_hex_color(rgb));
+
+    set_edit_text_if_changed(state.edit_hsb[0], format_channel_number(state.current_hue, 0));
+    set_edit_text_if_changed(state.edit_hsb[1], format_channel_number(state.current_sat * 100.0, 0));
+    set_edit_text_if_changed(state.edit_hsb[2], format_channel_number(state.current_val * 100.0, 0));
+
+    set_edit_text_if_changed(state.edit_cmyk[0], format_channel_number(cmyk[0] * 100.0, 0));
+    set_edit_text_if_changed(state.edit_cmyk[1], format_channel_number(cmyk[1] * 100.0, 0));
+    set_edit_text_if_changed(state.edit_cmyk[2], format_channel_number(cmyk[2] * 100.0, 0));
+    set_edit_text_if_changed(state.edit_cmyk[3], format_channel_number(cmyk[3] * 100.0, 0));
+
+    set_edit_text_if_changed(state.edit_hsl[0], format_channel_number(hsl.h, 0));
+    set_edit_text_if_changed(state.edit_hsl[1], format_channel_number(hsl.s * 100.0, 0));
+    set_edit_text_if_changed(state.edit_hsl[2], format_channel_number(hsl.l * 100.0, 0));
+
+    set_edit_text_if_changed(state.edit_lab[0], format_channel_number(lab.l, 0));
+    set_edit_text_if_changed(state.edit_lab[1], format_channel_number(lab.a, 0));
+    set_edit_text_if_changed(state.edit_lab[2], format_channel_number(lab.b, 0));
+
+    set_edit_text_if_changed(state.edit_opacity, format_channel_number(state.current_alpha * 100.0, 0));
+    if (state.stroke) {
+        set_edit_text_if_changed(state.edit_width, format_channel_number(state.width, 2));
     }
-    SetDlgItemTextW(dialog, 106, alpha_label.c_str());
-    SetDlgItemTextW(dialog, 207, alpha_value.c_str());
-    const bool picker_enabled = uses_picker(state.model);
-    EnableWindow(GetDlgItem(dialog, 110), picker_enabled);
-    InvalidateRect(dialog, nullptr, FALSE);
     state.populating = false;
 }
 
-constexpr RECT picker_plane{22, 70, 322, 292};
-constexpr RECT picker_hue{22, 306, 322, 324};
-
-DWORD dib_pixel(color::RGBColor rgb) {
-    const auto channel = [](double value) {
-        return static_cast<DWORD>(std::clamp(std::lround(value * 255), 0L, 255L));
-    };
-    return (channel(rgb.r) << 16) | (channel(rgb.g) << 8) | channel(rgb.b);
+void apply_active_color_to_draft(EditorState &state) {
+    const auto rgb = current_active_rgb(state);
+    auto next = color::ColorValue::make_rgb(rgb.r, rgb.g, rgb.b, rgb.a);
+    next.set_overprint(state.draft.overprint());
+    state.draft = source_color::convert(next, state.model);
+    state.color_changed = true;
 }
 
 void draw_dib(HDC dc, const RECT &destination, int width, int height,
@@ -358,119 +214,183 @@ void draw_dib(HDC dc, const RECT &destination, int width, int height,
 }
 
 void draw_picker(HWND dialog, EditorState &state, HDC dc) {
-    const auto current = read_color(dialog, state).value_or(state.draft);
-    const auto rgb = rgb_from(current);
-    const auto hsv = to_hsv(rgb);
-    const double hue = hsv.h;
-    constexpr int plane_width = 300, plane_height = 222;
-    std::vector<DWORD> plane(static_cast<size_t>(plane_width * plane_height));
-    for (int y = 0; y < plane_height; ++y) {
-        const double vertical = 1.0 - static_cast<double>(y) / (plane_height - 1);
-        for (int x = 0; x < plane_width; ++x) {
-            const double saturation = static_cast<double>(x) / (plane_width - 1);
-            const auto color = is_hsl(state.viewer)
-                ? hsl_to_rgb(hue, saturation, vertical)
-                : hsv_to_rgb(hue, saturation, vertical);
-            plane[static_cast<size_t>(y * plane_width + x)] = dib_pixel(color);
+    (void)dialog;
+    const double hue = state.current_hue;
+    const int plane_width = picker_plane.right - picker_plane.left;
+    const int plane_height = picker_plane.bottom - picker_plane.top;
+
+    if (state.cached_plane.empty() ||
+        std::abs(state.cached_hue - hue) > 0.01 ||
+        state.cached_viewer != state.viewer ||
+        state.cached_plane_w != plane_width ||
+        state.cached_plane_h != plane_height) {
+        state.cached_plane.resize(static_cast<size_t>(plane_width * plane_height));
+        for (int y = 0; y < plane_height; ++y) {
+            const double vertical = 1.0 - static_cast<double>(y) / (plane_height - 1);
+            for (int x = 0; x < plane_width; ++x) {
+                const double saturation = static_cast<double>(x) / (plane_width - 1);
+                const auto color = is_hsl(state.viewer)
+                    ? hsl_to_rgb(hue, saturation, vertical)
+                    : hsv_to_rgb(hue, saturation, vertical);
+                state.cached_plane[static_cast<size_t>(y * plane_width + x)] = dib_pixel(color);
+            }
         }
+        state.cached_hue = hue;
+        state.cached_viewer = state.viewer;
+        state.cached_plane_w = plane_width;
+        state.cached_plane_h = plane_height;
     }
-    draw_dib(dc, picker_plane, plane_width, plane_height, plane);
-    const double vertical = is_hsl(state.viewer) ? to_hsl(rgb).l : hsv.v;
-    const double marker_saturation = is_hsl(state.viewer) ? to_hsl(rgb).s : hsv.s;
-    const int marker_x = picker_plane.left + static_cast<int>(std::lround(marker_saturation * (picker_plane.right - picker_plane.left - 1)));
-    const int marker_y = picker_plane.top + static_cast<int>(std::lround((1.0 - vertical) * (picker_plane.bottom - picker_plane.top - 1)));
-    HPEN white = CreatePen(PS_SOLID, 3, RGB(255, 255, 255));
+    // Clear outer margins around picker plane and hue bar to erase previous cursor bounds
+    RECT plane_clear{picker_plane.left - 6, picker_plane.top - 6,
+                     picker_plane.right + 6, picker_plane.bottom + 6};
+    RECT strip_top{plane_clear.left, plane_clear.top, plane_clear.right, picker_plane.top};
+    FillRect(dc, &strip_top, state.background_brush);
+    RECT strip_bottom{plane_clear.left, picker_plane.bottom + 1, plane_clear.right, plane_clear.bottom};
+    FillRect(dc, &strip_bottom, state.background_brush);
+    RECT strip_left{plane_clear.left, picker_plane.top, picker_plane.left, picker_plane.bottom + 1};
+    FillRect(dc, &strip_left, state.background_brush);
+    RECT strip_right{picker_plane.right + 1, picker_plane.top, plane_clear.right, picker_plane.bottom + 1};
+    FillRect(dc, &strip_right, state.background_brush);
+
+    draw_dib(dc, picker_plane, plane_width, plane_height, state.cached_plane);
+
+    HPEN border_pen = CreatePen(PS_SOLID, 1, state.border);
+    auto old_pen = SelectObject(dc, border_pen);
+    auto old_brush = SelectObject(dc, GetStockObject(HOLLOW_BRUSH));
+    Rectangle(dc, picker_plane.left - 1, picker_plane.top - 1, picker_plane.right + 1, picker_plane.bottom + 1);
+
+    const auto current_rgb = hsv_to_rgb(state.current_hue, state.current_sat, state.current_val);
+    const auto hsl = to_hsl(current_rgb, state.current_hue);
+    const double marker_vertical = is_hsl(state.viewer) ? hsl.l : state.current_val;
+    const double marker_sat = is_hsl(state.viewer) ? hsl.s : state.current_sat;
+    const int marker_x = picker_plane.left + static_cast<int>(std::lround(marker_sat * (plane_width - 1)));
+    const int marker_y = picker_plane.top + static_cast<int>(std::lround((1.0 - marker_vertical) * (plane_height - 1)));
+
+    // Corel-style square marker with double border
+    HPEN white = CreatePen(PS_SOLID, 2, RGB(255, 255, 255));
     HPEN dark = CreatePen(PS_SOLID, 1, RGB(20, 24, 30));
-    const auto previous_pen = SelectObject(dc, white);
-    HBRUSH previous_brush = static_cast<HBRUSH>(SelectObject(dc, GetStockObject(HOLLOW_BRUSH)));
-    Ellipse(dc, marker_x - 6, marker_y - 6, marker_x + 7, marker_y + 7);
+    SelectObject(dc, white);
+    Rectangle(dc, marker_x - 4, marker_y - 4, marker_x + 5, marker_y + 5);
     SelectObject(dc, dark);
-    Ellipse(dc, marker_x - 5, marker_y - 5, marker_x + 6, marker_y + 6);
-    SelectObject(dc, previous_brush);
-    SelectObject(dc, previous_pen);
+    Rectangle(dc, marker_x - 3, marker_y - 3, marker_x + 4, marker_y + 4);
     DeleteObject(white);
     DeleteObject(dark);
 
-    constexpr int hue_width = 300;
-    std::vector<DWORD> hues(static_cast<size_t>(hue_width));
-    for (int x = 0; x < hue_width; ++x)
-        hues[static_cast<size_t>(x)] = dib_pixel(hsv_to_rgb(360.0 * x / (hue_width - 1), 1, 1));
-    draw_dib(dc, picker_hue, hue_width, 1, hues);
-    const int hue_x = picker_hue.left + static_cast<int>(std::lround(hue / 360.0 * (picker_hue.right - picker_hue.left - 1)));
-    HPEN hue_pen = CreatePen(PS_SOLID, 2, RGB(26, 30, 36));
-    const auto old_pen = SelectObject(dc, hue_pen);
-    MoveToEx(dc, hue_x, picker_hue.top - 3, nullptr);
-    LineTo(dc, hue_x, picker_hue.bottom + 3);
-    SelectObject(dc, old_pen);
-    DeleteObject(hue_pen);
+    // Hue slider strip: clear margin around hue bar
+    RECT hue_clear{picker_hue.left - 6, picker_hue.top - 4,
+                   picker_hue.right + 6, picker_hue.bottom + 6};
+    RECT hstrip_top{hue_clear.left, hue_clear.top, hue_clear.right, picker_hue.top};
+    FillRect(dc, &hstrip_top, state.background_brush);
+    RECT hstrip_bottom{hue_clear.left, picker_hue.bottom + 1, hue_clear.right, hue_clear.bottom};
+    FillRect(dc, &hstrip_bottom, state.background_brush);
+    RECT hstrip_left{hue_clear.left, picker_hue.top, picker_hue.left, picker_hue.bottom + 1};
+    FillRect(dc, &hstrip_left, state.background_brush);
+    RECT hstrip_right{picker_hue.right + 1, picker_hue.top, hue_clear.right, picker_hue.bottom + 1};
+    FillRect(dc, &hstrip_right, state.background_brush);
 
-    if (!uses_picker(state.model)) {
-        RECT disabled = picker_plane;
-        HBRUSH overlay = CreateSolidBrush(state.background);
-        SetBkMode(dc, TRANSPARENT);
-        FillRect(dc, &disabled, overlay);
-        DeleteObject(overlay);
-        SetTextColor(dc, state.muted);
-        DrawTextW(dc, state.vi ? L"Bộ chọn màu khả dụng cho RGB / CMYK"
-                              : L"Color picker is available for RGB / CMYK",
-                  -1, &disabled, DT_CENTER | DT_VCENTER | DT_WORDBREAK);
-        FillRect(dc, const_cast<RECT *>(&picker_hue), state.background_brush);
+    const int hue_width = picker_hue.right - picker_hue.left;
+    if (state.cached_hue_pixels.empty() || state.cached_hue_w != hue_width) {
+        state.cached_hue_pixels.resize(static_cast<size_t>(hue_width));
+        for (int x = 0; x < hue_width; ++x) {
+            state.cached_hue_pixels[static_cast<size_t>(x)] =
+                dib_pixel(hsv_to_rgb(360.0 * x / (hue_width - 1), 1.0, 1.0));
+        }
+        state.cached_hue_w = hue_width;
     }
+    draw_dib(dc, picker_hue, hue_width, 1, state.cached_hue_pixels);
+    Rectangle(dc, picker_hue.left - 1, picker_hue.top - 1, picker_hue.right + 1, picker_hue.bottom + 1);
+
+    // Corel-style slider box cursor on hue bar
+    const int hue_x = picker_hue.left + static_cast<int>(std::lround(hue / 360.0 * (hue_width - 1)));
+    HPEN hue_dark = CreatePen(PS_SOLID, 2, RGB(20, 24, 30)), old_hp = static_cast<HPEN>(SelectObject(dc, hue_dark));
+    Rectangle(dc, hue_x - 3, picker_hue.top - 2, hue_x + 4, picker_hue.bottom + 3);
+    HPEN hue_white = CreatePen(PS_SOLID, 1, RGB(255, 255, 255));
+    SelectObject(dc, hue_white);
+    Rectangle(dc, hue_x - 2, picker_hue.top - 1, hue_x + 3, picker_hue.bottom + 2);
+    SelectObject(dc, old_hp); DeleteObject(hue_dark); DeleteObject(hue_white);
+
+    SelectObject(dc, old_pen); SelectObject(dc, old_brush);
+    DeleteObject(border_pen);
 }
 
-void update_picker(HWND dialog, EditorState &state, int x, int y) {
-    if (!uses_picker(state.model)) return;
-    auto base = read_color(dialog, state).value_or(state.draft);
-    const auto current = to_hsv(rgb_from(base));
-    const auto base_rgb = rgb_from(base);
-    const auto base_hsl = to_hsl(base_rgb);
-    double hue = current.h, saturation = is_hsl(state.viewer) ? base_hsl.s : current.s;
-    double vertical = is_hsl(state.viewer) ? base_hsl.l : current.v;
-    if (y >= picker_hue.top - 3 && y <= picker_hue.bottom + 3) {
-        const double fraction = std::clamp(static_cast<double>(x - picker_hue.left) /
-            (picker_hue.right - picker_hue.left - 1), 0.0, 1.0);
-        hue = fraction * 360.0;
-    } else {
-        saturation = std::clamp(static_cast<double>(x - picker_plane.left) /
-            (picker_plane.right - picker_plane.left - 1), 0.0, 1.0);
-        vertical = 1.0 - std::clamp(static_cast<double>(y - picker_plane.top) /
-            (picker_plane.bottom - picker_plane.top - 1), 0.0, 1.0);
+void update_picker_from_mouse(HWND dialog, EditorState &state, int x, int y) {
+    if (state.drag_target == DragTarget::None) return;
+
+    if (state.drag_target == DragTarget::Hue) {
+        const int hue_w = picker_hue.right - picker_hue.left;
+        const double fraction = hue_w > 1
+            ? std::clamp(static_cast<double>(x - picker_hue.left) / (hue_w - 1), 0.0, 1.0)
+            : 0.0;
+        state.current_hue = std::clamp(fraction * 360.0, 0.0, 360.0);
+    } else if (state.drag_target == DragTarget::Plane) {
+        const int plane_w = picker_plane.right - picker_plane.left;
+        const int plane_h = picker_plane.bottom - picker_plane.top;
+        const double sat = plane_w > 1
+            ? std::clamp(static_cast<double>(x - picker_plane.left) / (plane_w - 1), 0.0, 1.0)
+            : 0.0;
+        const double vert = plane_h > 1
+            ? std::clamp(static_cast<double>(y - picker_plane.top) / (plane_h - 1), 0.0, 1.0)
+            : 0.0;
+        if (is_hsl(state.viewer)) {
+            const auto rgb = hsl_to_rgb(state.current_hue, sat, 1.0 - vert);
+            const auto hsv = to_hsv(rgb, state.current_hue);
+            state.current_sat = hsv.s;
+            state.current_val = hsv.v;
+        } else {
+            state.current_sat = sat;
+            state.current_val = 1.0 - vert;
+        }
     }
-    const auto selected = is_hsl(state.viewer)
-        ? hsl_to_rgb(hue, saturation, vertical, base_rgb.a)
-        : hsv_to_rgb(hue, saturation, vertical, base_rgb.a);
-    auto next = color::ColorValue::make_rgb(selected.r, selected.g, selected.b, selected.a);
-    next.set_overprint(base.overprint());
-    state.draft = source_color::convert(next, state.model);
-    state.color_changed = true;
-    populate(dialog, state);
+
+    apply_active_color_to_draft(state);
+    sync_inputs_from_state(dialog, state);
+
+    RECT picker_area{picker_plane.left - 6, picker_plane.top - 6,
+                     picker_plane.right + 6, picker_hue.bottom + 8};
+    InvalidateRect(dialog, &picker_area, FALSE);
+    RECT swatch_area{16, 274, 110, 320};
+    InvalidateRect(dialog, &swatch_area, FALSE);
 }
 
 void draw_swatch(HWND dialog, const DRAWITEMSTRUCT &item, const EditorState &state) {
-    const auto value = item.CtlID == 120 ? state.original
-        : read_color(dialog, state).value_or(state.draft);
-    RECT rect = item.rcItem;
-    const auto rgb = colorref_from(value);
-    HBRUSH brush = CreateSolidBrush(rgb);
-    HPEN pen = CreatePen(PS_SOLID, 1, state.border);
-    const auto old_brush = SelectObject(item.hDC, brush);
-    const auto old_pen = SelectObject(item.hDC, pen);
-    RoundRect(item.hDC, rect.left, rect.top, rect.right, rect.bottom, 8, 8);
-    SelectObject(item.hDC, old_brush);
-    SelectObject(item.hDC, old_pen);
-    DeleteObject(brush);
-    DeleteObject(pen);
+    (void)dialog;
+    const auto rgb = colorref_from(item.CtlID == 120 ? state.original : state.draft);
+    HBRUSH brush = CreateSolidBrush(rgb), old_b = static_cast<HBRUSH>(SelectObject(item.hDC, brush));
+    HPEN pen = CreatePen(PS_SOLID, 1, state.border), old_p = static_cast<HPEN>(SelectObject(item.hDC, pen));
+    RoundRect(item.hDC, item.rcItem.left, item.rcItem.top, item.rcItem.right, item.rcItem.bottom, 4, 4);
+    SelectObject(item.hDC, old_b); SelectObject(item.hDC, old_p);
+    DeleteObject(brush); DeleteObject(pen);
 }
 
 void initialize_editor(HWND dialog, EditorState &state) {
     state.populating = true;
     const wchar_t *title = state.context == ColorEditContext::Stroke
-        ? (state.vi ? L"Màu và độ dày viền" : L"Source stroke color and width")
-        : state.context == ColorEditContext::Fill
-            ? (state.vi ? L"Màu tô nguồn" : L"Source fill color")
-            : (state.vi ? L"Màu nguồn" : L"Source color");
+        ? (state.vi ? L"Chỉnh viền và màu (Edit Outline)" : L"Edit Outline")
+        : (state.vi ? L"Chỉnh màu tô (Edit Fill)" : L"Edit Fill");
     SetWindowTextW(dialog, title);
-    constexpr int dialog_width = 760, dialog_height = 610;
+
+    NONCLIENTMETRICSW ncm{};
+    ncm.cbSize = sizeof(NONCLIENTMETRICSW);
+    if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(NONCLIENTMETRICSW), &ncm, 0)) {
+        state.font = CreateFontIndirectW(&ncm.lfMessageFont);
+    }
+    if (!state.font) {
+        state.font = CreateFontW(-12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                 CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    }
+    state.font_bold = CreateFontW(-12, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+                                  DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                  CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    state.font_small = CreateFontW(-10, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                   DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                   CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+
+    RECT dlg_rect{0, 0, kClientWidth, kClientHeight};
+    AdjustWindowRectEx(&dlg_rect, WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME, FALSE, 0);
+    const int dialog_width = dlg_rect.right - dlg_rect.left;
+    const int dialog_height = dlg_rect.bottom - dlg_rect.top;
+
     RECT work{};
     if (GetParent(dialog) && GetWindowRect(GetParent(dialog), &work)) {
         const int x = (work.left + work.right - dialog_width) / 2;
@@ -481,21 +401,41 @@ void initialize_editor(HWND dialog, EditorState &state) {
         SetWindowPos(dialog, nullptr, (work.left + work.right - dialog_width) / 2,
                      (work.top + work.bottom - dialog_height) / 2, dialog_width, dialog_height, SWP_NOZORDER);
     }
-    const auto window_region = CreateRoundRectRgn(0, 0, dialog_width + 1, dialog_height + 1, 20, 20);
-    if (!SetWindowRgn(dialog, window_region, TRUE)) DeleteObject(window_region);
 
     state.background = state.dark ? RGB(25, 30, 38) : RGB(249, 250, 252);
     state.text = state.dark ? RGB(232, 237, 245) : RGB(29, 37, 48);
     state.muted = state.dark ? RGB(157, 169, 185) : RGB(100, 112, 128);
-    state.border = state.dark ? RGB(65, 76, 91) : RGB(218, 224, 232);
+    state.border = state.dark ? RGB(65, 76, 91) : RGB(200, 208, 220);
     state.edit_background = state.dark ? RGB(35, 42, 53) : RGB(255, 255, 255);
-    state.accent = state.dark ? RGB(0, 190, 160) : RGB(38, 125, 230);
+    state.accent = state.dark ? RGB(0, 190, 160) : RGB(30, 112, 232);
     state.background_brush = CreateSolidBrush(state.background);
     state.edit_brush = CreateSolidBrush(state.edit_background);
 
-    control(dialog, L"STATIC", state.vi ? L"Hệ màu nguồn" : L"Source color model", 0, 22, 18, 104, 22, 0);
+    const auto rgb = rgb_from(state.draft);
+    const auto hsv = to_hsv(rgb, 0.0);
+    state.current_hue = hsv.h;
+    state.current_sat = hsv.s;
+    state.current_val = hsv.v;
+    state.current_alpha = rgb.a;
+
+    // Header left: Uniform fill + Viewer dropdown
+    control(dialog, L"STATIC", state.vi ? L"Màu đồng nhất" : L"Uniform Fill",
+            0, 16, 12, 190, 16, 0, state.font_bold);
+    const auto viewer = control(dialog, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP,
+                                16, 30, 190, 160, 110, state.font);
+    const wchar_t *viewers_en[] = {L"HSB · Hue based", L"HSL · Lightness", L"RGB · 0–255", L"CMYK · 0–100%"};
+    const wchar_t *viewers_vi[] = {L"HSB · Sắc độ", L"HSL · Độ sáng", L"RGB · 0–255", L"CMYK · 0–100%"};
+    const auto *viewers = state.vi ? viewers_vi : viewers_en;
+    for (int i = 0; i < 4; ++i) {
+        const auto item = SendMessageW(viewer, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(viewers[i]));
+        SendMessageW(viewer, CB_SETITEMDATA, item, i);
+    }
+
+    // Header right: Color model
+    control(dialog, L"STATIC", state.vi ? L"Hệ màu đích:" : L"Color model:",
+            0, 226, 12, 100, 16, 0, state.font);
     const auto combo = control(dialog, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP,
-                               130, 14, 224, 180, 100);
+                               226, 30, 238, 160, 100, state.font);
     const wchar_t *models_en[] = {L"RGB · 0–255", L"CMYK · 0–100%", L"Spot · name + tint", L"Grayscale · 0–100%"};
     const wchar_t *models_vi[] = {L"RGB · 0–255", L"CMYK · 0–100%", L"Spot · tên + tint", L"Thang xám · 0–100%"};
     const auto *models = state.vi ? models_vi : models_en;
@@ -507,59 +447,199 @@ void initialize_editor(HWND dialog, EditorState &state) {
     }
     state.model = source_color::model_of(state.draft);
     select_model(combo, state.model);
-    control(dialog, L"STATIC", state.vi ? L"Chế độ xem" : L"Color viewer", 0, 386, 18, 88, 22, 0);
-    const auto viewer = control(dialog, L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_TABSTOP,
-                                480, 14, 250, 180, 110);
-    const wchar_t *viewers_en[] = {L"HSB · Hue based", L"HSL · Lightness", L"RGB · 0–255", L"CMYK · 0–100%"};
-    const wchar_t *viewers_vi[] = {L"HSB · Theo sắc độ", L"HSL · Độ sáng", L"RGB · 0–255", L"CMYK · 0–100%"};
-    const auto *viewers = state.vi ? viewers_vi : viewers_en;
+
+    // Right Column: CorelDRAW 3-column input grid
+    // Column 1: RGB (top), Hex, HSB (bottom)
+    const wchar_t *rgb_lbls[] = {L"R:", L"G:", L"B:"};
+    for (int i = 0; i < 3; ++i) {
+        control(dialog, L"STATIC", rgb_lbls[i], SS_RIGHT, 216, 62 + i * 26, 14, 18, 0, state.font);
+        state.edit_rgb[i] = control(dialog, L"EDIT", L"", ES_AUTOHSCROLL | ES_RIGHT | WS_TABSTOP,
+                                    232, 60 + i * 26, 44, 21, 211 + i, state.font);
+    }
+    state.edit_hex = control(dialog, L"EDIT", L"", ES_AUTOHSCROLL | ES_CENTER | WS_TABSTOP,
+                             216, 138, 60, 21, 214, state.font);
+    const wchar_t *hsb_lbls[] = {L"H:", L"S:", L"B:"};
+    for (int i = 0; i < 3; ++i) {
+        control(dialog, L"STATIC", hsb_lbls[i], SS_RIGHT, 216, 168 + i * 26, 14, 18, 0, state.font);
+        state.edit_hsb[i] = control(dialog, L"EDIT", L"", ES_AUTOHSCROLL | ES_RIGHT | WS_TABSTOP,
+                                    232, 166 + i * 26, 44, 21, 231 + i, state.font);
+    }
+
+    // Column 2: CMYK (top), HLS (bottom)
+    const wchar_t *cmyk_lbls[] = {L"C:", L"M:", L"Y:", L"K:"};
     for (int i = 0; i < 4; ++i) {
-        const auto item = SendMessageW(viewer, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(viewers[i]));
-        SendMessageW(viewer, CB_SETITEMDATA, item, i);
+        control(dialog, L"STATIC", cmyk_lbls[i], SS_RIGHT, 296, 62 + i * 26, 14, 18, 0, state.font);
+        state.edit_cmyk[i] = control(dialog, L"EDIT", L"", ES_AUTOHSCROLL | ES_RIGHT | WS_TABSTOP,
+                                     312, 60 + i * 26, 44, 21, 221 + i, state.font);
     }
-    state.viewer = ViewerMode::Hsb;
-    select_viewer(viewer, state.viewer);
-    control(dialog, L"STATIC", state.vi ? L"Màu đồng nhất" : L"Uniform color", 0, 22, 46, 300, 20, 0);
-    for (int i = 0; i < 5; ++i) {
-        const int y = 72 + i * 40;
-        control(dialog, L"STATIC", L"", 0, 354, y + 4, 96, 24, 101 + i);
-        control(dialog, L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP, 460, y, 270, 30, 201 + i);
+    const wchar_t *hsl_lbls[] = {L"H:", L"S:", L"L:"};
+    for (int i = 0; i < 3; ++i) {
+        control(dialog, L"STATIC", hsl_lbls[i], SS_RIGHT, 296, 168 + i * 26, 14, 18, 0, state.font);
+        state.edit_hsl[i] = control(dialog, L"EDIT", L"", ES_AUTOHSCROLL | ES_RIGHT | WS_TABSTOP,
+                                    312, 166 + i * 26, 44, 21, 241 + i, state.font);
     }
-    control(dialog, L"STATIC", L"", 0, 354, 282, 96, 24, 106);
-    control(dialog, L"EDIT", L"", ES_AUTOHSCROLL | WS_TABSTOP, 460, 276, 270, 30, 207);
-    control(dialog, L"STATIC", state.vi ? L"Bản gốc" : L"Original", 0, 22, 351, 68, 22, 0);
-    control(dialog, L"STATIC", L"", SS_OWNERDRAW, 92, 345, 94, 38, 120);
-    control(dialog, L"STATIC", state.vi ? L"Bản mới" : L"New color", 0, 204, 351, 74, 22, 0);
-    control(dialog, L"STATIC", L"", SS_OWNERDRAW, 280, 345, 94, 38, 121);
+
+    // Column 3: Lab (top), Opacity, Width
+    const wchar_t *lab_lbls[] = {L"L:", L"a:", L"b:"};
+    for (int i = 0; i < 3; ++i) {
+        control(dialog, L"STATIC", lab_lbls[i], SS_RIGHT, 376, 62 + i * 26, 14, 18, 0, state.font);
+        state.edit_lab[i] = control(dialog, L"EDIT", L"", ES_AUTOHSCROLL | ES_RIGHT | WS_TABSTOP,
+                                    392, 60 + i * 26, 44, 21, 251 + i, state.font);
+    }
+    control(dialog, L"STATIC", state.vi ? L"Độ:" : L"Op:", SS_RIGHT, 366, 168, 24, 18, 0, state.font);
+    state.edit_opacity = control(dialog, L"EDIT", L"", ES_AUTOHSCROLL | ES_RIGHT | WS_TABSTOP,
+                                 392, 166, 44, 21, 207, state.font);
+    control(dialog, L"STATIC", L"%", 0, 440, 168, 14, 18, 0, state.font_small);
+
+    control(dialog, L"STATIC", state.vi ? L"Dày:" : L"W:", SS_RIGHT, 366, 194, 24, 18, 313, state.font);
+    state.edit_width = control(dialog, L"EDIT", format_channel_number(state.width, 2).c_str(),
+                               ES_AUTOHSCROLL | ES_RIGHT | WS_TABSTOP, 392, 192, 44, 21, 206, state.font);
+    control(dialog, L"STATIC", L"mm", 0, 440, 194, 20, 18, 314, state.font_small);
+    EnableWindow(state.edit_width, state.stroke);
+    ShowWindow(GetDlgItem(dialog, 313), state.stroke ? SW_SHOW : SW_HIDE);
+    ShowWindow(state.edit_width, state.stroke ? SW_SHOW : SW_HIDE);
+    ShowWindow(GetDlgItem(dialog, 314), state.stroke ? SW_SHOW : SW_HIDE);
+
+    // Swatches (bottom left under Hue bar)
+    control(dialog, L"STATIC", state.vi ? L"Mới" : L"New", 0, 16, 274, 36, 14, 0, state.font_small);
+    control(dialog, L"STATIC", L"", SS_OWNERDRAW, 16, 290, 42, 26, 121, state.font);
+    control(dialog, L"STATIC", state.vi ? L"Gốc" : L"Orig", 0, 64, 274, 36, 14, 0, state.font_small);
+    control(dialog, L"STATIC", L"", SS_OWNERDRAW, 64, 290, 42, 26, 120, state.font);
+
+    // Bottom row: Overprint checkbox & OK/Cancel buttons
     if (has_overprint(state.context)) {
-        const auto check = control(dialog, L"BUTTON", L"", BS_3STATE | WS_TABSTOP, 354, 334, 376, 28, 208);
+        const auto check = control(dialog, L"BUTTON", L"", BS_3STATE | WS_TABSTOP,
+                                   216, 252, 250, 20, kOverprintId, state.font);
         state.initial_overprint = stroke_overprint(state.context)
             ? state.original.overprint().stroke : state.original.overprint().fill;
         SendMessageW(check, BM_SETCHECK, state.mixed_overprint ? BST_INDETERMINATE
             : state.initial_overprint ? BST_CHECKED : BST_UNCHECKED, 0);
     }
     set_overprint_caption(dialog, state);
-    control(dialog, L"STATIC", state.vi ? L"Viền nguồn (mm)" : L"Source width (mm)",
-            0, 354, 376, 96, 24, 209);
-    const auto width = control(dialog, L"EDIT", number(state.width).c_str(), ES_AUTOHSCROLL | WS_TABSTOP,
-                               460, 370, 270, 30, 206);
-    EnableWindow(width, state.stroke);
-    ShowWindow(GetDlgItem(dialog, 209), state.stroke ? SW_SHOW : SW_HIDE);
-    ShowWindow(width, state.stroke ? SW_SHOW : SW_HIDE);
-    const std::wstring hint = state.mixed_color
-        ? (state.vi ? L"Màu đang Mixed. Đổi kênh thay màu; overprint chưa chỉnh vẫn giữ riêng từng đối tượng."
-                    : L"Colors are Mixed. Channel edits replace source color; untouched overprint stays per object.")
-        : state.document_mode ? (state.vi ? L"Màu process khóa theo tài liệu. Đổi hệ màu toàn tài liệu trong menu Edit. Spot và overprint được giữ."
-                    : L"Process colors follow the document. Change document mode in Edit. Spot and overprint are retained.")
-        : (state.vi ? L"Chuyển hệ màu gần đúng; overprint được giữ."
-                    : L"Approximate model conversion; overprint is retained.");
-    control(dialog, L"STATIC", hint.c_str(), 0, 22, 422, 708, 58, 0);
-    control(dialog, L"BUTTON", state.vi ? L"Áp dụng" : L"Apply", BS_DEFPUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP,
-            550, 532, 84, 32, IDOK);
-    control(dialog, L"BUTTON", state.vi ? L"Hủy" : L"Cancel", BS_OWNERDRAW | WS_TABSTOP,
-            646, 532, 84, 32, IDCANCEL);
-    populate(dialog, state);
+
+    control(dialog, L"BUTTON", state.vi ? L"Đồng ý" : L"OK",
+            BS_DEFPUSHBUTTON | BS_OWNERDRAW | WS_TABSTOP, 312, 286, 72, 26, IDOK, state.font);
+    control(dialog, L"BUTTON", state.vi ? L"Hủy" : L"Cancel",
+            BS_OWNERDRAW | WS_TABSTOP, 394, 286, 72, 26, IDCANCEL, state.font);
+
+    select_viewer(viewer, state, ViewerMode::Hsb);
+    sync_inputs_from_state(dialog, state);
     state.populating = false;
+}
+
+void update_hsv_and_refresh(HWND dialog, EditorState &state, Hsv hsv) {
+    state.current_hue = hsv.h;
+    state.current_sat = hsv.s;
+    state.current_val = hsv.v;
+    apply_active_color_to_draft(state);
+    sync_inputs_from_state(dialog, state);
+    InvalidateRect(dialog, nullptr, FALSE);
+}
+
+void on_color_input_changed(HWND dialog, EditorState &state, int id) {
+    if (state.populating) return;
+
+    if (id >= 201 && id <= 204) {
+        if (state.viewer == ViewerMode::Hsb) {
+            const auto h = read_number_from_hwnd(state.edit_hsb[0], 360.0);
+            const auto s = read_number_from_hwnd(state.edit_hsb[1], 100.0);
+            const auto v = read_number_from_hwnd(state.edit_hsb[2], 100.0);
+            if (h && s && v) update_hsv_and_refresh(dialog, state, {*h, *s / 100.0, *v / 100.0});
+        } else if (state.viewer == ViewerMode::Hsl) {
+            const auto h = read_number_from_hwnd(state.edit_hsl[0], 360.0);
+            const auto s = read_number_from_hwnd(state.edit_hsl[1], 100.0);
+            const auto l = read_number_from_hwnd(state.edit_hsl[2], 100.0);
+            if (h && s && l) update_hsv_and_refresh(dialog, state, to_hsv(hsl_to_rgb(*h, *s / 100.0, *l / 100.0, state.current_alpha), *h));
+        } else if (state.viewer == ViewerMode::CMYK) {
+            const auto c = read_number_from_hwnd(state.edit_cmyk[0], 100.0);
+            const auto m = read_number_from_hwnd(state.edit_cmyk[1], 100.0);
+            const auto y = read_number_from_hwnd(state.edit_cmyk[2], 100.0);
+            const auto k = read_number_from_hwnd(state.edit_cmyk[3], 100.0);
+            if (c && m && y && k) {
+                const auto rgb = cmyk_to_rgb(*c / 100.0, *m / 100.0, *y / 100.0, *k / 100.0, state.current_alpha);
+                const auto hsv = to_hsv(rgb, state.current_hue);
+                state.current_hue = hsv.h;
+                state.current_sat = hsv.s;
+                state.current_val = hsv.v;
+                if (state.model == Model::Cmyk) {
+                    state.draft = color::ColorValue::make_cmyk(*c / 100.0, *m / 100.0, *y / 100.0, *k / 100.0, state.current_alpha);
+                    state.color_changed = true;
+                } else {
+                    apply_active_color_to_draft(state);
+                }
+                sync_inputs_from_state(dialog, state);
+                InvalidateRect(dialog, nullptr, FALSE);
+            }
+        } else if (state.viewer == ViewerMode::Rgb) {
+            const auto r = read_number_from_hwnd(state.edit_rgb[0], 255.0);
+            const auto g = read_number_from_hwnd(state.edit_rgb[1], 255.0);
+            const auto b = read_number_from_hwnd(state.edit_rgb[2], 255.0);
+            if (r && g && b) update_hsv_and_refresh(dialog, state, to_hsv({*r / 255.0, *g / 255.0, *b / 255.0, state.current_alpha}, state.current_hue));
+        }
+    } else if (id >= 211 && id <= 213) {
+        const auto r = read_number_from_hwnd(state.edit_rgb[0], 255.0);
+        const auto g = read_number_from_hwnd(state.edit_rgb[1], 255.0);
+        const auto b = read_number_from_hwnd(state.edit_rgb[2], 255.0);
+        if (r && g && b) update_hsv_and_refresh(dialog, state, to_hsv({*r / 255.0, *g / 255.0, *b / 255.0, state.current_alpha}, state.current_hue));
+    } else if (id == 214) {
+        wchar_t buf[32]{};
+        GetWindowTextW(state.edit_hex, buf, 32);
+        if (const auto parsed = parse_hex_color(buf))
+            update_hsv_and_refresh(dialog, state, to_hsv(*parsed, state.current_hue));
+    } else if (id >= 221 && id <= 224) {
+        const auto c = read_number_from_hwnd(state.edit_cmyk[0], 100.0);
+        const auto m = read_number_from_hwnd(state.edit_cmyk[1], 100.0);
+        const auto y = read_number_from_hwnd(state.edit_cmyk[2], 100.0);
+        const auto k = read_number_from_hwnd(state.edit_cmyk[3], 100.0);
+        if (c && m && y && k) {
+            const auto rgb = cmyk_to_rgb(*c / 100.0, *m / 100.0, *y / 100.0, *k / 100.0, state.current_alpha);
+            const auto hsv = to_hsv(rgb, state.current_hue);
+            state.current_hue = hsv.h;
+            state.current_sat = hsv.s;
+            state.current_val = hsv.v;
+            if (state.model == Model::Cmyk) {
+                state.draft = color::ColorValue::make_cmyk(*c / 100.0, *m / 100.0, *y / 100.0, *k / 100.0, state.current_alpha);
+                state.color_changed = true;
+            } else {
+                apply_active_color_to_draft(state);
+            }
+            sync_inputs_from_state(dialog, state);
+            InvalidateRect(dialog, nullptr, FALSE);
+        }
+    } else if (id >= 231 && id <= 233) {
+        const auto h = read_number_from_hwnd(state.edit_hsb[0], 360.0);
+        const auto s = read_number_from_hwnd(state.edit_hsb[1], 100.0);
+        const auto v = read_number_from_hwnd(state.edit_hsb[2], 100.0);
+        if (h && s && v) update_hsv_and_refresh(dialog, state, {*h, *s / 100.0, *v / 100.0});
+    } else if (id >= 241 && id <= 243) {
+        const auto h = read_number_from_hwnd(state.edit_hsl[0], 360.0);
+        const auto s = read_number_from_hwnd(state.edit_hsl[1], 100.0);
+        const auto l = read_number_from_hwnd(state.edit_hsl[2], 100.0);
+        if (h && s && l) update_hsv_and_refresh(dialog, state, to_hsv(hsl_to_rgb(*h, *s / 100.0, *l / 100.0, state.current_alpha), *h));
+    } else if (id >= 251 && id <= 253) {
+        const auto l = read_number_from_hwnd(state.edit_lab[0], 100.0);
+        const auto a = read_number_from_hwnd(state.edit_lab[1], 127.0);
+        const auto b = read_number_from_hwnd(state.edit_lab[2], 127.0);
+        if (l && a && b) update_hsv_and_refresh(dialog, state, to_hsv(lab_to_rgb(*l, *a, *b, state.current_alpha), state.current_hue));
+    } else if (id == 207) {
+        if (const auto a = read_number_from_hwnd(state.edit_opacity, 100.0)) {
+            state.current_alpha = *a / 100.0;
+            if (state.model == Model::Cmyk) {
+                if (const auto *cmyk = std::get_if<color::CMYKColor>(&state.draft.payload())) {
+                    state.draft = color::ColorValue::make_cmyk(cmyk->c, cmyk->m, cmyk->y, cmyk->k, state.current_alpha);
+                    state.color_changed = true;
+                } else {
+                    apply_active_color_to_draft(state);
+                }
+            } else {
+                apply_active_color_to_draft(state);
+            }
+            sync_inputs_from_state(dialog, state);
+            InvalidateRect(dialog, nullptr, FALSE);
+        }
+    } else if (id == 206) {
+        state.width_changed = true;
+    }
 }
 
 INT_PTR CALLBACK editor_proc(HWND dialog, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -613,119 +693,142 @@ INT_PTR CALLBACK editor_proc(HWND dialog, UINT message, WPARAM wparam, LPARAM lp
             HPEN pen = CreatePen(PS_SOLID, 1, primary ? state->accent : state->border);
             const auto old_brush = SelectObject(item->hDC, brush);
             const auto old_pen = SelectObject(item->hDC, pen);
-            RoundRect(item->hDC, rect.left, rect.top, rect.right, rect.bottom, 9, 9);
+            RoundRect(item->hDC, rect.left, rect.top, rect.right, rect.bottom, 4, 4);
             SelectObject(item->hDC, old_brush);
             SelectObject(item->hDC, old_pen);
             wchar_t caption[64]{};
             GetWindowTextW(item->hwndItem, caption, 64);
             SetBkMode(item->hDC, TRANSPARENT);
             SetTextColor(item->hDC, primary ? RGB(255, 255, 255) : state->text);
+            if (state->font) SelectObject(item->hDC, state->font);
             DrawTextW(item->hDC, caption, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             DeleteObject(brush);
             DeleteObject(pen);
             return TRUE;
         }
     }
-    if (message == WM_LBUTTONDOWN || message == WM_MOUSEMOVE || message == WM_LBUTTONUP) {
+    if (message == WM_NCHITTEST) {
+        POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
+        ScreenToClient(dialog, &pt);
+        // Header space above picker and color fields allows dragging the dialog smoothly
+        const bool in_viewer = (pt.x >= 16 && pt.x <= 206 && pt.y >= 30 && pt.y <= 56);
+        const bool in_model = (pt.x >= 226 && pt.x <= 464 && pt.y >= 30 && pt.y <= 56);
+        if (pt.y >= 0 && pt.y < 58 && !in_viewer && !in_model) {
+            SetWindowLongPtrW(dialog, DWLP_MSGRESULT, HTCAPTION);
+            return TRUE;
+        }
+        // Left, bottom, and separator margins
+        if ((pt.x >= 0 && pt.x <= 12) || (pt.x >= 207 && pt.x <= 215 && pt.y < 250) ||
+            (pt.y >= 316 && pt.y <= kClientHeight)) {
+            SetWindowLongPtrW(dialog, DWLP_MSGRESULT, HTCAPTION);
+            return TRUE;
+        }
+        return FALSE;
+    }
+    if (message == WM_MOVING) {
+        auto *rc = reinterpret_cast<RECT *>(lparam);
+        if (rc) {
+            HMONITOR hmon = MonitorFromRect(rc, MONITOR_DEFAULTTONEAREST);
+            MONITORINFO mi{};
+            mi.cbSize = sizeof(mi);
+            if (GetMonitorInfoW(hmon, &mi)) {
+                const int w = rc->right - rc->left;
+                const int h = rc->bottom - rc->top;
+                if (rc->left < mi.rcWork.left) { rc->left = mi.rcWork.left; rc->right = rc->left + w; }
+                if (rc->top < mi.rcWork.top) { rc->top = mi.rcWork.top; rc->bottom = rc->top + h; }
+                if (rc->right > mi.rcWork.right) { rc->right = mi.rcWork.right; rc->left = rc->right - w; }
+                if (rc->bottom > mi.rcWork.bottom) { rc->bottom = mi.rcWork.bottom; rc->top = rc->bottom - h; }
+            }
+        }
+        return TRUE;
+    }
+    if (message == WM_LBUTTONDOWN) {
         const int x = GET_X_LPARAM(lparam), y = GET_Y_LPARAM(lparam);
-        if (message == WM_LBUTTONDOWN && uses_picker(state->model) &&
-            ((x >= picker_plane.left && x < picker_plane.right && y >= picker_plane.top && y < picker_plane.bottom) ||
-             (x >= picker_hue.left && x < picker_hue.right && y >= picker_hue.top - 3 && y <= picker_hue.bottom + 3))) {
-            state->dragging_picker = true;
+        if (x >= picker_plane.left - 4 && x <= picker_plane.right + 4 &&
+            y >= picker_plane.top - 4 && y <= picker_plane.bottom + 4) {
+            state->drag_target = DragTarget::Plane;
             SetCapture(dialog);
-            update_picker(dialog, *state, x, y);
+            update_picker_from_mouse(dialog, *state, x, y);
             return TRUE;
         }
-        if (message == WM_MOUSEMOVE && state->dragging_picker) {
-            update_picker(dialog, *state, x, y);
-            return TRUE;
-        }
-        if (message == WM_LBUTTONUP && state->dragging_picker) {
-            update_picker(dialog, *state, x, y);
-            state->dragging_picker = false;
-            if (GetCapture() == dialog) ReleaseCapture();
+        if (x >= picker_hue.left - 4 && x <= picker_hue.right + 4 &&
+            y >= picker_hue.top - 4 && y <= picker_hue.bottom + 4) {
+            state->drag_target = DragTarget::Hue;
+            SetCapture(dialog);
+            update_picker_from_mouse(dialog, *state, x, y);
             return TRUE;
         }
     }
+    if (message == WM_MOUSEMOVE && state->drag_target != DragTarget::None) {
+        const int x = GET_X_LPARAM(lparam), y = GET_Y_LPARAM(lparam);
+        update_picker_from_mouse(dialog, *state, x, y);
+        return TRUE;
+    }
+    if (message == WM_LBUTTONUP && state->drag_target != DragTarget::None) {
+        const int x = GET_X_LPARAM(lparam), y = GET_Y_LPARAM(lparam);
+        update_picker_from_mouse(dialog, *state, x, y);
+        state->drag_target = DragTarget::None;
+        if (GetCapture() == dialog) ReleaseCapture();
+        return TRUE;
+    }
     if (message == WM_CAPTURECHANGED) {
-        state->dragging_picker = false;
+        state->drag_target = DragTarget::None;
         return FALSE;
     }
     if (message == WM_NCDESTROY) {
         if (state->background_brush) DeleteObject(state->background_brush);
         if (state->edit_brush) DeleteObject(state->edit_brush);
+        if (state->font) DeleteObject(state->font);
+        if (state->font_bold) DeleteObject(state->font_bold);
+        if (state->font_small) DeleteObject(state->font_small);
         SetWindowLongPtrW(dialog, DWLP_USER, 0);
         return FALSE;
     }
     if (message == WM_CLOSE) { EndDialog(dialog, IDCANCEL); return TRUE; }
     if (message != WM_COMMAND) return FALSE;
     const auto id = LOWORD(wparam);
+
     if (id == 100 && HIWORD(wparam) == CBN_SELCHANGE) {
-        const auto current = read_color(dialog, *state);
-        if (!current) {
-            select_model(GetDlgItem(dialog, 100), state->model);
-            MessageBoxW(dialog, state->vi ? L"Sửa giá trị chưa hợp lệ trước khi đổi hệ màu."
-                                           : L"Correct the invalid value before changing the color model.",
-                        L"PikDraw", MB_OK | MB_ICONWARNING);
-            return TRUE;
-        }
         const auto selected = SendDlgItemMessageW(dialog, 100, CB_GETCURSEL, 0, 0);
         const auto target = model_from_index(static_cast<int>(SendDlgItemMessageW(dialog, 100, CB_GETITEMDATA, selected, 0)));
-        state->draft = source_color::convert(*current, target);
-        state->model = source_color::model_of(state->draft);
-        if (state->model == Model::Rgb) state->viewer = ViewerMode::Rgb;
-        else if (state->model == Model::Cmyk) state->viewer = ViewerMode::Cmyk;
-        select_viewer(GetDlgItem(dialog, 110), state->viewer);
+        state->draft = source_color::convert(state->draft, target);
+        state->model = target;
         state->color_changed = true;
-        populate(dialog, *state);
+        apply_active_color_to_draft(*state);
+        sync_inputs_from_state(dialog, *state);
+        InvalidateRect(dialog, nullptr, FALSE);
         return TRUE;
     }
     if (id == 110 && HIWORD(wparam) == CBN_SELCHANGE) {
-        const auto current = read_color(dialog, *state);
-        if (!current) {
-            select_viewer(GetDlgItem(dialog, 110), state->viewer);
-            MessageBoxW(dialog, state->vi ? L"Sửa giá trị chưa hợp lệ trước khi đổi chế độ xem."
-                                           : L"Correct the invalid value before changing the color view.",
-                        L"PikDraw", MB_OK | MB_ICONWARNING);
-            return TRUE;
-        }
         const auto selected = SendDlgItemMessageW(dialog, 110, CB_GETCURSEL, 0, 0);
-        state->draft = *current;
         state->viewer = viewer_from_index(static_cast<int>(SendDlgItemMessageW(dialog, 110, CB_GETITEMDATA, selected, 0)));
-        populate(dialog, *state);
+        assign_viewer_ids(*state);
+        apply_active_color_to_draft(*state);
+        sync_inputs_from_state(dialog, *state);
+        InvalidateRect(dialog, nullptr, FALSE);
         return TRUE;
     }
-    if (id >= 201 && id <= 205 && HIWORD(wparam) == EN_CHANGE && !state->populating)
-        state->color_changed = true;
-    if (id == 207 && HIWORD(wparam) == EN_CHANGE && !state->populating)
-        state->color_changed = true;
-    if (id == 206 && HIWORD(wparam) == EN_CHANGE && !state->populating)
-        state->width_changed = true;
-    if (id == 208 && HIWORD(wparam) == BN_CLICKED) {
-        const auto previous = SendDlgItemMessageW(dialog, 208, BM_GETCHECK, 0, 0);
+    if (HIWORD(wparam) == EN_CHANGE) {
+        on_color_input_changed(dialog, *state, id);
+        return TRUE;
+    }
+    if (id == kOverprintId && HIWORD(wparam) == BN_CLICKED) {
+        const auto previous = SendDlgItemMessageW(dialog, kOverprintId, BM_GETCHECK, 0, 0);
         const auto next = previous == BST_INDETERMINATE ? BST_CHECKED
             : previous == BST_CHECKED ? BST_UNCHECKED : BST_CHECKED;
-        SendDlgItemMessageW(dialog, 208, BM_SETCHECK, next, 0);
+        SendDlgItemMessageW(dialog, kOverprintId, BM_SETCHECK, next, 0);
         state->overprint_changed = state->mixed_overprint ||
             (next == BST_CHECKED) != state->initial_overprint;
         set_overprint_caption(dialog, *state);
         return TRUE;
     }
     if (id == IDOK) {
-        auto color = read_color(dialog, *state);
-        const auto width = read_number(dialog, 206, 10000);
-        if (!color || !width) {
-            MessageBoxW(dialog,
-                state->vi ? L"Giá trị không hợp lệ. H: 0–360; kênh: 0–100% hoặc 0–255; tên Spot: 1–128 ký tự; viền: 0–10000 mm."
-                          : L"Invalid values. H: 0–360; channels: 0–100% or 0–255; Spot name: 1–128 characters; width: 0–10000 mm.",
-                L"PikDraw", MB_OK | MB_ICONWARNING);
-            return TRUE;
-        }
-        if (!state->color_changed) color = state->original;
+        const auto width = read_number_from_hwnd(state->edit_width, 10000.0).value_or(state->width);
+        if (!state->color_changed) state->draft = state->original;
         const auto overprint = state->overprint_changed
-            ? std::optional<bool>{SendDlgItemMessageW(dialog, 208, BM_GETCHECK, 0, 0) == BST_CHECKED}
+            ? std::optional<bool>{SendDlgItemMessageW(dialog, kOverprintId, BM_GETCHECK, 0, 0) == BST_CHECKED}
             : std::nullopt;
-        state->result = StyleEditorResult{*color, *width, state->color_changed,
+        state->result = StyleEditorResult{state->draft, width, state->color_changed,
                                           state->width_changed, overprint};
         EndDialog(dialog, IDOK);
         return TRUE;
@@ -740,9 +843,9 @@ std::optional<StyleEditorResult> edit_source_color(HWND owner, const color::Colo
     bool mixed_color, bool mixed_overprint, std::optional<color::DocumentColorMode> document_mode,
     bool dark_theme) {
     struct EmptyDialog { DLGTEMPLATE dialog; WORD menu{0}, klass{0}, title{0}; } layout{};
-    layout.dialog.style = WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME;
-    layout.dialog.cx = 280;
-    layout.dialog.cy = 300;
+    layout.dialog.style = WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
+    layout.dialog.cx = 242;
+    layout.dialog.cy = 163;
     EditorState state;
     state.original = initial; state.draft = initial; state.width = width_mm;
     state.document_mode = document_mode;
