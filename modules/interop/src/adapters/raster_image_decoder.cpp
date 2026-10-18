@@ -46,6 +46,8 @@ uint8_t paeth_predictor(int a, int b, int c) noexcept {
 RasterImageDecodeResult decode_png_pure(
     std::span<const uint8_t> source,
     const RasterImageDecodeOptions& options) {
+    if (options.frame_index != 0)
+        return failure("RASTER_FRAME_NOT_FOUND", "The requested PNG frame does not exist.");
     if (source.size() < 8)
         return failure("RASTER_DECODE_FAILED", "Invalid PNG source.");
 

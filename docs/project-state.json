@@ -27,7 +27,7 @@
       "interop",
       "workers",
       "desktop",
-      "harness"
+      "tooling"
     ],
     "specification": [
       "contracts"

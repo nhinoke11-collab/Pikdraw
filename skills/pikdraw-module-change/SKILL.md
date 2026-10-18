@@ -5,9 +5,9 @@ description: Make a scoped PikDraw change while preserving document data and mod
 
 # PikDraw module change
 
-Use the assigned task and module README/AGENTS.md. registry/modules.json defines module dependencies. Keep feature code with the module that owns its behavior; UI routes commands rather than owning core logic.
+registry/modules.json defines module dependencies. Keep feature code with the module that owns its behavior; UI routes commands rather than owning core logic.
 
-Work in the primary source after claiming exact paths. Preserve existing local edits. Use the shared build runner when a build is relevant, and hand off the task snapshot with checks and limits.
+Work directly in the primary source. Preserve existing local edits. Use the shared build runner (tooling/native/build.ps1) when a build is relevant, and verify changes with targeted test suites.
 
 Group code by feature cohesion. Source/header files should stay within 300–1800 lines and strictly <= 2000 lines. Never append new features to files approaching or exceeding 2000 lines; split by feature domain instead. See docs/development/code-organization.md.
 
@@ -17,6 +17,6 @@ Document changes use commands/transactions and preserve IDs, units, source curve
 
 For a behavior change or feature, add or update acceptance tests for the real user or consumer workflow. Use the shared Given/When/Then case structure and select only the relevant test layers for the change's risk; do not run a large default suite for every task. Reuse suitable tests instead of duplicating them. See [feature acceptance](../../docs/quality/feature-acceptance.md).
 
-After verification, delete one-off test sources and temporary fixtures, outputs and logs. Keep useful regression tests and reusable fixtures in the owning module's suite; remove an old test only when equivalent coverage remains and the handoff explains why.
+After verification, delete one-off test sources and temporary fixtures, outputs and logs. Keep useful regression tests and reusable fixtures in the owning module's suite.
 
 Run checks that cover the changed behavior. A core prototype is not a complete editor feature. Record actual evidence and unresolved limits; do not claim planned capabilities as implemented.

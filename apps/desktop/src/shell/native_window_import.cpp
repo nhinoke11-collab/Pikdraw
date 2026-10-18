@@ -297,6 +297,8 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
     const size_t layer_count = result->proposal.layers.size();
     const auto& proposal = result->proposal;
     const bool is_raster = proposal.profile_id == "raster-rgba8-v1";
+    const bool is_preview = proposal.profile_id == "cdr-preview-v1" ||
+                            proposal.profile_id == "pdf-ai-preview-v1";
     std::wostringstream content;
     content << (language_ == UILanguage::Vietnamese ? L"Nguồn: " : L"Source: ")
             << NativeWindow::utf8_to_wide(proposal.format_name).c_str() << L" · "
@@ -304,14 +306,20 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
             << FormatNumber(proposal.source_page_width_mm) << L" × "
             << FormatNumber(proposal.source_page_height_mm) << L" mm\n"
             << object_count << (language_ == UILanguage::Vietnamese
-                ? (is_raster ? L" ảnh raster · " : L" đối tượng chỉnh sửa được · ")
-                : (is_raster ? L" raster image · " : L" editable objects · "))
+                ? ((is_raster || is_preview) ? L" ảnh raster · " : L" đối tượng chỉnh sửa được · ")
+                : ((is_raster || is_preview) ? L" raster image · " : L" editable objects · "))
             << layer_count << (language_ == UILanguage::Vietnamese ? L" layer nguồn\n" : L" source layers\n")
             << (language_ == UILanguage::Vietnamese ? L"Độ bao phủ: một phần · Hiển thị: chưa xác minh · Sẵn sàng sản xuất: chưa đánh giá."
                                                     : L"Coverage: partial · Appearance: unverified · Production: not assessed.");
 
     std::wstring details;
-    if (is_raster) {
+    if (is_preview) {
+        details = language_ == UILanguage::Vietnamese
+            ? L"Chỉ nhập ảnh xem trước nhúng trong tệp CDR/AI/PDF. Không có đường vector, chữ hoặc layer gốc để chỉnh sửa hay cắt CNC. Chất lượng phóng to phụ thuộc thumbnail nguồn.\n"
+              L"Ảnh được đặt theo khổ trang nguồn. Dữ liệu thiết kế gốc không được lưu cùng tài liệu .pikdraw; hãy giữ tệp nguồn."
+            : L"Only the embedded CDR/AI/PDF preview is imported. Original vector paths, text and layers are unavailable for editing or CNC. Enlargement is limited by the source thumbnail.\n"
+              L"The image uses the source page dimensions. Original authoring data is not stored in the .pikdraw document; keep the source file.";
+    } else if (is_raster) {
         details = language_ == UILanguage::Vietnamese
             ? L"Ảnh được giải mã thành pixel RGBA8 để hiển thị; byte nguồn, DPI, hướng EXIF và ICC được giữ trong tài liệu. Chuyển đổi màu chưa được chứng nhận giống tuyệt đối giữa các ứng dụng.\n"
               L"Ảnh raster không phải đường vector để cắt CNC. Độ phân giải nguồn và việc chuyển sang RGBA8 có thể giới hạn chất lượng phóng to. Khổ trang tài liệu hiện tại không đổi."
@@ -345,13 +353,15 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
 
     const std::wstring title = language_ == UILanguage::Vietnamese ? L"Xem lại kết quả nhập" : L"Review import fidelity";
     const std::wstring instruction = language_ == UILanguage::Vietnamese
-        ? (is_raster ? L"Nhập ảnh raster đã chuyển đổi với các giới hạn hiển thị nêu trên?"
+        ? (is_preview ? L"Nhập ảnh xem trước với các giới hạn nêu trên?"
+           : is_raster ? L"Nhập ảnh raster đã chuyển đổi với các giới hạn hiển thị nêu trên?"
                      : L"Chỉ nhập các đối tượng được biểu diễn trong subset hiện tại?")
-        : (is_raster ? L"Import the converted raster image with these display limitations?"
+        : (is_preview ? L"Import the embedded preview with these limitations?"
+           : is_raster ? L"Import the converted raster image with these display limitations?"
                      : L"Import only the objects represented by the current subset?");
     const std::wstring apply_label = language_ == UILanguage::Vietnamese
-        ? (is_raster ? L"Nhập ảnh" : L"Nhập đối tượng")
-        : (is_raster ? L"Import image" : L"Import editable subset");
+        ? ((is_raster || is_preview) ? L"Nhập ảnh" : L"Nhập đối tượng")
+        : ((is_raster || is_preview) ? L"Import image" : L"Import editable subset");
     const std::wstring cancel_label = language_ == UILanguage::Vietnamese ? L"Hủy" : L"Cancel";
     const TASKDIALOG_BUTTON buttons[]{{kImportChoiceApply, apply_label.c_str()},
                                       {kImportChoiceCancel, cancel_label.c_str()}};

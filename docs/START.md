@@ -1,10 +1,10 @@
-# Bắt đầu task PikDraw
+# Bắt đầu phát triển PikDraw (Quy trình tinh gọn)
 
-1. Đọc AGENTS.md và docs/project-state.json để biết quy tắc cùng phạm vi đã xác nhận.
-2. Triển khai trực tiếp yêu cầu của người dùng trên mã nguồn gốc; không bắt buộc qua chu trình task create/claim/handoff trừ khi được yêu cầu rõ.
-3. Nếu sử dụng task coordinator, có thể dùng `tooling/pikdraw.ps1 task claim <id> --force` hoặc `tooling/pikdraw.ps1 task prune` để tự động giải phóng lease cũ.
-4. Giữ local edits của người dùng; không tạo worktree hay nhánh riêng.
-5. Chạy kiểm tra phù hợp qua `tooling/native/build.ps1 -Test` và commit sạch sẽ khi hoàn thành.
+1. Đọc `AGENTS.md` để nắm quy tắc kiến trúc và quy chuẩn phát triển (tối đa 2000 dòng/file).
+2. Triển khai trực tiếp yêu cầu của người dùng trên mã nguồn gốc (`C:/Users/Administrator/Downloads/PikDraw`). Không qua chu trình harness hành chính rườm rà (task create/claim/handoff/lease).
+3. Giữ nguyên local edits của người dùng; không tự ý reset, stash hoặc xóa code dở dang. Không tạo worktree hay nhánh task riêng.
+4. Kiểm tra sức khỏe môi trường qua `.\tooling\pikdraw.ps1 doctor`.
+5. Biên dịch và kiểm thử qua `.\tooling\native\build.ps1` (hoặc `.\tooling\pikdraw.ps1 test -TestTarget <target_name>`), commit rõ ràng khi hoàn thành.
 
 Với task tạo hoặc sửa hành vi, agent tự xác định và thêm/cập nhật ca nghiệm thu phản ánh luồng dùng thật. Dùng cấu trúc chung và chọn phạm vi theo rủi ro trong [quy chuẩn nghiệm thu tính năng](quality/feature-acceptance.md); không mặc định chạy toàn bộ test suite cho mọi task.
 

@@ -3,7 +3,7 @@
 ## Quy trình làm việc tinh gọn (Streamlined Workflow)
 
 - Làm việc trực tiếp trong source gốc: C:/Users/Administrator/Downloads/PikDraw. Không tạo worktree, clone hay nhánh task riêng.
-- Ưu tiên giải quyết trực tiếp yêu cầu của người dùng. Không bắt buộc phải qua chu trình hành chính rườm rà (task create/claim/handoff) của harness trừ khi người dùng yêu cầu quản lý task cụ thể.
+- Tuyệt đối loại bỏ chu trình harness hành chính rườm rà (task create/claim/handoff/lease). Triển khai trực tiếp và linh hoạt theo yêu cầu người dùng.
 - Cho phép Git commit rõ ràng sau khi hoàn thành tính năng và test pass (`tooling/native/build.ps1 -Test`), giúp working tree sạch sẽ, tránh dồn ứ hàng chục file dirty chưa commit.
 - Giữ nguyên local edits của người dùng; không tự ý reset, stash hoặc xóa code đang viết dở khi chưa được người dùng xác nhận.
 
@@ -29,8 +29,8 @@ Với thay đổi UI, đọc docs/design/ui-ux-standard.md và đối chiếu do
 
 - Chạy kiểm tra đúng mục tiêu thay đổi. Build/test native qua `tooling/native/build.ps1`; ưu tiên chỉ định `-Test -TestTarget <target_name> -TestRegex <regex>` thay vì build lại toàn bộ test suite. App chuẩn là `build/win-dev/apps/desktop/pikdraw.exe`.
 - Với thay đổi hành vi, ưu tiên mở rộng test hiện có của module thay vì tạo file test `.cpp` rời rạc mới. Sau khi kiểm tra, xóa ngay test source dùng một lần, ảnh chụp `.bmp`/`.png` tạm, fixture/output/log tạm. Xem docs/quality/feature-acceptance.md.
-- **Điều kiện ghi log & cập nhật trạng thái (Cấm ghi lịch sử tràn lan)**:
-  - `summary` của task/handoff tối đa 320 ký tự; mỗi mục `evidence`/`next_steps` tối đa 240 ký tự và không quá 6 mục.
+- **Báo cáo và cập nhật trạng thái**:
+  - Báo cáo kết quả trực tiếp, súc tích cho người dùng kèm các lệnh kiểm tra và bằng chứng thực tế. Không tạo phiếu handoff hay tài liệu snapshot trung gian.
   - `docs/project-state.json` chỉ lưu trạng thái snapshot hiện hành (tối đa 8.000 byte); **tuyệt đối không nối đuôi (append) nhật ký lịch sử từng ngày hay bảng số liệu dài** vào `project-state.json`.
 - Báo đúng lệnh, kết quả, giới hạn và paths đã đổi. Không suy ra UX, performance, fidelity hoặc containment từ harness pass.
 - Tài liệu hướng người dùng viết bằng tiếng Việt; hợp đồng kỹ thuật ngắn gọn có thể dùng tiếng Anh.

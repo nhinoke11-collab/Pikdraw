@@ -21,8 +21,8 @@
 namespace pikdraw::desktop {
 namespace {
 
-constexpr uint64_t kMaxImportResponseBytes = 24ull * 1024 * 1024;
-constexpr uint64_t kMaxImportCanonicalBytes = 20ull * 1024 * 1024;
+constexpr uint64_t kMaxImportResponseBytes = 40ull * 1024 * 1024;
+constexpr uint64_t kMaxImportCanonicalBytes = 36ull * 1024 * 1024;
 constexpr uint64_t kMaxImportRecords = 40002;
 constexpr uint32_t kMaxImportChunks = 64;
 constexpr uint32_t kMaxImportFrames = 65;
@@ -257,7 +257,7 @@ bool DecodeCanonicalProposal(std::span<const uint8_t> bytes,
     for (const auto& value : records) {
         if (const auto* image = std::get_if<ImportRasterImageRecord>(&value)) {
             if (image->frame_count != 1 || image->frame_index != 0 ||
-                image->decoded_pixel_bytes == 0 || image->decoded_pixel_bytes > 16u * 1024u * 1024u)
+                image->decoded_pixel_bytes == 0 || image->decoded_pixel_bytes > 32u * 1024u * 1024u)
                 return false;
             RasterAssembly assembly;
             assembly.pixels.resize(image->decoded_pixel_bytes);
@@ -525,7 +525,7 @@ ImportWorkerResult run_import_worker_job(
                 else if (signature.format == DetectedImportFormat::Cdr)
                     result.error_message = "This CorelDRAW file is malformed, password-protected, or does not contain a supported preview.";
                 else if (signature.format == DetectedImportFormat::Ai || signature.format == DetectedImportFormat::Pdf)
-                    result.error_message = "This PDF/AI file is malformed, password-protected, or does not contain a supported preview.";
+                    result.error_message = "This PDF/AI file has no usable embedded thumbnail, is protected or is malformed. Re-save with an embedded preview, or export PNG/SVG from the source application.";
                 else
                     result.error_message = "This file is malformed or uses entities outside the supported 2D DXF profile; source units are required.";
             } else {

@@ -74,7 +74,7 @@ LRESULT CALLBACK static_label_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         HWND parent = GetParent(hwnd);
         if (parent) {
             ReleaseCapture();
-            SendMessageW(parent, WM_SYSCOMMAND, SC_MOVE + 2, 0);
+            SendMessageW(parent, WM_NCLBUTTONDOWN, HTCAPTION, lp);
             return 0;
         }
     }
@@ -259,53 +259,6 @@ void draw_picker(HWND dialog, EditorState &state, HDC dc) {
         state.cached_plane_w = plane_width;
         state.cached_plane_h = plane_height;
     }
-    // Clear outer margins around picker plane and hue bar to erase previous cursor bounds
-    RECT plane_clear{picker_plane.left - 6, picker_plane.top - 6,
-                     picker_plane.right + 6, picker_plane.bottom + 6};
-    RECT strip_top{plane_clear.left, plane_clear.top, plane_clear.right, picker_plane.top};
-    FillRect(dc, &strip_top, state.background_brush);
-    RECT strip_bottom{plane_clear.left, picker_plane.bottom + 1, plane_clear.right, plane_clear.bottom};
-    FillRect(dc, &strip_bottom, state.background_brush);
-    RECT strip_left{plane_clear.left, picker_plane.top, picker_plane.left, picker_plane.bottom + 1};
-    FillRect(dc, &strip_left, state.background_brush);
-    RECT strip_right{picker_plane.right + 1, picker_plane.top, plane_clear.right, picker_plane.bottom + 1};
-    FillRect(dc, &strip_right, state.background_brush);
-
-    draw_dib(dc, picker_plane, plane_width, plane_height, state.cached_plane);
-
-    HPEN border_pen = CreatePen(PS_SOLID, 1, state.border);
-    auto old_pen = SelectObject(dc, border_pen);
-    auto old_brush = SelectObject(dc, GetStockObject(HOLLOW_BRUSH));
-    Rectangle(dc, picker_plane.left - 1, picker_plane.top - 1, picker_plane.right + 1, picker_plane.bottom + 1);
-
-    const auto current_rgb = hsv_to_rgb(state.current_hue, state.current_sat, state.current_val);
-    const auto hsl = to_hsl(current_rgb, state.current_hue);
-    const double marker_vertical = is_hsl(state.viewer) ? hsl.l : state.current_val;
-    const double marker_sat = is_hsl(state.viewer) ? hsl.s : state.current_sat;
-    const int marker_x = picker_plane.left + static_cast<int>(std::lround(marker_sat * (plane_width - 1)));
-    const int marker_y = picker_plane.top + static_cast<int>(std::lround((1.0 - marker_vertical) * (plane_height - 1)));
-
-    // Corel-style square marker with double border
-    HPEN white = CreatePen(PS_SOLID, 2, RGB(255, 255, 255));
-    HPEN dark = CreatePen(PS_SOLID, 1, RGB(20, 24, 30));
-    SelectObject(dc, white);
-    Rectangle(dc, marker_x - 4, marker_y - 4, marker_x + 5, marker_y + 5);
-    SelectObject(dc, dark);
-    Rectangle(dc, marker_x - 3, marker_y - 3, marker_x + 4, marker_y + 4);
-    DeleteObject(white);
-    DeleteObject(dark);
-
-    // Hue slider strip: clear margin around hue bar
-    RECT hue_clear{picker_hue.left - 6, picker_hue.top - 4,
-                   picker_hue.right + 6, picker_hue.bottom + 6};
-    RECT hstrip_top{hue_clear.left, hue_clear.top, hue_clear.right, picker_hue.top};
-    FillRect(dc, &hstrip_top, state.background_brush);
-    RECT hstrip_bottom{hue_clear.left, picker_hue.bottom + 1, hue_clear.right, hue_clear.bottom};
-    FillRect(dc, &hstrip_bottom, state.background_brush);
-    RECT hstrip_left{hue_clear.left, picker_hue.top, picker_hue.left, picker_hue.bottom + 1};
-    FillRect(dc, &hstrip_left, state.background_brush);
-    RECT hstrip_right{picker_hue.right + 1, picker_hue.top, hue_clear.right, picker_hue.bottom + 1};
-    FillRect(dc, &hstrip_right, state.background_brush);
 
     const int hue_width = picker_hue.right - picker_hue.left;
     if (state.cached_hue_pixels.empty() || state.cached_hue_w != hue_width) {
@@ -316,20 +269,74 @@ void draw_picker(HWND dialog, EditorState &state, HDC dc) {
         }
         state.cached_hue_w = hue_width;
     }
-    draw_dib(dc, picker_hue, hue_width, 1, state.cached_hue_pixels);
-    Rectangle(dc, picker_hue.left - 1, picker_hue.top - 1, picker_hue.right + 1, picker_hue.bottom + 1);
+
+    // Bounding box enclosing both picker plane, hue bar, and clear margins
+    const int bbox_left = picker_plane.left - 6;
+    const int bbox_top = picker_plane.top - 6;
+    const int bbox_right = picker_plane.right + 6;
+    const int bbox_bottom = picker_hue.bottom + 6;
+    const int bbox_w = bbox_right - bbox_left;
+    const int bbox_h = bbox_bottom - bbox_top;
+
+    HDC mem_dc = CreateCompatibleDC(dc);
+    HBITMAP mem_bmp = CreateCompatibleBitmap(dc, bbox_w, bbox_h);
+    HGDIOBJ old_bmp = SelectObject(mem_dc, mem_bmp);
+
+    RECT local_fill{0, 0, bbox_w, bbox_h};
+    FillRect(mem_dc, &local_fill, state.background_brush);
+
+    const int ox = -bbox_left;
+    const int oy = -bbox_top;
+
+    RECT local_plane{picker_plane.left + ox, picker_plane.top + oy,
+                     picker_plane.right + ox, picker_plane.bottom + oy};
+    draw_dib(mem_dc, local_plane, plane_width, plane_height, state.cached_plane);
+
+    HPEN border_pen = CreatePen(PS_SOLID, 1, state.border);
+    auto old_pen = SelectObject(mem_dc, border_pen);
+    auto old_brush = SelectObject(mem_dc, GetStockObject(HOLLOW_BRUSH));
+    Rectangle(mem_dc, local_plane.left - 1, local_plane.top - 1, local_plane.right + 1, local_plane.bottom + 1);
+
+    const auto current_rgb = hsv_to_rgb(state.current_hue, state.current_sat, state.current_val);
+    const auto hsl = to_hsl(current_rgb, state.current_hue);
+    const double marker_vertical = is_hsl(state.viewer) ? hsl.l : state.current_val;
+    const double marker_sat = is_hsl(state.viewer) ? hsl.s : state.current_sat;
+    const int marker_x = local_plane.left + static_cast<int>(std::lround(marker_sat * (plane_width - 1)));
+    const int marker_y = local_plane.top + static_cast<int>(std::lround((1.0 - marker_vertical) * (plane_height - 1)));
+
+    // Corel-style square marker with double border
+    HPEN white = CreatePen(PS_SOLID, 2, RGB(255, 255, 255));
+    HPEN dark = CreatePen(PS_SOLID, 1, RGB(20, 24, 30));
+    SelectObject(mem_dc, white);
+    Rectangle(mem_dc, marker_x - 4, marker_y - 4, marker_x + 5, marker_y + 5);
+    SelectObject(mem_dc, dark);
+    Rectangle(mem_dc, marker_x - 3, marker_y - 3, marker_x + 4, marker_y + 4);
+    DeleteObject(white);
+    DeleteObject(dark);
+
+    RECT local_hue{picker_hue.left + ox, picker_hue.top + oy,
+                   picker_hue.right + ox, picker_hue.bottom + oy};
+    draw_dib(mem_dc, local_hue, hue_width, 1, state.cached_hue_pixels);
+    Rectangle(mem_dc, local_hue.left - 1, local_hue.top - 1, local_hue.right + 1, local_hue.bottom + 1);
 
     // Corel-style slider box cursor on hue bar
-    const int hue_x = picker_hue.left + static_cast<int>(std::lround(hue / 360.0 * (hue_width - 1)));
-    HPEN hue_dark = CreatePen(PS_SOLID, 2, RGB(20, 24, 30)), old_hp = static_cast<HPEN>(SelectObject(dc, hue_dark));
-    Rectangle(dc, hue_x - 3, picker_hue.top - 2, hue_x + 4, picker_hue.bottom + 3);
+    const int hue_x = local_hue.left + static_cast<int>(std::lround(hue / 360.0 * (hue_width - 1)));
+    HPEN hue_dark = CreatePen(PS_SOLID, 2, RGB(20, 24, 30)), old_hp = static_cast<HPEN>(SelectObject(mem_dc, hue_dark));
+    Rectangle(mem_dc, hue_x - 3, local_hue.top - 2, hue_x + 4, local_hue.bottom + 3);
     HPEN hue_white = CreatePen(PS_SOLID, 1, RGB(255, 255, 255));
-    SelectObject(dc, hue_white);
-    Rectangle(dc, hue_x - 2, picker_hue.top - 1, hue_x + 3, picker_hue.bottom + 2);
-    SelectObject(dc, old_hp); DeleteObject(hue_dark); DeleteObject(hue_white);
+    SelectObject(mem_dc, hue_white);
+    Rectangle(mem_dc, hue_x - 2, local_hue.top - 1, hue_x + 3, local_hue.bottom + 2);
+    SelectObject(mem_dc, old_hp); DeleteObject(hue_dark); DeleteObject(hue_white);
 
-    SelectObject(dc, old_pen); SelectObject(dc, old_brush);
+    SelectObject(mem_dc, old_pen); SelectObject(mem_dc, old_brush);
     DeleteObject(border_pen);
+
+    // Blit whole picker area in one atomic shot to window DC
+    BitBlt(dc, bbox_left, bbox_top, bbox_w, bbox_h, mem_dc, 0, 0, SRCCOPY);
+
+    SelectObject(mem_dc, old_bmp);
+    DeleteObject(mem_bmp);
+    DeleteDC(mem_dc);
 }
 
 void update_picker_from_mouse(HWND dialog, EditorState &state, int x, int y) {
@@ -420,6 +427,26 @@ void initialize_editor(HWND dialog, EditorState &state) {
         SetWindowPos(dialog, nullptr, (work.left + work.right - dialog_width) / 2,
                      (work.top + work.bottom - dialog_height) / 2, dialog_width, dialog_height, SWP_NOZORDER);
     }
+
+    // Configure DWM attributes for crisp modern borders
+    typedef HRESULT (WINAPI *DwmSetWindowAttributeFn)(HWND, DWORD, LPCVOID, DWORD);
+    HMODULE dwm = GetModuleHandleW(L"dwmapi.dll");
+    if (!dwm) dwm = LoadLibraryW(L"dwmapi.dll");
+    if (dwm) {
+        auto set_attr = reinterpret_cast<DwmSetWindowAttributeFn>(
+            GetProcAddress(dwm, "DwmSetWindowAttribute"));
+        if (set_attr) {
+            // Windows 11: DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_DONOTROUND = 1
+            DWORD corner = 1;
+            set_attr(dialog, 33, &corner, sizeof(corner));
+        }
+    }
+    const ULONG_PTR class_style = GetClassLongPtrW(dialog, GCL_STYLE);
+    if (class_style & CS_DROPSHADOW) {
+        SetClassLongPtrW(dialog, GCL_STYLE, class_style & ~CS_DROPSHADOW);
+    }
+    SetWindowPos(dialog, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
 
     state.background = state.dark ? RGB(25, 30, 38) : RGB(249, 250, 252);
     state.text = state.dark ? RGB(232, 237, 245) : RGB(29, 37, 48);
@@ -671,9 +698,6 @@ INT_PTR CALLBACK editor_proc(HWND dialog, UINT message, WPARAM wparam, LPARAM lp
     }
     if (!state) return FALSE;
     if (message == WM_ERASEBKGND) {
-        RECT client{};
-        GetClientRect(dialog, &client);
-        FillRect(reinterpret_cast<HDC>(wparam), &client, state->background_brush);
         return TRUE;
     }
     if (message == WM_CTLCOLORDLG) return reinterpret_cast<INT_PTR>(state->background_brush);
@@ -744,23 +768,6 @@ INT_PTR CALLBACK editor_proc(HWND dialog, UINT message, WPARAM wparam, LPARAM lp
         }
         return FALSE;
     }
-    if (message == WM_MOVING) {
-        auto *rc = reinterpret_cast<RECT *>(lparam);
-        if (rc) {
-            HMONITOR hmon = MonitorFromRect(rc, MONITOR_DEFAULTTONEAREST);
-            MONITORINFO mi{};
-            mi.cbSize = sizeof(mi);
-            if (GetMonitorInfoW(hmon, &mi)) {
-                const int w = rc->right - rc->left;
-                const int h = rc->bottom - rc->top;
-                if (rc->left < mi.rcWork.left) { rc->left = mi.rcWork.left; rc->right = rc->left + w; }
-                if (rc->top < mi.rcWork.top) { rc->top = mi.rcWork.top; rc->bottom = rc->top + h; }
-                if (rc->right > mi.rcWork.right) { rc->right = mi.rcWork.right; rc->left = rc->right - w; }
-                if (rc->bottom > mi.rcWork.bottom) { rc->bottom = mi.rcWork.bottom; rc->top = rc->bottom - h; }
-            }
-        }
-        return FALSE;
-    }
     if (message == WM_LBUTTONDOWN) {
         const int x = GET_X_LPARAM(lparam), y = GET_Y_LPARAM(lparam);
         if (x >= picker_plane.left && x <= picker_plane.right &&
@@ -779,7 +786,7 @@ INT_PTR CALLBACK editor_proc(HWND dialog, UINT message, WPARAM wparam, LPARAM lp
         }
         // Clicking on header, background or empty space initiates moving the dialog window
         ReleaseCapture();
-        SendMessageW(dialog, WM_SYSCOMMAND, SC_MOVE + 2, 0);
+        SendMessageW(dialog, WM_NCLBUTTONDOWN, HTCAPTION, lparam);
         return TRUE;
     }
     if (message == WM_MOUSEMOVE && state->drag_target != DragTarget::None) {

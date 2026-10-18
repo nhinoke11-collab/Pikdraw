@@ -124,13 +124,15 @@ add_executable(pikdraw
 )
 
 if(WIN32 AND TARGET spike_worker)
-    add_dependencies(pikdraw spike_worker)
-    add_custom_command(TARGET pikdraw POST_BUILD
+    # Refresh the package even when only the worker changed and pikdraw does not relink.
+    add_custom_target(pikdraw_stage_worker
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:pikdraw>/workers"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:spike_worker>"
                 "$<TARGET_FILE_DIR:pikdraw>/workers/spike_worker.exe"
+        DEPENDS spike_worker
         VERBATIM
     )
+    add_dependencies(pikdraw pikdraw_stage_worker)
 endif()
 
 target_link_libraries(pikdraw PRIVATE

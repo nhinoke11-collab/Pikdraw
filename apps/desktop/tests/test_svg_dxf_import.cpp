@@ -1,7 +1,10 @@
 #include "pikdraw/desktop/workflows/document_workflow.hpp"
 #include "pikdraw/desktop/runtime/composition_root.hpp"
+#include "pikdraw/interop/adapters/raster_worker_adapter.hpp"
 
 #include <cassert>
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -12,6 +15,15 @@ using namespace pikdraw;
 using namespace pikdraw::desktop;
 
 namespace {
+std::filesystem::path local_corpus() {
+    auto current = std::filesystem::current_path();
+    for (int depth = 0; depth < 6; ++depth) {
+        if (std::filesystem::is_directory(current / "cdr")) return current / "cdr";
+        if (current == current.parent_path()) break;
+        current = current.parent_path();
+    }
+    return {};
+}
 constexpr char kSvgFixture[] = R"SVG(<svg xmlns="http://www.w3.org/2000/svg" width="30mm" height="20mm" viewBox="0 0 30 20">
   <g id="art-layer"><rect id="panel" x="2" y="3" width="12" height="8" fill="#2575fc"/></g>
 </svg>)SVG";
@@ -348,11 +360,12 @@ void test_png_raster_import_retains_source_and_is_undoable() {
 }
 
 void test_cdr_fast_preview_import() {
+    if (local_corpus().empty()) return;
     const std::vector<std::filesystem::path> paths = {
-        std::filesystem::current_path() / "cdr" / "KC12.cdr",
-        std::filesystem::current_path() / "cdr" / "s11.cdr",
-        std::filesystem::current_path() / "cdr" / "[ PikDecor.vn ] 260312_283.cdr",
-        std::filesystem::current_path() / "cdr" / (const char8_t*)u8"Bóc tách sân khấu Minh Châu Event (1).cdr"
+        local_corpus() / "KC12.cdr",
+        local_corpus() / "s11.cdr",
+        local_corpus() / "[ PikDecor.vn ] 260312_283.cdr",
+        local_corpus() / (const char8_t*)u8"Bóc tách sân khấu Minh Châu Event (1).cdr"
     };
     for (const auto& p : paths) {
         if (!std::filesystem::exists(p)) continue;
@@ -371,14 +384,19 @@ void test_cdr_fast_preview_import() {
         assert(imported.success);
         assert(imported.proposal.format_name == "CorelDRAW");
         assert(imported.proposal.profile_id == "cdr-preview-v1");
+        assert(imported.proposal.objects.size() == 1);
+        const auto& image = std::get<document::ImageObject>(imported.proposal.objects.front());
+        assert(std::abs(image.bounds_rect.width - imported.proposal.source_page_width_mm) < 0.01);
+        assert(std::abs(image.bounds_rect.height - imported.proposal.source_page_height_mm) < 0.01);
+        assert(workflow.commit_import_proposal(metadata, imported.proposal) == document::ProposalStatus::Accepted);
+        assert(root.document().undo() && root.document().current_snapshot()->object_count() == 0);
     }
 }
 
 void test_pdf_ai_preview_import() {
+    if (local_corpus().empty()) return;
     const std::vector<std::filesystem::path> paths = {
-        std::filesystem::current_path() / "cdr" / "11695530.ai",
-        std::filesystem::current_path() / "cdr" / "job  HVAM.pdf",
-        std::filesystem::current_path() / "cdr" / "[ PikDecor.vn ] 260312_283.pdf"
+        local_corpus() / "11695530.ai"
     };
     for (const auto& p : paths) {
         if (!std::filesystem::exists(p)) continue;
@@ -399,8 +417,47 @@ void test_pdf_ai_preview_import() {
         assert(imported.proposal.profile_id == "pdf-ai-preview-v1");
         assert(imported.proposal.source_page_width_mm > 0.0);
         assert(imported.proposal.source_page_height_mm > 0.0);
+        assert(imported.proposal.objects.size() == 1);
+        const auto& image = std::get<document::ImageObject>(imported.proposal.objects.front());
+        assert(image.width_px == 256 && image.height_px == 180);
+        assert(image.source.media_type == "image/jpeg");
+        assert(std::any_of(image.pixels_rgba.begin(), image.pixels_rgba.end(),
+            [](uint32_t pixel) { return ((pixel >> 24) & 255) < 128; }));
+        assert(std::abs(image.bounds_rect.width - imported.proposal.source_page_width_mm) < 0.01);
+        assert(workflow.commit_import_proposal(metadata, imported.proposal) == document::ProposalStatus::Accepted);
+        assert(root.document().undo() && root.document().current_snapshot()->object_count() == 0);
     }
 }
+void test_large_local_jpeg_import() {
+    if (local_corpus().empty()) return;
+    size_t checked = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(local_corpus())) {
+        if (entry.path().extension() != ".jpg") continue;
+        CompositionRoot root;
+        root.initialize();
+        DocumentWorkflow workflow(root);
+        const auto metadata = workflow.begin_import_job(1);
+        auto imported = run_import_worker_job(entry.path().wstring(), ImportFormat::Svg,
+            metadata, std::stop_token{});
+        if (!imported.success) {
+            std::cerr << "JPEG corpus import failed: " << imported.error_message << '\n';
+            std::ifstream input(entry.path(), std::ios::binary);
+            const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(input)), {});
+            std::vector<interop::CanonicalImportRecord> records;
+            std::string diagnostic;
+            const bool decoded = interop::BuildRasterImportRecords(bytes, records, diagnostic);
+            std::cerr << "Host adapter result: " << decoded << ": " << diagnostic << '\n';
+        }
+        assert(imported.success);
+        const auto& image = std::get<document::ImageObject>(imported.proposal.objects.front());
+        assert(!image.source.original_bytes.empty());
+        if (image.pixels_rgba.size() > 4u * 1024u * 1024u) ++checked;
+        assert(workflow.commit_import_proposal(metadata, std::move(imported.proposal)) == document::ProposalStatus::Accepted);
+        assert(root.document().undo());
+    }
+    assert(checked >= 2);
+}
+
 }
 
 int main() {
@@ -409,6 +466,7 @@ int main() {
     test_png_raster_import_retains_source_and_is_undoable();
     test_cdr_fast_preview_import();
     test_pdf_ai_preview_import();
+    test_large_local_jpeg_import();
     std::cout << "Desktop isolated SVG/DXF/raster/CDR/PDF/AI import workflow tests passed\n";
     return 0;
 }

@@ -8,7 +8,7 @@
 
 namespace pikdraw::interop {
 namespace {
-constexpr uint32_t kMaxRasterPixelBytes = 16u * 1024u * 1024u;
+constexpr uint32_t kMaxRasterPixelBytes = 32u * 1024u * 1024u;
 constexpr uint32_t kMaxRasterChunkBytes = 256u * 1024u;
 constexpr uint32_t kMaxRasterIccBytes = 256u * 1024u;
 

@@ -118,7 +118,7 @@ bool CdrExtractor::is_cdr_zip_container(std::span<const uint8_t> bytes) noexcept
 
 CdrExtractionResult CdrExtractor::extract_preview(std::span<const uint8_t> cdr_bytes) {
     CdrExtractionResult result;
-    if (!is_cdr_zip_container(cdr_bytes)) {
+    if (cdr_bytes.size() < 22 || !is_cdr_zip_container(cdr_bytes)) {
         result.error_message = "The file is not a valid CorelDRAW ZIP container (PK header missing).";
         return result;
     }
@@ -143,7 +143,7 @@ CdrExtractionResult CdrExtractor::extract_preview(std::span<const uint8_t> cdr_b
 
     const uint32_t cd_size = read_u32_le(cdr_bytes.data() + eocd_pos + 12);
     const uint32_t cd_offset = read_u32_le(cdr_bytes.data() + eocd_pos + 16);
-    if (cd_offset + cd_size > cdr_bytes.size()) {
+    if (static_cast<uint64_t>(cd_offset) + cd_size > cdr_bytes.size()) {
         result.error_message = "Corrupt CorelDRAW container: Central Directory exceeds file bounds.";
         return result;
     }
@@ -152,7 +152,7 @@ CdrExtractionResult CdrExtractor::extract_preview(std::span<const uint8_t> cdr_b
     std::vector<uint8_t> fallback_thumbnail_png;
 
     size_t pos = cd_offset;
-    const size_t cd_end = cd_offset + cd_size;
+    const size_t cd_end = static_cast<size_t>(cd_offset) + cd_size;
     while (pos + 46 <= cd_end) {
         if (cdr_bytes[pos] != 0x50 || cdr_bytes[pos + 1] != 0x4B ||
             cdr_bytes[pos + 2] != 0x01 || cdr_bytes[pos + 3] != 0x02) {
@@ -178,7 +178,7 @@ CdrExtractionResult CdrExtractor::extract_preview(std::span<const uint8_t> cdr_b
         if (!is_thumb && !is_page1 && !is_meta) continue;
 
         // Read from local file header
-        if (lhdr_off + 30 > cdr_bytes.size()) continue;
+        if (static_cast<uint64_t>(lhdr_off) + 30 > cdr_bytes.size()) continue;
         if (cdr_bytes[lhdr_off] != 0x50 || cdr_bytes[lhdr_off + 1] != 0x4B ||
             cdr_bytes[lhdr_off + 2] != 0x03 || cdr_bytes[lhdr_off + 3] != 0x04) {
             continue;
@@ -186,7 +186,7 @@ CdrExtractionResult CdrExtractor::extract_preview(std::span<const uint8_t> cdr_b
 
         const uint16_t local_nlen = read_u16_le(cdr_bytes.data() + lhdr_off + 26);
         const uint16_t local_elen = read_u16_le(cdr_bytes.data() + lhdr_off + 28);
-        const size_t data_start = lhdr_off + 30 + local_nlen + local_elen;
+        const size_t data_start = static_cast<size_t>(lhdr_off) + 30 + local_nlen + local_elen;
         if (data_start + csize > cdr_bytes.size()) continue;
 
         if (is_thumb) {

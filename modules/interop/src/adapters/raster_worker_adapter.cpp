@@ -9,7 +9,7 @@
 namespace pikdraw::interop {
 namespace {
 
-constexpr uint32_t kMaxRasterPixelBytes = 16u * 1024u * 1024u;
+constexpr uint32_t kMaxRasterPixelBytes = 32u * 1024u * 1024u;
 constexpr uint32_t kRasterChunkBytes = 256u * 1024u;
 
 const char* media_type_for(RasterImageFormat format) noexcept {
@@ -32,7 +32,7 @@ bool BuildRasterImportRecords(std::span<const uint8_t> source,
     try {
         RasterImageDecodeOptions options;
         options.max_source_bytes = 64ULL * 1024ULL * 1024ULL;
-        options.max_decoded_pixels = 4ULL * 1024ULL * 1024ULL;
+        options.max_decoded_pixels = 8ULL * 1024ULL * 1024ULL;
         options.max_decoded_bytes = kMaxRasterPixelBytes;
         options.max_icc_profile_bytes = 256ULL * 1024ULL;
         options.max_frames = 1;
@@ -90,7 +90,7 @@ bool BuildRasterImportRecords(std::span<const uint8_t> source,
             auto encoded = SerializeImportRecord(value);
             if (!encoded) return false;
             records.push_back(std::move(*encoded));
-            return records.size() <= 80;
+            return records.size() <= 144;
         };
         if (!add_record(ImportPageRecord{page_width_mm, page_height_mm}))
             throw std::runtime_error("Raster page dimensions exceed the import profile.");

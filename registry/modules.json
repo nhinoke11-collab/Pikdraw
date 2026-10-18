@@ -257,19 +257,18 @@
       "purpose": "Desktop shell, dock layout, module workspaces, action routing and accessibility."
     },
     {
-      "id": "harness",
+      "id": "tooling",
       "path": "tooling",
       "status": "implemented",
       "dependencies": [],
       "context": [
-        "tooling/README.md",
-        "tooling/AGENTS.md"
+        "tooling/README.md"
       ],
       "owned_paths": [
         "tooling",
         "tests/harness"
       ],
-      "purpose": "Single-source Codex task board, lease coordination, bounded context and source-snapshot handoffs."
+      "purpose": "Native build, check runners and environment validation."
     },
     {
       "id": "contracts",

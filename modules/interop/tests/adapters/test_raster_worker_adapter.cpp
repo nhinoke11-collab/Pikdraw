@@ -1,6 +1,7 @@
 #include "pikdraw/interop/adapters/raster_worker_adapter.hpp"
 
 #include <cassert>
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -63,10 +64,57 @@ std::vector<uint8_t> png_fixture() {
     return png;
 }
 
+void test_raster_above_old_limit_and_over_budget() {
+    std::vector<uint8_t> png{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+    std::vector<uint8_t> header;
+    append_be32(header, 2049);
+    append_be32(header, 2048);
+    header.insert(header.end(), {8, 6, 0, 0, 0});
+    append_chunk(png, "IHDR", header);
+    std::vector<uint8_t> raw((1 + 2049u * 4) * 2048, 0);
+    std::vector<uint8_t> zlib{0x78, 0x01};
+    for (size_t offset = 0; offset < raw.size();) {
+        const auto count = static_cast<uint16_t>((std::min)(size_t{32768}, raw.size() - offset));
+        zlib.push_back(offset + count == raw.size() ? 1 : 0);
+        zlib.push_back(static_cast<uint8_t>(count));
+        zlib.push_back(static_cast<uint8_t>(count >> 8));
+        zlib.push_back(static_cast<uint8_t>(~count));
+        zlib.push_back(static_cast<uint8_t>((~count) >> 8));
+        zlib.insert(zlib.end(), raw.begin() + offset, raw.begin() + offset + count);
+        offset += count;
+    }
+    // All scanline bytes are zero, so Adler-32 is (length % 65521) << 16 | 1.
+    append_be32(zlib, (static_cast<uint32_t>(raw.size() % 65521) << 16) | 1);
+    append_chunk(png, "IDAT", zlib);
+    append_chunk(png, "IEND", {});
+    std::vector<CanonicalImportRecord> records;
+    std::string diagnostic;
+    assert(BuildRasterImportRecords(png, records, diagnostic));
+    const auto image_record = DeserializeImportRecord(records[2].type, records[2].payload);
+    assert(image_record);
+    const auto& image = std::get<ImportRasterImageRecord>(*image_record);
+    assert(image.width_px == 2049 && image.height_px == 2048);
+    assert(image.decoded_pixel_bytes == 2049u * 2048u * 4);
+    uint32_t offset = 0;
+    for (const auto& record : records) {
+        if (record.type != ImportRecordType::RasterImageChunk) continue;
+        const auto value = DeserializeImportRecord(record.type, record.payload);
+        assert(value);
+        const auto& chunk = std::get<ImportRasterImageChunkRecord>(*value);
+        assert(chunk.byte_offset == offset);
+        offset += static_cast<uint32_t>(chunk.bytes.size());
+    }
+    assert(offset == image.decoded_pixel_bytes);
+    png[16] = 0; png[17] = 0; png[18] = 0x20; png[19] = 1; // 8193 x 2048 exceeds 8 Mi pixels.
+    assert(!BuildRasterImportRecords(png, records, diagnostic));
+    assert(records.empty() && !diagnostic.empty());
+}
+
 } // namespace
 
 int main() {
 #ifdef _WIN32
+    test_raster_above_old_limit_and_over_budget();
     std::vector<CanonicalImportRecord> records;
     std::string diagnostic;
     const auto source = png_fixture();

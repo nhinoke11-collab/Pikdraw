@@ -183,8 +183,8 @@ bool SendImportProposal(HANDLE output, const V2ImportBegin& request,
     V2ProposalChunk chunk;
     chunk.job = request.job;
     uint32_t next_record_ordinal = 0;
-    const size_t max_stream_bytes = format == "RASTER" ? 20 * 1024 * 1024
-                                                        : 16 * 1024 * 1024;
+    const size_t max_stream_bytes = (format == "RASTER" || format == "CorelDRAW" || format == "AI" || format == "PDF")
+        ? 36 * 1024 * 1024 : 16 * 1024 * 1024;
     constexpr size_t chunk_target_bytes = IPC_V2_MAX_FRAME_BYTES - 256;
     try {
         canonical_stream.reserve(1024 * 1024);
@@ -205,10 +205,15 @@ bool SendImportProposal(HANDLE output, const V2ImportBegin& request,
                 chunk.first_record_ordinal = next_record_ordinal;
                 chunk.canonical_record_bytes.reserve(256 * 1024);
             }
-            if (!AppendV2ProposalRecord(chunk.canonical_record_bytes, static_cast<uint16_t>(record.type), record.payload) ||
-                !AppendV2ProposalRecord(canonical_stream, static_cast<uint16_t>(record.type), record.payload)) {
+            const size_t record_start = chunk.canonical_record_bytes.size();
+            if (!AppendV2ProposalRecord(chunk.canonical_record_bytes, static_cast<uint16_t>(record.type), record.payload)) {
                 return SendError(output, request_sequence, 4, "import proposal record could not be framed");
             }
+            // The aggregate digest input spans multiple frames. The framing helper
+            // deliberately accepts only one frame and must not cap this stream.
+            canonical_stream.insert(canonical_stream.end(),
+                chunk.canonical_record_bytes.begin() + record_start,
+                chunk.canonical_record_bytes.end());
             ++chunk.record_count;
             ++next_record_ordinal;
         }
@@ -315,6 +320,18 @@ bool HandleImportBegin(
             if (!BuildRasterImportRecords(extracted.thumbnail_png, records, diagnostic)) {
                 return false;
             }
+            for (auto& record : records) {
+                if (record.type != ImportRecordType::RasterImage) continue;
+                auto value = DeserializeImportRecord(record.type, record.payload);
+                if (!value) return false;
+                auto& image = std::get<ImportRasterImageRecord>(*value);
+                image.dpi_x = image.width_px * 25.4 / extracted.page_width_mm;
+                image.dpi_y = image.height_px * 25.4 / extracted.page_height_mm;
+                image.dpi_from_source = false;
+                auto encoded = SerializeImportRecord(image);
+                if (!encoded) return false;
+                record = std::move(*encoded);
+            }
             if (extracted.page_width_mm > 0.0 && extracted.page_height_mm > 0.0 && !records.empty()) {
                 ImportPageRecord page_record{extracted.page_width_mm, extracted.page_height_mm};
                 auto encoded = SerializeImportRecord(page_record);
@@ -339,7 +356,7 @@ bool HandleImportBegin(
             return true;
         };
         return SendImportProposal(output, *request, source_bytes, header.sequence_id,
-            "CorelDRAW", 80, build_cdr);
+            "CorelDRAW", 144, build_cdr);
     }
     if (is_ai || is_pdf) {
         const auto build_pdf_ai = [](std::span<const uint8_t> source,
@@ -354,6 +371,18 @@ bool HandleImportBegin(
             }
             if (!BuildRasterImportRecords(extracted.thumbnail_png, records, diagnostic)) {
                 return false;
+            }
+            for (auto& record : records) {
+                if (record.type != ImportRecordType::RasterImage) continue;
+                auto value = DeserializeImportRecord(record.type, record.payload);
+                if (!value) return false;
+                auto& image = std::get<ImportRasterImageRecord>(*value);
+                image.dpi_x = image.width_px * 25.4 / extracted.page_width_mm;
+                image.dpi_y = image.height_px * 25.4 / extracted.page_height_mm;
+                image.dpi_from_source = false;
+                auto encoded = SerializeImportRecord(image);
+                if (!encoded) return false;
+                record = std::move(*encoded);
             }
             if (extracted.page_width_mm > 0.0 && extracted.page_height_mm > 0.0 && !records.empty()) {
                 ImportPageRecord page_record{extracted.page_width_mm, extracted.page_height_mm};
@@ -379,7 +408,7 @@ bool HandleImportBegin(
             return true;
         };
         return SendImportProposal(output, *request, source_bytes, header.sequence_id,
-            is_ai ? "AI" : "PDF", 80, build_pdf_ai);
+            is_ai ? "AI" : "PDF", 144, build_pdf_ai);
     }
     if (is_dxf) {
         return SendImportProposal(output, *request, source_bytes, header.sequence_id,
@@ -387,7 +416,7 @@ bool HandleImportBegin(
     }
     if (is_raster) {
         return SendImportProposal(output, *request, source_bytes, header.sequence_id,
-            "RASTER", 80, BuildRasterImportRecords);
+            "RASTER", 144, BuildRasterImportRecords);
     }
     return SendImportProposal(output, *request, source_bytes, header.sequence_id,
         "SVG", SvgImporter::kMaxObjects * 2 + 2, BuildSvgImportRecords);

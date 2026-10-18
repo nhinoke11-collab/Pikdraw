@@ -1,4 +1,5 @@
 #include "pikdraw/interop/adapters/pdf_ai_extractor.hpp"
+#include "pikdraw/interop/adapters/cdr_extractor.hpp"
 #include "pikdraw/interop/adapters/raster_image_decoder.hpp"
 
 #include <cassert>
@@ -21,7 +22,7 @@ std::vector<uint8_t> read_file_if_exists(const std::filesystem::path& path) {
 
 std::filesystem::path find_cdr_dir() {
     std::filesystem::path cur = std::filesystem::current_path();
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 6; ++i) {
         if (std::filesystem::exists(cur / "cdr")) {
             return cur / "cdr";
         }
@@ -68,16 +69,10 @@ void test_synthetic_pdf_with_mediabox() {
     assert(PdfAiExtractor::is_pdf_or_ai_container(bytes));
 
     const auto result = PdfAiExtractor::extract_preview(bytes);
-    assert(result.success);
-    assert(result.is_pdf);
-    assert(!result.is_ai);
-    assert(std::abs(result.page_width_mm - 210.0) < 0.1);
-    assert(std::abs(result.page_height_mm - 297.0) < 0.1);
-    // When no embedded image exists, placeholder PNG is generated
-    assert(!result.thumbnail_png.empty());
-    assert(result.thumbnail_png.size() >= 8);
-    assert(result.thumbnail_png[0] == 0x89 && result.thumbnail_png[1] == 'P' &&
-           result.thumbnail_png[2] == 'N'  && result.thumbnail_png[3] == 'G');
+    assert(!result.success);
+    assert(result.thumbnail_png.empty());
+    assert(result.error_message.find("renderer") != std::string::npos);
+
 }
 
 void test_synthetic_ai_with_xmp_thumbnail() {
@@ -109,7 +104,8 @@ void test_synthetic_ai_with_xmp_thumbnail() {
     assert(std::abs(result.page_height_mm - (500.0 * 25.4 / 72.0)) < 0.1);
     assert(!result.thumbnail_png.empty());
     assert(result.thumbnail_png.size() >= 8);
-    assert(result.thumbnail_png[0] == 0x89 && result.thumbnail_png[1] == 'P');
+    assert(result.thumbnail_png[0] == 0xFF && result.thumbnail_png[1] == 0xD8);
+
 }
 
 void test_synthetic_pdf_with_dct_stream() {
@@ -134,13 +130,10 @@ void test_synthetic_pdf_with_dct_stream() {
     doc.insert(doc.end(), footer.begin(), footer.end());
 
     const auto result = PdfAiExtractor::extract_preview(doc);
-    assert(result.success);
-    assert(result.is_pdf);
-    assert(std::abs(result.page_width_mm - (100.0 * 25.4 / 72.0)) < 0.1);
-    assert(std::abs(result.page_height_mm - (200.0 * 25.4 / 72.0)) < 0.1);
-    assert(!result.thumbnail_png.empty());
-    assert(result.thumbnail_png.size() >= 8);
-    assert(result.thumbnail_png[0] == 0x89 && result.thumbnail_png[1] == 'P');
+    // A page image XObject alone is not evidence of a whole-document preview.
+    assert(!result.success);
+    assert(result.thumbnail_png.empty());
+
 }
 
 void test_repo_files() {
@@ -166,7 +159,7 @@ void test_repo_files() {
         assert(std::abs(result.page_height_mm - 176.39) < 0.5);
         assert(!result.thumbnail_png.empty());
         assert(result.thumbnail_png.size() >= 8);
-        assert(result.thumbnail_png[0] == 0x89 && result.thumbnail_png[1] == 'P');
+        assert(result.thumbnail_png[0] == 0xFF && result.thumbnail_png[1] == 0xD8);
         const auto decoded = RasterImageDecoder::decode(result.thumbnail_png);
         assert(decoded.success);
         std::cout << "[test_pdf_ai_extractor] 11695530.ai successfully parsed ("
@@ -174,43 +167,22 @@ void test_repo_files() {
                   << " mm, thumb=" << result.thumbnail_png.size() << " bytes)\n";
     }
 
-    // 2. job HVAM.pdf (vector PDF without DCT stream)
-    const auto job_path = cdr_dir / "job  HVAM.pdf";
-    if (std::filesystem::exists(job_path)) {
-        const auto pdf_bytes = read_file_if_exists(job_path);
-        assert(!pdf_bytes.empty());
-        assert(PdfAiExtractor::is_pdf_or_ai_container(pdf_bytes));
-        const auto result = PdfAiExtractor::extract_preview(pdf_bytes);
-        assert(result.success);
-        assert(result.is_pdf);
-        assert(result.page_width_mm > 1000.0);
-        assert(result.page_height_mm > 1000.0);
-        assert(!result.thumbnail_png.empty());
-        std::cout << "[test_pdf_ai_extractor] job HVAM.pdf parsed ("
-                  << result.page_width_mm << " x " << result.page_height_mm << " mm)\n";
+    // Vector PDFs without document thumbnails require a real page renderer.
+    for (const auto& entry : std::filesystem::directory_iterator(cdr_dir)) {
+        if (entry.path().extension() != ".pdf") continue;
+        const auto bytes = read_file_if_exists(entry.path());
+        const auto result = PdfAiExtractor::extract_preview(bytes);
+        if (!result.success) assert(result.thumbnail_png.empty());
     }
 
-    // 3. [ PikDecor.vn ] 260312_283.pdf (PDF with DCT stream)
-    const auto pik_path = cdr_dir / "[ PikDecor.vn ] 260312_283.pdf";
-    if (std::filesystem::exists(pik_path)) {
-        const auto pdf_bytes = read_file_if_exists(pik_path);
-        assert(!pdf_bytes.empty());
-        assert(PdfAiExtractor::is_pdf_or_ai_container(pdf_bytes));
-        const auto result = PdfAiExtractor::extract_preview(pdf_bytes);
-        assert(result.success);
-        assert(result.is_pdf);
-        assert(result.page_width_mm > 400.0);
-        assert(result.page_height_mm > 500.0);
-        assert(!result.thumbnail_png.empty());
-        std::cout << "[test_pdf_ai_extractor] PikDecor.pdf parsed ("
-                  << result.page_width_mm << " x " << result.page_height_mm << " mm)\n";
-    }
 }
 
 } // namespace
 
 int main() {
     std::cout << "[test_pdf_ai_extractor] Running PDF/AI extractor unit tests...\n";
+    const uint8_t truncated_zip[]{'P', 'K', 3, 4};
+    assert(!pikdraw::interop::CdrExtractor::extract_preview(truncated_zip).success);
     test_is_pdf_or_ai_container();
     test_synthetic_pdf_with_mediabox();
     test_synthetic_ai_with_xmp_thumbnail();

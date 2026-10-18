@@ -54,23 +54,30 @@ void append_png_chunk(std::vector<uint8_t>& png, const char type[4],
     append_be32(png, crc32(std::span<const uint8_t>(png).subspan(crc_start)));
 }
 
-std::vector<uint8_t> make_png() {
+std::vector<uint8_t> make_png(uint32_t width = 2, uint32_t height = 1) {
     std::vector<uint8_t> png{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
     std::vector<uint8_t> header;
-    append_be32(header, 2);
-    append_be32(header, 1);
+    append_be32(header, width);
+    append_be32(header, height);
     header.insert(header.end(), {8, 6, 0, 0, 0});
     append_png_chunk(png, "IHDR", header);
 
-    const std::vector<uint8_t> scanline{0, 255, 0, 0, 255, 0, 255, 0, 128};
-    std::vector<uint8_t> zlib{0x78, 0x01, 0x01};
-    const auto length = static_cast<uint16_t>(scanline.size());
-    zlib.push_back(static_cast<uint8_t>(length));
-    zlib.push_back(static_cast<uint8_t>(length >> 8));
-    const auto inverse = static_cast<uint16_t>(~length);
-    zlib.push_back(static_cast<uint8_t>(inverse));
-    zlib.push_back(static_cast<uint8_t>(inverse >> 8));
-    zlib.insert(zlib.end(), scanline.begin(), scanline.end());
+    std::vector<uint8_t> scanline;
+    if (width == 2 && height == 1) scanline = {0, 255, 0, 0, 255, 0, 255, 0, 128};
+    else scanline.resize((1 + static_cast<size_t>(width) * 4) * height, 0);
+    std::vector<uint8_t> zlib{0x78, 0x01};
+    size_t offset = 0;
+    while (offset < scanline.size()) {
+        const auto length = static_cast<uint16_t>((std::min)(size_t{32768}, scanline.size() - offset));
+        zlib.push_back(offset + length == scanline.size() ? 1 : 0);
+        zlib.push_back(static_cast<uint8_t>(length));
+        zlib.push_back(static_cast<uint8_t>(length >> 8));
+        const auto inverse = static_cast<uint16_t>(~length);
+        zlib.push_back(static_cast<uint8_t>(inverse));
+        zlib.push_back(static_cast<uint8_t>(inverse >> 8));
+        zlib.insert(zlib.end(), scanline.begin() + offset, scanline.begin() + offset + length);
+        offset += length;
+    }
     uint32_t a = 1, b = 0;
     for (const auto byte : scanline) {
         a = (a + byte) % 65521u;
@@ -259,6 +266,26 @@ void test_png_worker_stream() {
             "raster conversion fidelity status is missing");
 }
 
+void test_raster_stream_exceeds_single_frame() {
+    TemporarySource file;
+    const auto bytes = make_png(600, 600);
+    Require(file.Write(bytes), "could not write multi-frame PNG source");
+    auto source = snapshot_for(file.path);
+    Require(source && source->IsValid(), "could not snapshot multi-frame PNG source");
+    const auto result = run_import(*source);
+    Require(result.complete && result.capture.ended && result.capture.records_valid,
+            "raster larger than a single IPC frame was rejected");
+    Require(result.capture.chunks > 1, "large raster did not span proposal frames");
+    uint32_t expected_offset = 0;
+    for (const auto& record : result.capture.records) {
+        if (const auto* pixels = std::get_if<ImportRasterImageChunkRecord>(&record)) {
+            Require(pixels->byte_offset == expected_offset, "large raster pixels have a gap");
+            expected_offset += static_cast<uint32_t>(pixels->bytes.size());
+        }
+    }
+    Require(expected_offset == 600u * 600u * 4u, "large raster pixels were truncated");
+}
+
 void test_malformed_png_rejected_without_partial_proposal() {
     TemporarySource file;
     const std::array<uint8_t, 8> bytes{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
@@ -276,6 +303,7 @@ void test_malformed_png_rejected_without_partial_proposal() {
 int main() {
     try {
         test_png_worker_stream();
+        test_raster_stream_exceeds_single_frame();
         test_malformed_png_rejected_without_partial_proposal();
         std::cout << "Raster isolated worker import tests passed\n";
         return 0;

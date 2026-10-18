@@ -512,9 +512,20 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
-        RECT rc;
-        GetClientRect(hwnd, &rc);
-        if (self) self->paint(hdc, self->width_, self->height_);
+        if (self) {
+            const bool modal_active = !IsWindowEnabled(hwnd);
+            if (modal_active && self->backbuffer_dc_ && self->backbuffer_bmp_) {
+                const int rx = ps.rcPaint.left;
+                const int ry = ps.rcPaint.top;
+                const int rw = ps.rcPaint.right - ps.rcPaint.left;
+                const int rh = ps.rcPaint.bottom - ps.rcPaint.top;
+                if (rw > 0 && rh > 0) {
+                    BitBlt(hdc, rx, ry, rw, rh, self->backbuffer_dc_, rx, ry, SRCCOPY);
+                }
+            } else {
+                self->paint(hdc, self->width_, self->height_);
+            }
+        }
         EndPaint(hwnd, &ps);
         return 0;
     }
