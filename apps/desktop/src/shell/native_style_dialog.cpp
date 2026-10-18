@@ -68,15 +68,34 @@ struct EditorState {
     HWND edit_width{};
 };
 
+LRESULT CALLBACK static_label_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_NCHITTEST) return HTTRANSPARENT;
+    if (msg == WM_LBUTTONDOWN) {
+        HWND parent = GetParent(hwnd);
+        if (parent) {
+            ReleaseCapture();
+            SendMessageW(parent, WM_SYSCOMMAND, SC_MOVE + 2, 0);
+            return 0;
+        }
+    }
+    WNDPROC old_proc = reinterpret_cast<WNDPROC>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    return old_proc ? CallWindowProcW(old_proc, hwnd, msg, wp, lp) : DefWindowProcW(hwnd, msg, wp, lp);
+}
+
 HWND control(HWND dialog, const wchar_t *type, const wchar_t *text, DWORD style,
              int x, int y, int width, int height, int id, HFONT font) {
     const bool is_edit = (std::wcscmp(type, L"EDIT") == 0);
-    const auto child = CreateWindowExW(0, type, text,
+    const bool is_static = (std::wcscmp(type, L"STATIC") == 0 && (style & SS_OWNERDRAW) == 0);
+    const auto child = CreateWindowExW(is_static ? WS_EX_TRANSPARENT : 0, type, text,
         WS_CHILD | WS_VISIBLE | (is_edit ? WS_BORDER : 0) | style,
         x, y, width, height, dialog,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), GetModuleHandleW(nullptr), nullptr);
     if (font) {
         SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+    }
+    if (is_static && child) {
+        auto old_proc = SetWindowLongPtrW(child, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(static_label_proc));
+        SetWindowLongPtrW(child, GWLP_USERDATA, old_proc);
     }
     return child;
 }
@@ -740,24 +759,28 @@ INT_PTR CALLBACK editor_proc(HWND dialog, UINT message, WPARAM wparam, LPARAM lp
                 if (rc->bottom > mi.rcWork.bottom) { rc->bottom = mi.rcWork.bottom; rc->top = rc->bottom - h; }
             }
         }
-        return TRUE;
+        return FALSE;
     }
     if (message == WM_LBUTTONDOWN) {
         const int x = GET_X_LPARAM(lparam), y = GET_Y_LPARAM(lparam);
-        if (x >= picker_plane.left - 4 && x <= picker_plane.right + 4 &&
-            y >= picker_plane.top - 4 && y <= picker_plane.bottom + 4) {
+        if (x >= picker_plane.left && x <= picker_plane.right &&
+            y >= picker_plane.top && y <= picker_plane.bottom) {
             state->drag_target = DragTarget::Plane;
             SetCapture(dialog);
             update_picker_from_mouse(dialog, *state, x, y);
             return TRUE;
         }
-        if (x >= picker_hue.left - 4 && x <= picker_hue.right + 4 &&
-            y >= picker_hue.top - 4 && y <= picker_hue.bottom + 4) {
+        if (x >= picker_hue.left && x <= picker_hue.right &&
+            y >= picker_hue.top && y <= picker_hue.bottom) {
             state->drag_target = DragTarget::Hue;
             SetCapture(dialog);
             update_picker_from_mouse(dialog, *state, x, y);
             return TRUE;
         }
+        // Clicking on header, background or empty space initiates moving the dialog window
+        ReleaseCapture();
+        SendMessageW(dialog, WM_SYSCOMMAND, SC_MOVE + 2, 0);
+        return TRUE;
     }
     if (message == WM_MOUSEMOVE && state->drag_target != DragTarget::None) {
         const int x = GET_X_LPARAM(lparam), y = GET_Y_LPARAM(lparam);
