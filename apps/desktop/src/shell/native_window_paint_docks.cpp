@@ -44,19 +44,27 @@ void NativeWindow::paint_left_toolbox(HDC mem_dc, int w, int h) {
         FillRect(mem_dc, &rc_tools, br_tools);
         DeleteObject(br_tools);
 
-        const int toolbox_tools[] = {0, quick_shapes_last_tool_, path_drawing_last_tool_, 3, 4, 5, 10};
-        const int group_for_row[] = {0, 1, 2, 0, 0, 0, 3};
-        for (int row = 0; row < 7; ++row) {
+        const int toolbox_tools[] = {0, quick_shapes_last_tool_, path_drawing_last_tool_, 3, 4, 5, -1, -2, 12, 13};
+        const int group_for_row[] = {0, 1, 2, 0, 0, 0, 0, 0, 0, 0};
+        for (int row = 0; row < 10; ++row) {
             const int tool = toolbox_tools[row];
             const int group = group_for_row[row];
             const int ty = content_top + 10 + row * 42;
             RECT rc_tb = { 6, ty, tool_w - 6, ty + 36 };
             const bool active = group == 1 ? (active_tool_ == 1 || active_tool_ == 2 || active_tool_ == 9)
                               : group == 2 ? ((active_tool_ >= 6 && active_tool_ <= 8) || active_tool_ == 11)
-                              : group == 3 ? (toolbox_open_group_ == 3)
+                              : row == 6 ? workflow().selected_effect_index(document::GaussianBlurEffect{1.0, 1.0}).has_value()
+                              : row == 7 ? workflow().selected_effect_index(document::DropShadowEffect{}).has_value()
+                              : row == 8 ? (active_tool_ == 12 || (contour_tool_ && contour_tool_->active()))
+                              : row == 9 ? (active_tool_ == 13 || (gradient_tool_ && gradient_tool_->active()))
                                            : active_tool_ == tool;
             const int btn_cx = (rc_tb.left + rc_tb.right) / 2;
             const int btn_cy = (rc_tb.top + rc_tb.bottom) / 2;
+            const int icon = row == 6 ? 11
+                           : row == 7 ? 12
+                           : row == 8 ? 14
+                           : row == 9 ? 13
+                           : (group == 2 && tool == 11 ? 15 : tool);
             if (active) {
                 HBRUSH br_t_act = CreateSolidBrush(col_active_tab);
                 HPEN pen_t_act = CreatePen(PS_SOLID, 1, col_teal);
@@ -67,7 +75,7 @@ void NativeWindow::paint_left_toolbox(HDC mem_dc, int w, int h) {
                 SelectObject(mem_dc, old_pen);
                 DeleteObject(pen_t_act);
                 DeleteObject(br_t_act);
-                draw_tool_icon(mem_dc, group == 2 && tool == 11 ? 15 : tool,
+                draw_tool_icon(mem_dc, icon,
                                btn_cx, btn_cy, col_teal);
             } else {
                 HBRUSH br_t_inact = CreateSolidBrush(col_header);
@@ -79,7 +87,7 @@ void NativeWindow::paint_left_toolbox(HDC mem_dc, int w, int h) {
                 SelectObject(mem_dc, old_pen);
                 DeleteObject(pen_t_inact);
                 DeleteObject(br_t_inact);
-                draw_tool_icon(mem_dc, group == 2 && tool == 11 ? 15 : tool,
+                draw_tool_icon(mem_dc, icon,
                                btn_cx, btn_cy, col_text_muted);
             }
             if (group != 0) {

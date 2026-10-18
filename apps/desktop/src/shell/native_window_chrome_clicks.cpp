@@ -312,8 +312,8 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
         return true;
     }
 
-    // 4. Grouped toolbox and its compact flyouts.
-    const bool on_toolbox = x >= 6 && x <= 46 && y >= 112 && y < 406;
+    // 4. Grouped toolbox and individual tools.
+    const bool on_toolbox = x >= 6 && x <= 46 && y >= 112 && y < 532;
     if (toolbox_open_group_ > 0) {
         const int group_row = toolbox_open_group_ == 1 ? 1
                             : toolbox_open_group_ == 2 ? 2 : 6;
@@ -349,32 +349,20 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
     if (on_toolbox) {
         toolbox_keyboard_focus_ = false;
         const int row = (y - 112) / 42;
-        if (row >= 0 && row < 7) {
-            if (row == 1 || row == 2 || row == 6) {
-                const int group = row == 1 ? 1 : row == 2 ? 2 : 3;
+        if (row >= 0 && row < 10) {
+            if (row == 1 || row == 2) {
+                const int group = row;
                 toolbox_focus_group_ = group;
                 if (x >= 37) {
                     if (toolbox_open_group_ == group) {
                         toolbox_open_group_ = 0;
                     } else {
                         toolbox_open_group_ = group;
-                        if (group == 3) {
-                            toolbox_flyout_index_ = 0;
-                            status_msg_ = language_ == UILanguage::Vietnamese
-                                ? "Appearance · ↑/↓ chọn · Enter mở · Esc đóng"
-                                : "Appearance · ↑/↓ select · Enter open · Esc close";
-                        } else {
-                            const int active = group == 1 ? quick_shapes_last_tool_ : path_drawing_last_tool_;
-                            toolbox_flyout_index_ = group == 1
-                                ? (active == 1 ? 0 : active == 2 ? 1 : 2)
-                                : (active == 6 ? 0 : active == 7 ? 1 : active == 8 ? 2 : 3);
-                        }
+                        const int active = group == 1 ? quick_shapes_last_tool_ : path_drawing_last_tool_;
+                        toolbox_flyout_index_ = group == 1
+                            ? (active == 1 ? 0 : active == 2 ? 1 : 2)
+                            : (active == 6 ? 0 : active == 7 ? 1 : active == 8 ? 2 : 3);
                     }
-                } else if (group == 3) {
-                    toolbox_open_group_ = 0;
-                    execute_menu_action(static_cast<int>(MenuActionId::ObjectProperties));
-                    InvalidateRect(hwnd_, nullptr, FALSE);
-                    return true;
                 } else {
                     toolbox_open_group_ = 0;
                     const int active_in_group = group == 1
@@ -385,10 +373,32 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                                ? active_tool_ : path_drawing_last_tool_);
                     workflow().cancel_effect_draft(); set_active_tool(active_in_group);
                 }
-            } else if (row < 6) {
-                static constexpr int separate_tools[] = {0, 0, 0, 3, 4, 5};
+            } else if (row == 0) {
                 toolbox_open_group_ = 0;
-                workflow().cancel_effect_draft(); set_active_tool(separate_tools[row]);
+                workflow().cancel_effect_draft(); set_active_tool(0);
+            } else if (row == 3) {
+                toolbox_open_group_ = 0;
+                workflow().cancel_effect_draft(); set_active_tool(3);
+            } else if (row == 4) {
+                toolbox_open_group_ = 0;
+                workflow().cancel_effect_draft(); set_active_tool(4);
+            } else if (row == 5) {
+                toolbox_open_group_ = 0;
+                workflow().cancel_effect_draft(); set_active_tool(5);
+            } else if (row == 6) {
+                toolbox_open_group_ = 0;
+                activate_toolbox_effect_item(1);
+            } else if (row == 7) {
+                toolbox_open_group_ = 0;
+                activate_toolbox_effect_item(2);
+            } else if (row == 8) {
+                toolbox_open_group_ = 0;
+                workflow().cancel_effect_draft();
+                trigger_effects_contour();
+            } else if (row == 9) {
+                toolbox_open_group_ = 0;
+                workflow().cancel_effect_draft();
+                set_active_tool(13);
             }
             InvalidateRect(hwnd_, nullptr, FALSE);
             return true;

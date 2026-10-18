@@ -165,6 +165,11 @@ void test_toolbox_appearance_flyout_activation() {
     window.handle_toolbox_key(VK_RETURN, false);
     assert(window.active_tool() == 13);
     assert(window.toolbox_open_group() == 0);
+
+    // Also test direct toolbox button click on row 9 (Gradient, y = 508)
+    window.set_active_tool(0);
+    window.handle_mouse_down(26, 508);
+    assert(window.active_tool() == 13);
 }
 
 void test_canvas_drag_gesture_commits_gradient() {

@@ -328,11 +328,17 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
             tip_text = is_vi ? L"Dao cắt xén đối tượng vector (Knife Tool) · Phím K"
                              : L"Knife / Slice Tool · Shortcut: K";
         } else if (tool_idx == 6) {
-            tip_text = mouse_x >= 37
-                ? (is_vi ? L"Appearance · Alt+↓ mở nhóm · ↑/↓ chọn · Enter mở · Esc đóng"
-                         : L"Appearance · Alt+Down opens group · Up/Down select · Enter opens · Esc closes")
-                : (is_vi ? L"Thuộc tính diện mạo · mở Properties > Style để chỉnh Opacity, Blend và hiệu ứng"
-                         : L"Appearance Properties · open Properties > Style for Opacity, Blend and effects");
+            tip_text = is_vi ? L"Hiệu ứng làm mờ (Gaussian Blur) · Áp dụng hoặc chỉnh sửa độ mờ"
+                             : L"Gaussian Blur Effect · Apply or edit blur on selection";
+        } else if (tool_idx == 7) {
+            tip_text = is_vi ? L"Hiệu ứng đổ bóng (Drop Shadow) · Kéo bóng trực tiếp hoặc chỉnh sửa"
+                             : L"Drop Shadow Effect · Interactive shadow on selection";
+        } else if (tool_idx == 8) {
+            tip_text = is_vi ? L"Công cụ viền Contour · Tạo viền bao quanh đối tượng · Phím tắt: Ctrl+F9"
+                             : L"Contour Tool · Create offset outline around object · Shortcut: Ctrl+F9";
+        } else if (tool_idx == 9) {
+            tip_text = is_vi ? L"Công cụ chuyển sắc tương tác (Gradient Tool) · Phím G"
+                             : L"Interactive Gradient Tool · Shortcut: G";
         }
     }
 

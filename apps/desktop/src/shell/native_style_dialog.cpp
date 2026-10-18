@@ -68,34 +68,15 @@ struct EditorState {
     HWND edit_width{};
 };
 
-LRESULT CALLBACK static_label_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    if (msg == WM_NCHITTEST) return HTTRANSPARENT;
-    if (msg == WM_LBUTTONDOWN) {
-        HWND parent = GetParent(hwnd);
-        if (parent) {
-            ReleaseCapture();
-            SendMessageW(parent, WM_NCLBUTTONDOWN, HTCAPTION, lp);
-            return 0;
-        }
-    }
-    WNDPROC old_proc = reinterpret_cast<WNDPROC>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-    return old_proc ? CallWindowProcW(old_proc, hwnd, msg, wp, lp) : DefWindowProcW(hwnd, msg, wp, lp);
-}
-
 HWND control(HWND dialog, const wchar_t *type, const wchar_t *text, DWORD style,
              int x, int y, int width, int height, int id, HFONT font) {
     const bool is_edit = (std::wcscmp(type, L"EDIT") == 0);
-    const bool is_static = (std::wcscmp(type, L"STATIC") == 0 && (style & SS_OWNERDRAW) == 0);
-    const auto child = CreateWindowExW(is_static ? WS_EX_TRANSPARENT : 0, type, text,
+    const auto child = CreateWindowExW(0, type, text,
         WS_CHILD | WS_VISIBLE | (is_edit ? WS_BORDER : 0) | style,
         x, y, width, height, dialog,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), GetModuleHandleW(nullptr), nullptr);
     if (font) {
         SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
-    }
-    if (is_static && child) {
-        auto old_proc = SetWindowLongPtrW(child, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(static_label_proc));
-        SetWindowLongPtrW(child, GWLP_USERDATA, old_proc);
     }
     return child;
 }
@@ -395,20 +376,13 @@ void initialize_editor(HWND dialog, EditorState &state) {
         : (state.vi ? L"Chỉnh màu tô (Edit Fill)" : L"Edit Fill");
     SetWindowTextW(dialog, title);
 
-    NONCLIENTMETRICSW ncm{};
-    ncm.cbSize = sizeof(NONCLIENTMETRICSW);
-    if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(NONCLIENTMETRICSW), &ncm, 0)) {
-        state.font = CreateFontIndirectW(&ncm.lfMessageFont);
-    }
-    if (!state.font) {
-        state.font = CreateFontW(-12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                 CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    }
+    state.font = CreateFontW(-12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
     state.font_bold = CreateFontW(-12, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
                                   DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                   CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    state.font_small = CreateFontW(-10, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+    state.font_small = CreateFontW(-11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                    DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                    CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
 
@@ -448,12 +422,12 @@ void initialize_editor(HWND dialog, EditorState &state) {
     SetWindowPos(dialog, nullptr, 0, 0, 0, 0,
                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
 
-    state.background = state.dark ? RGB(25, 30, 38) : RGB(249, 250, 252);
-    state.text = state.dark ? RGB(232, 237, 245) : RGB(29, 37, 48);
-    state.muted = state.dark ? RGB(157, 169, 185) : RGB(100, 112, 128);
-    state.border = state.dark ? RGB(65, 76, 91) : RGB(200, 208, 220);
-    state.edit_background = state.dark ? RGB(35, 42, 53) : RGB(255, 255, 255);
-    state.accent = state.dark ? RGB(0, 190, 160) : RGB(30, 112, 232);
+    state.background = state.dark ? RGB(20, 26, 38) : RGB(246, 248, 250);
+    state.text = state.dark ? RGB(241, 245, 249) : RGB(30, 41, 59);
+    state.muted = state.dark ? RGB(148, 163, 184) : RGB(100, 116, 139);
+    state.border = state.dark ? RGB(45, 55, 72) : RGB(203, 213, 225);
+    state.edit_background = state.dark ? RGB(28, 36, 50) : RGB(255, 255, 255);
+    state.accent = state.dark ? RGB(0, 210, 175) : RGB(14, 116, 144);
     state.background_brush = CreateSolidBrush(state.background);
     state.edit_brush = CreateSolidBrush(state.edit_background);
 
@@ -697,13 +671,17 @@ INT_PTR CALLBACK editor_proc(HWND dialog, UINT message, WPARAM wparam, LPARAM lp
         return TRUE;
     }
     if (!state) return FALSE;
-    if (message == WM_ERASEBKGND) {
+    if (message == WM_ERASEBKGND || message == WM_PRINTCLIENT) {
+        RECT client{};
+        GetClientRect(dialog, &client);
+        FillRect(reinterpret_cast<HDC>(wparam), &client, state->background_brush);
         return TRUE;
     }
     if (message == WM_CTLCOLORDLG) return reinterpret_cast<INT_PTR>(state->background_brush);
     if (message == WM_CTLCOLORSTATIC || message == WM_CTLCOLORBTN) {
         const auto dc = reinterpret_cast<HDC>(wparam);
         SetTextColor(dc, state->text);
+        SetBkColor(dc, state->background);
         SetBkMode(dc, TRANSPARENT);
         return reinterpret_cast<INT_PTR>(state->background_brush);
     }
@@ -729,44 +707,36 @@ INT_PTR CALLBACK editor_proc(HWND dialog, UINT message, WPARAM wparam, LPARAM lp
         }
         if (item->CtlID == IDOK || item->CtlID == IDCANCEL) {
             const bool primary = item->CtlID == IDOK;
+            const bool selected = (item->itemState & ODS_SELECTED) != 0;
+            const bool focused = (item->itemState & ODS_FOCUS) != 0;
             RECT rect = item->rcItem;
-            const COLORREF fill = primary ? state->accent
-                : state->dark ? RGB(42, 50, 62) : RGB(235, 239, 244);
+
+            COLORREF fill = primary
+                ? (selected ? RGB(10, 95, 120) : state->accent)
+                : (selected ? RGB(220, 226, 234) : (state->dark ? RGB(36, 46, 60) : RGB(238, 242, 246)));
+            COLORREF border_col = primary
+                ? (focused ? RGB(255, 255, 255) : state->accent)
+                : (focused ? state->accent : state->border);
+
             HBRUSH brush = CreateSolidBrush(fill);
-            HPEN pen = CreatePen(PS_SOLID, 1, primary ? state->accent : state->border);
+            HPEN pen = CreatePen(PS_SOLID, 1, border_col);
             const auto old_brush = SelectObject(item->hDC, brush);
             const auto old_pen = SelectObject(item->hDC, pen);
-            RoundRect(item->hDC, rect.left, rect.top, rect.right, rect.bottom, 4, 4);
+            RoundRect(item->hDC, rect.left, rect.top, rect.right, rect.bottom, 6, 6);
             SelectObject(item->hDC, old_brush);
             SelectObject(item->hDC, old_pen);
+            DeleteObject(brush);
+            DeleteObject(pen);
+
             wchar_t caption[64]{};
             GetWindowTextW(item->hwndItem, caption, 64);
             SetBkMode(item->hDC, TRANSPARENT);
             SetTextColor(item->hDC, primary ? RGB(255, 255, 255) : state->text);
-            if (state->font) SelectObject(item->hDC, state->font);
+            HFONT btn_font = primary ? state->font_bold : state->font;
+            if (btn_font) SelectObject(item->hDC, btn_font);
             DrawTextW(item->hDC, caption, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-            DeleteObject(brush);
-            DeleteObject(pen);
             return TRUE;
         }
-    }
-    if (message == WM_NCHITTEST) {
-        POINT pt{GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam)};
-        ScreenToClient(dialog, &pt);
-        // Header space above picker and color fields allows dragging the dialog smoothly
-        const bool in_viewer = (pt.x >= 16 && pt.x <= 206 && pt.y >= 30 && pt.y <= 56);
-        const bool in_model = (pt.x >= 226 && pt.x <= 464 && pt.y >= 30 && pt.y <= 56);
-        if (pt.y >= 0 && pt.y < 58 && !in_viewer && !in_model) {
-            SetWindowLongPtrW(dialog, DWLP_MSGRESULT, HTCAPTION);
-            return TRUE;
-        }
-        // Left, bottom, and separator margins
-        if ((pt.x >= 0 && pt.x <= 12) || (pt.x >= 207 && pt.x <= 215 && pt.y < 250) ||
-            (pt.y >= 316 && pt.y <= kClientHeight)) {
-            SetWindowLongPtrW(dialog, DWLP_MSGRESULT, HTCAPTION);
-            return TRUE;
-        }
-        return FALSE;
     }
     if (message == WM_LBUTTONDOWN) {
         const int x = GET_X_LPARAM(lparam), y = GET_Y_LPARAM(lparam);
@@ -784,9 +754,12 @@ INT_PTR CALLBACK editor_proc(HWND dialog, UINT message, WPARAM wparam, LPARAM lp
             update_picker_from_mouse(dialog, *state, x, y);
             return TRUE;
         }
-        // Clicking on header, background or empty space initiates moving the dialog window
+        // Clicking on empty background/header space moves the dialog:
+        // Convert to SCREEN coordinates to ensure smooth, zero-latency dragging!
         ReleaseCapture();
-        SendMessageW(dialog, WM_NCLBUTTONDOWN, HTCAPTION, lparam);
+        POINT pt{x, y};
+        ClientToScreen(dialog, &pt);
+        SendMessageW(dialog, WM_NCLBUTTONDOWN, HTCAPTION, MAKELPARAM(pt.x, pt.y));
         return TRUE;
     }
     if (message == WM_MOUSEMOVE && state->drag_target != DragTarget::None) {

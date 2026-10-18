@@ -611,32 +611,23 @@ void test_effects_toolbox_flyout() {
     assert(win.handle_toolbox_key(VK_ESCAPE));
 #endif
 
-    // AC-BF10-01 — the main Appearance icon opens the existing Style Properties section.
-    const auto before_properties = win.root().document().current_snapshot()->revision();
-    win.handle_mouse_down(20, 382); // Appearance icon body, row 6.
-    assert(win.style_inspector_visible());
-    assert(win.root().document().current_snapshot()->revision() == before_properties);
-
-    // AC-BF10-04 — capture the actual native paint path in both supported UI languages.
-    win.handle_mouse_down(43, 382); // Group arrow opens the flyout.
-    win.handle_mouse_move(0, 0);
-    capture_shell_screenshot(win, "effects-toolbox-english.bmp");
-    win.set_language(UILanguage::Vietnamese);
-    win.handle_mouse_move(0, 0);
-    capture_shell_screenshot(win, "effects-toolbox-vietnamese.bmp");
-    win.set_language(UILanguage::English);
-
-    // AC-BF10-02 — the flyout appends one Blur and one Shadow node through the shared workflow.
+    // Direct toolbox buttons for Gaussian Blur (row 6, y = 382) and Drop Shadow (row 7, y = 424).
     auto before_effect = win.root().document().current_snapshot()->revision();
-    win.handle_mouse_down(110, 433); // Gaussian Blur row.
+    win.handle_mouse_down(26, 382); // Row 6: Gaussian Blur button.
+    assert(win.style_inspector_visible());
     assert(win.root().document().current_snapshot()->revision() == before_effect + 1);
     assert(path_appearance().effects.size() == 1);
     assert(std::holds_alternative<pikdraw::document::GaussianBlurEffect>(
         path_appearance().effects[0].parameters));
 
+    // Capture the native paint path in both supported UI languages.
+    capture_shell_screenshot(win, "effects-toolbox-english.bmp");
+    win.set_language(UILanguage::Vietnamese);
+    capture_shell_screenshot(win, "effects-toolbox-vietnamese.bmp");
+    win.set_language(UILanguage::English);
+
     before_effect = win.root().document().current_snapshot()->revision();
-    win.handle_mouse_down(43, 382);
-    win.handle_mouse_down(110, 462); // Drop Shadow row.
+    win.handle_mouse_down(26, 424); // Row 7: Drop Shadow button.
     assert(win.root().document().current_snapshot()->revision() == before_effect + 1);
     assert(path_appearance().effects.size() == 2);
     assert(std::holds_alternative<pikdraw::document::DropShadowEffect>(
@@ -683,10 +674,9 @@ void test_effects_toolbox_flyout() {
     assert(win.workflow().undo());
     assert(path_appearance().effects.size() == 1);
 
-    // Contour tool activation via Effects flyout item 3
+    // Contour tool activation via direct toolbox button (row 8, y = 466)
     selection.select(path_id);
-    win.handle_mouse_down(43, 382); // Open Appearance flyout
-    win.handle_mouse_down(110, 491); // Contour item (row 3)
+    win.handle_mouse_down(26, 466); // Row 8: Contour tool
     assert(win.active_tool() == 12);
     assert(win.active_dock_tab() == 0);
     capture_shell_screenshot(win, "contour-properties-1440-en.bmp");
@@ -786,12 +776,11 @@ void test_effects_toolbox_flyout() {
     // AC-BF10-03 — no selection disables effect insertion and does not write the document.
     selection.clear();
     const auto before_disabled = win.root().document().current_snapshot()->revision();
-    win.handle_mouse_down(43, 382);
-    win.handle_mouse_down(110, 433);
+    win.handle_mouse_down(26, 382); // Row 6: Gaussian Blur button with no selection.
     assert(win.root().document().current_snapshot()->revision() == before_disabled);
     assert(win.status_message().find("Select unlocked Path/Text") != std::string::npos);
     win.set_language(UILanguage::Vietnamese);
-    win.handle_mouse_down(110, 433);
+    win.handle_mouse_down(26, 382);
     assert(win.root().document().current_snapshot()->revision() == before_disabled);
     assert(win.status_message().find("Chọn Path/Text") != std::string::npos);
 
