@@ -64,6 +64,16 @@ bool DocumentWorkflow::open_native(const std::string& file_path) {
 bool DocumentWorkflow::save_svg(const std::string& file_path) {
     if (file_path.empty())
         return false;
+    const auto separator = file_path.find_last_of("/\\");
+    const auto dot = file_path.find_last_of('.');
+    if (dot == std::string::npos || (separator != std::string::npos && dot < separator))
+        return false;
+    std::string extension = file_path.substr(dot);
+    for (auto& character : extension)
+        if (character >= 'A' && character <= 'Z')
+            character = static_cast<char>(character - 'A' + 'a');
+    if (extension != ".svg")
+        return false;
 
     std::filesystem::path target;
     std::filesystem::path temporary;
@@ -468,6 +478,9 @@ bool DocumentWorkflow::auto_weld_overlapping() {
 }
 
 document::SnapshotPtr DocumentWorkflow::snapshot_for_canvas() {
+    if (text_preview_ && text_preview_base_ == root_.document().current_snapshot())
+      return text_preview_;
+    clear_text_preview();
     (void)cancel_stale_effect_draft();
     if (effect_draft_ && effect_draft_->preview_enabled && effect_draft_->preview_snapshot)
         return effect_draft_->preview_snapshot;

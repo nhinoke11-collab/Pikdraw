@@ -1,4 +1,5 @@
 #include "desktop_shell_test_helpers.hpp"
+#include "pikdraw/desktop/shell/native_style_color_model.hpp"
 
 void test_compact_icons_and_hover_tooltips();
 void test_page_preset_dropdown_and_modal_row_clicks();
@@ -6,17 +7,18 @@ void test_double_click_rotate_and_flip_transform_suite();
 void test_group_ungroup_and_isolation_mode();
 void test_blend_and_effect_properties_panel();
 void test_typography_inline_editing_ribbon_and_table();
+void test_native_window_theme_and_settings_state();
+void test_ai_connections_settings_draft_state();
 void test_fill_and_stroke_opacity_properties();
 void test_contextual_object_action_capabilities();
 void test_solid_tools_boolean_knife_and_context_actions();
 void test_numeric_keyboard_input_property_bar();
 void test_corel_pick_auto_select_resume_guidelines_and_space_shortcut();
-void test_native_window_theme_and_settings_state();
 void test_effects_toolbox_flyout();
 void test_align_and_distribute_tools();
 void test_selection_directional_scale_rotate_and_pivot();
-void test_ai_connections_settings_draft_state();
 void test_object_opacity_property_bar_and_appearance_panel();
+void test_layers_and_objects_dock_suite();
 
 void test_shell_geometry_resolutions_and_dpi() {
     // 1920x1080 @ 100% DPI
@@ -466,6 +468,9 @@ void test_canvas_workspace_and_object_size_limits() {
 void test_selection_borderless_default_stroke_none_and_hairline_zoom() {
     NativeWindow win;
     assert(win.initialize("Test Selection Borderless & Hairline"));
+    if (win.is_recovery_modal_open()) {
+        win.handle_key_down(VK_ESCAPE);
+    }
     auto& workflow = win.workflow();
     workflow.new_document(210.0, 297.0);
 
@@ -662,6 +667,79 @@ void test_copy_cut_paste_ecosystem_and_array_sessions() {
     std::cout << "[PASS] test_copy_cut_paste_ecosystem_and_array_sessions\n";
 }
 
+void test_source_color_models_and_object_overprint_patches() {
+    using namespace pikdraw;
+    auto spot = color::ColorValue{color::SpotColor{"CutContour", .42, {.9, .1, .7, .8}, true}};
+    spot.set_overprint({true, false});
+    assert(desktop::source_color::model_of(spot) == desktop::source_color::Model::Spot);
+
+    const auto gray = desktop::source_color::convert(spot, desktop::source_color::Model::Grayscale);
+    assert(desktop::source_color::model_of(gray) == desktop::source_color::Model::Grayscale);
+    assert(gray.overprint().fill && !gray.overprint().stroke);
+    const auto gray_source = std::get<color::GrayscaleColor>(gray.payload());
+    assert(std::abs(gray_source.a - .8) < 1e-6);
+
+    const auto rgb = desktop::source_color::convert(gray, desktop::source_color::Model::Rgb);
+    assert(desktop::source_color::model_of(rgb) == desktop::source_color::Model::Rgb);
+    const auto rgb_source = std::get<color::RGBColor>(rgb.payload());
+    assert(std::abs(rgb_source.r - rgb_source.g) < 1e-6);
+    assert(std::abs(rgb_source.g - rgb_source.b) < 1e-6);
+    assert(rgb.overprint().fill && !rgb.overprint().stroke);
+
+    const auto recreated_spot = desktop::source_color::convert(gray, desktop::source_color::Model::Spot);
+    const auto recreated = std::get<color::SpotColor>(recreated_spot.payload());
+    assert(recreated.spot_name == "Spot Color");
+    assert(recreated.tint == 1.0);
+    assert(std::abs(recreated.alternate_rgb.a - .8) < 1e-6);
+    assert(recreated_spot.overprint().fill && !recreated_spot.overprint().stroke);
+    const auto retained_spot = desktop::source_color::convert(spot, desktop::source_color::Model::Spot);
+    const auto retained = std::get<color::SpotColor>(retained_spot.payload());
+    assert(retained.spot_name == "CutContour" && retained.tint == .42 && retained.overprint);
+    assert(retained.alternate_rgb.approx_equal({.9, .1, .7, .8}));
+
+    desktop::NativeWindow win(1440, 900);
+    auto& workflow = win.workflow();
+    workflow.new_document(200.0, 200.0);
+    const auto id = workflow.add_rectangle(20.0, 20.0, 30.0, 30.0);
+    const auto before_patch = *win.root().document().current_snapshot()->objects().get(id);
+    const auto original_fill_space = std::get<document::PathObject>(before_patch).fill.color_space();
+    auto& selection = win.root().vector_controller().selection();
+    selection.clear();
+    selection.select(id, vector::SelectionMode::Add);
+
+    vector::StylePatch fill_overprint;
+    fill_overprint.fill_overprint = true;
+    assert(win.apply_style_patch(fill_overprint));
+    const auto after_overprint = *win.root().document().current_snapshot()->objects().get(id);
+    assert(std::get<document::PathObject>(after_overprint).fill.overprint().fill);
+
+    vector::StylePatch change_color;
+    change_color.fill = color::ColorValue{color::GrayscaleColor{.25, .8}};
+    assert(win.apply_style_patch(change_color));
+    const auto after_gray = *win.root().document().current_snapshot()->objects().get(id);
+    const auto& gray_path = std::get<document::PathObject>(after_gray);
+    const auto& normalized_gray = std::get<color::RGBColor>(gray_path.fill.payload());
+    assert(normalized_gray.approx_equal({.25, .25, .25, .8}, 0));
+    assert(gray_path.fill.overprint().fill && !gray_path.fill.overprint().stroke);
+
+    vector::StylePatch stroke_overprint;
+    stroke_overprint.stroke_overprint = true;
+    assert(win.apply_style_patch(stroke_overprint));
+    const auto after_stroke = *win.root().document().current_snapshot()->objects().get(id);
+    assert(std::get<document::PathObject>(after_stroke).stroke.overprint().stroke);
+    assert(workflow.undo());
+    const auto after_undo_stroke = *win.root().document().current_snapshot()->objects().get(id);
+    assert(!std::get<document::PathObject>(after_undo_stroke).stroke.overprint().stroke);
+    assert(workflow.undo());
+    const auto after_undo_gray = *win.root().document().current_snapshot()->objects().get(id);
+    assert(std::get<document::PathObject>(after_undo_gray).fill.overprint().fill);
+    assert(std::get<document::PathObject>(after_undo_gray).fill.color_space() == original_fill_space);
+    assert(workflow.undo());
+    const auto after_undo_overprint = *win.root().document().current_snapshot()->objects().get(id);
+    assert(!std::get<document::PathObject>(after_undo_overprint).fill.overprint().fill);
+    std::cout << "[PASS] test_source_color_models_and_object_overprint_patches\n";
+}
+
 int main() {
     std::cout << "=== Running Desktop Shell Tests ===\n";
     test_shell_geometry_resolutions_and_dpi();
@@ -693,6 +771,8 @@ int main() {
     test_corel_pick_auto_select_resume_guidelines_and_space_shortcut();
     test_selection_borderless_default_stroke_none_and_hairline_zoom();
     test_copy_cut_paste_ecosystem_and_array_sessions();
+    test_source_color_models_and_object_overprint_patches();
+    test_layers_and_objects_dock_suite();
     std::cout << "All Desktop Shell Tests PASSED.\n";
     return 0;
 }

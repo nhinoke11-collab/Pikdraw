@@ -4,6 +4,8 @@
 #include <cassert>
 #include <cmath>
 #include <iostream>
+#include <sstream>
+#include <vector>
 
 using namespace pikdraw;
 using namespace pikdraw::interop;
@@ -145,12 +147,47 @@ void test_svg_unsupported_appearance_is_rejected_before_output() {
     assert(SvgExporter::export_to_string(*effect_doc.current_snapshot()).empty());
 }
 
+void test_svg_stream_export_respects_resolved_object_scope() {
+    Document doc("svg-scoped-stream");
+    PathObject included;
+    included.id = generate_object_id();
+    included.path = geometry::Path2D::make_rect(10, 10, 20, 20);
+    assert(doc.execute_command(std::make_unique<AddObjectCommand>(included)).success);
+
+    PathObject excluded;
+    excluded.id = generate_object_id();
+    excluded.path = geometry::Path2D::make_rect(100, 100, 20, 20);
+    excluded.appearance.blend_mode = BlendMode::Multiply;
+    assert(doc.execute_command(std::make_unique<AddObjectCommand>(excluded)).success);
+
+    const std::vector<ObjectId> scope{included.id};
+    std::ostringstream output;
+    const auto result = SvgExporter::write_to_stream(
+        *doc.current_snapshot(), output, SvgExportOptions{}, &scope);
+    assert(result.success && result.report.is_clean());
+    const auto text = output.str();
+    assert(text.find("<path") != std::string::npos);
+    assert(text.find("<path", text.find("<path") + 1) == std::string::npos);
+    const auto roundtrip = SvgImporter::import_from_string(text);
+    assert(roundtrip.success && roundtrip.objects.size() == 1);
+    assert(std::get<PathObject>(roundtrip.objects.front()).path.bounds().x == 10.0);
+
+    const std::vector<ObjectId> unsupported_scope{excluded.id};
+    std::ostringstream rejected_output;
+    const auto rejected = SvgExporter::write_to_stream(
+        *doc.current_snapshot(), rejected_output, SvgExportOptions{},
+        &unsupported_scope);
+    assert(!rejected.success && rejected.report.has_unsupported());
+    assert(rejected_output.str().empty());
+}
+
 int main() {
     std::cout << "[test_svg_exporter] Running SVG exporter tests...\n";
     test_svg_export_and_roundtrip();
     test_svg_analytic_arc_and_loss_report();
     test_svg_path_and_text_opacity_mapping();
     test_svg_unsupported_appearance_is_rejected_before_output();
+    test_svg_stream_export_respects_resolved_object_scope();
     std::cout << "[test_svg_exporter] All tests passed!\n";
     return 0;
 }

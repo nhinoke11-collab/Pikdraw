@@ -88,40 +88,12 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
         && camera.center().x == cached_camera_x_
         && camera.center().y == cached_camera_y_
         && theme_ == cached_theme_;
-    bool partial_update = false;
-    RECT dirty_area{0, 0, canvas_width, canvas_height};
     if (view_is_stable && cached_canvas_snapshot_
         && snapshot != cached_canvas_snapshot_) {
         damage_tracker_.update(*cached_canvas_snapshot_, *snapshot, camera.zoom());
-        if (damage_tracker_.has_damage() && !damage_tracker_.is_full_damage()) {
-            const auto& damage = damage_tracker_.damage_rect();
-            const auto first = camera.world_to_screen({damage.x, damage.y + damage.height});
-            const auto second = camera.world_to_screen({damage.x + damage.width, damage.y});
-            if (std::isfinite(first.x) && std::isfinite(first.y)
-                && std::isfinite(second.x) && std::isfinite(second.y)) {
-                const auto clamp_pixel = [](double coordinate, int extent) {
-                    return static_cast<int>(std::clamp(
-                        coordinate, 0.0, static_cast<double>(extent)));
-                };
-                const int left = clamp_pixel(
-                    std::floor(std::min(first.x, second.x)) - 1.0, canvas_width);
-                const int top = clamp_pixel(
-                    std::floor(std::min(first.y, second.y)) - 1.0, canvas_height);
-                const int right = clamp_pixel(
-                    std::ceil(std::max(first.x, second.x)) + 1.0, canvas_width);
-                const int bottom = clamp_pixel(
-                    std::ceil(std::max(first.y, second.y)) + 1.0, canvas_height);
-                dirty_area = RECT{left, top, right, bottom};
-                const int64_t dirty_pixels = static_cast<int64_t>(right - left)
-                    * static_cast<int64_t>(bottom - top);
-                const int64_t total_pixels = static_cast<int64_t>(canvas_width)
-                    * static_cast<int64_t>(canvas_height);
-                partial_update = dirty_pixels == 0 || dirty_pixels * 4 < total_pixels * 3;
-            }
-        }
-    }
-    if (!view_is_stable)
+    } else if (!view_is_stable) {
         damage_tracker_.reset();
+    }
 
     // Check if the canvas bitmap cache needs to be regenerated
     const bool cache_needs_rebuild = !canvas_cache_valid_
@@ -156,13 +128,10 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
         // Ensure backend rasterizer clears with active theme's pasteboard color
         root().renderer().backend().set_canvas_background(canvas_background_color());
 
-        // Preserve unchanged pixels when damage stays within a small viewport region.
-        if (!partial_update) {
-            RECT local_area{0, 0, canvas_width, canvas_height};
-            HBRUSH background = CreateSolidBrush(canvas_background_colorref());
-            FillRect(cached_canvas_dc_, &local_area, background);
-            DeleteObject(background);
-        }
+        RECT local_area{0, 0, canvas_width, canvas_height};
+        HBRUSH background = CreateSolidBrush(canvas_background_colorref());
+        FillRect(cached_canvas_dc_, &local_area, background);
+        DeleteObject(background);
 
         // Render the captured snapshot directly so incomplete GPU frames cannot
         // be mistaken for the previous reusable buffer contents.
@@ -189,19 +158,10 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
             bitmap.bmiHeader.biPlanes = 1;
             bitmap.bmiHeader.biBitCount = 32;
             bitmap.bmiHeader.biCompression = BI_RGB;
-            if (!partial_update || (dirty_area.left < dirty_area.right
-                && dirty_area.top < dirty_area.bottom)) {
-                const int dst_x = partial_update ? dirty_area.left : 0;
-                const int dst_y = partial_update ? dirty_area.top : 0;
-                const int copy_width = partial_update
-                    ? dirty_area.right - dirty_area.left : canvas_width;
-                const int copy_height = partial_update
-                    ? dirty_area.bottom - dirty_area.top : canvas_height;
-                StretchDIBits(cached_canvas_dc_, dst_x, dst_y, copy_width, copy_height,
-                              dip(dst_x), dip(dst_y), dip(copy_width), dip(copy_height),
-                              reusable_bgra_buffer_.data(), &bitmap,
-                              DIB_RGB_COLORS, SRCCOPY);
-            }
+            StretchDIBits(cached_canvas_dc_, 0, 0, canvas_width, canvas_height,
+                          0, 0, raster_w, raster_h,
+                          reusable_bgra_buffer_.data(), &bitmap,
+                          DIB_RGB_COLORS, SRCCOPY);
         } else {
             SetBkMode(cached_canvas_dc_, TRANSPARENT);
             SetTextColor(cached_canvas_dc_, RGB(180, 90, 80));
@@ -364,96 +324,7 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
         DeleteObject(marker_pen);
     }
 
-    // Committed text is rendered once by ViewportRenderer; retain the active editor.
-    if (is_inline_text_editing_) {
-        auto pt_screen = camera.world_to_screen(inline_text_pos_mm_);
-        int sx = area.left + static_cast<int>(std::floor(pt_screen.x));
-        int sy = area.top + static_cast<int>(std::floor(pt_screen.y));
-
-        int font_px = std::max(10, static_cast<int>(std::lround(font_size_pt_ * camera.zoom() * 1.333)));
-        int weight = font_bold_ ? 700 : 400;
-        BOOL italic = font_italic_ ? TRUE : FALSE;
-        BOOL underline = font_underline_ ? TRUE : FALSE;
-
-        const char* fam_names[] = { "Be Vietnam Pro", "Segoe UI", "Arial", "Times New Roman", "JetBrains Mono" };
-        std::string fam_name = fam_names[font_family_index_ % 5];
-        std::wstring wfamily(fam_name.begin(), fam_name.end());
-
-        HFONT hfont = CreateFontW(
-            font_px, 0, 0, 0, weight, italic, underline, FALSE,
-            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
-            wfamily.c_str()
-        );
-        HGDIOBJ old_f = SelectObject(dc, hfont);
-
-        std::string display_str = inline_text_buffer_.empty()
-            ? (language_ == UILanguage::Vietnamese ? "Gõ văn bản tại đây..." : "Type text here...")
-            : inline_text_buffer_;
-
-        int wlen = MultiByteToWideChar(CP_UTF8, 0, display_str.c_str(), -1, nullptr, 0);
-        std::vector<wchar_t> wbuf(std::max(2, wlen));
-        if (wlen > 1) {
-            MultiByteToWideChar(CP_UTF8, 0, display_str.c_str(), -1, wbuf.data(), wlen);
-        }
-
-        SIZE text_sz{120, font_px + 8};
-        if (wlen > 1) {
-            GetTextExtentPoint32W(dc, wbuf.data(), static_cast<int>(wcslen(wbuf.data())), &text_sz);
-        }
-
-        int box_w = std::max(160, static_cast<int>(text_sz.cx) + 20);
-        int box_h = std::max(font_px + 12, static_cast<int>(text_sz.cy) + 8);
-        RECT rc_box{sx - 4, sy - 4, sx + box_w, sy + box_h};
-
-        HBRUSH bg_br = CreateSolidBrush(theme_ == ThemeMode::CyberDark ? RGB(22, 30, 44) : RGB(255, 255, 255));
-        HPEN bdr_pen = CreatePen(PS_DASH, 1, RGB(0, 242, 195));
-        HGDIOBJ op_bg = SelectObject(dc, bdr_pen);
-        HGDIOBJ ob_bg = SelectObject(dc, bg_br);
-        RoundRect(dc, rc_box.left, rc_box.top, rc_box.right, rc_box.bottom, 4, 4);
-        SelectObject(dc, op_bg);
-        SelectObject(dc, ob_bg);
-        DeleteObject(bdr_pen);
-        DeleteObject(bg_br);
-
-        SetBkMode(dc, TRANSPARENT);
-        if (inline_text_buffer_.empty()) {
-            SetTextColor(dc, RGB(148, 163, 184));
-        } else {
-            SetTextColor(dc, theme_ == ThemeMode::CyberDark ? RGB(241, 245, 249) : RGB(15, 23, 42));
-        }
-
-        RECT rc_inner{sx, sy, sx + box_w - 8, sy + box_h};
-        UINT flags = DT_LEFT | DT_NOPREFIX;
-        if (font_alignment_ == typography::TextAlignment::Center) flags = DT_CENTER | DT_NOPREFIX;
-        else if (font_alignment_ == typography::TextAlignment::Right) flags = DT_RIGHT | DT_NOPREFIX;
-        DrawTextW(dc, wbuf.data(), -1, &rc_inner, flags);
-
-        // Blinking caret vertical bar
-        HPEN caret_pen = CreatePen(PS_SOLID, 2, RGB(0, 242, 195));
-        HGDIOBJ old_cp = SelectObject(dc, caret_pen);
-        int caret_x = sx + (inline_text_buffer_.empty() ? 2 : static_cast<int>(text_sz.cx) + 2);
-        MoveToEx(dc, caret_x, sy + 2, nullptr);
-        LineTo(dc, caret_x, sy + font_px + 2);
-        SelectObject(dc, old_cp);
-        DeleteObject(caret_pen);
-
-        SelectObject(dc, old_f);
-        DeleteObject(hfont);
-
-        HFONT tip_f = CreateFontW(11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                 CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-        HGDIOBJ old_tf = SelectObject(dc, tip_f);
-        SetTextColor(dc, RGB(100, 116, 139));
-        const wchar_t* tip = (language_ == UILanguage::Vietnamese)
-            ? L"↵ Enter: Hoàn tất   ·   Shift+↵: Xuống dòng   ·   Esc: Hủy"
-            : L"↵ Enter: Commit   ·   Shift+↵: New line   ·   Esc: Cancel";
-        RECT rc_tip{sx - 4, rc_box.bottom + 2, sx + 320, rc_box.bottom + 18};
-        DrawTextW(dc, tip, -1, &rc_tip, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
-        SelectObject(dc, old_tf);
-        DeleteObject(tip_f);
-    }
+    paint_inline_text_overlay(dc);
 
     paint_drawing_overlay(dc);
     const auto& diagnostics = root().renderer().last_metric().diagnostics;

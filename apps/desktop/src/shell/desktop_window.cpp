@@ -86,11 +86,11 @@ void DesktopWindow::setup_default_actions() {
     });
     dispatcher_.register_action({
         std::string(ActionId::kFileImport), "Nhập tệp...", "Import...", "Ctrl+I",
-        []() {}, nullptr
+        {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kFileExport), "Xuất tệp...", "Export...", "Ctrl+E",
-        []() {}, nullptr
+        {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kFileExportFor), "Xuất cho", "Export For", "",

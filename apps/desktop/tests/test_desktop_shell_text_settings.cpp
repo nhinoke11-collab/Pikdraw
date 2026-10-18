@@ -1,4 +1,5 @@
 #include "desktop_shell_test_helpers.hpp"
+#include "../src/shell/native_window_selection_geometry.hpp"
 
 void test_typography_inline_editing_ribbon_and_table() {
     NativeWindow win(1440, 900);
@@ -133,538 +134,304 @@ void test_typography_inline_editing_ribbon_and_table() {
     assert(std::holds_alternative<pikdraw::document::PathObject>(*curve_obj));
     capture_shell_screenshot(win, "m1_pikdraw_text_curves.bmp");
 
+    // Canvas authoring changes only its preview snapshot until the user commits.
+    NativeWindow editor(1440, 900);
+    editor.set_active_tool(4);
+    const auto start_revision = editor.root().document().revision();
+    editor.start_inline_text_editing({42.0, 54.0});
+    assert(editor.is_inline_editing());
+    assert(editor.handle_inline_text_character('B'));
+    assert(editor.handle_inline_text_character('i'));
+    assert(editor.handle_inline_text_character('e'));
+    assert(editor.handle_inline_text_character(0x0309));
+    assert(editor.inline_text_buffer() == "Bie\u0309");
+    assert(editor.root().document().revision() == start_revision);
+    auto preview = editor.workflow().snapshot_for_canvas();
+    assert(preview->revision() == start_revision);
+    auto preview_id = pikdraw::document::kInvalidObjectId;
+    for (const auto& [id, object] : preview->objects().all())
+        if (const auto* text = std::get_if<pikdraw::document::TextObject>(&object);
+            text && text->text == "Bie\u0309") preview_id = id;
+    assert(preview_id != pikdraw::document::kInvalidObjectId);
+    assert(editor.handle_inline_text_key(VK_RETURN, false, false));
+    assert(editor.handle_inline_text_character(VK_RETURN)); // matching translated WM_CHAR is consumed
+    assert(editor.inline_text_buffer() == "Bie\u0309\n");
+    assert(editor.handle_inline_text_character('N'));
+    assert(editor.handle_inline_text_key('B', true, false));
+    assert(editor.is_inline_editing());
+    assert(editor.handle_inline_text_key('Z', true, false)); // editor-local undo
+    assert(editor.inline_text_buffer() == "Bie\u0309\nN");
+    assert(editor.root().document().revision() == start_revision);
+    auto pixel_preview = editor.workflow().render_snapshot(160, 90);
+    editor.commit_inline_text_editing();
+    assert(!editor.is_inline_editing());
+    assert(editor.root().document().revision() == start_revision + 1);
+    auto committed_text = editor.root().document().current_snapshot()->objects().get(preview_id);
+    assert(committed_text && std::get<pikdraw::document::TextObject>(*committed_text).text ==
+           "Bie\u0309\nN");
+    assert(editor.workflow().render_snapshot(160, 90) == pixel_preview);
+    assert(editor.workflow().undo());
+    assert(!editor.root().document().current_snapshot()->objects().get(preview_id));
+    assert(editor.workflow().redo());
+
+    const auto cancel_revision = editor.root().document().revision();
+    const auto cancel_object_count = editor.root().document().current_snapshot()->object_count();
+    editor.start_inline_text_editing({120, 40});
+    assert(editor.handle_inline_text_character('d'));
+    assert(editor.handle_inline_text_key(VK_ESCAPE, false, false));
+    assert(!editor.is_inline_editing());
+    assert(editor.root().document().revision() == cancel_revision);
+    assert(editor.root().document().current_snapshot()->object_count() == cancel_object_count);
+
+    pikdraw::document::TextObject source_text;
+    source_text.id = pikdraw::document::generate_object_id();
+    source_text.name = "Text";
+    source_text.text = "Bi e\u0309n";
+    source_text.font.family_name = "Arial";
+    source_text.font.postscript_name = "Keep-Imported-Face-Identity";
+    source_text.font.size_pt = 22;
+    source_text.position = {46, 72};
+    source_text.transform = pikdraw::geometry::Transform2D::translation(7, 9);
+    source_text.frame_width_mm = 34;
+    source_text.line_spacing_ratio = 1.4;
+    const auto nfd_id = source_text.id;
+    assert(editor.root().document().execute_command(
+        std::make_unique<pikdraw::document::AddObjectCommand>(source_text)).success);
+    sel.clear();
+    sel.select(nfd_id);
+    const auto object_to_edit = std::get<pikdraw::document::TextObject>(
+        *editor.root().document().current_snapshot()->objects().get(nfd_id));
+    editor.start_inline_text_editing({object_to_edit.position.x + 34, object_to_edit.position.y}, nfd_id);
+    assert(editor.inline_text_buffer() == object_to_edit.text);
+    assert(editor.handle_inline_text_key('A', true, false));
+    assert(editor.inline_text_buffer() == object_to_edit.text);
+    assert(editor.handle_inline_text_character('X'));
+    editor.commit_inline_text_editing();
+    auto updated = std::get<pikdraw::document::TextObject>(
+        *editor.root().document().current_snapshot()->objects().get(nfd_id));
+    assert(updated.text == "X");
+    assert(updated.font.postscript_name == "Keep-Imported-Face-Identity");
+    assert(updated.frame_width_mm == 34 && updated.line_spacing_ratio == 1.4);
+    assert(updated.transform.tx == 7 && updated.transform.ty == 9);
+    const auto native_path = shell_screenshot_path("canvas-text-serialization.pikdraw");
+    assert(editor.workflow().save_native(native_path.string()));
+    assert(editor.workflow().open_native(native_path.string()));
+    auto reopened = std::get<pikdraw::document::TextObject>(
+        *editor.root().document().current_snapshot()->objects().get(nfd_id));
+    assert(reopened.text == updated.text && reopened.font.postscript_name == updated.font.postscript_name);
+    assert(reopened.frame_width_mm == 34 && reopened.line_spacing_ratio == 1.4);
+    assert(reopened.transform.tx == 7 && reopened.transform.ty == 9);
+    editor.start_inline_text_editing(reopened.position, nfd_id);
+    assert(editor.handle_inline_text_key('A', true, false));
+    assert(editor.handle_inline_text_character('Q'));
+    assert(editor.handle_inline_text_key(VK_ESCAPE, false, false));
+    const auto after_cancel = std::get<pikdraw::document::TextObject>(
+        *editor.root().document().current_snapshot()->objects().get(nfd_id));
+    assert(after_cancel.text == reopened.text);
+    std::filesystem::remove(native_path);
+
+    const auto stale_id = editor.workflow().add_vietnamese_text(
+        80, 90, "Keep source", "Arial", 22, "#123456");
+    const auto stale_obj = std::get<pikdraw::document::TextObject>(
+        *editor.root().document().current_snapshot()->objects().get(stale_id));
+    editor.start_inline_text_editing(stale_obj.position, stale_id);
+    editor.handle_inline_text_key('A', true, false);
+    assert(editor.handle_inline_text_character('X'));
+    assert(editor.workflow().transform_object(stale_id, 1, 0));
+    editor.commit_inline_text_editing();
+    assert(std::get<pikdraw::document::TextObject>(
+        *editor.root().document().current_snapshot()->objects().get(stale_id)).text == "Keep source");
+
+    // A selected text object can be scaled directly from its handles while Text stays active.
+    NativeWindow text_scale(1440, 900);
+    text_scale.set_active_tool(4);
+    auto& scale_camera = text_scale.root().renderer().camera();
+    scale_camera.set_viewport_size(1440 - 352, 900 - 148);
+    text_scale.start_inline_text_editing({50, 80});
+    for (char value : std::string("Scale directly"))
+        text_scale.handle_inline_text_character(static_cast<unsigned char>(value));
+    text_scale.commit_inline_text_editing();
+    const auto scale_id = text_scale.root().vector_controller().selection().selected_ids().front();
+    const auto before_scale = text_scale.root().vector_controller().selection().bounds(
+        *text_scale.root().document().current_snapshot());
+    assert(before_scale && before_scale->width > 0 && before_scale->height > 0);
+    const auto body_screen = scale_camera.world_to_screen(before_scale->center());
+    const int body_x = 72 + static_cast<int>(std::lround(body_screen.x));
+    const int body_y = 122 + static_cast<int>(std::lround(body_screen.y));
+    text_scale.handle_mouse_down(body_x, body_y);
+    assert(!text_scale.is_inline_editing());
+    text_scale.handle_mouse_move(body_x + 24, body_y + 12);
+    text_scale.handle_mouse_up(body_x + 24, body_y + 12);
+    const auto after_move = text_scale.root().vector_controller().selection().bounds(
+        *text_scale.root().document().current_snapshot());
+    assert(after_move && std::hypot(after_move->center().x - before_scale->center().x,
+                                   after_move->center().y - before_scale->center().y) > 0.1);
+    assert(!text_scale.is_inline_editing());
+    const auto selection_rect = selection_ui::screen_bounds(scale_camera, *after_move,
+        text_scale.canvas_rect(1440, 900));
+    const auto scale_handle = selection_ui::handles(selection_rect).front();
+    assert(text_scale.selection_handle_at(scale_handle.x, scale_handle.y) == 0);
+    text_scale.handle_mouse_down(scale_handle.x, scale_handle.y);
+    text_scale.handle_mouse_move(scale_handle.x - 24, scale_handle.y - 18);
+    text_scale.handle_mouse_up(scale_handle.x - 24, scale_handle.y - 18);
+    const auto after_scale = text_scale.root().vector_controller().selection().bounds(
+        *text_scale.root().document().current_snapshot());
+    assert(after_scale && after_scale->width > before_scale->width &&
+           after_scale->height > before_scale->height);
+    const auto selected_side_rect = selection_ui::screen_bounds(scale_camera, *after_scale,
+        text_scale.canvas_rect(1440, 900));
+    const auto selected_side = selection_ui::handles(selected_side_rect)[1];
+    assert(text_scale.selection_handle_at(selected_side.x, selected_side.y) == 1);
+    text_scale.handle_mouse_down(selected_side.x, selected_side.y);
+    text_scale.handle_mouse_move(selected_side.x, selected_side.y - 24);
+    text_scale.handle_mouse_up(selected_side.x, selected_side.y - 24);
+    const auto after_side_scale = text_scale.root().vector_controller().selection().bounds(
+        *text_scale.root().document().current_snapshot());
+    assert(after_side_scale && after_side_scale->height > after_scale->height);
+    assert(std::abs(after_side_scale->width / after_scale->width -
+                    after_side_scale->height / after_scale->height) < 1e-4);
+    assert(std::holds_alternative<pikdraw::document::TextObject>(
+        *text_scale.root().document().current_snapshot()->objects().get(scale_id)));
+
+    // Live corner scaling updates the draft's font size proportionally and keeps editing active.
+    NativeWindow live_scale(1440, 900);
+    live_scale.set_active_tool(4);
+    auto& live_camera = live_scale.root().renderer().camera();
+    live_camera.set_viewport_size(1440 - 352, 900 - 148);
+    live_scale.start_inline_text_editing({60, 80});
+    for (char value : std::string("Keep proportions"))
+        live_scale.handle_inline_text_character(static_cast<unsigned char>(value));
+    const auto live_revision = live_scale.root().document().revision();
+    auto live_preview = live_scale.workflow().snapshot_for_canvas();
+    std::optional<pikdraw::document::TextObject> draft_before;
+    for (const auto& [id, object] : live_preview->objects().all()) {
+        (void)id;
+        if (const auto* text = std::get_if<pikdraw::document::TextObject>(&object)) draft_before = *text;
+    }
+    assert(draft_before);
+    const auto live_bounds_before = draft_before->bounds();
+    const auto live_size_before = draft_before->font.size_pt;
+    const auto live_rect = selection_ui::screen_bounds(live_camera, live_bounds_before,
+        live_scale.canvas_rect(1440, 900));
+    const auto live_handle = selection_ui::handles(live_rect).front();
+    assert(live_scale.selection_handle_at(live_handle.x, live_handle.y) == 0);
+    live_scale.handle_mouse_down(live_handle.x, live_handle.y);
+    assert(live_scale.is_inline_editing());
+    live_scale.handle_mouse_move(live_handle.x - 30, live_handle.y - 24);
+    live_scale.handle_mouse_up(live_handle.x - 30, live_handle.y - 24);
+    assert(live_scale.is_inline_editing());
+    assert(live_scale.root().document().revision() == live_revision);
+    live_preview = live_scale.workflow().snapshot_for_canvas();
+    std::optional<pikdraw::document::TextObject> draft_after;
+    for (const auto& [id, object] : live_preview->objects().all()) {
+        (void)id;
+        if (const auto* text = std::get_if<pikdraw::document::TextObject>(&object)) draft_after = *text;
+    }
+    assert(draft_after && draft_after->font.size_pt > live_size_before);
+    const auto live_bounds_after = draft_after->bounds();
+    assert(std::abs(live_bounds_after.right() - live_bounds_before.right()) < 1e-4);
+    assert(std::abs(live_bounds_after.y - live_bounds_before.y) < 1e-4);
+    const double live_factor = draft_after->font.size_pt / live_size_before;
+    assert(std::abs(live_bounds_after.width / live_bounds_before.width - live_factor) < 1e-4);
+    assert(std::abs(live_bounds_after.height / live_bounds_before.height - live_factor) < 1e-4);
+    assert(live_scale.handle_inline_text_character('!'));
+    assert(live_scale.inline_text_buffer().ends_with("!"));
+
+    // Side handles scale both live text dimensions uniformly, keep the opposite edge anchored,
+    // and leave the caret/editor active so typing can continue without switching tools.
+    live_preview = live_scale.workflow().snapshot_for_canvas();
+    std::optional<pikdraw::document::TextObject> draft_before_side;
+    for (const auto& [id, object] : live_preview->objects().all()) {
+        (void)id;
+        if (const auto* text = std::get_if<pikdraw::document::TextObject>(&object))
+            draft_before_side = *text;
+    }
+    assert(draft_before_side);
+    const auto side_bounds_before = draft_before_side->bounds();
+    const auto side_rect = selection_ui::screen_bounds(live_camera, side_bounds_before,
+        live_scale.canvas_rect(1440, 900));
+    const auto side_handle = selection_ui::handles(side_rect)[1];
+    assert(live_scale.selection_handle_at(side_handle.x, side_handle.y) == 1);
+    live_scale.handle_mouse_down(side_handle.x, side_handle.y);
+    live_scale.handle_mouse_move(side_handle.x, side_handle.y - 24);
+    live_scale.handle_mouse_up(side_handle.x, side_handle.y - 24);
+    assert(live_scale.is_inline_editing());
+    assert(live_scale.root().document().revision() == live_revision);
+    live_preview = live_scale.workflow().snapshot_for_canvas();
+    std::optional<pikdraw::document::TextObject> draft_after_side;
+    for (const auto& [id, object] : live_preview->objects().all()) {
+        (void)id;
+        if (const auto* text = std::get_if<pikdraw::document::TextObject>(&object))
+            draft_after_side = *text;
+    }
+    assert(draft_after_side && draft_after_side->font.size_pt > draft_before_side->font.size_pt);
+    const auto side_bounds_after = draft_after_side->bounds();
+    const double side_factor = draft_after_side->font.size_pt / draft_before_side->font.size_pt;
+    assert(std::abs(side_bounds_after.width / side_bounds_before.width - side_factor) < 1e-4);
+    assert(std::abs(side_bounds_after.height / side_bounds_before.height - side_factor) < 1e-4);
+    assert(std::abs(side_bounds_after.center().x - side_bounds_before.center().x) < 1e-4);
+    assert(std::abs(side_bounds_after.y - side_bounds_before.y) < 1e-4);
+    assert(live_scale.handle_inline_text_character('?'));
+    assert(live_scale.inline_text_buffer().ends_with("!?"));
+
+    // Text Properties exposes a real point-size field and preserves unrelated paragraph/style data.
+    NativeWindow text_properties(1440, 900);
+    const auto property_text_id = text_properties.workflow().add_vietnamese_text(
+        40, 50, "Property font size", "Be Vietnam Pro", 24, "#102030");
+    auto& property_selection = text_properties.root().vector_controller().selection();
+    property_selection.select(property_text_id);
+    assert(text_properties.workflow().style_selected_text("", 24, true, true, true,
+        pikdraw::typography::TextAlignment::Center));
+    text_properties.start_numeric_input(NativeWindow::NumericFieldId::TextFontSize);
+    text_properties.handle_numeric_char_input('3');
+    text_properties.handle_numeric_char_input('6');
+    text_properties.commit_numeric_field();
+    const auto property_text = std::get<pikdraw::document::TextObject>(
+        *text_properties.root().document().current_snapshot()->objects().get(property_text_id));
+    assert(property_text.font.size_pt == 36);
+    assert(property_text.font.weight >= 700 && property_text.font.italic);
+    assert(property_text.underline);
+    assert(property_text.alignment == pikdraw::typography::TextAlignment::Center);
+    assert(text_properties.workflow().undo());
+    const auto property_text_undone = std::get<pikdraw::document::TextObject>(
+        *text_properties.root().document().current_snapshot()->objects().get(property_text_id));
+    assert(property_text_undone.font.size_pt == 24);
+    assert(property_text_undone.underline &&
+           property_text_undone.alignment == pikdraw::typography::TextAlignment::Center);
+
+    // Real pointer path: dragging with Text selected creates a wrapping text frame.
+    NativeWindow frame(1440, 900);
+    frame.set_active_tool(4);
+    auto& camera = frame.root().renderer().camera();
+    camera.set_viewport_size(1440 - 352, 900 - 148);
+    const auto canvas_point = [&](pikdraw::geometry::Point2D world) {
+        const auto screen = camera.world_to_screen(world);
+        return std::pair<int, int>{72 + static_cast<int>(screen.x), 122 + static_cast<int>(screen.y)};
+    };
+    const auto [start_x, start_y] = canvas_point({50, 100});
+    const auto [end_x, end_y] = canvas_point({105, 65});
+    frame.handle_mouse_down(start_x, start_y);
+    frame.handle_mouse_move(end_x, end_y);
+    frame.handle_mouse_up(end_x, end_y);
+    for (char value : std::string("PikDraw text wraps on the canvas"))
+        frame.handle_inline_text_character(static_cast<unsigned char>(value));
+    auto frame_preview = frame.workflow().snapshot_for_canvas();
+    std::optional<pikdraw::document::TextObject> paragraph;
+    for (const auto& [id, object] : frame_preview->objects().all()) {
+        (void)id;
+        if (const auto* text = std::get_if<pikdraw::document::TextObject>(&object)) paragraph = *text;
+    }
+    assert(paragraph && paragraph->frame_width_mm > 0);
+    assert(paragraph->layout().line_count() > 1);
+    const auto paragraph_origin = camera.world_to_screen({paragraph->position.x,
+        paragraph->position.y + paragraph->layout().lines().front().run.ascent_mm});
+    assert(std::abs(72 + paragraph_origin.x - start_x) <= 1.0);
+    assert(std::abs(122 + paragraph_origin.y - start_y) <= 1.0);
+    frame.commit_inline_text_editing();
+    auto saved_paragraph = std::get<pikdraw::document::TextObject>(
+        *frame.root().document().current_snapshot()->objects().get(paragraph->id));
+    assert(saved_paragraph.frame_width_mm == paragraph->frame_width_mm);
+
     std::cout << "[PASS] test_typography_inline_editing_ribbon_and_table\n";
-}
-
-void test_native_window_theme_and_settings_state() {
-    NativeWindow win(1440, 900);
-    assert(win.theme() == ThemeMode::Light);
-    assert(win.language() == UILanguage::English);
-    assert(!win.is_settings_modal_open());
-    assert(win.canvas_background_color().r == 255);
-    assert(win.canvas_background_color().g == 255);
-    assert(win.canvas_background_color().b == 255);
-#ifdef _WIN32
-    assert(win.canvas_background_colorref() == RGB(255, 255, 255));
-#endif
-
-    win.set_theme(ThemeMode::CyberDark);
-    assert(win.theme() == ThemeMode::CyberDark);
-    assert(win.settings_theme_choice() == 0);
-    assert(win.canvas_background_color().r == 68);
-    assert(win.canvas_background_color().g == 72);
-    assert(win.canvas_background_color().b == 80);
-#ifdef _WIN32
-    assert(win.canvas_background_colorref() == RGB(68, 72, 80));
-#endif
-
-    win.toggle_theme();
-    assert(win.theme() == ThemeMode::Light);
-    assert(win.canvas_background_color().r == 255);
-    assert(win.canvas_background_color().g == 255);
-    assert(win.canvas_background_color().b == 255);
-#ifdef _WIN32
-    assert(win.canvas_background_colorref() == RGB(255, 255, 255));
-#endif
-
-    win.open_settings_modal();
-    assert(win.is_settings_modal_open());
-
-    win.set_settings_tab(2);
-    assert(win.settings_active_tab() == 2);
-
-    win.set_settings_accent_choice(1);
-    assert(win.settings_accent_choice() == 1);
-
-    win.set_settings_unit_choice(2);
-    assert(win.settings_unit_choice() == 2);
-
-    win.close_settings_modal();
-    assert(!win.is_settings_modal_open());
-
-    assert(pikdraw::desktop::actions::ActionId::is_valid_action_id(
-        pikdraw::desktop::actions::ActionId::kSettingsAiConnections));
-    bool found_ai_connections = false;
-    for (const auto& item : kSettingsMenuItems)
-        found_ai_connections = found_ai_connections || item.action == MenuActionId::SettingsAiConnections;
-    assert(found_ai_connections);
-    assert(pikdraw::desktop::actions::ActionId::is_valid_action_id(
-        pikdraw::desktop::actions::ActionId::kHelpAiAutomation));
-    bool found_ai_help = false;
-    for (const auto& item : kHelpMenuItems)
-        found_ai_help = found_ai_help || item.action == MenuActionId::HelpAiAutomation;
-    assert(found_ai_help);
-
-    std::cout << "[PASS] test_native_window_theme_and_settings_state\n";
-}
-
-void test_ai_connections_settings_draft_state() {
-    NativeWindow win(1440, 900);
-    assert(!win.mcp_listener_active());
-    assert(!win.mcp_edit_access_active());
-
-    win.open_ai_connections_settings();
-    assert(win.is_settings_modal_open());
-    assert(win.settings_active_tab() == 6);
-    assert(win.ai_connections_focus_index() == 0);
-    assert(!win.ai_connections_read_choice());
-    assert(!win.ai_connections_edit_choice());
-    capture_shell_screenshot(win, "ai-connections-settings-english.bmp");
-    win.set_language(UILanguage::Vietnamese);
-    capture_shell_screenshot(win, "ai-connections-settings-vietnamese.bmp");
-    win.set_language(UILanguage::English);
-
-    win.toggle_ai_connections_read_choice();
-    win.toggle_ai_connections_edit_choice();
-    assert(win.ai_connections_read_choice());
-    assert(win.ai_connections_edit_choice());
-    assert(!win.mcp_listener_active());
-
-    win.close_settings_modal();
-    assert(!win.is_settings_modal_open());
-    assert(!win.ai_connections_read_choice());
-    assert(!win.ai_connections_edit_choice());
-    assert(!win.mcp_listener_active());
-
-    win.open_ai_connections_settings();
-    win.toggle_ai_connections_read_choice();
-    assert(!win.apply_ai_connections_choices());
-    assert(!win.mcp_listener_active());
-    assert(!win.mcp_error_message().empty());
-    win.close_settings_modal();
-}
-
-void test_compact_icons_and_hover_tooltips() {
-    NativeWindow win(1440, 900);
-
-    // 1. Hover over the new-document plus area in the tab bar.
-    win.set_language(UILanguage::Vietnamese);
-    win.update_hover_tooltip(235, 50);
-    assert(win.tooltip().visible);
-    assert(win.tooltip().text.find(L"Tạo tài liệu mới") != std::wstring::npos);
-    assert(win.tooltip().text.find(L"Ctrl+N") != std::wstring::npos);
-
-    // Switch to English: Tooltip changes language immediately
-    win.set_language(UILanguage::English);
-    win.update_hover_tooltip(235, 50);
-    assert(win.tooltip().visible);
-    assert(win.tooltip().text.find(L"New Document Tab") != std::wstring::npos);
-    assert(win.tooltip().text.find(L"Ctrl+N") != std::wstring::npos);
-
-    // 2. Hover over Left Tool Strip: Tool 0 (Pick Tool), Tool 4 (Text Tool), Tool 5 (Knife Tool)
-    win.set_language(UILanguage::Vietnamese);
-    win.update_hover_tooltip(20, 115); // Tool 0 (content_top + 10 = 112)
-    assert(win.tooltip().visible);
-    assert(win.tooltip().text.find(L"chọn") != std::wstring::npos);
-    assert(win.tooltip().text.find(L"Phím V") != std::wstring::npos);
-
-    win.update_hover_tooltip(20, 115 + 4 * 42); // Tool 4 (Text Tool)
-    assert(win.tooltip().visible);
-    assert(win.tooltip().text.find(L"văn bản") != std::wstring::npos);
-    assert(win.tooltip().text.find(L"F8") != std::wstring::npos);
-
-    win.update_hover_tooltip(20, 115 + 5 * 42); // Tool 5 (Knife Tool)
-    assert(win.tooltip().visible);
-    assert(win.tooltip().text.find(L"Dao cắt") != std::wstring::npos);
-    assert(win.tooltip().text.find(L"Phím K") != std::wstring::npos);
-
-    // 3. Hover over Ribbon: Text Mode (Convert to Curves `⤹ Q`, Table `▦ Table`)
-    win.set_active_tool(4); // Text Tool active
-    win.update_hover_tooltip(580, 80); // Curves button (556 to 616)
-    assert(win.tooltip().visible);
-    assert(win.tooltip().text.find(L"đường cong") != std::wstring::npos);
-    assert(win.tooltip().text.find(L"Ctrl+Q") != std::wstring::npos);
-
-    win.update_hover_tooltip(650, 80); // Table button (622 to 692)
-    assert(win.tooltip().visible);
-    assert(win.tooltip().text.find(L"bảng") != std::wstring::npos);
-
-    // 4. Properties has no legacy Align hitbox; the selection context bar owns the action.
-    int insp_x = 1440 - 280;
-    win.update_hover_tooltip(insp_x + 30, 420);
-    assert(!win.tooltip().visible);
-
-    // 5. Context bar tooltips describe the actual command and do not invent shortcuts.
-    win.set_active_tool(0); // Return to Pick so selection actions own the context bar.
-    auto tip_a = win.workflow().add_rectangle(40.0, 40.0, 30.0, 20.0);
-    auto tip_b = win.workflow().add_rectangle(60.0, 40.0, 30.0, 20.0);
-    win.root().vector_controller().selection().clear();
-    win.root().vector_controller().selection().select(tip_a, pikdraw::vector::SelectionMode::Add);
-    win.root().vector_controller().selection().select(tip_b, pikdraw::vector::SelectionMode::Add);
-    win.set_language(UILanguage::Vietnamese);
-    win.update_hover_tooltip(850, 80); // Weld icon in the two-path selection context.
-    std::wcout << L"ACTUAL TOOLTIP AT 850: '" << win.tooltip().text << L"'" << std::endl;
-    assert(win.tooltip().visible);
-    assert(win.tooltip().text.find(L"Hàn") != std::wstring::npos);
-
-    // 6. English mode keeps the same icon action name.
-    win.set_language(UILanguage::English);
-    win.update_hover_tooltip(850, 80);
-    assert(win.tooltip().visible);
-    assert(win.tooltip().text.find(L"Weld") != std::wstring::npos);
-
-    // 7. Hovering empty canvas clears tooltip
-    win.update_hover_tooltip(500, 500);
-    assert(!win.tooltip().visible);
-    assert(win.tooltip().text.empty());
-
-    // 8. Capture visual proof of compact, icon-only context actions.
-    win.set_language(UILanguage::Vietnamese);
-    win.update_hover_tooltip(850, 80);
-    capture_shell_screenshot(win, "object-context-actions-hover.bmp");
-
-    // Also capture Text Ribbon with hover tooltip over ⤹ Q
-    win.set_active_tool(4);
-    win.update_hover_tooltip(585, 80);
-    capture_shell_screenshot(win, "m1_pikdraw_compact_text_ribbon_hover.bmp");
-
-    // 8. Capture visual proof of multiple selected objects with compact ribbon buttons
-    win.set_active_tool(0); // Pick tool
-    auto r1 = win.workflow().add_rectangle(50.0, 50.0, 80.0, 60.0, "#00f2c3", "#0ea5e9", 1.0);
-    auto r2 = win.workflow().add_rectangle(150.0, 70.0, 100.0, 80.0, "#eab308", "#f59e0b", 1.0);
-    win.root().vector_controller().selection().clear();
-    win.root().vector_controller().selection().select(r1, pikdraw::vector::SelectionMode::Add);
-    win.root().vector_controller().selection().select(r2, pikdraw::vector::SelectionMode::Add);
-    win.set_language(UILanguage::Vietnamese);
-    win.update_hover_tooltip(590, 80); // Hover over Align Left on the object context bar.
-    assert(win.tooltip().visible);
-    assert(win.tooltip().text.find(L"Căn cạnh trái") != std::wstring::npos);
-    capture_shell_screenshot(win, "m1_pikdraw_compact_object_ribbon_hover.bmp");
-
-    // 9. Verify Del, Dup, and Page buttons are completely absent from the ribbon
-    win.update_hover_tooltip(490, 80); // Former Del position
-    assert(!win.tooltip().visible);
-    win.update_hover_tooltip(545, 80); // Former Dup position
-    assert(!win.tooltip().visible);
-
-    // Single-selection verification
-    win.root().vector_controller().selection().clear();
-    win.root().vector_controller().selection().select(r1, pikdraw::vector::SelectionMode::Add);
-    win.update_hover_tooltip(490, 80); // Former Del position
-    assert(!win.tooltip().visible);
-    win.update_hover_tooltip(545, 80); // Former Dup position
-    assert(!win.tooltip().visible);
-    win.update_hover_tooltip(590, 80); // 580..625 is now FlipH (replacing Page)
-    assert(win.tooltip().visible);
-    assert(win.tooltip().text.find(L"Lật ngang") != std::wstring::npos);
-
-    std::cout << "[PASS] test_compact_icons_and_hover_tooltips\n";
-}
-
-void test_numeric_keyboard_input_property_bar() {
-    NativeWindow win(1440, 900);
-
-    // 1. Test Direct Keyboard Input for Page Width & Height (Replacing +/- buttons)
-    win.start_numeric_input(NativeWindow::NumericFieldId::PageWidth);
-    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::PageWidth);
-    assert(!win.numeric_input_buffer().empty());
-
-    while (!win.numeric_input_buffer().empty()) {
-        win.handle_numeric_char_input(8); // Backspace
-    }
-    win.handle_numeric_char_input(L'5');
-    win.handle_numeric_char_input(L'0');
-    win.handle_numeric_char_input(L'0');
-    assert(win.numeric_input_buffer() == "500");
-
-    win.handle_numeric_char_input(13); // Enter
-    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::None);
-    assert(std::abs(win.active_tab().page_width_mm - 500.0) < 0.1);
-    assert(std::abs(win.root().document().current_snapshot()->page().width_mm - 500.0) < 0.1);
-
-    // Type on Page Height with Tab cycling
-    win.start_numeric_input(NativeWindow::NumericFieldId::PageWidth);
-    win.handle_numeric_char_input(9); // Tab cycles to PageHeight!
-    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::PageHeight);
-    while (!win.numeric_input_buffer().empty()) {
-        win.handle_numeric_char_input(8);
-    }
-    win.handle_numeric_char_input(L'3');
-    win.handle_numeric_char_input(L'5');
-    win.handle_numeric_char_input(L'0');
-    win.commit_numeric_field();
-    assert(std::abs(win.active_tab().page_height_mm - 350.0) < 0.1);
-    assert(std::abs(win.root().document().current_snapshot()->page().height_mm - 350.0) < 0.1);
-
-    // Capture clean Page Ribbon evidence (no +/- buttons)
-    capture_shell_screenshot(win, "m1_pikdraw_numeric_input_page_ribbon.bmp");
-
-    // 2. Test Direct Keyboard Input for Object X, Y, Width, Height
-    auto rect_id = win.workflow().add_rectangle(50.0, 60.0, 100.0, 80.0, "#00f2c3", "#0ea5e9", 2.0);
-    win.root().vector_controller().selection().select(rect_id);
-
-    // Object X
-    win.start_numeric_input(NativeWindow::NumericFieldId::ObjectX);
-    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::ObjectX);
-    while (!win.numeric_input_buffer().empty()) win.handle_numeric_char_input(8);
-    win.handle_numeric_char_input(L'1');
-    win.handle_numeric_char_input(L'2');
-    win.handle_numeric_char_input(L'5');
-    win.commit_numeric_field();
-    auto b_obj = win.workflow().get_object_bounds(rect_id);
-    assert(b_obj.has_value());
-    assert(std::abs(b_obj->x - 125.0) < 0.1);
-
-    // Object Y
-    win.start_numeric_input(NativeWindow::NumericFieldId::ObjectY);
-    while (!win.numeric_input_buffer().empty()) win.handle_numeric_char_input(8);
-    win.handle_numeric_char_input(L'1');
-    win.handle_numeric_char_input(L'7');
-    win.handle_numeric_char_input(L'5');
-    win.commit_numeric_field();
-    b_obj = win.workflow().get_object_bounds(rect_id);
-    assert(b_obj.has_value());
-    assert(std::abs(b_obj->y - 175.0) < 0.1);
-
-    // Aspect ratio locked scaling via numeric Width input:
-    if (!win.is_aspect_ratio_locked()) win.toggle_aspect_ratio_lock();
-    win.start_numeric_input(NativeWindow::NumericFieldId::ObjectWidth);
-    while (!win.numeric_input_buffer().empty()) win.handle_numeric_char_input(8);
-    win.handle_numeric_char_input(L'2');
-    win.handle_numeric_char_input(L'0');
-    win.handle_numeric_char_input(L'0');
-    win.commit_numeric_field();
-    b_obj = win.workflow().get_object_bounds(rect_id);
-    assert(b_obj.has_value());
-    assert(std::abs(b_obj->width - 200.0) < 0.5);
-    assert(std::abs(b_obj->height - 160.0) < 0.5);
-
-    // Clamping test: typing > 40m clamps to 40,000 mm
-    win.start_numeric_input(NativeWindow::NumericFieldId::ObjectWidth);
-    while (!win.numeric_input_buffer().empty()) win.handle_numeric_char_input(8);
-    win.handle_numeric_char_input(L'9');
-    win.handle_numeric_char_input(L'9');
-    win.handle_numeric_char_input(L'9');
-    win.handle_numeric_char_input(L'9');
-    win.handle_numeric_char_input(L'9');
-    win.commit_numeric_field();
-    b_obj = win.workflow().get_object_bounds(rect_id);
-    assert(b_obj.has_value());
-    assert(b_obj->width <= pikdraw::geometry::kMaxObjectDimensionMm + 0.1);
-
-    // Capture clean Object Ribbon evidence
-    capture_shell_screenshot(win, "m1_pikdraw_numeric_input_object_ribbon.bmp");
-
-    // Capture Focused State screenshot with cyan highlight and cursor |
-    win.start_numeric_input(NativeWindow::NumericFieldId::ObjectWidth);
-    capture_shell_screenshot(win, "m1_pikdraw_numeric_input_focused.bmp");
-    win.cancel_numeric_field();
-
-    // 3. Test New Document Modal Numeric Inputs (No [-10]/[+10] buttons)
-    win.open_new_doc_modal();
-    assert(win.is_new_doc_modal_open());
-
-    win.start_numeric_input(NativeWindow::NumericFieldId::ModalWidth);
-    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::ModalWidth);
-    while (!win.numeric_input_buffer().empty()) win.handle_numeric_char_input(8);
-    win.handle_numeric_char_input(L'1');
-    win.handle_numeric_char_input(L'2');
-    win.handle_numeric_char_input(L'0');
-    win.handle_numeric_char_input(L'0');
-    win.commit_numeric_field();
-    assert(std::abs(win.new_doc_width() - 1200.0) < 0.1);
-
-    win.start_numeric_input(NativeWindow::NumericFieldId::ModalHeight);
-    while (!win.numeric_input_buffer().empty()) win.handle_numeric_char_input(8);
-    win.handle_numeric_char_input(L'6');
-    win.handle_numeric_char_input(L'0');
-    win.handle_numeric_char_input(L'0');
-    win.commit_numeric_field();
-    assert(std::abs(win.new_doc_height() - 600.0) < 0.1);
-
-    // Capture clean Modal screenshot
-    capture_shell_screenshot(win, "m1_pikdraw_new_doc_clean_inputs.bmp");
-    win.close_new_doc_modal();
-
-    std::cout << "[PASS] test_numeric_keyboard_input_property_bar\n";
-}
-
-void test_page_preset_dropdown_and_modal_row_clicks() {
-    NativeWindow win(1440, 900);
-    win.workflow().new_document(297.0, 210.0); // Default A4 landscape
-    win.fit_page_to_canvas();
-
-    // 1. Verify New Document Modal Row 2 Click Hit-Testing (Fixing click offset bug)
-    win.open_new_doc_modal();
-    assert(win.is_new_doc_modal_open());
-
-    int modal_w = 680, modal_h = 510;
-    int modal_x = (1440 - modal_w) / 2; // 380
-    int modal_y = (900 - modal_h) / 2;  // 195
-    int cx = modal_x + 24;              // 404
-    int cy = modal_y + 58;              // 253
-
-    // Row 1 presets: i=0 (A4: 210x297), i=1 (A3: 297x420), i=2 (A2: 420x594)
-    // Row 2 presets: i=3 (Pano 2x1m: 2000x1000), i=4 (Banner 3x1m: 3000x1000), i=5 (Vuông 1080: 1080x1080)
-    // Click on Row 2 Card 0 (Pano 2x1m): px = cx + 0 = 404, py = cy + 24 + 48 = 325
-    win.handle_mouse_down(cx + 50, cy + 24 + 48 + 20);
-    assert(std::abs(win.new_doc_width() - 2000.0) < 0.1);
-    assert(std::abs(win.new_doc_height() - 1000.0) < 0.1);
-
-    // Click on Row 2 Card 1 (Banner 3x1m): px = cx + 212 = 616, py = cy + 24 + 48 = 325
-    win.handle_mouse_down(cx + 212 + 50, cy + 24 + 48 + 20);
-    assert(std::abs(win.new_doc_width() - 3000.0) < 0.1);
-    assert(std::abs(win.new_doc_height() - 1000.0) < 0.1);
-
-    // Click on Row 2 Card 2 (Vuông 1080): px = cx + 424 = 828, py = cy + 24 + 48 = 325
-    win.handle_mouse_down(cx + 424 + 50, cy + 24 + 48 + 20);
-    assert(std::abs(win.new_doc_width() - 1080.0) < 0.1);
-    assert(std::abs(win.new_doc_height() - 1080.0) < 0.1);
-
-    // Click on Row 1 Card 0 (A4): px = cx = 404, py = cy + 24 = 277
-    win.handle_mouse_down(cx + 50, cy + 24 + 20);
-    assert(std::abs(win.new_doc_width() - 297.0) < 0.1 || std::abs(win.new_doc_width() - 210.0) < 0.1);
-
-    win.close_new_doc_modal();
-    assert(!win.is_new_doc_modal_open());
-
-    // 2. Test Page Preset Combobox & Dropdown on Ribbon
-    assert(!win.is_page_preset_dropdown_open());
-
-    // Click Combobox Button at x=100, y=80 (ribbon y: 66 to 102)
-    win.handle_mouse_down(100, 80);
-    assert(win.is_page_preset_dropdown_open());
-
-    // Capture visual proof of Page Preset Dropdown List OPEN
-    capture_shell_screenshot(win, "m1_pikdraw_page_preset_dropdown_open.bmp");
-
-    // Click on preset in Dropdown (item 1: A3)
-    int drop_y = 38 + 28 + 36;
-    int a3_click_y = drop_y + 6 + 1 * 28 + 14;
-    win.handle_mouse_down(100, a3_click_y);
-    assert(!win.is_page_preset_dropdown_open()); // Closed after selection
-    assert(std::abs(win.active_tab().page_width_mm - 420.0) < 0.1);
-    assert(std::abs(win.active_tab().page_height_mm - 297.0) < 0.1);
-
-    // Open dropdown again and click Pano 2x1m (item 5)
-    win.handle_mouse_down(100, 80);
-    assert(win.is_page_preset_dropdown_open());
-    int pano_click_y = drop_y + 6 + 5 * 28 + 14;
-    win.handle_mouse_down(100, pano_click_y);
-    assert(!win.is_page_preset_dropdown_open());
-    assert(std::abs(win.active_tab().page_width_mm - 2000.0) < 0.1);
-    assert(std::abs(win.active_tab().page_height_mm - 1000.0) < 0.1);
-
-    // Open dropdown again and press ESC to close
-    win.handle_mouse_down(100, 80);
-    assert(win.is_page_preset_dropdown_open());
-    win.handle_key_down(VK_ESCAPE);
-    assert(!win.is_page_preset_dropdown_open());
-
-    // Vietnamese language mode dropdown
-    win.set_language(UILanguage::Vietnamese);
-    win.handle_mouse_down(100, 80);
-    assert(win.is_page_preset_dropdown_open());
-    capture_shell_screenshot(win, "m1_pikdraw_page_preset_dropdown_vi.bmp");
-    win.close_page_preset_dropdown();
-
-    // Capture visual proof of Compact Ribbon with Preset Combobox (Collapsed)
-    capture_shell_screenshot(win, "m1_pikdraw_page_ribbon_compact_combobox.bmp");
-
-    std::cout << "[PASS] test_page_preset_dropdown_and_modal_row_clicks\n";
-}
-
-void test_corel_pick_auto_select_resume_guidelines_and_space_shortcut() {
-    NativeWindow win;
-    assert(win.initialize("Test Corel Pick & Guidelines Flow"));
-    auto& workflow = win.workflow();
-    workflow.new_document(297.0, 210.0);
-    win.fit_page_to_canvas();
-    auto& sel = win.root().vector_controller().selection();
-    const auto area = win.canvas_rect(win.width(), win.height());
-
-    // 1. Phím tắt V và Space
-    assert(win.active_tool() == 0);
-    win.set_active_tool(1);
-    assert(win.active_tool() == 1);
-
-    // Bấm Space -> Tạm thời chuyển sang Pick Tool (tool 0)
-    assert(win.handle_key_down(VK_SPACE));
-    assert(win.active_tool() == 0);
-    assert(win.previous_drawing_tool() == 1);
-
-    // Bấm Space lần nữa -> Khôi phục lại công cụ Rectangle (tool 1)
-    assert(win.handle_key_down(VK_SPACE));
-    assert(win.active_tool() == 1);
-
-    // Bấm V -> Chuyển sang Pick Tool (tool 0)
-    assert(win.handle_key_down('V'));
-    assert(win.active_tool() == 0);
-    assert(win.previous_drawing_tool() == 1);
-
-    // 2. CorelDRAW Flow: Vẽ xong 1 đối tượng -> Tự động chọn (Pick) ngay lập tức
-    win.set_active_tool(2);
-    assert(win.active_tool() == 2);
-
-    const int x1 = area.left + 60;
-    const int y1 = area.top + 60;
-    const int x2 = area.left + 160;
-    const int y2 = area.top + 140;
-
-    win.handle_mouse_down(x1, y1, 0);
-    win.handle_mouse_move(x2, y2, 0);
-    win.handle_mouse_up(x2, y2, 0);
-
-    std::cout << "DEBUG: active_tool=" << win.active_tool() << " sel=" << sel.count()
-              << " status=" << win.status_message() << " snap_objs="
-              << win.root().document().current_snapshot()->object_count() << std::endl;
-    // a) Đối tượng mới tạo được tự động chọn!
-    assert(sel.count() == 1);
-    // b) Hệ thống tự động chuyển sang công cụ Pick (active_tool == 0)!
-    assert(win.active_tool() == 0);
-    // c) previous_drawing_tool lưu lại là tool 2 (Elip)!
-    assert(win.previous_drawing_tool() == 2);
-
-    // 3. Khi người dùng click ra ngoài khoảng trống (deselect) -> Tự động kích hoạt lại công cụ Elip (tool 2)!
-    const int empty_x = area.left + 20;
-    const int empty_y = area.top + 20;
-    assert(win.is_canvas_point(empty_x, empty_y));
-
-    win.handle_mouse_down(empty_x, empty_y, 0);
-    win.handle_mouse_up(empty_x, empty_y, 0);
-
-    // a) Vùng chọn đã bị bỏ
-    assert(sel.count() == 0);
-    // b) Công cụ vẽ trước đó (Elip - tool 2) tự động kích hoạt trở lại để tiếp tục vẽ!
-    assert(win.active_tool() == 2);
-
-    // 4. Guidelines: Pick chọn và di chuyển vị trí thước gióng
-    win.set_active_tool(0);
-    win.clear_guidelines();
-    assert(win.guideline_count() == 0);
-
-    win.add_guideline(NativeWindow::GuidelineOrientation::Horizontal, 80.0);
-    win.add_guideline(NativeWindow::GuidelineOrientation::Vertical, 120.0);
-    assert(win.guideline_count() == 2);
-
-    const auto gl_h_screen = win.root().renderer().camera().world_to_screen({0.0, 80.0});
-    const int gl_h_y = area.top + static_cast<int>(std::round(gl_h_screen.y));
-    const int test_x = area.left + 200;
-
-    // Cursor tại đường gióng ngang là IDC_SIZENS (32645)
-    assert(win.canvas_cursor_at(test_x, gl_h_y) == 32645);
-
-    // Pick đường gióng ngang và kéo dời sang vị trí mới Y = 110.0 mm
-    win.handle_mouse_down(test_x, gl_h_y, 0);
-    assert(win.is_dragging_guideline());
-    assert(win.selected_guideline_index() == 0);
-
-    const auto target_pos = win.root().renderer().camera().world_to_screen({0.0, 110.0});
-    const int new_gl_y = area.top + static_cast<int>(std::round(target_pos.y));
-    win.handle_mouse_move(test_x, new_gl_y, 0);
-    win.handle_mouse_up(test_x, new_gl_y, 0);
-
-    assert(win.guidelines()[0].orientation == NativeWindow::GuidelineOrientation::Horizontal);
-    assert(std::abs(win.guidelines()[0].position_mm - 110.0) < 1.0);
-
-    // Kéo đường gióng ra ngoài canvas (thả vào khu vực menu/topbar y < area.top) -> Guideline bị xóa
-    win.handle_mouse_down(test_x, new_gl_y, 0);
-    assert(win.is_dragging_guideline());
-    win.handle_mouse_move(test_x, area.top - 20, 0);
-    win.handle_mouse_up(test_x, area.top - 20, 0);
-    assert(win.guideline_count() == 1);
-    assert(win.guidelines()[0].orientation == NativeWindow::GuidelineOrientation::Vertical);
-
-    std::cout << "[PASS] test_corel_pick_auto_select_resume_guidelines_and_space_shortcut\n";
 }
 

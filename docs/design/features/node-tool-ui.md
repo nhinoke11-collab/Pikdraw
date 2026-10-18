@@ -29,8 +29,8 @@
 | --- | --- | --- | --- | --- |
 | Node count / Số node | Properties summary | Số nguyên ≥0; chỉ đọc | Selection node hiện tại; không có selection thì 0 | Cập nhật theo selection, không tạo Undo |
 | Node mode / Chế độ node | Properties summary + bar | Corner, Cusp, Smooth, Symmetric, Auto Smooth; ban đầu theo node | Selection; nhiều mode khác nhau hiển thị Mixed | Cusp/Smooth/Symmetric gọi cùng controller command; Mixed không giả một giá trị |
-| X / Tọa độ X | Properties | Số thập phân, mm, −500.000..500.000 mm; mặc định tọa độ node được chọn | Chỉ single-node selection; nhiều node/không có node thì disabled và hiện Mixed/chọn node | Dot hoặc comma thập phân; Enter commit, Esc hủy, Tab sang Y; giá trị ngoài miền/không hợp lệ bị giữ ở draft và báo lỗi |
-| Y / Tọa độ Y | Properties | Số thập phân, mm, −500.000..500.000 mm; mặc định tọa độ node được chọn | Như X | Enter commit một `MovePathNodeCommand`; Ctrl+Z hoàn tác |
+| X / Tọa độ X | Properties | Số thập phân, mm, −20.000..20.000 mm; giá trị hiện tại luôn đọc từ node được chọn | Chỉ single-node selection; nhiều node/không có node thì disabled và hiện Mixed/chọn node | Khi focus, draft trống để gõ thay thế; dot hoặc comma thập phân; Enter commit, Esc hủy, Tab sang Y; giá trị ngoài miền/không hợp lệ được giữ ở draft và báo lỗi |
+| Y / Tọa độ Y | Properties | Số thập phân, mm, −20.000..20.000 mm; giá trị hiện tại luôn đọc từ node được chọn | Như X | Draft trống khi focus; Enter commit một `MovePathNodeCommand`; Tab quay lại X; Ctrl+Z hoàn tác |
 
 - Bar không có bản sao của X/Y; chỉ phần mode/lệnh nhanh nằm trên bar. Properties và numeric editor chia sẻ `NumericFieldId::ObjectX/ObjectY` hiện có trong ngữ cảnh Node, không thêm state/enum mới vào header shell.
 - Đổi selection khỏi một node khi đang nhập sẽ commit giá trị hợp lệ cho node cũ trước khi tiếp tục; số sai vẫn giữ field mở để người dùng sửa hoặc Esc hủy.
@@ -65,8 +65,8 @@
 
 - Mở `Tools > Node Edit Tool`, chọn Path Drawing > Node hoặc nhấn F10; tool active không đổi document revision. Node tool tự chọn target Path tương thích đầu tiên nếu chưa có selection theo controller hiện tại.
 - Nhấp node trên canvas để chọn; kéo anchor/handle thao tác theo Node controller. Lệnh bar và nút mode trong Properties cùng gọi controller; mỗi lần áp dụng là command/Undo như API hiện tại.
-- Nhấp X/Y mở numeric draft với tọa độ hiện tại (mm). Enter xác thực miền hữu hạn, gọi `set_selected_node_position`; Esc bỏ draft; Ctrl+Z hoàn tác thao tác đã commit.
+- Nhấp X/Y giữ tọa độ hiện tại (mm) nhìn thấy trong Properties và mở draft trống để nhập giá trị thay thế. Enter xác thực miền hữu hạn ±20.000 mm, gọi `set_selected_node_position`; Esc bỏ draft; Ctrl+Z hoàn tác thao tác đã commit.
 - Properties chỉ được hiện trong Inspector hiện có; chuyển/focus dock không sửa artwork. Mode, count và coordinates được đọc lại từ Node controller sau selection/document update.
 - Cửa sổ hẹp: tọa độ nằm trong dock, không làm property bar dài hơn; flyout Path Drawing cao hơn một hàng. Keyboard navigation phải đi được qua 4 item Line/Polyline/Pen/Node bằng ↑/↓, Enter/Space và Esc.
 - Kiểm tra mục tiêu: `test_pikdraw_drawing_tool_ui` xác nhận menu/action route, toolbox mouse + keyboard route, single-node X/Y commit/cancel/range, mode command và Undo; `test_pikdraw_desktop_shell` regression hiện có.
-- Nghiệm thu native bằng ảnh ở 1366×768 và 1920×1080, scale 100/125/150/200% chưa chạy được trong phiên này do Windows screenshot capture timeout; không suy ra visual/accessibility pass từ harness.
+- Đã chụp và kiểm tra Node flyout cùng Properties ở cửa sổ 1440×900 (client 1424×861, 100% DPI); sửa chồng lấn nội dung Inspector được phát hiện qua ảnh. 1366×768, 1920×1080 và scale 125/150/200% vẫn chưa kiểm trực quan; không suy ra UX/accessibility ở các cấu hình đó từ harness.

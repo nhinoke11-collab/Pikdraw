@@ -107,7 +107,8 @@ void test_native_v5_migrates_to_one_page() {
     };
     const auto doc_id_length = read_u32(36);
     const size_t prefix_end = 36 + 4 + doc_id_length + 7 * 4;
-    const size_t page_record = prefix_end + 4 + 8;
+    const size_t color_bytes = 1 + 4 + read_u32(prefix_end + 1) + 4 + 1;
+    const size_t page_record = prefix_end + color_bytes + 4 + 8;
     const auto page_name_length = read_u32(page_record + 8);
     const size_t legacy_page_body = page_record + 8 + 4 + page_name_length;
     std::vector<uint8_t> legacy(current.begin(), current.begin() + 36);

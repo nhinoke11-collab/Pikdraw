@@ -92,6 +92,22 @@ struct ActionId {
     static constexpr std::string_view kObjectRotate90CW = "action.object.rotate_90_cw";
     static constexpr std::string_view kObjectRotate90CCW = "action.object.rotate_90_ccw";
     static constexpr std::string_view kObjectRotate180 = "action.object.rotate_180";
+    static constexpr std::string_view kObjectOrderToFront = "action.object.order_to_front";
+    static constexpr std::string_view kObjectOrderToBack = "action.object.order_to_back";
+    static constexpr std::string_view kObjectOrderForwardOne = "action.object.order_forward_one";
+    static constexpr std::string_view kObjectOrderBackOne = "action.object.order_back_one";
+    static constexpr std::string_view kObjectNudgeUp = "action.object.nudge_up";
+    static constexpr std::string_view kObjectNudgeDown = "action.object.nudge_down";
+    static constexpr std::string_view kObjectNudgeLeft = "action.object.nudge_left";
+    static constexpr std::string_view kObjectNudgeRight = "action.object.nudge_right";
+    static constexpr std::string_view kObjectSuperNudgeUp = "action.object.super_nudge_up";
+    static constexpr std::string_view kObjectSuperNudgeDown = "action.object.super_nudge_down";
+    static constexpr std::string_view kObjectSuperNudgeLeft = "action.object.super_nudge_left";
+    static constexpr std::string_view kObjectSuperNudgeRight = "action.object.super_nudge_right";
+    static constexpr std::string_view kObjectMicroNudgeUp = "action.object.micro_nudge_up";
+    static constexpr std::string_view kObjectMicroNudgeDown = "action.object.micro_nudge_down";
+    static constexpr std::string_view kObjectMicroNudgeLeft = "action.object.micro_nudge_left";
+    static constexpr std::string_view kObjectMicroNudgeRight = "action.object.micro_nudge_right";
 
     // Settings and help
     static constexpr std::string_view kSettingsAiConnections = "action.settings.ai_connections";

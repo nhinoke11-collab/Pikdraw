@@ -51,47 +51,29 @@ public:
     [[nodiscard]] std::string_view name() const noexcept override { return "Update Text Style"; }
 
     document::CommandResult execute(document::Document& doc) override {
-        auto opt = doc.objects().get(target_id_);
-        if (!opt || !std::holds_alternative<document::TextObject>(*opt)) {
-            return document::CommandResult::fail("Target text object not found");
+        const auto opt = doc.objects().get(target_id_);
+        if (!opt || !std::holds_alternative<document::TextObject>(*opt) ||
+            !editable_target(doc.page(), doc.objects(), target_id_))
+            return document::CommandResult::fail("Text target is missing, hidden or locked");
+        auto text = std::get<document::TextObject>(*opt);
+        before_ = text;
+        if (text.font.family_name != new_family_) {
+            text.font.family_name = new_family_;
+            text.font.postscript_name = new_family_ + "-Regular";
         }
-
-        auto text_obj = std::get<document::TextObject>(*opt);
-        old_family_ = text_obj.font.family_name;
-        old_size_pt_ = text_obj.font.size_pt;
-        old_weight_ = text_obj.font.weight;
-        old_italic_ = text_obj.font.italic;
-        old_underline_ = text_obj.underline;
-        old_alignment_ = text_obj.alignment;
-
-        text_obj.font.family_name = new_family_;
-        text_obj.font.size_pt = std::clamp(new_size_pt_, 6.0, 288.0);
-        text_obj.font.weight = new_weight_;
-        text_obj.font.italic = new_italic_;
-        text_obj.underline = new_underline_;
-        text_obj.alignment = new_alignment_;
-
-        auto map = doc.objects().set(target_id_, std::move(text_obj));
-        doc.apply_mutation(doc.page(), std::move(map));
+        text.font.size_pt = new_size_pt_;
+        text.font.weight = static_cast<uint16_t>(new_weight_);
+        text.font.italic = new_italic_;
+        text.underline = new_underline_;
+        text.alignment = new_alignment_;
+        if (text.font == before_->font && text.underline == before_->underline &&
+            text.alignment == before_->alignment) return document::CommandResult::no_change();
+        doc.apply_mutation(doc.page(), doc.objects().set(target_id_, std::move(text)));
         return document::CommandResult::ok();
     }
-
     document::CommandResult undo(document::Document& doc) override {
-        auto opt = doc.objects().get(target_id_);
-        if (!opt || !std::holds_alternative<document::TextObject>(*opt)) {
-            return document::CommandResult::fail("Target object invalid on style undo");
-        }
-
-        auto text_obj = std::get<document::TextObject>(*opt);
-        text_obj.font.family_name = old_family_;
-        text_obj.font.size_pt = old_size_pt_;
-        text_obj.font.weight = old_weight_;
-        text_obj.font.italic = old_italic_;
-        text_obj.underline = old_underline_;
-        text_obj.alignment = old_alignment_;
-
-        auto map = doc.objects().set(target_id_, std::move(text_obj));
-        doc.apply_mutation(doc.page(), std::move(map));
+        if (!before_) return document::CommandResult::fail("Missing text style before state");
+        doc.apply_mutation(doc.page(), doc.objects().set(target_id_, *before_));
         return document::CommandResult::ok();
     }
 
@@ -104,12 +86,7 @@ private:
     bool new_underline_{false};
     typography::TextAlignment new_alignment_{typography::TextAlignment::Left};
 
-    std::string old_family_;
-    double old_size_pt_{12.0};
-    int old_weight_{400};
-    bool old_italic_{false};
-    bool old_underline_{false};
-    typography::TextAlignment old_alignment_{typography::TextAlignment::Left};
+    std::optional<document::TextObject> before_;
 };
 
 } // namespace pikdraw::vector

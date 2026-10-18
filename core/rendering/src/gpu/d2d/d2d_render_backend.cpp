@@ -59,6 +59,7 @@ struct D2DRenderBackend::Impl {
   d2d::ComPtr<ID2D1Bitmap1> pixel_staging_bitmap;
   D2D1_SIZE_U pixel_bitmap_size{};
   bool d2d_initialized{false};
+  int32_t document_raster_dpi{0};
 
   Impl() {
     d2d_initialized = device_mgr.initialize();
@@ -144,8 +145,8 @@ struct D2DRenderBackend::Impl {
 
     context->SetTransform(D2D1::Matrix3x2F::Identity());
     d2d::ComPtr<ID2D1Image> output_image;
-    const bool effects_ok = effects_pipeline.apply_effects(
-        context, command_list.Get(), appearance, object_id, camera.zoom(),
+    const bool effects_ok = effects_pipeline.apply_document_effects(
+        context, command_list.Get(), appearance, object_id, camera.zoom(), document_raster_dpi,
         output_image, diagnostics, color_preview.get());
     if (effects_ok && appearance.blend_mode == document::BlendMode::Normal) {
       context->DrawImage(output_image.Get(), nullptr, nullptr,
@@ -177,6 +178,8 @@ struct D2DRenderBackend::Impl {
       std::vector<RenderDiagnostic> &diagnostics,
       d2d::SceneDrawState *scene,
       size_t depth = 0) {
+    document_raster_dpi = (snapshot.page().color_mode_explicit || snapshot.page().raster_dpi_explicit)
+        ? snapshot.raster_dpi() : 0;
     if (depth > 256) {
       diagnostics.push_back({document::kInvalidObjectId, true,
                              "Group nesting exceeds the Direct2D traversal limit"});
@@ -243,13 +246,14 @@ struct D2DRenderBackend::Impl {
                 ++rendered_count;
                 return true;
               }
-              const auto layout = typography::TextLayout::layout_text(obj.text, obj.font);
-              auto path = typography::text_to_path_outlines(layout);
+              const auto layout = obj.layout();
+              auto path = typography::text_to_path_outlines(layout, obj.underline);
               const auto effective_transform = (parent_transform * obj.transform) *
                                                geometry::Transform2D::translation(
                                                    obj.position.x, obj.position.y) *
                                                geometry::Transform2D::scale(1, -1);
-              auto geo = geometry_cache.get_or_create_path(
+              d2d::D2DGeometryCache text_geometry;
+              auto geo = text_geometry.get_or_create_path(
                   factory, obj.id, snapshot.revision(), path);
               if (!geo)
                 return fail("Direct2D could not create text glyph-outline geometry");

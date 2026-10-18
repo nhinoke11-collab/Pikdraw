@@ -1,4 +1,5 @@
 #include "pikdraw/document/document.hpp"
+#include "pikdraw/document/commands/color_commands.hpp"
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
@@ -168,6 +169,8 @@ void Document::apply_mutation(Page page, PersistentObjectMap objects) {
     require_writer();
     if (!open_ || !executing_) throw std::logic_error("Mutation requires an executing document command");
     validate_page(page);
+    if (page.color_mode_explicit)
+        objects = normalize_process_colors(objects, page.color_mode);
     current_page_ = std::move(page);
     current_objects_ = std::move(objects);
     const auto active = std::find_if(pages_.begin(), pages_.end(), [&](const auto& item) {
@@ -183,6 +186,10 @@ void Document::apply_page_collection(std::vector<DocumentPage> pages, PageId act
     require_writer();
     if (!open_ || !executing_)
         throw std::logic_error("Page collection mutation requires an executing document command");
+    // History restores exact committed roots. Other writers normalize new process paints.
+    for (auto& page : pages)
+        if (page.layout.color_mode_explicit)
+            page.objects = normalize_process_colors(page.objects, page.layout.color_mode);
     // Validate the entire replacement before publishing any part of it.
     DocumentSnapshot validation{epoch_, revision_, pages, active_page_id, document_id_};
     const auto* active = validation.find_page(active_page_id);

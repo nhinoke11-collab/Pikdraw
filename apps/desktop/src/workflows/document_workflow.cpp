@@ -169,14 +169,14 @@ bool DocumentWorkflow::convert_text_to_curves(document::ObjectId text_id) {
         return false;
     }
     const auto& text_obj = std::get<document::TextObject>(*opt);
-    auto layout = typography::TextLayout::layout_text(text_obj.text, text_obj.font);
-    auto outline_path = typography::text_to_path_outlines(layout);
+    auto layout = text_obj.layout();
+    auto outline_path = typography::text_to_path_outlines(layout, text_obj.underline);
     if (outline_path.empty()) {
         auto b = text_obj.bounds();
         outline_path = geometry::Path2D::make_rect(b.x, b.y, b.width, b.height);
     } else {
         geometry::Transform2D pos_tx = geometry::Transform2D::translation(text_obj.position.x, text_obj.position.y);
-        outline_path = outline_path.transformed(pos_tx * text_obj.transform);
+        outline_path = outline_path.transformed(text_obj.transform * pos_tx * geometry::Transform2D::scale(1, -1));
     }
 
     document::PathObject path_obj;
@@ -443,7 +443,8 @@ bool DocumentWorkflow::redo() {
     return res;
 }
 
-void DocumentWorkflow::new_document(double page_width_mm, double page_height_mm) {
+void DocumentWorkflow::new_document(double page_width_mm, double page_height_mm,
+                                   color::DocumentColorMode mode, int32_t dpi) {
     if (!std::isfinite(page_width_mm) || !std::isfinite(page_height_mm) ||
         page_width_mm <= 0.0 || page_height_mm <= 0.0)
         return;
@@ -452,6 +453,12 @@ void DocumentWorkflow::new_document(double page_width_mm, double page_height_mm)
     auto page = document::Page::make_default();
     page.width_mm = page_width_mm;
     page.height_mm = page_height_mm;
+    page.color_mode = mode;
+    page.color_profile_name = color::default_document_profile(mode);
+    page.raster_dpi = dpi == 0 ? (mode == color::DocumentColorMode::Cmyk ? 300 : 72) : dpi;
+    page.color_mode_explicit = true;
+    if (!color::valid_document_color_mode(mode) ||
+        (page.raster_dpi != 72 && page.raster_dpi != 150 && page.raster_dpi != 300)) return;
     auto snapshot = std::make_shared<const document::DocumentSnapshot>(
         doc.epoch() + 1,
         0,

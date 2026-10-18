@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "native_window_text_properties.hpp"
 #include "../automation/native_window_automation.hpp"
 #include "pikdraw/desktop/actions/action_id.hpp"
 #include "native_window_menus.hpp"
@@ -92,7 +93,7 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
                     : L"Shift snaps direction to 15° · Ctrl uses the start point as center";
         } else if (is_text_mode) {
             if (mouse_x >= 52 && mouse_x <= 192) {
-                tip_text = is_vi ? L"Chọn kiểu phông chữ văn bản (Font Family)" : L"Select Font Family";
+                tip_text = is_vi ? L"Chọn phông đã cài trên Windows · mở hộp thoại font" : L"Choose an installed Windows font";
             } else if (mouse_x >= 220 && mouse_x <= 240) {
                 tip_text = is_vi ? L"Giảm cỡ chữ (-2 pt)" : L"Decrease Font Size (-2 pt)";
             } else if (mouse_x >= 294 && mouse_x <= 314) {
@@ -151,12 +152,14 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
                 tip_text = is_vi ? L"Nhập vị trí X của đối tượng (mm)" : L"Enter the object's X position in millimeters";
             } else if (mouse_x >= 100 && mouse_x <= 185) {
                 tip_text = is_vi ? L"Nhập vị trí Y của đối tượng (mm)" : L"Enter the object's Y position in millimeters";
-            } else if (mouse_x >= 190 && mouse_x <= 285) {
+            } else if (mouse_x >= 190 && mouse_x <= 275) {
                 tip_text = is_vi ? L"Nhập chiều rộng của đối tượng (mm)" : L"Enter the object's width in millimeters";
-            } else if (mouse_x >= 290 && mouse_x <= 360) {
+            } else if (mouse_x >= 280 && mouse_x <= 335) {
                 tip_text = is_vi ? L"Khóa hoặc mở tỷ lệ W:H" : L"Lock or unlock the width-to-height ratio";
-            } else if (mouse_x >= 365 && mouse_x <= 460) {
+            } else if (mouse_x >= 340 && mouse_x <= 425) {
                 tip_text = is_vi ? L"Nhập chiều cao của đối tượng (mm)" : L"Enter the object's height in millimeters";
+            } else if (mouse_x >= 435 && mouse_x <= 525) {
+                tip_text = is_vi ? L"Nhập góc xoay của đối tượng (độ °) · Enter để áp dụng · Esc để hủy" : L"Enter object rotation angle (degrees °) · Enter to apply · Esc to cancel";
             } else if (is_in_isolation_mode()) {
                 if (mouse_x >= 580 && mouse_x <= 670) {
                     tip_text = is_vi ? L"Thoát chế độ cô lập nhóm (Phím Esc)" : L"Exit group isolation mode (Esc)";
@@ -209,7 +212,7 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
                         break;
                     }
                 } else if (selection.size() == 1) {
-                    int rx = 580;
+                    int rx = 540;
                     if (mouse_x >= rx && mouse_x < rx + 28) {
                         tip_text = is_vi ? L"Lật ngang đối tượng qua tâm (Ctrl+Shift+H)" : L"Flip selection horizontally (Ctrl+Shift+H)";
                     } else if (mouse_x >= rx + 32 && mouse_x < rx + 60) {
@@ -239,9 +242,10 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
         const int group_row = toolbox_open_group_ == 1 ? 1
                             : toolbox_open_group_ == 2 ? 2 : 6;
         const int flyout_top = content_top + 10 + group_row * 42;
-        const int item = (mouse_y - flyout_top) / 30;
-        const int max_items = toolbox_open_group_ == 3 ? 5 : 3;
-        if (mouse_y >= flyout_top && item >= 0 && item < max_items) {
+        const int item = (mouse_y - flyout_top - 26) / 29;
+        const int max_items = toolbox_open_group_ == 3 ? 5
+            : toolbox_open_group_ == 2 ? 4 : 3;
+        if (mouse_y >= flyout_top + 26 && item >= 0 && item < max_items) {
             if (toolbox_open_group_ == 1) {
                 if (item == 0)
                     tip_text = is_vi ? L"Hình chữ nhật · Shift vuông · Ctrl từ tâm"
@@ -278,6 +282,10 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
                         ? L"Công cụ chuyển sắc tương tác (Gradient)"
                         : L"Interactive Gradient Tool";
                 }
+            } else if (item == 3) {
+                tip_text = is_vi
+                    ? L"Node · nhấp chọn, kéo để di chuyển · tọa độ X/Y và mode trong Properties"
+                    : L"Node · click to select, drag to move · X/Y and mode are in Properties";
             } else if (item == 0) {
                 tip_text = is_vi ? L"Đoạn thẳng · L" : L"Line · L";
             } else if (item == 1) {
@@ -297,8 +305,8 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
             tip_text = is_vi ? L"Hình cơ bản · Hình chữ nhật, elip, đa giác · Alt+↓ mở nhóm"
                              : L"Quick Shapes · Rectangle, Ellipse, Polygon · Alt+Down opens group";
         } else if (tool_idx == 2) {
-            tip_text = is_vi ? L"Đường vẽ · Line, Polyline, Pen · Alt+↓ mở nhóm"
-                             : L"Path Drawing · Line, Polyline, Pen · Alt+Down opens group";
+            tip_text = is_vi ? L"Đường vẽ · Line, Polyline, Pen, Node · Alt+↓ mở nhóm"
+                             : L"Path Drawing · Line, Polyline, Pen, Node · Alt+Down opens group";
         } else if (tool_idx == 3) {
             tip_text = is_vi ? L"Kéo trượt vùng làm việc (Pan Hand Tool) · Phím H hoặc Giữ Chuột giữa"
                              : L"Pan Viewport Hand Tool · Shortcut: H or Middle Drag";
@@ -325,7 +333,7 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
             if (tidx == 0) tip_text = is_vi ? L"Bảng thuộc tính đối tượng" : L"Object Properties";
             else if (tidx == 1) tip_text = is_vi ? L"Danh sách các lớp & Đối tượng (Layers)" : L"Layers & Objects Hierarchy";
             else if (tidx == 2) tip_text = is_vi ? L"Lịch sử các thao tác hoàn tác / làm lại (History)" : L"Command History & Undo/Redo Log";
-        } else if (active_dock_tab_ == 0 &&
+        } else if (active_dock_tab_ == 0 && !has_text_properties_target(*this) &&
                    mouse_y >= AlignPanelMetrics::section_tabs_top &&
                    mouse_y < AlignPanelMetrics::section_tabs_top + AlignPanelMetrics::section_tabs_height) {
             const int panel_left = insp_x + AlignPanelMetrics::content_left;
@@ -334,6 +342,41 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
             if (index == 0) tip_text = is_vi ? L"Xem thông tin đối tượng đang chọn" : L"Show selected object properties";
             else if (index == 1) tip_text = is_vi ? L"Mở thuộc tính kiểu dáng" : L"Open style properties";
             else if (index == 2) tip_text = is_vi ? L"Mở bảng Align & Distribute (Ctrl+Shift+A)" : L"Open Align & Distribute (Ctrl+Shift+A)";
+        } else if (active_dock_tab_ == 0 && has_text_properties_target(*this)) {
+            const int local_y = mouse_y - (content_top + 36);
+            if (local_y >= TextPropertiesLayout::font_button_top &&
+                local_y < TextPropertiesLayout::font_button_top + TextPropertiesLayout::font_button_height) {
+                const int panel_left = insp_x + AlignPanelMetrics::content_left;
+                const int family_width = std::max(72, AlignPanelMetrics::content_width - TextPropertiesLayout::font_size_width -
+                    3 * TextPropertiesLayout::style_button_width - 4 * TextPropertiesLayout::font_row_gap);
+                const int size_left = panel_left + family_width + TextPropertiesLayout::font_row_gap;
+                const int style_left = size_left + TextPropertiesLayout::font_size_width + TextPropertiesLayout::font_row_gap;
+                if (mouse_x < size_left) tip_text = is_vi
+                    ? L"Chọn họ phông Windows · nhóm Sans, Serif, Script và UTM/SVN nếu đã cài"
+                    : L"Choose an installed Windows font · browse Sans, Serif, Script, and UTM/SVN when installed";
+                else if (mouse_x < style_left) tip_text = is_vi
+                    ? L"Cỡ chữ theo điểm · 1–2880 pt · Enter áp dụng · Esc hủy"
+                    : L"Font size in points · 1–2880 pt · Enter applies · Esc cancels";
+                else tip_text = is_vi
+                    ? L"Bật/tắt đậm, nghiêng hoặc gạch chân · Ctrl+B/I/U khi đang soạn"
+                    : L"Toggle bold, italic, or underline · Ctrl+B/I/U while editing";
+            }
+            else if (local_y >= TextPropertiesLayout::alignment_buttons_top &&
+                     local_y < TextPropertiesLayout::alignment_buttons_top + TextPropertiesLayout::alignment_buttons_height)
+                tip_text = is_vi ? L"Căn trái, giữa hoặc phải cho đoạn chữ"
+                                 : L"Align the text paragraph left, center, or right";
+            else if (local_y >= TextPropertiesLayout::frame_field_top &&
+                     local_y < TextPropertiesLayout::frame_field_top + TextPropertiesLayout::field_height)
+                tip_text = is_vi ? L"Độ rộng khung chữ theo mm · 0 giữ kiểu chữ tự do · Enter áp dụng · Esc hủy"
+                                 : L"Text frame width in mm · 0 keeps point text · Enter applies · Esc cancels";
+            else if (local_y >= TextPropertiesLayout::spacing_field_top &&
+                     local_y < TextPropertiesLayout::spacing_field_top + TextPropertiesLayout::field_height)
+                tip_text = is_vi ? L"Giãn dòng 25–1000% · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
+                                 : L"Line spacing 25–1000% · Enter applies · Esc cancels · Ctrl+Z undoes";
+            else if (local_y >= TextPropertiesLayout::image_search_top &&
+                     local_y < TextPropertiesLayout::image_search_top + TextPropertiesLayout::image_search_height)
+                tip_text = is_vi ? L"Tìm họ phông gần giống từ ảnh · thuật toán sẽ được bổ sung sau"
+                                 : L"Find similar font families from an image · matching is planned for a later update";
         } else if (active_dock_tab_ == 0 && active_tool_ == 9) {
             if (mouse_y >= 172 && mouse_y <= 206)
                 tip_text = is_vi ? L"Số cạnh của đa giác tạo tiếp theo · số nguyên 3–256"

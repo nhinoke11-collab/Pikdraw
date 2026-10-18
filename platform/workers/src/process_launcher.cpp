@@ -116,10 +116,15 @@ bool WorkerProcessHost::Launch(const WorkerLaunchConfig& config) {
     SECURITY_CAPABILITIES sec_caps{};
     if (config.use_appcontainer) {
         if (!app_container_.Create(config.appcontainer_profile_name)) return false;
-            sec_caps.AppContainerSid = app_container_.GetSid();
-            sec_caps.Capabilities = nullptr;
-            sec_caps.CapabilityCount = 0;
-            sec_caps.Reserved = 0;
+        sec_caps.AppContainerSid = app_container_.GetSid();
+        sec_caps.Capabilities = nullptr;
+        sec_caps.CapabilityCount = 0;
+        sec_caps.Reserved = 0;
+        const auto bin_dir = std::filesystem::path(config.worker_executable_path).parent_path().wstring();
+        if (!AppContainerProfileGuard::GrantDirectoryAccess(bin_dir, app_container_.GetSid()) ||
+            !AppContainerProfileGuard::GrantDirectoryAccess(config.worker_executable_path, app_container_.GetSid())) {
+            return false;
+        }
     }
 
     // Prepare STARTUPINFOEXW with explicit handle inheritance whitelist

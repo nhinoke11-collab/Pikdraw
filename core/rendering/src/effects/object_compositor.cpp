@@ -47,7 +47,8 @@ bool render_effect_stack(const document::PathObject &path,
                          const Camera2D &camera, PixelBufferTarget &target,
                          const color::IccPreview *preview,
                          size_t *out_peak_gaussian_blur_scratch_capacity_bytes,
-                         size_t *out_peak_drop_shadow_scratch_capacity_bytes) {
+                         size_t *out_peak_drop_shadow_scratch_capacity_bytes,
+                         int32_t raster_dpi) {
   if (path.path.elements().empty())
     return true;
   const auto source_bounds = path.path.bounds();
@@ -61,7 +62,7 @@ bool render_effect_stack(const document::PathObject &path,
   double transform_scale = 0.0;
   if (!max_linear_scale(path.transform, transform_scale))
     return false;
-  const double density = camera.zoom() * transform_scale;
+  const double density = (raster_dpi > 0 ? raster_dpi / 25.4 : camera.zoom()) * transform_scale;
   if (!std::isfinite(density) || density <= 0.0)
     return false;
 
@@ -372,7 +373,8 @@ bool render_path_with_appearance(const document::PathObject &path,
                                  PixelBufferTarget &target,
                                  const color::IccPreview *preview,
                                  size_t *out_peak_gaussian_blur_scratch_capacity_bytes,
-                                 size_t *out_peak_drop_shadow_scratch_capacity_bytes) {
+                                 size_t *out_peak_drop_shadow_scratch_capacity_bytes,
+                                 int32_t raster_dpi) {
   if (out_peak_gaussian_blur_scratch_capacity_bytes)
     *out_peak_gaussian_blur_scratch_capacity_bytes = 0;
   if (out_peak_drop_shadow_scratch_capacity_bytes)
@@ -388,7 +390,7 @@ bool render_path_with_appearance(const document::PathObject &path,
       return render_effect_stack(
           path, appearance, camera, target, preview,
           out_peak_gaussian_blur_scratch_capacity_bytes,
-          out_peak_drop_shadow_scratch_capacity_bytes);
+          out_peak_drop_shadow_scratch_capacity_bytes, raster_dpi);
     } catch (const std::bad_alloc &) {
       return false;
     } catch (const std::length_error &) {

@@ -1,5 +1,7 @@
 #include "desktop_shell_test_helpers.hpp"
-
+#include "pikdraw/document/commands/contour_commands.hpp"
+#include "../src/tools/contour_tool_controller.hpp"
+#include "../src/shell/native_window_text_properties.hpp"
 void test_object_opacity_property_bar_and_appearance_panel() {
     NativeWindow win(1440, 900);
     const auto path_id = win.workflow().add_rectangle(20.0, 30.0, 80.0, 55.0,
@@ -29,14 +31,54 @@ void test_object_opacity_property_bar_and_appearance_panel() {
     assert(std::abs(object_opacity(path_id) - 0.355) < 1e-9);
     auto path = std::get<pikdraw::document::PathObject>(
         *win.root().document().current_snapshot()->objects().get(path_id));
-    assert(std::abs(std::get<pikdraw::color::RGBColor>(path.fill.payload()).a - 1.0) < 1e-9);
+    assert(std::abs(std::get<pikdraw::color::CMYKColor>(path.fill.payload()).a - 1.0) < 1e-9);
 
     selection.select(text_id);
     win.handle_mouse_down(930, 82);
     assert(win.active_numeric_field() == NativeWindow::NumericFieldId::ObjectOpacity);
     type(L"88,8");
     assert(std::abs(object_opacity(text_id) - 0.888) < 1e-9);
-
+    const auto text_layout = [&](pikdraw::document::ObjectId id) { return std::get<pikdraw::document::TextObject>(
+        *win.root().document().current_snapshot()->objects().get(id)); };
+    const auto layout_revision = win.root().document().current_snapshot()->revision();
+    win.handle_mouse_down(1350, 138 + TextPropertiesLayout::frame_field_top + 14);
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::EffectSigmaX);
+    type(L"52,5");
+    assert(text_layout(text_id).frame_width_mm == 52.5);
+    assert(win.root().document().current_snapshot()->revision() == layout_revision + 1);
+    assert(win.workflow().undo());
+    assert(text_layout(text_id).frame_width_mm == 0.0);
+    win.handle_mouse_down(1350, 138 + TextPropertiesLayout::spacing_field_top + 14);
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::EffectSigmaY && win.numeric_input_buffer().empty());
+    type(L"145");
+    assert(std::abs(text_layout(text_id).line_spacing_ratio - 1.45) < 1e-9);
+    assert(win.workflow().undo());
+    const auto draft_revision = win.root().document().current_snapshot()->revision();
+    win.start_inline_text_editing({120.0, 40.0}, text_id);
+    win.handle_mouse_down(1350, 138 + TextPropertiesLayout::frame_field_top + 14);
+    type(L"63");
+    assert(win.root().document().current_snapshot()->revision() == draft_revision);
+    assert(std::get<pikdraw::document::TextObject>(*win.workflow().snapshot_for_canvas()->objects().get(text_id)).frame_width_mm == 63.0);
+    win.cancel_inline_text_editing();
+    assert(text_layout(text_id).frame_width_mm == 0.0);
+    pikdraw::document::TextObject second_text;
+    second_text.id = pikdraw::document::generate_object_id(); second_text.name = "Second paragraph";
+    second_text.text = "Second";
+    second_text.frame_width_mm = 44.0;
+    second_text.line_spacing_ratio = 1.8;
+    const auto second_text_id = second_text.id;
+    assert(win.root().document().execute_command(std::make_unique<pikdraw::document::AddObjectCommand>(second_text)).success);
+    selection.clear(); selection.select(text_id);
+    selection.select(second_text_id, pikdraw::vector::SelectionMode::Add);
+    win.handle_mouse_down(1350, 138 + TextPropertiesLayout::frame_field_top + 14);
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::EffectSigmaX);
+    assert(win.numeric_input_buffer().empty());
+    type(L"72.5");
+    assert(text_layout(text_id).frame_width_mm == 72.5);
+    assert(text_layout(second_text_id).frame_width_mm == 72.5);
+    assert(win.workflow().undo());
+    assert(text_layout(text_id).frame_width_mm == 0.0);
+    assert(text_layout(second_text_id).frame_width_mm == 44.0);
     // AC-UI-OP-02 — Object > Properties focuses Appearance without a document/history write.
     const auto before_open = win.root().document().current_snapshot()->revision();
     const bool had_undo = win.root().document().can_undo();
@@ -212,7 +254,7 @@ void test_fill_and_stroke_opacity_properties() {
     assert(std::abs(spot_after.tint - 0.42) < 1e-9);
     assert(std::abs(spot_after.alternate_rgb.a - 0.37) < 1e-9);
     assert(path_after_fill.fill.overprint().fill && !path_after_fill.fill.overprint().stroke);
-    assert(std::abs(std::get<color::RGBColor>(text_after_fill.fill.payload()).a - 0.52) < 1e-9);
+    assert(std::abs(std::get<color::CMYKColor>(text_after_fill.fill.payload()).a - 0.52) < 1e-9);
     assert(win.workflow().undo());
     assert(std::abs(appearance_of(path_one_id).fill_opacity - 0.2) < 1e-9);
     assert(std::abs(appearance_of(text_id).fill_opacity - 0.8) < 1e-9);
@@ -237,8 +279,8 @@ void test_fill_and_stroke_opacity_properties() {
         *win.root().document().current_snapshot()->objects().get(path_one_id));
     auto path_two_after_stroke = std::get<document::PathObject>(
         *win.root().document().current_snapshot()->objects().get(path_two_id));
-    assert(std::abs(std::get<color::RGBColor>(path_one_after_stroke.stroke.payload()).a - 0.61) < 1e-9);
-    assert(std::abs(std::get<color::RGBColor>(path_two_after_stroke.stroke.payload()).a - 0.82) < 1e-9);
+    assert(std::abs(std::get<color::CMYKColor>(path_one_after_stroke.stroke.payload()).a - 0.61) < 1e-9);
+    assert(std::abs(std::get<color::CMYKColor>(path_two_after_stroke.stroke.payload()).a - 0.82) < 1e-9);
     assert(std::abs(appearance_of(path_one_id).fill_opacity - 0.2) < 1e-9);
     assert(std::abs(appearance_of(path_two_id).fill_opacity - 0.4) < 1e-9);
     assert(win.workflow().undo());
@@ -646,6 +688,83 @@ void test_effects_toolbox_flyout() {
     win.handle_mouse_down(43, 382); // Open Appearance flyout
     win.handle_mouse_down(110, 491); // Contour item (row 3)
     assert(win.active_tool() == 12);
+    assert(win.active_dock_tab() == 0);
+    capture_shell_screenshot(win, "contour-properties-1440-en.bmp");
+    win.set_language(UILanguage::Vietnamese);
+    capture_shell_screenshot(win, "contour-properties-1440-vi.bmp");
+    win.set_language(UILanguage::English);
+    NativeWindow narrow_contour(1366, 768);
+    const auto narrow_path = narrow_contour.workflow().add_rectangle(20, 20, 70, 45, "#80b8dc", "#28445e", 1);
+    narrow_contour.root().vector_controller().selection().select(narrow_path);
+    narrow_contour.set_active_tool(12);
+    capture_shell_screenshot(narrow_contour, "contour-properties-1366-en.bmp");
+    NativeWindow wide_contour(1920, 1080);
+    const auto wide_path = wide_contour.workflow().add_rectangle(20, 20, 70, 45, "#80b8dc", "#28445e", 1);
+    wide_contour.root().vector_controller().selection().select(wide_path);
+    wide_contour.set_active_tool(12);
+    capture_shell_screenshot(wide_contour, "contour-properties-1920-en.bmp");
+    auto* contour = win.contour_tool();
+    assert(contour && contour->active());
+    const auto contour_revision = win.root().document().current_snapshot()->revision();
+    const auto set_contour_field = [&](int y, std::wstring_view value,
+                                       NativeWindow::NumericFieldId expected) {
+        win.handle_mouse_down(1300, y);
+        assert(win.active_numeric_field() == expected);
+        while (!win.numeric_input_buffer().empty())
+            win.handle_numeric_char_input(8);
+        for (const wchar_t ch : value) win.handle_numeric_char_input(ch);
+        win.handle_numeric_char_input(13);
+        assert(win.active_numeric_field() == NativeWindow::NumericFieldId::None);
+    };
+    // Properties edits preview parameters without writing document history; Tab follows field order.
+    win.handle_mouse_down(1300, 254);
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::DistributeSpacing);
+    while (!win.numeric_input_buffer().empty()) win.handle_numeric_char_input(8);
+    for (const wchar_t ch : std::wstring_view(L"2,75")) win.handle_numeric_char_input(ch);
+    win.handle_numeric_char_input(9);
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::PolygonSides);
+    while (!win.numeric_input_buffer().empty()) win.handle_numeric_char_input(8);
+    for (const wchar_t ch : std::wstring_view(L"5")) win.handle_numeric_char_input(ch);
+    win.handle_numeric_char_input(9);
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::PolygonRotation);
+    while (!win.numeric_input_buffer().empty()) win.handle_numeric_char_input(8);
+    for (const wchar_t ch : std::wstring_view(L"7.5")) win.handle_numeric_char_input(ch);
+    win.handle_numeric_char_input(13);
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::None);
+    assert(std::abs(contour->spacing_mm() - 2.75) < 1e-9);
+    assert(contour->steps() == 5);
+    assert(std::abs(contour->miter_limit() - 7.5) < 1e-9);
+    assert(contour->has_preview());
+    assert(win.root().document().current_snapshot()->revision() == contour_revision);
+    win.handle_mouse_down(1300, 254);
+    while (!win.numeric_input_buffer().empty()) win.handle_numeric_char_input(8);
+    for (const wchar_t ch : std::wstring_view(L"0.05")) win.handle_numeric_char_input(ch);
+    win.handle_numeric_char_input(13);
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::DistributeSpacing);
+    assert(std::abs(contour->spacing_mm() - 2.75) < 1e-9);
+    win.handle_numeric_char_input(27);
+
+    // Apply writes one undoable feature; Cancel restores that saved draft without a write.
+    win.handle_mouse_down(1184, 468); // Properties > Apply.
+    assert(win.root().document().current_snapshot()->revision() == contour_revision + 1);
+    auto contour_feature = pikdraw::document::get_object_contour(
+        win.root().document(), path_id);
+    assert(contour_feature);
+    assert(std::abs(contour_feature->spacing_mm - 2.75) < 1e-9);
+    assert(contour_feature->steps == 5);
+    assert(std::abs(contour_feature->miter_limit - 7.5) < 1e-9);
+    set_contour_field(254, L"3.5", NativeWindow::NumericFieldId::DistributeSpacing);
+    const auto before_cancel = win.root().document().current_snapshot()->revision();
+    win.handle_mouse_down(1380, 468); // Properties > Cancel.
+    assert(std::abs(contour->spacing_mm() - 2.75) < 1e-9);
+    assert(win.root().document().current_snapshot()->revision() == before_cancel);
+
+    // Remove calls the dedicated Contour operation and Undo restores its saved feature.
+    win.handle_mouse_down(1248, 468); // Properties > Remove.
+    assert(!pikdraw::document::get_object_contour(win.root().document(), path_id));
+    assert(win.root().document().current_snapshot()->revision() == before_cancel + 1);
+    assert(win.workflow().undo());
+    assert(pikdraw::document::get_object_contour(win.root().document(), path_id));
 
     // Contour tool activation via Effects menu
     win.set_active_tool(0);

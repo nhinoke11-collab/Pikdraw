@@ -5,8 +5,18 @@
 #include <variant>
 #include <cmath>
 #include <algorithm>
+#include <cstdint>
 
 namespace pikdraw::color {
+
+enum class DocumentColorMode : uint8_t { Cmyk = 0, Rgb = 1 };
+
+[[nodiscard]] constexpr bool valid_document_color_mode(DocumentColorMode mode) noexcept {
+    return mode == DocumentColorMode::Cmyk || mode == DocumentColorMode::Rgb;
+}
+[[nodiscard]] constexpr const char* default_document_profile(DocumentColorMode mode) noexcept {
+    return mode == DocumentColorMode::Cmyk ? "U.S. Web Coated (SWOP) v2" : "sRGB IEC61966-2.1";
+}
 
 /// RGB Color with normalized components [0.0, 1.0]
 struct RGBColor {

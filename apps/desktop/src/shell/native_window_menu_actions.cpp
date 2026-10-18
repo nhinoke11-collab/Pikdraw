@@ -3,6 +3,8 @@
 #include "pikdraw/desktop/actions/action_dispatcher.hpp"
 #include "native_window_file_menu.hpp"
 #include "native_window_menus.hpp"
+#include "native_window_document_color.hpp"
+#include "native_window_text_properties.hpp"
 #include "native_window_page_presets.hpp"
 #include "../tools/drawing_tool_controller.hpp"
 #include "../tools/pen_tool_controller.hpp"
@@ -113,6 +115,14 @@ bool NativeWindow::is_menu_action_checked(MenuActionId action) const noexcept {
 }
 
 void NativeWindow::execute_menu_action(int action_id) {
+    if (action_id == document_color_ui::kModeMenu || action_id == document_color_ui::kDpiMenu)
+        action_id = document_color_ui::choose_setting(hwnd_, *root().document().current_snapshot(),
+            language_ == UILanguage::Vietnamese, action_id == document_color_ui::kDpiMenu,
+            get_menu_bar_item_rect(static_cast<int>(MenuId::Edit), 38).left);
+    if (*document_color_ui::action_id(action_id)) {
+        (void)root().window().action_dispatcher().dispatch(document_color_ui::action_id(action_id));
+        return;
+    }
     const auto action = static_cast<MenuActionId>(action_id);
     if (!is_menu_action_enabled(action)) return;
     const auto activate_effect = [this](document::EffectParameters parameters,
@@ -125,6 +135,7 @@ void NativeWindow::execute_menu_action(int action_id) {
                 : "This effect cannot be activated for the current selection";
         } else {
             property_effect_index_ = effect_index;
+            if (std::holds_alternative<document::DropShadowEffect>(parameters)) ribbon_drop_shadow_mode_ = true;
             open_object_properties_panel();
             const int viewport_height = std::max(0, height_ - 26 - 162);
             style_inspector_scroll_ = std::max(0,
@@ -148,8 +159,9 @@ void NativeWindow::execute_menu_action(int action_id) {
     case MenuActionId::FileImport: {
         const std::string id(actions::ActionId::kFileImport);
         auto& dispatcher = root().window().action_dispatcher();
-        if (!dispatcher.get_action(id)) {
-            dispatcher.register_action({id, "Nhập SVG hoặc DXF", "Import SVG or DXF", "",
+        const auto* action = dispatcher.get_action(id);
+        if (!action || !action->handler) {
+            dispatcher.register_action({id, "Nhập tệp...", "Import...", "Ctrl+I",
                 [this] { open_import_dialog(); }, nullptr});
         }
         (void)dispatcher.dispatch(id);
@@ -167,7 +179,17 @@ void NativeWindow::execute_menu_action(int action_id) {
     }
     case MenuActionId::FileSave: save_document_dialog(); return;
     case MenuActionId::FileSaveAs: save_document_dialog(true); return;
-    case MenuActionId::FileExportSvg: export_svg_dialog(); return;
+    case MenuActionId::FileExport: {
+        const std::string id(actions::ActionId::kFileExport);
+        auto& dispatcher = root().window().action_dispatcher();
+        const auto* action = dispatcher.get_action(id);
+        if (!action || !action->handler) {
+            dispatcher.register_action({id, "Xuất tệp...", "Export...", "Ctrl+E",
+                [this] { trigger_export(); }, nullptr});
+        }
+        (void)dispatcher.dispatch(id);
+        return;
+    }
     case MenuActionId::FileToggleGuidelines: toggle_guidelines(); return;
     case MenuActionId::FileClearGuidelines: clear_guidelines(); return;
     case MenuActionId::FileExit: DestroyWindow(hwnd_); return;
@@ -385,6 +407,7 @@ void NativeWindow::execute_menu_action(int action_id) {
         return;
     }
     case MenuActionId::EffectsClear: {
+        ribbon_drop_shadow_mode_ = false;
         const bool cleared = workflow().clear_selected_effects();
         status_msg_ = language_ == UILanguage::Vietnamese
             ? (cleared ? "Đã xóa toàn bộ node hiệu ứng · Opacity và Blend được giữ · Ctrl+Z hoàn tác"
@@ -394,7 +417,53 @@ void NativeWindow::execute_menu_action(int action_id) {
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
-    case MenuActionId::TextEdit: workflow().cancel_effect_draft(); set_active_tool(4); return;
+    case MenuActionId::TextEdit: {
+        workflow().cancel_effect_draft();
+        const auto selected = root().vector_controller().selection().selected_ids();
+        if (selected.size() == 1) {
+            const auto object = root().document().current_snapshot()->objects().get(selected.front());
+            if (object && std::holds_alternative<document::TextObject>(*object)) {
+                start_inline_text_editing(std::get<document::TextObject>(*object).position, selected.front());
+                return;
+            }
+        }
+        set_active_tool(4);
+        return;
+    }
+    case MenuActionId::TextFont: {
+        const auto view = text_properties_view(*this);
+        if (view.context && !view.editable) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Không thể sửa phông chữ của văn bản bị khóa hoặc ẩn"
+                : "Cannot change the font of locked or hidden text";
+            return;
+        }
+        if (view.context && view.mixed_font) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Kiểu chữ đang hỗn hợp · chọn một đối tượng hoặc thống nhất trước"
+                : "Font settings are mixed · select one object or unify them first";
+            return;
+        }
+        POINT screen_point{}; GetCursorPos(&screen_point);
+        const auto family = choose_and_store_installed_text_font(hwnd_, screen_point, view,
+            font_family_index_, font_size_pt_, font_bold_, font_italic_, font_underline_, font_alignment_);
+        if (family) {
+            apply_text_style_controls(true);
+            status_msg_ = view.context
+                ? is_inline_editing()
+                    ? language_ == UILanguage::Vietnamese
+                        ? "Đã xem trước phông chữ · Ctrl+Enter lưu, Esc hủy"
+                        : "Font preview updated · Ctrl+Enter saves, Esc cancels"
+                    : language_ == UILanguage::Vietnamese
+                        ? "Đã cập nhật phông chữ · Ctrl+Z hoàn tác"
+                        : "Font updated · Ctrl+Z undoes"
+                : language_ == UILanguage::Vietnamese
+                    ? "Phông mặc định cho Văn bản mới đã cập nhật"
+                    : "Default font for new Text updated";
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        return;
+    }
     case MenuActionId::TextBold: toggle_font_bold(); return;
     case MenuActionId::TextItalic: toggle_font_italic(); return;
     case MenuActionId::TextConvertToCurves: convert_selected_text_to_curves(); return;
@@ -490,14 +559,15 @@ bool NativeWindow::handle_toolbox_key(WPARAM key, bool alt_pressed, bool shift_p
     const auto set_item_hint = [&]() {
         const char *labels_en[3][5] = {
             {"Rectangle", "Ellipse", "Polygon", "", ""},
-            {"Line", "Polyline", "Pen", "", ""},
+            {"Line", "Polyline", "Pen", "Node", ""},
             {"Appearance Properties", "Gaussian Blur", "Drop Shadow", "Contour", "Gradient"}};
         const char *labels_vi[3][5] = {
             {"Hình chữ nhật", "Hình elip", "Đa giác", "", ""},
-            {"Đoạn thẳng", "Đường gấp khúc", "Pen", "", ""},
+            {"Đoạn thẳng", "Đường gấp khúc", "Pen", "Node", ""},
             {"Thuộc tính diện mạo", "Gaussian Blur", "Drop Shadow", "Viền Contour", "Chuyển sắc"}};
         const int group_index = std::clamp(toolbox_focus_group_ - 1, 0, 2);
-        const int max_items = toolbox_focus_group_ == 3 ? 5 : 3;
+        const int max_items = toolbox_focus_group_ == 3 ? 5
+            : toolbox_focus_group_ == 2 ? 4 : 3;
         const int item_index = std::clamp(toolbox_flyout_index_, 0, max_items - 1);
         if (toolbox_focus_group_ == 3 && item_index == 4) {
             status_msg_ = language_ == UILanguage::Vietnamese
@@ -526,6 +596,10 @@ bool NativeWindow::handle_toolbox_key(WPARAM key, bool alt_pressed, bool shift_p
                           labels_en[group_index][item_index] + " · Enter choose · Esc closes"
                     : std::string(labels_en[group_index][item_index]) +
                           " · Select compatible unlocked Path/Text · Esc closes");
+        } else if (toolbox_focus_group_ == 2 && item_index == 3) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Node · nhấp chọn, kéo để di chuyển · tọa độ X/Y trong Properties"
+                : "Node · click to select, drag to move · edit X/Y in Properties";
         } else {
             status_msg_ = language_ == UILanguage::Vietnamese
                 ? std::string(labels_vi[group_index][item_index]) + " · Enter chọn · Esc đóng"
@@ -542,7 +616,7 @@ bool NativeWindow::handle_toolbox_key(WPARAM key, bool alt_pressed, bool shift_p
             const int last = toolbox_open_group_ == 1 ? quick_shapes_last_tool_ : path_drawing_last_tool_;
             toolbox_flyout_index_ = toolbox_open_group_ == 1
                 ? (last == 1 ? 0 : last == 2 ? 1 : 2)
-                : (last == 6 ? 0 : last == 7 ? 1 : 2);
+                : (last == 6 ? 0 : last == 7 ? 1 : last == 8 ? 2 : 3);
         }
         set_item_hint();
     };
@@ -566,7 +640,8 @@ bool NativeWindow::handle_toolbox_key(WPARAM key, bool alt_pressed, bool shift_p
             return true;
         }
         if (key == VK_UP || key == VK_DOWN) {
-            const int max_items = toolbox_open_group_ == 3 ? 5 : 3;
+            const int max_items = toolbox_open_group_ == 3 ? 5
+                : toolbox_open_group_ == 2 ? 4 : 3;
             toolbox_flyout_index_ = (toolbox_flyout_index_ + (key == VK_UP ? max_items - 1 : 1)) % max_items;
             set_item_hint();
             return true;
@@ -579,7 +654,7 @@ bool NativeWindow::handle_toolbox_key(WPARAM key, bool alt_pressed, bool shift_p
             }
             const int tool = toolbox_open_group_ == 1
                 ? (index == 0 ? 1 : index == 1 ? 2 : 9)
-                : (index == 0 ? 6 : index == 1 ? 7 : 8);
+                : (index == 0 ? 6 : index == 1 ? 7 : index == 2 ? 8 : 11);
             toolbox_open_group_ = 0;
             workflow().cancel_effect_draft(); set_active_tool(tool);
             return true;
@@ -653,12 +728,8 @@ bool NativeWindow::handle_align_panel_click(int x, int y) {
         if (offset % (button_width + 6) >= button_width) return true;
         const bool second_row = align_second_row_hit;
         constexpr geometry::AlignMode modes[] = {
-            geometry::AlignMode::Left,
-            geometry::AlignMode::CenterHorizontal,
-            geometry::AlignMode::Right,
-            geometry::AlignMode::Top,
-            geometry::AlignMode::CenterVertical,
-            geometry::AlignMode::Bottom
+            geometry::AlignMode::Left, geometry::AlignMode::CenterHorizontal, geometry::AlignMode::Right,
+            geometry::AlignMode::Top, geometry::AlignMode::CenterVertical, geometry::AlignMode::Bottom
         };
         const size_t index = static_cast<size_t>(second_row ? 3 + column : column);
         if (workflow().can_align_selected(modes[index], align_reference_, key_object_id_))
@@ -683,10 +754,8 @@ bool NativeWindow::handle_align_panel_click(int x, int y) {
     const bool horizontal_second_row_hit = y >= horizontal_second_row && y < horizontal_second_row + Metrics::distribute_button_height;
     if (horizontal_first_row_hit || horizontal_second_row_hit) {
         constexpr geometry::DistributeMode modes[] = {
-            geometry::DistributeMode::SpacingHorizontal,
-            geometry::DistributeMode::CentersHorizontal,
-            geometry::DistributeMode::LeftEdges,
-            geometry::DistributeMode::RightEdges
+            geometry::DistributeMode::SpacingHorizontal, geometry::DistributeMode::CentersHorizontal,
+            geometry::DistributeMode::LeftEdges, geometry::DistributeMode::RightEdges
         };
         run_distribute(modes, Metrics::horizontal_top);
         return true;
@@ -695,10 +764,8 @@ bool NativeWindow::handle_align_panel_click(int x, int y) {
     const bool vertical_second_row_hit = y >= vertical_second_row && y < vertical_second_row + Metrics::distribute_button_height;
     if (vertical_first_row_hit || vertical_second_row_hit) {
         constexpr geometry::DistributeMode modes[] = {
-            geometry::DistributeMode::SpacingVertical,
-            geometry::DistributeMode::CentersVertical,
-            geometry::DistributeMode::TopEdges,
-            geometry::DistributeMode::BottomEdges
+            geometry::DistributeMode::SpacingVertical, geometry::DistributeMode::CentersVertical,
+            geometry::DistributeMode::TopEdges, geometry::DistributeMode::BottomEdges
         };
         run_distribute(modes, Metrics::vertical_top);
         return true;
@@ -721,8 +788,5 @@ bool NativeWindow::handle_align_panel_click(int x, int y) {
     }
     return false;
 }
-
-
 #endif
-
 } // namespace pikdraw::desktop

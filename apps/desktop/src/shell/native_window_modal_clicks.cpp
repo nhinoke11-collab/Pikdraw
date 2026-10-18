@@ -76,7 +76,7 @@ bool NativeWindow::handle_modal_and_home_mouse_down(int x, int y) {
             }
         }
 
-        int fy_form = cy + 142;
+        int fy_form = cy + 132; // Match the painted File > New form rows.
         // Width input box
         RECT rc_w_box = { cx, fy_form + 22, cx + 290, fy_form + 54 };
         if (x >= rc_w_box.left && x <= rc_w_box.right && y >= rc_w_box.top && y <= rc_w_box.bottom) {
@@ -115,12 +115,14 @@ bool NativeWindow::handle_modal_and_home_mouse_down(int x, int y) {
             // Color Mode: CMYK
             if (x >= cx + 320 && x <= cx + 460) {
                 new_doc_color_mode_ = 0;
+                new_doc_dpi_ = 300;
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return true;
             }
             // Color Mode: RGB
             if (x >= cx + 470 && x <= cx + 610) {
                 new_doc_color_mode_ = 1;
+                new_doc_dpi_ = 72;
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return true;
             }

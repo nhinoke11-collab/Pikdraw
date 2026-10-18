@@ -180,6 +180,11 @@ public:
       std::vector<RenderDiagnostic> &diagnostics,
       const color::IccPreview *color_preview = nullptr);
 
+  bool apply_document_effects(ID2D1DeviceContext* context, ID2D1Image* source,
+      const document::Appearance& appearance, document::ObjectId id,
+      double viewport_density, int32_t raster_dpi, ComPtr<ID2D1Image>& output,
+      std::vector<RenderDiagnostic>& diagnostics, const color::IccPreview* preview);
+
   ComPtr<ID2D1Brush> create_brush(
       ID2D1DeviceContext *context,
       const color::ColorValue &color,

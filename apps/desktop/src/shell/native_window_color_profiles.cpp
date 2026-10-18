@@ -1,6 +1,7 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
 #include "../utf8_path.hpp"
 #include <fstream>
+#include <utility>
 #ifdef _WIN32
 #include <commdlg.h>
 #endif
@@ -28,6 +29,14 @@ bool NativeWindow::configure_preview_profiles(const std::filesystem::path &rgb_s
 }
 #ifdef _WIN32
 namespace {
+std::pair<std::filesystem::path, std::filesystem::path> default_profile_sources() {
+    const auto rgb = color::IccPreview::system_srgb_profile();
+    auto cmyk = rgb.empty() ? std::filesystem::path{} : rgb.parent_path() / L"RSWOP.icm";
+    std::error_code error;
+    if (cmyk.empty() || !std::filesystem::is_regular_file(cmyk, error))
+        cmyk.clear();
+    return {rgb, cmyk};
+}
 std::filesystem::path preferences_file() {
     wchar_t local[32768]{};
     const auto size = GetEnvironmentVariableW(L"LOCALAPPDATA", local, 32768);
@@ -68,40 +77,61 @@ std::optional<std::filesystem::path> choose_profile(HWND owner, bool cmyk, bool 
 }
 } // namespace
 void NativeWindow::load_color_preferences() {
+    const auto defaults = default_profile_sources();
+    auto rgb = defaults.first;
+    auto cmyk = defaults.second;
     const auto file = preferences_file();
-    if (file.empty())
-        return;
-    std::ifstream input(file, std::ios::binary);
-    std::string version, rgb, cmyk;
-    if (!std::getline(input, version) || version != "pikdraw-preview-profiles-v1" ||
-        !std::getline(input, rgb) || !std::getline(input, cmyk) || rgb.size() > 32768 || cmyk.size() > 32768)
-        return;
+    if (!file.empty()) {
+        std::ifstream input(file, std::ios::binary);
+        std::string version, saved_rgb, saved_cmyk;
+        if (std::getline(input, version) && version == "pikdraw-preview-profiles-v1" &&
+            std::getline(input, saved_rgb) && std::getline(input, saved_cmyk) &&
+            saved_rgb.size() <= 32768 && saved_cmyk.size() <= 32768) {
+            if (!saved_rgb.empty())
+                rgb = detail::path_from_utf8(saved_rgb);
+            if (!saved_cmyk.empty())
+                cmyk = detail::path_from_utf8(saved_cmyk);
+        }
+    }
     std::string error;
-    if (!configure_preview_profiles(detail::path_from_utf8(rgb), detail::path_from_utf8(cmyk), &error))
+    if (configure_preview_profiles(rgb, cmyk, &error))
+        return;
+    if ((rgb != defaults.first || cmyk != defaults.second) &&
+        configure_preview_profiles(defaults.first, defaults.second, &error)) {
         status_msg_ = language_ == UILanguage::Vietnamese
-                          ? "Profile preview không khả dụng; đang dùng preview gần đúng."
-                          : "Preview profile unavailable; approximate preview is active.";
+                          ? "ICC tùy chỉnh không khả dụng; đã khôi phục profile mặc định."
+                          : "A saved ICC profile is unavailable; default profiles were restored.";
+        save_preferences(defaults.first, defaults.second);
+        return;
+    }
+    status_msg_ = language_ == UILanguage::Vietnamese
+                      ? "ICC preview không khả dụng; màu CMYK đang hiển thị gần đúng."
+                      : "ICC preview unavailable; CMYK colors are shown approximately.";
 }
 void NativeWindow::show_color_profiles() {
     const bool vi = language_ == UILanguage::Vietnamese;
     const auto menu = CreatePopupMenu();
-    const auto rgb_name = rgb_preview_profile_.empty() ? std::wstring(L"sRGB (Windows)")
-                                                       : rgb_preview_profile_.filename().wstring();
+    const auto defaults = default_profile_sources();
+    const auto rgb_name = rgb_preview_profile_.empty() || rgb_preview_profile_ == defaults.first
+                              ? std::wstring(L"sRGB IEC61966-2.1")
+                              : rgb_preview_profile_.filename().wstring();
     const auto cmyk_name = cmyk_preview_profile_.empty()
                                ? (vi ? std::wstring(L"CMYK: gần đúng · chưa có ICC")
                                      : std::wstring(L"CMYK: approximate · no ICC"))
-                               : L"CMYK: " + cmyk_preview_profile_.filename().wstring();
+                               : L"CMYK: " + (cmyk_preview_profile_ == defaults.second
+                                    ? std::wstring(L"U.S. Web Coated (SWOP) v2")
+                                    : cmyk_preview_profile_.filename().wstring());
     AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, (L"RGB: " + rgb_name).c_str());
     AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, cmyk_name.c_str());
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, 1, vi ? L"Nạp ICC nguồn RGB…" : L"Load source RGB ICC…");
     AppendMenuW(menu, MF_STRING, 2, vi ? L"Nạp ICC nguồn CMYK…" : L"Load source CMYK ICC…");
-    const auto swop = color::IccPreview::system_srgb_profile().parent_path() / L"RSWOP.icm";
-    std::error_code lookup_error;
-    if (std::filesystem::is_regular_file(swop, lookup_error))
+    const auto swop = defaults.second;
+    if (!swop.empty())
         AppendMenuW(menu, MF_STRING, 5,
-                    vi ? L"CMYK: SWOP có sẵn trên Windows" : L"CMYK: installed Windows SWOP profile");
-    AppendMenuW(menu, MF_STRING, 3, vi ? L"Khôi phục preview sRGB" : L"Reset preview to sRGB");
+                    vi ? L"Dùng U.S. Web Coated (SWOP) v2" : L"Use U.S. Web Coated (SWOP) v2");
+    AppendMenuW(menu, MF_STRING, 3,
+                vi ? L"Khôi phục ICC mặc định (sRGB + SWOP)" : L"Restore default ICC profiles (sRGB + SWOP)");
     AppendMenuW(menu, MF_STRING, 4, vi ? L"Phạm vi quản lý màu…" : L"Color management scope…");
     POINT point{};
     GetCursorPos(&point);
@@ -134,8 +164,8 @@ void NativeWindow::show_color_profiles() {
     } else if (action == 5) {
         cmyk = swop;
     } else if (action == 3) {
-        rgb.clear();
-        cmyk.clear();
+        rgb = defaults.first;
+        cmyk = defaults.second;
     } else
         return;
     std::string error;

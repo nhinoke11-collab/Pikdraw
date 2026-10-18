@@ -15,7 +15,7 @@ namespace pikdraw::workers {
 
 struct V2ProposalStreamValidator::SemanticState {
   enum class Phase { NeedPage, Layers, Objects, Issues, Report, Complete };
-  enum class ObjectKind { Path, Text, Group };
+  enum class ObjectKind { Path, Text, Group, Raster };
   struct ObjectInfo {
     ObjectKind kind{ObjectKind::Path};
     std::vector<uint32_t> children;
@@ -30,6 +30,12 @@ struct V2ProposalStreamValidator::SemanticState {
   std::unordered_set<std::string> source_ids;
   std::vector<std::vector<uint32_t>> layer_roots;
   std::unordered_map<uint32_t, ObjectInfo> objects;
+  struct RasterChunkState {
+    uint32_t total_bytes{0};
+    uint32_t next_byte_offset{0};
+  };
+  std::unordered_map<uint32_t, RasterChunkState> raster_chunks;
+  bool has_raster{false};
 
   [[nodiscard]] bool AddObject(uint32_t id, std::string_view source_id,
                                ObjectInfo object);

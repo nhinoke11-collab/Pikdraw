@@ -174,7 +174,8 @@ bool render_object(const document::DocumentSnapshot &snapshot,
           const bool rendered = effects::render_path_with_appearance(
               transformed, transformed.appearance, camera, target, preview,
               &gaussian_scratch_capacity_bytes,
-              &shadow_scratch_capacity_bytes);
+              &shadow_scratch_capacity_bytes,
+              (snapshot.page().color_mode_explicit || snapshot.page().raster_dpi_explicit) ? snapshot.raster_dpi() : 0);
           metric.peak_gaussian_blur_scratch_capacity_bytes = std::max(
               metric.peak_gaussian_blur_scratch_capacity_bytes,
               gaussian_scratch_capacity_bytes);
@@ -188,8 +189,7 @@ bool render_object(const document::DocumentSnapshot &snapshot,
       // Enabled only when a genuine platform outline backend is compiled in.
 #ifdef PIKDRAW_TYPOGRAPHY_REAL_OUTLINES
           try {
-            const auto layout =
-                typography::TextLayout::layout_text(object.text, object.font);
+            const auto layout = object.layout();
             for (const auto &line : layout.lines()) {
               if (line.run.is_fallback) {
                 diagnostic(metric, object.id, false,
@@ -198,7 +198,7 @@ bool render_object(const document::DocumentSnapshot &snapshot,
               }
             }
             document::PathObject outlines;
-            outlines.path = typography::text_to_path_outlines(layout);
+            outlines.path = typography::text_to_path_outlines(layout, object.underline);
             outlines.transform = (parent_transform * object.transform) *
                                  geometry::Transform2D::translation(
                                      object.position.x, object.position.y) *
@@ -210,7 +210,8 @@ bool render_object(const document::DocumentSnapshot &snapshot,
             const bool rendered = effects::render_path_with_appearance(
                 outlines, object.appearance, camera, target, preview,
                 &gaussian_scratch_capacity_bytes,
-                &shadow_scratch_capacity_bytes);
+                &shadow_scratch_capacity_bytes,
+                (snapshot.page().color_mode_explicit || snapshot.page().raster_dpi_explicit) ? snapshot.raster_dpi() : 0);
             metric.peak_gaussian_blur_scratch_capacity_bytes = std::max(
                 metric.peak_gaussian_blur_scratch_capacity_bytes,
                 gaussian_scratch_capacity_bytes);

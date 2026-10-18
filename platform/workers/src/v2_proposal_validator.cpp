@@ -177,15 +177,23 @@ V2ProposalStreamValidator::V2ProposalStreamValidator(
     digest_.reset(new (std::nothrow) DigestState());
     const bool is_svg = expected_.format_id == "SVG";
     const bool is_dxf = expected_.format_id == "DXF";
+    const bool is_png = expected_.format_id == "PNG";
+    const bool is_jpeg = expected_.format_id == "JPEG";
+    const bool is_tiff = expected_.format_id == "TIFF";
     const bool supported_svg_profile = is_svg &&
         FormatCapabilities::is_worker_import_profile_supported(
             FormatType::Svg, expected_.profile_id);
     const bool supported_dxf_profile = is_dxf &&
         FormatCapabilities::is_worker_import_profile_supported(
             FormatType::Dxf, expected_.profile_id);
+    const bool supported_raster_profile = (is_png || is_jpeg || is_tiff) &&
+        FormatCapabilities::is_worker_import_profile_supported(
+            is_png ? FormatType::Png : is_jpeg ? FormatType::Jpeg : FormatType::Tiff,
+            expected_.profile_id);
     const bool supported_profile =
-        (!is_svg && !is_dxf) || supported_svg_profile || supported_dxf_profile;
-    const bool requires_semantics = is_svg || is_dxf;
+        (!is_svg && !is_dxf && !is_png && !is_jpeg && !is_tiff) ||
+        supported_svg_profile || supported_dxf_profile || supported_raster_profile;
+    const bool requires_semantics = is_svg || is_dxf || is_png || is_jpeg || is_tiff;
     if (requires_semantics && supported_profile) {
         semantic_.reset(new (std::nothrow) SemanticState());
         if (semantic_) semantic_->expected_coverage_profile = expected_.profile_id;

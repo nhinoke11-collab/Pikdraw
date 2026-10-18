@@ -8,6 +8,10 @@
 namespace pikdraw::document {
 
 inline void validate_page(const Page& page) {
+    if (!color::valid_document_color_mode(page.color_mode) ||
+        page.color_profile_name.empty() || page.color_profile_name.size() > 256 ||
+        (page.raster_dpi != 72 && page.raster_dpi != 150 && page.raster_dpi != 300))
+        throw std::invalid_argument("Invalid document color settings or raster effects DPI");
     if (!std::isfinite(page.width_mm) || !std::isfinite(page.height_mm) ||
         page.width_mm <= 0 || page.height_mm <= 0 ||
         page.width_mm > geometry::limits::kCanvasMaxMm ||
@@ -56,6 +60,14 @@ inline void validate_path_source(const PathObject& object) {
 }
 
 inline void validate_text_source(const TextObject& object) {
+    if (!std::isfinite(object.frame_width_mm) || object.frame_width_mm < 0 ||
+        object.frame_width_mm > geometry::limits::kCanvasMaxMm ||
+        !std::isfinite(object.line_spacing_ratio) || object.line_spacing_ratio < 0.25 ||
+        object.line_spacing_ratio > 10 ||
+        (object.alignment != typography::TextAlignment::Left &&
+         object.alignment != typography::TextAlignment::Center &&
+         object.alignment != typography::TextAlignment::Right))
+        throw std::invalid_argument("Invalid paragraph width, spacing or alignment");
     if (!object.fill.is_valid() || object.font.family_name.empty() ||
         !std::isfinite(object.font.size_pt) || object.font.size_pt <= 0 ||
         object.font.size_mm() > geometry::limits::kCanvasMaxMm ||
@@ -134,6 +146,22 @@ inline void validate_image_source(const ImageObject& object) {
                                  static_cast<uint64_t>(object.height_px);
     if (expected_pixels != object.pixels_rgba.size())
         throw std::invalid_argument("Image pixel count does not match its dimensions");
+    const auto& source = object.source;
+    if ((!source.media_type.empty() &&
+         source.media_type != "image/png" &&
+         source.media_type != "image/jpeg" &&
+         source.media_type != "image/tiff") ||
+        source.original_bytes.size() > RasterSourceMetadata::kMaxSourceBytes ||
+        source.icc_profile.size() > RasterSourceMetadata::kMaxIccProfileBytes ||
+        !std::isfinite(source.dpi_x) || !std::isfinite(source.dpi_y) ||
+        source.dpi_x <= 0.0 || source.dpi_y <= 0.0 ||
+        source.dpi_x > 1000000.0 || source.dpi_y > 1000000.0 ||
+        source.frame_count == 0 || source.frame_count > 256 ||
+        source.frame_index >= source.frame_count ||
+        source.source_bits_per_pixel > 128 ||
+        source.exif_orientation == 0 || source.exif_orientation > 8 ||
+        (!source.original_bytes.empty() && source.media_type.empty()))
+        throw std::invalid_argument("Invalid raster source metadata or embedded asset budget");
     if (object.clip_path)
         validate_geometry_path(*object.clip_path);
 }

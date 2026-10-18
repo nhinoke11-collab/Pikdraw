@@ -1,5 +1,7 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
 #include "native_window_paint_icons.hpp"
+#include "native_window_gradient_properties_paint.hpp"
+#include "native_window_text_properties.hpp"
 #include "../tools/drawing_tool_controller.hpp"
 #include "../tools/pen_tool_controller.hpp"
 #include "../tools/node_tool_controller.hpp"
@@ -50,7 +52,7 @@ void NativeWindow::paint_left_toolbox(HDC mem_dc, int w, int h) {
             const int ty = content_top + 10 + row * 42;
             RECT rc_tb = { 6, ty, tool_w - 6, ty + 36 };
             const bool active = group == 1 ? (active_tool_ == 1 || active_tool_ == 2 || active_tool_ == 9)
-                              : group == 2 ? (active_tool_ >= 6 && active_tool_ <= 8)
+                              : group == 2 ? ((active_tool_ >= 6 && active_tool_ <= 8) || active_tool_ == 11)
                               : group == 3 ? (toolbox_open_group_ == 3)
                                            : active_tool_ == tool;
             const int btn_cx = (rc_tb.left + rc_tb.right) / 2;
@@ -65,7 +67,8 @@ void NativeWindow::paint_left_toolbox(HDC mem_dc, int w, int h) {
                 SelectObject(mem_dc, old_pen);
                 DeleteObject(pen_t_act);
                 DeleteObject(br_t_act);
-                draw_tool_icon(mem_dc, tool, btn_cx, btn_cy, col_teal);
+                draw_tool_icon(mem_dc, group == 2 && tool == 11 ? 15 : tool,
+                               btn_cx, btn_cy, col_teal);
             } else {
                 HBRUSH br_t_inact = CreateSolidBrush(col_header);
                 HPEN pen_t_inact = CreatePen(PS_SOLID, 1, col_border);
@@ -76,7 +79,8 @@ void NativeWindow::paint_left_toolbox(HDC mem_dc, int w, int h) {
                 SelectObject(mem_dc, old_pen);
                 DeleteObject(pen_t_inact);
                 DeleteObject(br_t_inact);
-                draw_tool_icon(mem_dc, tool, btn_cx, btn_cy, col_text_muted);
+                draw_tool_icon(mem_dc, group == 2 && tool == 11 ? 15 : tool,
+                               btn_cx, btn_cy, col_text_muted);
             }
             if (group != 0) {
                 draw_toolbox_flyout_marker(mem_dc, rc_tb.right - 5, rc_tb.bottom - 5,
@@ -95,7 +99,8 @@ void NativeWindow::paint_left_toolbox(HDC mem_dc, int w, int h) {
             const int flyout_top = content_top + 10 + group_row * 42;
             const int flyout_left = 54;
             const int flyout_width = toolbox_open_group_ == 3 ? 208 : 188;
-            const int flyout_height = toolbox_open_group_ == 3 ? 174 : 116;
+            const int flyout_height = toolbox_open_group_ == 3 ? 174
+                : toolbox_open_group_ == 2 ? 145 : 116;
             RECT flyout{flyout_left, flyout_top, flyout_left + flyout_width, flyout_top + flyout_height};
             HBRUSH flyout_brush = CreateSolidBrush(is_dark ? RGB(20, 31, 46) : RGB(250, 252, 255));
             HPEN flyout_pen = CreatePen(PS_SOLID, 1, col_border);
@@ -125,12 +130,12 @@ void NativeWindow::paint_left_toolbox(HDC mem_dc, int w, int h) {
                 quick_shapes ? 1 : path_drawing ? 6 : 10,
                 quick_shapes ? 2 : path_drawing ? 7 : 11,
                 quick_shapes ? 9 : path_drawing ? 8 : 12,
-                appearance ? 14 : 13,
+                appearance ? 14 : path_drawing ? 11 : 13,
                 13};
             const wchar_t* labels_en[] = {L"Rectangle", L"Ellipse", L"Polygon", L"", L""};
             const wchar_t* labels_vi[] = {L"Hình chữ nhật", L"Hình elip", L"Đa giác", L"", L""};
-            const wchar_t* path_en[] = {L"Line", L"Polyline", L"Pen", L"", L""};
-            const wchar_t* path_vi[] = {L"Đoạn thẳng", L"Đường gấp khúc", L"Pen", L"", L""};
+            const wchar_t* path_en[] = {L"Line", L"Polyline", L"Pen", L"Node", L""};
+            const wchar_t* path_vi[] = {L"Đoạn thẳng", L"Đường gấp khúc", L"Pen", L"Node", L""};
             const wchar_t* appearance_en[] = {L"Appearance Properties", L"Gaussian Blur", L"Drop Shadow", L"Contour", L"Gradient"};
             const wchar_t* appearance_vi[] = {L"Thuộc tính diện mạo", L"Gaussian Blur", L"Drop Shadow", L"Viền Contour", L"Chuyển sắc"};
             const bool has_blur = appearance && workflow().selected_effect_index(
@@ -138,7 +143,8 @@ void NativeWindow::paint_left_toolbox(HDC mem_dc, int w, int h) {
             const bool has_shadow = appearance && workflow().selected_effect_index(
                 document::DropShadowEffect{}).has_value();
             const bool is_contour = appearance && (active_tool_ == 12 || (contour_tool_ && contour_tool_->active()));
-            const int max_items = toolbox_open_group_ == 3 ? 5 : 3;
+            const int max_items = toolbox_open_group_ == 3 ? 5
+                : toolbox_open_group_ == 2 ? 4 : 3;
             for (int item = 0; item < max_items; ++item) {
                 const int item_top = flyout_top + 26 + item * 29;
                 const bool selected = appearance
@@ -156,7 +162,9 @@ void NativeWindow::paint_left_toolbox(HDC mem_dc, int w, int h) {
                     FillRect(mem_dc, &item_rect, item_brush);
                     DeleteObject(item_brush);
                 }
-                draw_tool_icon(mem_dc, flyout_tools[item], flyout_left + 20,
+                const int icon = path_drawing && flyout_tools[item] == 11
+                    ? 15 : flyout_tools[item];
+                draw_tool_icon(mem_dc, icon, flyout_left + 20,
                                item_top + 14, !available ? col_text_muted : selected ? col_teal : col_text_white);
                 SetTextColor(mem_dc, !available ? col_text_muted : selected ? col_teal : col_text_white);
                 SelectObject(mem_dc, selected ? font_be_vietnam_bold : font_be_vietnam);
@@ -283,6 +291,118 @@ void NativeWindow::paint_right_inspector_dock(HDC mem_dc, int w, int h) {
                 is_vi ? L"Số cạnh: 3–256. Góc xoay là góc đỉnh đầu tiên. Shift khóa hướng kéo theo bước 15°; Ctrl lấy điểm đầu làm tâm. Các giá trị này áp dụng cho đa giác tạo tiếp theo và không sửa path đã có."
                       : L"Sides: 3–256. Rotation sets the first vertex angle. Shift snaps the drag direction to 15°; Ctrl uses the start point as center. Settings apply to the next polygon and do not alter existing paths.",
                 -1, &property_hint, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+        } else if (active_dock_tab_ == 0 && active_tool_ == 11 && node_tool_ && node_tool_->active()) {
+            SelectObject(mem_dc, font_be_vietnam_bold);
+            SetTextColor(mem_dc, col_teal);
+            RECT title{insp_x + 14, content_y + 2, w - 14, content_y + 25};
+            DrawTextW(mem_dc, is_vi ? L"THUỘC TÍNH · NODE" : L"PROPERTIES · NODE", -1,
+                      &title, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+            const size_t node_count = node_tool_->selected_node_count();
+            const auto position = node_tool_->single_selected_node_position();
+            const auto mode = node_tool_->selected_nodes_mode();
+            SelectObject(mem_dc, font_secondary);
+            SetTextColor(mem_dc, col_text_muted);
+            RECT selection_summary{insp_x + 14, content_y + 24, w - 14, content_y + 44};
+            const std::wstring count_text = node_count == 1
+                ? (is_vi ? L"1 node được chọn" : L"1 node selected")
+                : (is_vi ? std::to_wstring(node_count) + L" node được chọn"
+                         : std::to_wstring(node_count) + L" nodes selected");
+            const wchar_t* mode_name = nullptr;
+            if (mode) {
+                switch (*mode) {
+                    case document::PathNodeMode::Corner: mode_name = is_vi ? L"Góc" : L"Corner"; break;
+                    case document::PathNodeMode::Cusp: mode_name = L"Cusp"; break;
+                    case document::PathNodeMode::Smooth: mode_name = is_vi ? L"Mượt" : L"Smooth"; break;
+                    case document::PathNodeMode::Symmetric: mode_name = is_vi ? L"Đối xứng" : L"Symmetric"; break;
+                    case document::PathNodeMode::AutoSmooth: mode_name = is_vi ? L"Tự mượt" : L"Auto Smooth"; break;
+                }
+            }
+            const std::wstring summary_text = count_text + L" · " +
+                (mode_name ? mode_name : node_count > 1
+                    ? (is_vi ? L"mode hỗn hợp" : L"Mixed modes")
+                    : (is_vi ? L"chưa chọn node" : L"no node selected"));
+            DrawTextW(mem_dc, summary_text.c_str(), -1, &selection_summary,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+            const auto draw_coordinate = [&](int y, const wchar_t* label,
+                                             NumericFieldId field, double value) {
+                RECT name{insp_x + 14, y, insp_x + 126, y + 32};
+                SetTextColor(mem_dc, col_text_white);
+                SelectObject(mem_dc, font_be_vietnam);
+                DrawTextW(mem_dc, label, -1, &name,
+                          DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                RECT input{insp_x + 132, y + 2, w - 14, y + 30};
+                const bool focused = active_num_field_ == field;
+                const bool enabled = position.has_value();
+                HBRUSH brush = CreateSolidBrush(!enabled ? col_header : focused ? col_active_tab : col_btn_bg);
+                HPEN pen = CreatePen(PS_SOLID, focused ? 2 : 1,
+                                     focused ? col_teal : enabled ? col_btn_bdr : col_border);
+                const auto old_pen = SelectObject(mem_dc, pen);
+                const auto old_brush = SelectObject(mem_dc, brush);
+                RoundRect(mem_dc, input.left, input.top, input.right, input.bottom, 5, 5);
+                SelectObject(mem_dc, old_brush);
+                SelectObject(mem_dc, old_pen);
+                DeleteObject(brush);
+                DeleteObject(pen);
+                std::wostringstream formatted;
+                formatted << std::fixed << std::setprecision(3) << value << L" mm";
+                const std::wstring shown = focused ? utf8_to_wide(num_input_buffer_) + L"|"
+                    : enabled ? formatted.str()
+                    : node_count > 1 ? (is_vi ? L"Hỗn hợp" : L"Mixed") : L"—";
+                RECT value_rect{input.left + 8, input.top, input.right - 8, input.bottom};
+                SetTextColor(mem_dc, !enabled ? col_text_muted : focused ? col_teal : col_text_white);
+                SelectObject(mem_dc, font_mono);
+                DrawTextW(mem_dc, shown.c_str(), -1, &value_rect,
+                          DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+            };
+            draw_coordinate(content_y + 48, L"X (mm)", NumericFieldId::ObjectX,
+                            position ? position->x : 0.0);
+            draw_coordinate(content_y + 88, L"Y (mm)", NumericFieldId::ObjectY,
+                            position ? position->y : 0.0);
+
+            const wchar_t* mode_names_en[] = {L"Cusp", L"Smooth", L"Symmetric"};
+            const wchar_t* mode_names_vi[] = {L"Cusp", L"Smooth", L"Đối xứng"};
+            constexpr document::PathNodeMode modes[] = {
+                document::PathNodeMode::Cusp,
+                document::PathNodeMode::Smooth,
+                document::PathNodeMode::Symmetric};
+            const int button_width = (AlignPanelMetrics::content_width - 12) / 3;
+            for (int i = 0; i < 3; ++i) {
+                const int left = insp_x + AlignPanelMetrics::content_left + i * (button_width + 6);
+                const bool enabled = node_count > 0;
+                const bool selected = mode && *mode == modes[i];
+                HBRUSH brush = CreateSolidBrush(!enabled ? col_header : selected ? col_active_tab : col_btn_bg);
+                HPEN pen = CreatePen(PS_SOLID, selected ? 2 : 1,
+                                     !enabled ? col_border : selected ? col_teal : col_btn_bdr);
+                const auto old_pen = SelectObject(mem_dc, pen);
+                const auto old_brush = SelectObject(mem_dc, brush);
+                RoundRect(mem_dc, left, content_y + 136, left + button_width,
+                          content_y + 164, 5, 5);
+                SelectObject(mem_dc, old_brush);
+                SelectObject(mem_dc, old_pen);
+                DeleteObject(brush);
+                DeleteObject(pen);
+                RECT text{left + 2, content_y + 136, left + button_width - 2, content_y + 164};
+                SetTextColor(mem_dc, !enabled ? col_text_muted : selected ? col_teal : col_text_white);
+                SelectObject(mem_dc, selected ? font_be_vietnam_bold : font_be_vietnam);
+                DrawTextW(mem_dc, is_vi ? mode_names_vi[i] : mode_names_en[i], -1,
+                          &text, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+            }
+            SelectObject(mem_dc, font_secondary);
+            SetTextColor(mem_dc, col_text_muted);
+            RECT hint{insp_x + 14, content_y + 172, w - 14, content_y + 256};
+            DrawTextW(mem_dc,
+                is_vi ? L"Chọn một node để nhập tọa độ mm. Enter áp dụng; Tab đổi trục; Esc hủy. Có thể kéo anchor/tay nắm trên canvas. Nhiều node: tọa độ bị tắt, mode áp dụng cho toàn bộ vùng chọn."
+                      : L"Select one node to enter coordinates in mm. Enter applies; Tab switches axes; Esc cancels. Drag anchors/handles on canvas. Multiple nodes disable coordinates; mode applies to the full selection.",
+                -1, &hint, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+        } else if (active_dock_tab_ == 0 &&
+                   ((active_tool_ == 13 && gradient_tool_ && gradient_tool_->active()) ||
+                    (active_tool_ == 12 && contour_tool_ && contour_tool_->active()))) {
+        } else if (active_dock_tab_ == 0 && has_text_properties_target(*this)) {
+            paint_text_properties_panel(mem_dc, insp_x, inspect_w, content_y, h - status_h,
+                theme_, language_, text_properties_view(*this), active_num_field_, num_input_buffer_);
+            return;
         } else if (active_dock_tab_ == 0) {
             const int panel_left = insp_x + AlignPanelMetrics::content_left;
             const int section_width = (AlignPanelMetrics::content_width - 12) / 3;
@@ -314,7 +434,120 @@ void NativeWindow::paint_right_inspector_dock(HDC mem_dc, int w, int h) {
 
         std::wostringstream content;
         if (active_dock_tab_ == 0) {
-            if (show_align_panel_) {
+            if (active_tool_ == 13 && gradient_tool_ && gradient_tool_->active()) {
+                paint_gradient_properties_panel(mem_dc, insp_x, inspect_w, content_y,
+                    h - status_h, theme_, language_, *gradient_tool_, active_num_field_,
+                    num_input_buffer_);
+            } else if (active_tool_ == 12 && contour_tool_ && contour_tool_->active()) {
+                const auto target = contour_tool_->target_object();
+                const auto* object = snapshot ? snapshot->objects().lookup_ref(target) : nullptr;
+                const auto* path = object ? std::get_if<document::PathObject>(object) : nullptr;
+                const bool can_edit = path && !path->locked;
+                const bool has_contour = can_edit &&
+                    document::get_object_contour(root().document(), target).has_value();
+                const auto& preview = contour_tool_->preview_result();
+                const int panel_left = insp_x + 14;
+                const int panel_right = w - 14;
+                const int panel_width = panel_right - panel_left;
+                SelectObject(mem_dc, font_be_vietnam_bold); SetTextColor(mem_dc, col_teal);
+                RECT title{panel_left, content_y + 2, panel_right, content_y + 24};
+                DrawTextW(mem_dc, is_vi ? L"THUỘC TÍNH · CONTOUR" : L"PROPERTIES · CONTOUR", -1,
+                          &title, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                SelectObject(mem_dc, font_secondary); SetTextColor(mem_dc, !can_edit ? col_text_muted : col_text_white);
+                const std::wstring target_name = path && !path->name.empty()
+                    ? utf8_to_wide(path->name) : std::to_wstring(target);
+                const std::wstring scope = !can_edit ? (is_vi ? L"Chọn một Path không khóa" : L"Select one unlocked Path")
+                    : target_name + (is_vi ? L" · xem trước " : L" · preview ") + std::to_wstring(preview.steps.size()) +
+                      (is_vi ? L" bước" : preview.steps.size() == 1 ? L" step" : L" steps") +
+                      (has_contour ? (is_vi ? L" · đã lưu" : L" · saved")
+                                                                  : (is_vi ? L" · chưa lưu" : L" · not saved"));
+                RECT summary{panel_left, content_y + 25, panel_right, content_y + 45};
+                DrawTextW(mem_dc, scope.c_str(), -1, &summary,
+                          DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                const auto draw_button = [&](int x, int y, int width, const wchar_t* label, bool enabled, bool selected = false) {
+                    HBRUSH brush = CreateSolidBrush(!enabled ? col_header : selected ? col_active_tab : col_btn_bg);
+                    HPEN pen = CreatePen(PS_SOLID, selected ? 2 : 1,
+                                         !enabled ? col_border : selected ? col_teal : col_btn_bdr);
+                    const auto old_pen = SelectObject(mem_dc, pen); const auto old_brush = SelectObject(mem_dc, brush);
+                    RoundRect(mem_dc, x, y, x + width, y + 28, 5, 5);
+                    SelectObject(mem_dc, old_brush); SelectObject(mem_dc, old_pen);
+                    DeleteObject(brush); DeleteObject(pen);
+                    RECT label_rect{x + 2, y, x + width - 2, y + 28};
+                    SetTextColor(mem_dc, !enabled ? col_text_muted : selected ? col_teal : col_text_white);
+                    SelectObject(mem_dc, selected ? font_be_vietnam_bold : font_be_vietnam);
+                    DrawTextW(mem_dc, label, -1, &label_rect,
+                              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                };
+                const auto draw_field = [&](int row, const wchar_t* label, const std::wstring& value, NumericFieldId field, bool enabled) {
+                    RECT name{panel_left, content_y + row, panel_left + 112, content_y + row + 32};
+                    SetTextColor(mem_dc, enabled ? col_text_white : col_text_muted); SelectObject(mem_dc, font_be_vietnam);
+                    DrawTextW(mem_dc, label, -1, &name,
+                              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                    RECT input{panel_left + 118, content_y + row + 2, panel_right, content_y + row + 30};
+                    const bool focused = active_num_field_ == field;
+                    HBRUSH brush = CreateSolidBrush(!enabled ? col_header : focused ? col_active_tab : col_btn_bg);
+                    HPEN pen = CreatePen(PS_SOLID, focused ? 2 : 1,
+                                         !enabled ? col_border : focused ? col_teal : col_btn_bdr);
+                    const auto old_pen = SelectObject(mem_dc, pen); const auto old_brush = SelectObject(mem_dc, brush);
+                    RoundRect(mem_dc, input.left, input.top, input.right, input.bottom, 5, 5);
+                    SelectObject(mem_dc, old_brush); SelectObject(mem_dc, old_pen);
+                    DeleteObject(brush); DeleteObject(pen);
+                    RECT shown_rect{input.left + 7, input.top, input.right - 6, input.bottom};
+                    const std::wstring shown = focused ? utf8_to_wide(num_input_buffer_) + L"|" : value;
+                    SetTextColor(mem_dc, !enabled ? col_text_muted : focused ? col_teal : col_text_white);
+                    SelectObject(mem_dc, font_mono);
+                    DrawTextW(mem_dc, shown.c_str(), -1, &shown_rect,
+                              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                };
+                SetTextColor(mem_dc, col_teal);
+                RECT direction_label{panel_left, content_y + 48, panel_right, content_y + 66};
+                DrawTextW(mem_dc, is_vi ? L"HƯỚNG VIỀN" : L"CONTOUR DIRECTION", -1, &direction_label,
+                          DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                const int triple_width = (panel_width - 12) / 3;
+                const wchar_t* direction_names_en[] = {L"Outside", L"Inside", L"To center"};
+                const wchar_t* direction_names_vi[] = {L"Ngoài", L"Trong", L"Vào tâm"};
+                constexpr geometry::ContourDirection directions[] = {geometry::ContourDirection::Outside,
+                    geometry::ContourDirection::Inside, geometry::ContourDirection::ToCenter};
+                for (int i = 0; i < 3; ++i)
+                    draw_button(panel_left + i * (triple_width + 6), content_y + 68, triple_width,
+                        is_vi ? direction_names_vi[i] : direction_names_en[i], can_edit,
+                        contour_tool_->direction() == directions[i]);
+                std::wostringstream spacing; spacing << std::fixed << std::setprecision(3)
+                    << contour_tool_->spacing_mm() << L" mm";
+                draw_field(104, is_vi ? L"Khoảng cách" : L"Spacing", spacing.str(), NumericFieldId::DistributeSpacing, can_edit);
+                draw_field(140, is_vi ? L"Số bước" : L"Steps", std::to_wstring(contour_tool_->steps()),
+                           NumericFieldId::PolygonSides, can_edit);
+                SetTextColor(mem_dc, col_teal);
+                RECT join_label{panel_left, content_y + 176, panel_right, content_y + 194};
+                DrawTextW(mem_dc, is_vi ? L"GÓC NỐI" : L"CORNER JOIN", -1, &join_label,
+                          DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                const wchar_t* join_names_en[] = {L"Miter", L"Round", L"Bevel"};
+                const wchar_t* join_names_vi[] = {L"Nhọn", L"Tròn", L"Vát"};
+                constexpr geometry::JoinType joins[] = {geometry::JoinType::Miter,
+                    geometry::JoinType::Round, geometry::JoinType::Bevel};
+                for (int i = 0; i < 3; ++i)
+                    draw_button(panel_left + i * (triple_width + 6), content_y + 196, triple_width,
+                        is_vi ? join_names_vi[i] : join_names_en[i], can_edit,
+                        contour_tool_->join_type() == joins[i]);
+                std::wostringstream miter; miter << std::fixed << std::setprecision(2) << contour_tool_->miter_limit();
+                draw_field(228, L"Miter limit", miter.str(), NumericFieldId::PolygonRotation,
+                           can_edit && contour_tool_->join_type() == geometry::JoinType::Miter);
+                SelectObject(mem_dc, font_secondary); SetTextColor(mem_dc, col_text_muted);
+                RECT hint{panel_left, content_y + 264, panel_right, content_y + 310};
+                DrawTextW(mem_dc, is_vi
+                    ? L"Enter cập nhật xem trước; Tab chuyển trường. Apply lưu một bước Undo. Remove xóa viền đã lưu; Break tách thành Path độc lập. Cancel khôi phục tham số đã lưu (hoặc mặc định nếu chưa lưu)."
+                    : L"Enter updates preview; Tab moves between fields. Apply saves one undo step. Remove deletes the saved contour; Break creates independent Paths. Cancel restores saved settings or defaults.",
+                    -1, &hint, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+                const int action_width = (panel_width - 18) / 4;
+                const wchar_t* action_names_en[] = {L"Apply", L"Remove", L"Break", L"Cancel"};
+                const wchar_t* action_names_vi[] = {L"Áp dụng", L"Xóa", L"Tách", L"Hủy"};
+                for (int i = 0; i < 4; ++i)
+                    draw_button(panel_left + i * (action_width + 6), content_y + 316, action_width,
+                        is_vi ? action_names_vi[i] : action_names_en[i],
+                        i == 0 ? can_edit && contour_tool_->has_preview() : i < 3 ? has_contour : can_edit);
+            } else if (active_tool_ == 11 && node_tool_ && node_tool_->active()) {
+                // Node-specific selection and properties were painted above.
+            } else if (show_align_panel_) {
                 using Metrics = AlignPanelMetrics;
                 const int panel_left = insp_x + Metrics::content_left;
                 const int three_button_width = (Metrics::content_width - 12) / 3;
@@ -527,22 +760,7 @@ void NativeWindow::paint_right_inspector_dock(HDC mem_dc, int w, int h) {
                       DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
             }
         } else if (active_dock_tab_ == 1) {
-            DrawTextW(mem_dc, is_vi ? L"ĐỐI TƯỢNG TRONG TÀI LIỆU" : L"DOCUMENT OBJECTS", -1,
-                      &rc_head, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
-            size_t shown = 0;
-            for (const auto& [id, object] : snapshot->objects().all()) {
-                const auto name = std::visit([](const auto& value) { return value.name; }, object);
-                content << L"• " << utf8_to_wide(name) << L"  (#" << id << L")\n";
-                if (++shown == 20)
-                    break;
-            }
-            if (snapshot->object_count() == 0)
-                content << (is_vi ? L"Tài liệu chưa có đối tượng." : L"The document is empty.");
-            else if (snapshot->object_count() > shown)
-                content << L"…";
-            RECT body = { insp_x + 14, content_y + 28, w - 14, h - status_h - 8 };
-            const auto text = content.str();
-            DrawTextW(mem_dc, text.c_str(), -1, &body, DT_LEFT | DT_NOPREFIX);
+            paint_layers_dock(mem_dc, insp_x, content_y, w, h, status_h);
         } else {
             DrawTextW(mem_dc, is_vi ? L"LỊCH SỬ LỆNH" : L"COMMAND HISTORY", -1,
                       &rc_head, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);

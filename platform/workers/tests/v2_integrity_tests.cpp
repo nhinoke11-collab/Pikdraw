@@ -288,6 +288,94 @@ void TestDxfProfileHostSemantics(const SourceSnapshot& source) {
             "host accepted a DXF stream carrying the SVG coverage profile");
 }
 
+void TestRasterChunkHostSemantics(const SourceSnapshot& source) {
+    auto expected = BeginFor(source);
+    expected.format_id = "PNG";
+    expected.profile_id = "raster-rgba8-v1";
+
+    ImportPageRecord page{0.5291666667, 0.2645833333};
+    ImportLayerRecord layer{1, "raster-layer", "Raster", true, false, {1}};
+    ImportRasterImageRecord image;
+    image.local_id = 1;
+    image.source_id = "raster-image";
+    image.name = "Image";
+    image.media_type = "image/png";
+    image.width_px = 2;
+    image.height_px = 1;
+    image.decoded_pixel_bytes = 8;
+    image.source_bits_per_pixel = 32;
+    image.frame_count = 1;
+    image.dpi_x = 96;
+    image.dpi_y = 96;
+    ImportRasterImageChunkRecord pixels;
+    pixels.local_id = 1;
+    pixels.byte_offset = 0;
+    pixels.total_bytes = 8;
+    pixels.bytes = {255, 0, 0, 255, 0, 255, 0, 128};
+    ImportFidelityIssueRecord issue;
+    issue.source_locator = "raster-image";
+    issue.feature_code = "raster_rgba8_conversion";
+    issue.diagnostic_code = "appearance_and_editability_limited";
+    ImportFidelityReportRecord report;
+    report.coverage_profile = "raster-rgba8-v1";
+    report.parse_outcome = ImportParseOutcome::CompleteWithDiagnostics;
+    report.coverage = ImportCoverage::Partial;
+    report.appearance = ImportAppearance::Partial;
+    report.editability = ImportEditability::ExplicitConversion;
+    report.production = ImportProduction::NotAssessed;
+    report.issue_count = 1;
+
+    const auto stream_for = [&](bool omit_pixels, bool wrong_offset) {
+        std::vector<ImportRecordValue> values{page, layer, image};
+        if (!omit_pixels) {
+            auto chunk = pixels;
+            if (wrong_offset) {
+                chunk.byte_offset = 4;
+                chunk.bytes.resize(4);
+            }
+            values.emplace_back(std::move(chunk));
+        }
+        values.emplace_back(issue);
+        values.emplace_back(report);
+        V2ProposalChunk chunk;
+        chunk.job = expected.job;
+        for (const auto& value : values) {
+            const auto record = SerializeImportRecord(value);
+            Require(record && AppendV2ProposalRecord(chunk.canonical_record_bytes,
+                static_cast<uint16_t>(record->type), record->payload),
+                "could not encode raster semantic test record");
+            ++chunk.record_count;
+        }
+        chunk.checksum_crc32 = V2ProposalRecordsCrc32(chunk.canonical_record_bytes);
+        return chunk;
+    };
+
+    auto valid_chunk = stream_for(false, false);
+    V2ProposalStreamValidator valid(expected, 64 * 1024, 128, 4);
+    Require(valid.IsReady(), "raster host validator did not initialize");
+    Require(valid.Accept(MakeFrame(SerializeV2ProposalChunk(valid_chunk, 1))),
+            "host rejected a complete RGBA8 raster proposal");
+    V2ImportEnd end;
+    end.job = expected.job;
+    end.chunk_count = 1;
+    end.record_count = valid_chunk.record_count;
+    end.canonical_bytes = valid_chunk.canonical_record_bytes.size();
+    end.fidelity_report_complete = true;
+    Require(Digest(valid_chunk.canonical_record_bytes, end.canonical_sha256),
+            "could not hash raster semantic stream");
+    Require(valid.Accept(MakeFrame(SerializeV2ImportEnd(end, 2))) && valid.IsComplete(),
+            "host did not complete a full raster fidelity stream");
+
+    for (const auto [omit_pixels, wrong_offset] : {std::pair{true, false},
+                                                   std::pair{false, true}}) {
+        const auto malformed = stream_for(omit_pixels, wrong_offset);
+        V2ProposalStreamValidator validator(expected, 64 * 1024, 128, 4);
+        Require(validator.IsReady(), "negative raster validator did not initialize");
+        Require(!validator.Accept(MakeFrame(SerializeV2ProposalChunk(malformed, 1))),
+                "host accepted an incomplete or out-of-order raster pixel stream");
+    }
+}
+
 void TestPositiveStream(const SourceSnapshot& source) {
     WorkerProcessHost host;
     Require(StartNegotiated(host, source, L"--test-v2-stream-good"), "v2 fixture negotiation failed");
@@ -372,6 +460,7 @@ int main() {
         TestPositiveStream(*source);
         TestSvgHierarchyHostSemantics(*source);
         TestDxfProfileHostSemantics(*source);
+        TestRasterChunkHostSemantics(*source);
         for (const auto* mode : {
                  L"--test-v2-stream-gap", L"--test-v2-stream-oversize", L"--test-v2-stream-quota",
                  L"--test-v2-stream-no-end", L"--test-v2-stream-bad-crc", L"--test-v2-stream-bad-hash",

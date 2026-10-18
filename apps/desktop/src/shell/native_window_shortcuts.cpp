@@ -195,7 +195,13 @@ bool NativeWindow::handle_drawing_key_down(WPARAM key) {
 }
 
 bool NativeWindow::handle_key_down(WPARAM key) {
-    if (is_inline_text_editing_) return false;
+    if (show_recovery_modal_) return handle_recovery_key(key);
+    if ((GetKeyState(VK_CONTROL) & 0x8000) != 0 && key == 'T') {
+        open_inspector_properties_panel();
+        return true;
+    }
+    if (is_inline_text_editing_ && handle_inline_text_key(static_cast<uint32_t>(key),
+        (GetKeyState(VK_CONTROL) & 0x8000) != 0, (GetKeyState(VK_SHIFT) & 0x8000) != 0)) return true;
     if (active_num_field_ != NumericFieldId::None) {
         if (key == VK_ESCAPE) {
             cancel_numeric_field();
@@ -301,8 +307,9 @@ bool NativeWindow::handle_key_down(WPARAM key) {
             return true;
         }
         if (key == 'O') { open_document_dialog(); return true; }
+        if (key == 'I') { open_import_dialog(); return true; }
         if (key == 'S') { save_document_dialog(shift); return true; }
-        if (key == 'E') { export_svg_dialog(); return true; }
+        if (key == 'E') { trigger_export(); return true; }
         if (key == 'J') { open_settings_modal(); return true; }
         if (key == 'A') {
             if (shift) {
@@ -557,6 +564,7 @@ bool NativeWindow::handle_key_down(WPARAM key) {
         InvalidateRect(hwnd_, nullptr, FALSE);
         return true;
     }
+    if (key == VK_F8) { set_active_tool(4); return true; }
     if (key == 'F') { fit_page_to_canvas(); return true; }
     if (key == 'H') { set_active_tool(3); return true; }
     if (key == '1') {

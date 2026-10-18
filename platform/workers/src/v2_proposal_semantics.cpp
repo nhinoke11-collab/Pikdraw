@@ -53,6 +53,28 @@ bool V2ProposalStreamValidator::SemanticState::Consume(
     if (!text || !AddObject(text->local_id, text->source_id,
                             ObjectInfo{ObjectKind::Text, {}}))
       return false;
+  } else if (type == ImportRecordType::RasterImage) {
+    const auto *image = std::get_if<ImportRasterImageRecord>(&value);
+    if (!image || phase == Phase::Issues || phase == Phase::Report ||
+        phase == Phase::Complete || expected_coverage_profile != "raster-rgba8-v1" ||
+        has_raster ||
+        !AddObject(image->local_id, image->source_id,
+                   ObjectInfo{ObjectKind::Raster, {}}))
+      return false;
+    raster_chunks.emplace(image->local_id,
+                          RasterChunkState{image->decoded_pixel_bytes, 0});
+    has_raster = true;
+  } else if (type == ImportRecordType::RasterImageChunk) {
+    const auto *chunk = std::get_if<ImportRasterImageChunkRecord>(&value);
+    if (!chunk || phase != Phase::Objects)
+      return false;
+    const auto found = raster_chunks.find(chunk->local_id);
+    if (found == raster_chunks.end() ||
+        chunk->total_bytes != found->second.total_bytes ||
+        chunk->byte_offset != found->second.next_byte_offset ||
+        chunk->bytes.size() > found->second.total_bytes - found->second.next_byte_offset)
+      return false;
+    found->second.next_byte_offset += static_cast<uint32_t>(chunk->bytes.size());
   } else if (type == ImportRecordType::FidelityIssue) {
     const auto *issue = std::get_if<ImportFidelityIssueRecord>(&value);
     if (!issue || issue->severity == ImportFidelitySeverity::Unsupported ||
@@ -77,8 +99,16 @@ bool V2ProposalStreamValidator::SemanticState::Consume(
                               : ImportParseOutcome::CompleteWithDiagnostics) ||
         report->appearance != (issue_count == 0 ? ImportAppearance::Unknown
                                                 : ImportAppearance::Partial) ||
-        report->editability != ImportEditability::NativeEditable ||
+        report->editability != (has_raster ? ImportEditability::ExplicitConversion
+                                            : ImportEditability::NativeEditable) ||
         report->production != ImportProduction::NotAssessed || !ValidateGraph())
+      return false;
+    if (has_raster &&
+        (expected_coverage_profile != "raster-rgba8-v1" || objects.size() != 1 ||
+         raster_chunks.size() != 1 ||
+         raster_chunks.begin()->second.next_byte_offset != raster_chunks.begin()->second.total_bytes ||
+         layer_roots.size() != 1 || layer_roots.front().size() != 1 ||
+         layer_roots.front().front() != raster_chunks.begin()->first))
       return false;
     phase = Phase::Complete;
   } else {
@@ -108,7 +138,7 @@ bool V2ProposalStreamValidator::SemanticState::ConsumeChunk(
         (static_cast<uint32_t>(bytes[offset + 7]) << 24);
     offset += 8;
     if (flags != 0 || payload_size > bytes.size() - offset || raw_type < 1 ||
-        raw_type > 7)
+        raw_type > 9)
       return false;
     const auto type = static_cast<ImportRecordType>(raw_type);
     const auto value =

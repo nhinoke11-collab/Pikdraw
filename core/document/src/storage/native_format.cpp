@@ -1,4 +1,5 @@
 #include "byte_codec.hpp"
+#include "pikdraw/document/commands/color_commands.hpp"
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
@@ -42,6 +43,11 @@ std::vector<uint8_t> NativeFormat::serialize(const DocumentSnapshot &snapshot) {
   payload.u32(kAppearanceSchemaMinor);
   payload.u32(kGradientSchemaMajor);
   payload.u32(kGradientSchemaMinor);
+  payload.u8(static_cast<uint8_t>(snapshot.color_mode()));
+  payload.str(snapshot.color_profile_name());
+  payload.u32(static_cast<uint32_t>(snapshot.raster_dpi()));
+  payload.u8((snapshot.page().color_mode_explicit ? 1 : 0) |
+             (snapshot.page().raster_dpi_explicit ? 2 : 0));
   payload.count(snapshot.page_count(), 10000);
   payload.u64(snapshot.active_page_id());
 
@@ -49,6 +55,8 @@ std::vector<uint8_t> NativeFormat::serialize(const DocumentSnapshot &snapshot) {
   for (const auto &page : snapshot.pages()) {
     validate_document_structure(page.layout, page.objects);
     for (const auto &[id, object] : page.objects.all()) {
+      if (page.layout.color_mode_explicit && !object_colors_match_mode(object, page.layout.color_mode))
+        throw std::invalid_argument("Native explicit document mode conflicts with source process colors");
       maximum_stable_id = std::max(maximum_stable_id, id);
       const Appearance *appearance = nullptr;
       if (const auto *path = std::get_if<PathObject>(&object)) {
@@ -156,6 +164,27 @@ std::vector<uint8_t> NativeFormat::serialize(const DocumentSnapshot &snapshot) {
           path && !path->authoring_source)
         source_override = &migrated_sources.at(id);
       write_object(payload, object, true, source_override, true, true);
+      if (const auto* text = std::get_if<TextObject>(&object)) {
+        payload.u8(static_cast<uint8_t>(text->alignment));
+        payload.flag(text->underline);
+        payload.f64(text->frame_width_mm);
+        payload.f64(text->line_spacing_ratio);
+      } else if (const auto* image = std::get_if<ImageObject>(&object)) {
+        const auto& source = image->source;
+        payload.str(source.media_type);
+        payload.f64(source.dpi_x);
+        payload.f64(source.dpi_y);
+        payload.flag(source.dpi_from_source);
+        payload.u32(source.frame_index);
+        payload.u32(source.frame_count);
+        payload.u32(source.source_bits_per_pixel);
+        payload.u32(source.exif_orientation);
+        payload.flag(source.orientation_applied);
+        payload.blob(source.original_bytes,
+            static_cast<uint32_t>(RasterSourceMetadata::kMaxSourceBytes));
+        payload.blob(source.icc_profile,
+            static_cast<uint32_t>(RasterSourceMetadata::kMaxIccProfileBytes));
+      }
     }
   }
   Writer container;
@@ -192,10 +221,13 @@ NativeFormat::deserialize(const uint8_t *data, size_t length,
         version != kAuthoringSourceFormatVersion &&
         version != kAppearanceFormatVersion &&
         version != kGradientFormatVersion &&
+        version != kMultiPageFormatVersion &&
+        version != kTextLayoutFormatVersion &&
+        version != kRasterAssetFormatVersion &&
         version != kCurrentFormatVersion)
       throw std::invalid_argument(
           "Unsupported native version; v1 is not silently migrated and "
-          "versions v2-v6 require a compatible reader");
+          "versions v2-v9 require a compatible reader");
     if (header.u32() != 0)
       throw std::invalid_argument("Unsupported native feature flags");
     const auto epoch = header.u64();
@@ -235,6 +267,20 @@ NativeFormat::deserialize(const uint8_t *data, size_t length,
           throw std::invalid_argument("Unsupported required gradient schema");
       }
     }
+    Page color_settings;
+    if (version >= kDocumentColorFormatVersion) {
+      color_settings.color_mode = static_cast<color::DocumentColorMode>(reader.u8());
+      color_settings.color_profile_name = reader.str(256);
+      const auto dpi = reader.u32();
+      if (dpi != 72 && dpi != 150 && dpi != 300)
+        throw std::invalid_argument("Invalid native raster effects DPI");
+      color_settings.raster_dpi = static_cast<int32_t>(dpi);
+      const auto settings_flags = reader.u8();
+      if (settings_flags > 3) throw std::invalid_argument("Invalid native document color/DPI flags");
+      color_settings.color_mode_explicit = (settings_flags & 1) != 0;
+      color_settings.raster_dpi_explicit = (settings_flags & 2) != 0;
+      validate_page(color_settings);
+    }
     std::vector<DocumentPage> pages;
     PageId active_page_id = kInvalidPageId;
     std::unordered_set<PageId> seen_page_ids;
@@ -261,6 +307,11 @@ NativeFormat::deserialize(const uint8_t *data, size_t length,
       }
       result.layout.width_mm = reader.f64();
       result.layout.height_mm = reader.f64();
+      result.layout.color_mode = color_settings.color_mode;
+      result.layout.color_profile_name = color_settings.color_profile_name;
+      result.layout.raster_dpi = color_settings.raster_dpi;
+      result.layout.color_mode_explicit = color_settings.color_mode_explicit;
+      result.layout.raster_dpi_explicit = color_settings.raster_dpi_explicit;
       validate_page(result.layout);
       const auto layer_count = reader.count(remaining_layers, 10);
       remaining_layers -= layer_count;
@@ -299,6 +350,37 @@ NativeFormat::deserialize(const uint8_t *data, size_t length,
           if (auto *path = std::get_if<PathObject>(&object))
             path->fill_gradient = read_gradient(reader, remaining_gradient_stops);
         }
+        if (version >= kTextLayoutFormatVersion) {
+          if (auto* text = std::get_if<TextObject>(&object)) {
+            text->alignment = static_cast<typography::TextAlignment>(reader.u8());
+            text->underline = reader.flag();
+            text->frame_width_mm = reader.f64();
+            text->line_spacing_ratio = reader.f64();
+          }
+        }
+        if (version >= kRasterAssetFormatVersion) {
+          if (auto* image = std::get_if<ImageObject>(&object)) {
+            auto& source = image->source;
+            source.media_type = reader.str(64);
+            source.dpi_x = reader.f64();
+            source.dpi_y = reader.f64();
+            source.dpi_from_source = reader.flag();
+            source.frame_index = reader.u32();
+            source.frame_count = reader.u32();
+            source.source_bits_per_pixel = reader.u32();
+            const auto orientation = reader.u32();
+            if (orientation == 0 || orientation > 8)
+              throw std::invalid_argument("Invalid native raster orientation metadata");
+            source.exif_orientation = static_cast<uint16_t>(orientation);
+            source.orientation_applied = reader.flag();
+            source.original_bytes = reader.blob(
+                static_cast<uint32_t>(RasterSourceMetadata::kMaxSourceBytes));
+            source.icc_profile = reader.blob(
+                static_cast<uint32_t>(RasterSourceMetadata::kMaxIccProfileBytes));
+          }
+        }
+        if (color_settings.color_mode_explicit && !object_colors_match_mode(object, color_settings.color_mode))
+          throw std::invalid_argument("Native explicit document mode conflicts with source process colors");
         const auto id = std::visit([](const auto &value) { return value.id; }, object);
         if (id == kInvalidObjectId || !seen_object_ids.insert(id).second)
           throw std::invalid_argument("Duplicate native object ID");
@@ -324,7 +406,7 @@ NativeFormat::deserialize(const uint8_t *data, size_t length,
       return result;
     };
 
-    if (version >= kCurrentFormatVersion) {
+    if (version >= kMultiPageFormatVersion) {
       const auto page_count = reader.count(10000, 37);
       if (page_count == 0) throw std::invalid_argument("Native document has no pages");
       active_page_id = reader.u64();

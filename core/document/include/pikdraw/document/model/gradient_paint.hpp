@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pikdraw/color/values/color_value.hpp"
+#include "pikdraw/document/model/object_id.hpp"
 #include "pikdraw/geometry/primitives/bounds.hpp"
 #include "pikdraw/geometry/primitives/transform.hpp"
 #include <cstdint>

@@ -21,14 +21,16 @@
 namespace pikdraw::desktop {
 namespace {
 
-constexpr uint64_t kMaxImportResponseBytes = 20ull * 1024 * 1024;
-constexpr uint64_t kMaxImportCanonicalBytes = 16ull * 1024 * 1024;
+constexpr uint64_t kMaxImportResponseBytes = 24ull * 1024 * 1024;
+constexpr uint64_t kMaxImportCanonicalBytes = 20ull * 1024 * 1024;
 constexpr uint64_t kMaxImportRecords = 40002;
 constexpr uint32_t kMaxImportChunks = 64;
 constexpr uint32_t kMaxImportFrames = 65;
 
+enum class DetectedImportFormat { Svg, Dxf, Png, Jpeg, Tiff, Cdr };
+
 struct SourceSignature {
-    ImportFormat format{ImportFormat::Svg};
+    DetectedImportFormat format{DetectedImportFormat::Svg};
     bool recognized{false};
 };
 
@@ -45,16 +47,98 @@ SourceSignature DetectSignature(HANDLE source) {
     std::array<uint8_t, 4096> bytes{};
     size_t count = 0;
     if (!ReadPrefix(source, bytes, count)) return {};
+    const auto starts_with = [&](std::initializer_list<uint8_t> signature) {
+        return count >= signature.size() && std::equal(signature.begin(), signature.end(), bytes.begin());
+    };
+    if (starts_with({0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}))
+        return {DetectedImportFormat::Png, true};
+    if (starts_with({0xFF, 0xD8, 0xFF}))
+        return {DetectedImportFormat::Jpeg, true};
+    if (starts_with({'I', 'I', 0x2A, 0x00}) || starts_with({'M', 'M', 0x00, 0x2A}))
+        return {DetectedImportFormat::Tiff, true};
+    if (starts_with({'P', 'K', 0x03, 0x04}))
+        return {DetectedImportFormat::Cdr, true};
     std::string_view text(reinterpret_cast<const char*>(bytes.data()), count);
     if (text.starts_with("\xef\xbb\xbf")) text.remove_prefix(3);
     const auto svg = text.find("<svg");
-    if (svg != std::string_view::npos && svg < 2048) return {ImportFormat::Svg, true};
+    if (svg != std::string_view::npos && svg < 2048) return {DetectedImportFormat::Svg, true};
     const auto section = text.find("SECTION");
     const auto entities = text.find("ENTITIES");
     if (section != std::string_view::npos && entities != std::string_view::npos &&
         section < 2048 && entities < 4096 && text.find('\0') == std::string_view::npos)
-        return {ImportFormat::Dxf, true};
+        return {DetectedImportFormat::Dxf, true};
     return {};
+}
+
+bool ReadOriginalSource(HANDLE source, uint64_t expected_size,
+                        std::vector<uint8_t>& bytes) {
+    if (source == INVALID_HANDLE_VALUE || expected_size == 0 ||
+        expected_size > 64ULL * 1024ULL * 1024ULL || expected_size > SIZE_MAX)
+        return false;
+    LARGE_INTEGER beginning{};
+    if (!SetFilePointerEx(source, beginning, nullptr, FILE_BEGIN)) return false;
+    try {
+        bytes.resize(static_cast<size_t>(expected_size));
+    } catch (...) {
+        return false;
+    }
+    size_t offset = 0;
+    while (offset < bytes.size()) {
+        const DWORD requested = static_cast<DWORD>(
+            (std::min)(bytes.size() - offset, static_cast<size_t>(1024 * 1024)));
+        DWORD received = 0;
+        if (!ReadFile(source, bytes.data() + offset, requested, &received, nullptr) ||
+            received == 0)
+            return false;
+        offset += received;
+    }
+    uint8_t extra = 0;
+    DWORD received = 0;
+    const bool exact = ReadFile(source, &extra, 1, &received, nullptr) && received == 0;
+    LARGE_INTEGER zero{};
+    return exact && SetFilePointerEx(source, zero, nullptr, FILE_BEGIN) != FALSE;
+}
+
+const char* FormatName(DetectedImportFormat format) noexcept {
+    switch (format) {
+    case DetectedImportFormat::Svg: return "SVG";
+    case DetectedImportFormat::Dxf: return "DXF";
+    case DetectedImportFormat::Png: return "PNG";
+    case DetectedImportFormat::Jpeg: return "JPEG";
+    case DetectedImportFormat::Tiff: return "TIFF";
+    case DetectedImportFormat::Cdr: return "CDR";
+    }
+    return "Unknown";
+}
+
+bool IsRaster(DetectedImportFormat format) noexcept {
+    return format == DetectedImportFormat::Png ||
+           format == DetectedImportFormat::Jpeg ||
+           format == DetectedImportFormat::Tiff;
+}
+
+bool IsRasterExtension(std::wstring_view extension) noexcept {
+    return extension == L".png" || extension == L".jpg" || extension == L".jpeg" ||
+           extension == L".tif" || extension == L".tiff";
+}
+
+const wchar_t* ExpectedExtension(DetectedImportFormat format) noexcept {
+    switch (format) {
+    case DetectedImportFormat::Svg: return L".svg";
+    case DetectedImportFormat::Dxf: return L".dxf";
+    case DetectedImportFormat::Png: return L".png";
+    case DetectedImportFormat::Jpeg: return L".jpg";
+    case DetectedImportFormat::Tiff: return L".tif";
+    case DetectedImportFormat::Cdr: return L".cdr";
+    }
+    return L"";
+}
+
+bool ExtensionMatches(DetectedImportFormat format, std::wstring_view extension) noexcept {
+    if (extension == ExpectedExtension(format)) return true;
+    return (format == DetectedImportFormat::Jpeg && extension == L".jpeg") ||
+           (format == DetectedImportFormat::Tiff && extension == L".tiff") ||
+           (format == DetectedImportFormat::Cdr && extension == L".cdr");
 }
 
 std::wstring WorkerExecutablePath() {
@@ -125,7 +209,7 @@ bool DecodeCanonicalProposal(std::span<const uint8_t> bytes,
             (static_cast<uint32_t>(bytes[offset + 6]) << 16) |
             (static_cast<uint32_t>(bytes[offset + 7]) << 24);
         offset += 8;
-        if (raw_type < 1 || raw_type > 7 || flags != 0 || payload_size > bytes.size() - offset)
+        if (raw_type < 1 || raw_type > 9 || flags != 0 || payload_size > bytes.size() - offset)
             return false;
         const auto value = DeserializeImportRecord(static_cast<ImportRecordType>(raw_type),
                                                     bytes.subspan(offset, payload_size));
@@ -140,7 +224,8 @@ bool DecodeCanonicalProposal(std::span<const uint8_t> bytes,
             using T = std::decay_t<decltype(record)>;
             if constexpr (std::is_same_v<T, ImportPathRecord> ||
                           std::is_same_v<T, ImportTextRecord> ||
-                          std::is_same_v<T, ImportGroupRecord>) return record.local_id;
+                          std::is_same_v<T, ImportGroupRecord> ||
+                          std::is_same_v<T, ImportRasterImageRecord>) return record.local_id;
             return 0;
         }, value);
         if (!local_id) continue;
@@ -148,6 +233,36 @@ bool DecodeCanonicalProposal(std::span<const uint8_t> bytes,
         if (id == document::kInvalidObjectId || !ids.emplace(local_id, id).second) return false;
     }
     if (ids.empty()) return false;
+
+    struct RasterAssembly {
+        std::vector<uint8_t> pixels;
+        uint32_t next_offset{0};
+    };
+    std::unordered_map<uint32_t, RasterAssembly> raster_assemblies;
+    for (const auto& value : records) {
+        if (const auto* image = std::get_if<ImportRasterImageRecord>(&value)) {
+            if (image->frame_count != 1 || image->frame_index != 0 ||
+                image->decoded_pixel_bytes == 0 || image->decoded_pixel_bytes > 16u * 1024u * 1024u)
+                return false;
+            RasterAssembly assembly;
+            assembly.pixels.resize(image->decoded_pixel_bytes);
+            if (!raster_assemblies.emplace(image->local_id, std::move(assembly)).second)
+                return false;
+        } else if (const auto* chunk = std::get_if<ImportRasterImageChunkRecord>(&value)) {
+            const auto found = raster_assemblies.find(chunk->local_id);
+            if (found == raster_assemblies.end() || chunk->byte_offset != found->second.next_offset ||
+                chunk->total_bytes != found->second.pixels.size() ||
+                chunk->bytes.size() > found->second.pixels.size() - found->second.next_offset)
+                return false;
+            std::copy(chunk->bytes.begin(), chunk->bytes.end(),
+                      found->second.pixels.begin() + found->second.next_offset);
+            found->second.next_offset += static_cast<uint32_t>(chunk->bytes.size());
+        }
+    }
+    for (const auto& [id, assembly] : raster_assemblies) {
+        (void)id;
+        if (assembly.next_offset != assembly.pixels.size()) return false;
+    }
 
     for (const auto& value : records) {
         if (const auto* page = std::get_if<ImportPageRecord>(&value)) {
@@ -212,6 +327,41 @@ bool DecodeCanonicalProposal(std::span<const uint8_t> bytes,
             converted.position = {text->x_mm, text->y_mm};
             converted.fill = std::move(*fill);
             output.objects.emplace_back(std::move(converted));
+        } else if (const auto* raster = std::get_if<ImportRasterImageRecord>(&value)) {
+            const auto assembly = raster_assemblies.find(raster->local_id);
+            if (assembly == raster_assemblies.end() ||
+                assembly->second.pixels.size() !=
+                    static_cast<size_t>(raster->width_px) * raster->height_px * 4)
+                return false;
+            document::ImageObject converted;
+            converted.id = ids.at(raster->local_id);
+            converted.name = raster->name;
+            converted.width_px = static_cast<int32_t>(raster->width_px);
+            converted.height_px = static_cast<int32_t>(raster->height_px);
+            converted.bounds_rect = {0.0, 0.0,
+                static_cast<double>(raster->width_px) * 25.4 / raster->dpi_x,
+                static_cast<double>(raster->height_px) * 25.4 / raster->dpi_y};
+            converted.pixels_rgba.resize(
+                static_cast<size_t>(raster->width_px) * raster->height_px);
+            for (size_t index = 0; index < converted.pixels_rgba.size(); ++index) {
+                const size_t offset = index * 4;
+                converted.pixels_rgba[index] =
+                    (static_cast<uint32_t>(assembly->second.pixels[offset]) << 24) |
+                    (static_cast<uint32_t>(assembly->second.pixels[offset + 1]) << 16) |
+                    (static_cast<uint32_t>(assembly->second.pixels[offset + 2]) << 8) |
+                    static_cast<uint32_t>(assembly->second.pixels[offset + 3]);
+            }
+            converted.source.media_type = raster->media_type;
+            converted.source.dpi_x = raster->dpi_x;
+            converted.source.dpi_y = raster->dpi_y;
+            converted.source.dpi_from_source = raster->dpi_from_source;
+            converted.source.frame_index = raster->frame_index;
+            converted.source.frame_count = raster->frame_count;
+            converted.source.source_bits_per_pixel = raster->source_bits_per_pixel;
+            converted.source.exif_orientation = raster->exif_orientation;
+            converted.source.orientation_applied = raster->orientation_applied;
+            converted.source.icc_profile = raster->icc_profile;
+            output.objects.emplace_back(std::move(converted));
         } else if (const auto* report = std::get_if<ImportFidelityReportRecord>(&value)) {
             output.profile_id = report->coverage_profile;
             output.coverage_status = report->coverage == ImportCoverage::Partial ? "partial" : "unknown";
@@ -267,26 +417,27 @@ ImportWorkerResult run_import_worker_job(
     try {
         if (cancellation.stop_requested()) { result.cancelled = true; return result; }
         progress({ImportProgressStage::Snapshotting, 0});
+        auto extension = std::filesystem::path(source_path).extension().wstring();
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+            [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
+        const auto source_limit = (IsRasterExtension(extension) || extension == L".cdr")
+            ? 64ULL * 1024ULL * 1024ULL
+            : DxfImporter::kMaxSourceBytes;
         SourceSnapshotFailure snapshot_failure{};
-        auto source = SourceSnapshot::Create(source_path,
-            format == ImportFormat::Svg ? SvgImporter::kMaxSourceBytes : DxfImporter::kMaxSourceBytes,
-            &snapshot_failure);
+        auto source = SourceSnapshot::Create(source_path, source_limit, &snapshot_failure);
         if (!source || !source->IsValid()) {
             result.error_message = "The selected file could not be staged safely or exceeds the import size limit.";
             return result;
         }
         const auto signature = DetectSignature(source->ReadHandle());
-        if (!signature.recognized || signature.format != format) {
-            result.error_message = "The file extension and source signature do not match a supported SVG or DXF file.";
+        if (!signature.recognized ||
+            (format == ImportFormat::Dxf) !=
+                (signature.format == DetectedImportFormat::Dxf)) {
+            result.error_message = "The file extension and source signature do not match a supported import format.";
             return result;
         }
-        const auto extension = std::filesystem::path(source_path).extension().wstring();
-        std::wstring normalized_extension = extension;
-        std::transform(normalized_extension.begin(), normalized_extension.end(), normalized_extension.begin(),
-            [](wchar_t ch) { return static_cast<wchar_t>(std::towlower(ch)); });
-        if ((format == ImportFormat::Svg && normalized_extension != L".svg") ||
-            (format == ImportFormat::Dxf && normalized_extension != L".dxf")) {
-            result.error_message = "Use the matching .svg or .dxf file extension for the detected source format.";
+        if (!ExtensionMatches(signature.format, extension)) {
+            result.error_message = "Use the matching .svg, .dxf or .cdr file extension for the detected source format.";
             return result;
         }
         if (cancellation.stop_requested()) { result.cancelled = true; return result; }
@@ -311,7 +462,8 @@ ImportWorkerResult run_import_worker_job(
         constexpr uint32_t required_features = IPC_V2_FEATURE_SOURCE_HANDLE |
                                                IPC_V2_FEATURE_CHECKED_PROPOSAL_STREAM;
         if (!host.NegotiateV2(required_features, std::chrono::seconds(3))) {
-            result.error_message = "The isolated import worker did not negotiate the required protocol.";
+            result.error_message = std::string("The isolated import worker did not negotiate the required protocol: ") +
+                host.LastTransportFailure() + " exit_code=" + std::to_string(host.LastWorkerExitCode());
             return result;
         }
         if (cancellation.stop_requested()) { result.cancelled = true; return result; }
@@ -324,8 +476,11 @@ ImportWorkerResult run_import_worker_job(
         begin.job.source_token = source->Token();
         begin.source_bytes = source->SizeBytes();
         begin.source_sha256 = source->Sha256();
-        begin.format_id = format == ImportFormat::Svg ? "SVG" : "DXF";
-        begin.profile_id = format == ImportFormat::Svg ? "svg-hierarchy-v2" : "dxf-entities-v1";
+        begin.format_id = FormatName(signature.format);
+        begin.profile_id = IsRaster(signature.format) ? "raster-rgba8-v1"
+            : signature.format == DetectedImportFormat::Svg ? "svg-hierarchy-v2"
+            : signature.format == DetectedImportFormat::Cdr ? "cdr-preview-v1"
+                                                            : "dxf-entities-v1";
         const auto request = SerializeV2ImportBegin(begin, 1);
         const V2ProposalStreamLimits limits{kMaxImportResponseBytes, kMaxImportCanonicalBytes,
             kMaxImportRecords, kMaxImportChunks, kMaxImportFrames};
@@ -346,9 +501,12 @@ ImportWorkerResult run_import_worker_job(
             if (cancellation.stop_requested() || std::string_view(host.LastTransportFailure()) == "v2 import cancelled") {
                 result.cancelled = true;
             } else if (std::string_view(host.LastTransportFailure()) == "worker returned v2 error response") {
-                result.error_message = format == ImportFormat::Svg
-                    ? "This file is malformed or uses features outside the supported static SVG subset."
-                    : "This file is malformed or uses entities outside the supported 2D DXF profile; source units are required.";
+                if (IsRaster(signature.format))
+                    result.error_message = "The raster file is malformed, exceeds the safe decode limits, or uses an unsupported frame/color profile.";
+                else if (signature.format == DetectedImportFormat::Svg)
+                    result.error_message = "This file is malformed or uses features outside the supported static SVG subset.";
+                else
+                    result.error_message = "This file is malformed or uses entities outside the supported 2D DXF profile; source units are required.";
             } else {
                 result.error_message = "The isolated import worker rejected an incomplete or invalid proposal.";
             }
@@ -356,11 +514,29 @@ ImportWorkerResult run_import_worker_job(
         }
         if (cancellation.stop_requested()) { result.cancelled = true; return result; }
         progress({ImportProgressStage::Validating, record_count});
-        result.proposal.format_name = format == ImportFormat::Svg ? "SVG" : "DXF";
+        result.proposal.format_name = FormatName(signature.format);
         result.proposal.source_bytes = source->SizeBytes();
         if (!DecodeCanonicalProposal(canonical, result.proposal)) {
             result.error_message = "The verified import proposal could not be mapped into native document objects.";
             return result;
+        }
+        if (IsRaster(signature.format)) {
+            std::vector<uint8_t> original_bytes;
+            if (!ReadOriginalSource(source->ReadHandle(), source->SizeBytes(), original_bytes)) {
+                result.error_message = "The staged raster source could not be retained in the document.";
+                return result;
+            }
+            size_t raster_count = 0;
+            for (auto& object : result.proposal.objects) {
+                if (auto* image = std::get_if<document::ImageObject>(&object)) {
+                    image->source.original_bytes = original_bytes;
+                    ++raster_count;
+                }
+            }
+            if (raster_count != 1) {
+                result.error_message = "The raster proposal did not contain exactly one retained image.";
+                return result;
+            }
         }
         result.success = true;
         progress({ImportProgressStage::Complete, record_count});

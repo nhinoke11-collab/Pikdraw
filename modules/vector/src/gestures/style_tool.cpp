@@ -30,13 +30,16 @@ document::CommandResult apply_object_styles(document::Document &doc,
             },
             *object);
         command->add_command(std::make_unique<SetObjectStyleCommand>(id, fill, stroke, patch.width_mm,
-                                                                     patch.has_fill, patch.has_stroke));
+                                                                     patch.has_fill, patch.has_stroke,
+                                                                     patch.fill_overprint,
+                                                                     patch.stroke_overprint));
     }
     return doc.execute_command(std::move(command));
 }
 
 document::CommandResult SetObjectStyleCommand::execute(document::Document &doc) {
-    if (!fill_ && !stroke_ && !width_ && !has_fill_ && !has_stroke_)
+    if (!fill_ && !stroke_ && !width_ && !has_fill_ && !has_stroke_ &&
+        !fill_overprint_ && !stroke_overprint_)
         return document::CommandResult::fail("No source style attributes supplied");
     if (!editable_target(doc.page(), doc.objects(), id_))
         return document::CommandResult::fail("Style target missing, hidden, locked or unsupported group");
@@ -60,11 +63,24 @@ document::CommandResult SetObjectStyleCommand::execute(document::Document &doc) 
             path->has_fill = *has_fill_;
         if (has_stroke_)
             path->has_stroke = *has_stroke_;
+        if (fill_overprint_ || stroke_overprint_) {
+            auto fill_overprint = path->fill.overprint();
+            auto stroke_overprint = path->stroke.overprint();
+            if (fill_overprint_) fill_overprint.fill = *fill_overprint_;
+            if (stroke_overprint_) stroke_overprint.stroke = *stroke_overprint_;
+            path->fill.set_overprint(fill_overprint);
+            path->stroke.set_overprint(stroke_overprint);
+        }
     } else if (auto *text = std::get_if<document::TextObject>(&updated)) {
-        if (stroke_ || width_ || has_stroke_ || has_fill_)
+        if (stroke_ || width_ || has_stroke_ || has_fill_ || stroke_overprint_)
             return document::CommandResult::fail("Text stroke/fill flags unsupported by source model");
         if (fill_)
             text->fill = *fill_;
+        if (fill_overprint_) {
+            auto overprint = text->fill.overprint();
+            overprint.fill = *fill_overprint_;
+            text->fill.set_overprint(overprint);
+        }
     } else if (std::holds_alternative<document::ImageObject>(updated)) {
         return document::CommandResult::fail("Bitmap image style is not editable as vector fill/stroke");
     } else {

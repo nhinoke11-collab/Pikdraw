@@ -692,7 +692,9 @@ void test_bgra_targets_and_image_upload_cache() {
   assert(cpu.render(*doc.current_snapshot(), camera, target));
 }
 
+void test_document_raster_effects_dpi();
 int main() {
+  test_document_raster_effects_dpi();
   std::cout << "[test_rasterizer] Running software rasterizer tests...\n";
   test_bgra_targets_and_image_upload_cache();
   test_software_rasterizer_frame();

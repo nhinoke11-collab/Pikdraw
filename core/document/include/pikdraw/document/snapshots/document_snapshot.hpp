@@ -37,6 +37,9 @@ public:
     [[nodiscard]] uint64_t epoch() const noexcept { return epoch_; }
     [[nodiscard]] uint64_t revision() const noexcept { return revision_; }
     [[nodiscard]] const Page& page() const noexcept { return active_page().layout; }
+    [[nodiscard]] color::DocumentColorMode color_mode() const noexcept { return page().color_mode; }
+    [[nodiscard]] const std::string& color_profile_name() const noexcept { return page().color_profile_name; }
+    [[nodiscard]] int32_t raster_dpi() const noexcept { return page().raster_dpi; }
     [[nodiscard]] const PersistentObjectMap& objects() const noexcept {
         return active_page().objects;
     }
@@ -74,6 +77,13 @@ private:
         size_t gradient_stop_count = 0;
         bool active_found = false;
         for (const auto& page : pages_) {
+            const auto& settings = pages_.front().layout;
+            if (page.layout.color_mode != settings.color_mode ||
+                page.layout.color_profile_name != settings.color_profile_name ||
+                page.layout.raster_dpi != settings.raster_dpi ||
+                page.layout.color_mode_explicit != settings.color_mode_explicit ||
+                page.layout.raster_dpi_explicit != settings.raster_dpi_explicit)
+                throw std::invalid_argument("All pages must share document color settings");
             if (page.id == kInvalidPageId || !page_ids.insert(page.id).second)
                 throw std::invalid_argument("Document page IDs must be unique and nonzero");
             if (page.id == active_page_id_) active_found = true;

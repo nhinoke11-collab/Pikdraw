@@ -23,10 +23,26 @@ std::vector<FormatCapabilityEntry> FormatCapabilityRegistry::GetMatrix() {
          "Import only for the explicit 2D entity/unit profile; no DXF export."},
         unsupported("PDF", ".pdf", "No PDF adapter; IPC or preview output is not PDF support."),
         unsupported("Adobe Illustrator", ".ai", "No AI source adapter or round-trip guarantee."),
-        unsupported("CorelDRAW", ".cdr", "No CDR source adapter or round-trip guarantee."),
+        {"CorelDRAW", ".cdr", "Fast reference preview cdr-preview-v1",
+         FormatCapabilityStatus::SupportedPrototype, FormatCapabilityStatus::UnsupportedReject,
+         "CdrExtractor", "repository source", "not applicable", "isolated worker for import",
+         "Import only: fast reference preview from embedded thumbnail/page PNG and metadata dimensions. No CDR export."},
         unsupported("EPS", ".eps", "No EPS/PostScript adapter or round-trip guarantee."),
-        unsupported("PNG", ".png", "No raster import/export adapter is implemented."),
-        unsupported("JPEG", ".jpg", "No raster import/export adapter is implemented.")
+        {"PNG", ".png", "single-frame SDR PNG to embedded RGBA8 image asset",
+         FormatCapabilityStatus::SupportedPrototype, FormatCapabilityStatus::UnsupportedReject,
+         "Windows Imaging Component", "Windows built-in PNG decoder", "system component",
+         "isolated worker for import",
+         "Import only: RGBA8 preview, up to 4M pixels/16 MiB decoded pixels, one frame. Original bytes, DPI/orientation and ICC metadata are retained; color-managed appearance is not certified. No PNG export or CNC vector-cut claim."},
+        {"JPEG", ".jpg", "single-frame SDR JPEG to embedded RGBA8 image asset",
+         FormatCapabilityStatus::SupportedPrototype, FormatCapabilityStatus::UnsupportedReject,
+         "Windows Imaging Component", "Windows built-in JPEG decoder", "system component",
+         "isolated worker for import",
+         "Import only: RGBA8 preview, up to 4M pixels/16 MiB decoded pixels, one frame. Original bytes, DPI/orientation and ICC metadata are retained; color-managed appearance is not certified. No JPEG export or CNC vector-cut claim."},
+        {"TIFF", ".tif", "single-frame SDR TIFF to embedded RGBA8 image asset",
+         FormatCapabilityStatus::SupportedPrototype, FormatCapabilityStatus::UnsupportedReject,
+         "Windows Imaging Component", "Windows built-in TIFF decoder", "system component",
+         "isolated worker for import",
+         "Import only: single-frame source up to 8 bits per channel converted to RGBA8, up to 4M pixels/16 MiB decoded pixels. Original bytes, DPI/orientation and ICC metadata are retained; multipage, wider precision and color-managed appearance are not supported. No TIFF export or CNC vector-cut claim."}
     };
 }
 std::vector<ThirdPartyProvenance> FormatCapabilityRegistry::GetCandidateLibraries() {
@@ -47,7 +63,18 @@ bool FormatCapabilityRegistry::IsFormatSupported(std::string_view format_name) n
     return equal_ascii_case_insensitive(format_name, "SVG") ||
            equal_ascii_case_insensitive(format_name, ".svg") ||
            equal_ascii_case_insensitive(format_name, "AutoCAD DXF 2D subset") ||
-           equal_ascii_case_insensitive(format_name, ".dxf");
+           equal_ascii_case_insensitive(format_name, ".dxf") ||
+           equal_ascii_case_insensitive(format_name, "PNG") ||
+           equal_ascii_case_insensitive(format_name, ".png") ||
+           equal_ascii_case_insensitive(format_name, "JPEG") ||
+           equal_ascii_case_insensitive(format_name, ".jpg") ||
+           equal_ascii_case_insensitive(format_name, ".jpeg") ||
+           equal_ascii_case_insensitive(format_name, "TIFF") ||
+           equal_ascii_case_insensitive(format_name, ".tif") ||
+           equal_ascii_case_insensitive(format_name, ".tiff") ||
+           equal_ascii_case_insensitive(format_name, "CorelDRAW") ||
+           equal_ascii_case_insensitive(format_name, "CDR") ||
+           equal_ascii_case_insensitive(format_name, ".cdr");
 }
 std::string FormatCapabilityRegistry::GetDiagnosticForFormat(std::string_view format_name) {
     const auto matrix = GetMatrix();

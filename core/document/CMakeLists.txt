@@ -9,6 +9,8 @@ add_library(pikdraw_document STATIC
     src/async/proposal_validator.cpp
     src/snapshots/structure_validator.cpp
     src/commands/command.cpp
+    src/commands/color_commands.cpp
+    src/commands/layer_commands.cpp
     src/commands/appearance_commands.cpp
     src/commands/gradient_commands.cpp
     src/commands/pen_path_extension_command.cpp
@@ -61,6 +63,8 @@ if(PIKDRAW_BUILD_TESTS)
     endmacro()
 
     add_doc_test(test_pikdraw_document_commands tests/commands/test_commands.cpp)
+    target_sources(test_pikdraw_document_commands PRIVATE tests/commands/test_color_commands.cpp)
+    add_doc_test(test_pikdraw_document_layer_commands tests/commands/test_layer_commands.cpp)
     add_doc_test(test_pikdraw_document_node_commands tests/commands/test_node_commands.cpp)
     add_doc_test(test_pikdraw_document_contour tests/commands/test_contour_commands.cpp)
     add_doc_test(test_pikdraw_document_pen_path_extension tests/commands/test_pen_path_extension.cpp)

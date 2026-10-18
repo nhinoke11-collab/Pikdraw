@@ -81,35 +81,29 @@ struct TextObject {
     Appearance appearance;
     typography::TextAlignment alignment{typography::TextAlignment::Left};
     bool underline{false};
+    double frame_width_mm{0.0}; // 0: point text; >0: editable wrapping paragraph.
+    double line_spacing_ratio{1.2};
     geometry::Point2D position{0.0, 0.0};
     geometry::Transform2D transform{geometry::Transform2D::identity()};
     bool visible{true};
     bool locked{false};
 
+    [[nodiscard]] typography::TextLayout layout() const {
+        typography::LayoutOptions options;
+        options.alignment = alignment;
+        options.max_width_mm = frame_width_mm;
+        options.line_spacing_ratio = line_spacing_ratio;
+        return typography::TextLayout::layout_text(text, font, options);
+    }
+
     [[nodiscard]] geometry::Rect2D bounds() const {
-        if (text.empty()) {
-            return transform.map_rect({position.x, position.y, 20.0, font.size_mm()});
-        }
-        // Calculate multi-line and single-line bounds accurately
-        size_t lines = 1;
-        size_t max_line_len = 0;
-        size_t cur_len = 0;
-        for (char c : text) {
-            if (c == '\n') {
-                if (cur_len > max_line_len) max_line_len = cur_len;
-                cur_len = 0;
-                lines++;
-            } else {
-                cur_len++;
-            }
-        }
-        if (cur_len > max_line_len) max_line_len = cur_len;
-        const double char_w = font.size_mm() * 0.55;
-        const double line_h = font.size_mm() * 1.3;
-        const double w = std::max(10.0, max_line_len * char_w);
-        const double h = std::max(font.size_mm(), lines * line_h);
-        geometry::Rect2D r{position.x, position.y, w, h};
-        return transform.map_rect(r);
+        auto box = layout().bounds();
+        if (frame_width_mm > 0) { box.x = 0; box.width = frame_width_mm; }
+        // Keep an empty line selectable without a fake width based on UTF-8 bytes.
+        box.width = std::max(box.width, font.size_mm() * 0.2);
+        if (underline) box.height += font.size_mm() * 0.12;
+        return (transform * geometry::Transform2D::translation(position.x, position.y) *
+                geometry::Transform2D::scale(1, -1)).map_rect(box);
     }
 };
 
@@ -122,6 +116,25 @@ struct GroupObject {
     bool locked{false};
 };
 
+/// Raster source identity and metadata kept beside the editable RGBA preview.
+/// The original bytes remain embedded so a later export can preserve the source.
+struct RasterSourceMetadata {
+    static constexpr size_t kMaxSourceBytes = 64u * 1024u * 1024u;
+    static constexpr size_t kMaxIccProfileBytes = 1u * 1024u * 1024u;
+
+    std::string media_type;
+    std::vector<uint8_t> original_bytes;
+    double dpi_x{96.0};
+    double dpi_y{96.0};
+    bool dpi_from_source{false};
+    uint32_t frame_index{0};
+    uint32_t frame_count{1};
+    uint32_t source_bits_per_pixel{0};
+    uint16_t exif_orientation{1};
+    bool orientation_applied{false};
+    std::vector<uint8_t> icc_profile;
+};
+
 struct ImageObject {
     ObjectId id{kInvalidObjectId};
     std::string name;
@@ -130,6 +143,7 @@ struct ImageObject {
     int32_t width_px{160};
     int32_t height_px{120};
     std::vector<uint32_t> pixels_rgba;
+    RasterSourceMetadata source;
     std::optional<geometry::Path2D> clip_path;
     bool visible{true};
     bool locked{false};
@@ -216,6 +230,13 @@ struct Page {
     double width_mm{20000.0}; // Default 20-meter billboard capable
     double height_mm{1000.0};
     std::vector<Layer> layers;
+    color::DocumentColorMode color_mode{color::DocumentColorMode::Rgb};
+    std::string color_profile_name{"sRGB"};
+    int32_t raster_dpi{72};
+    // v2-v8 never declared a process mode. Preserve those source channels until
+    // explicit conversion; new desktop documents enable normalization immediately.
+    bool color_mode_explicit{false};
+    bool raster_dpi_explicit{false};
 
     static Page make_default() {
         Page p;

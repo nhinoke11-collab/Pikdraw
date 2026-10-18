@@ -20,7 +20,9 @@ enum class ImportRecordType : uint16_t {
     FidelityReport = 4,
     FidelityIssue = 5,
     Layer = 6,
-    Group = 7
+    Group = 7,
+    RasterImage = 8,
+    RasterImageChunk = 9
 };
 
 enum class ImportColorModel : uint8_t { Rgb = 1, Cmyk = 2, Spot = 3, Gray = 4 };
@@ -91,6 +93,32 @@ struct ImportTextRecord {
     ImportColorRecord fill;
 };
 
+struct ImportRasterImageRecord {
+    uint32_t local_id{0};
+    std::string source_id;
+    std::string name;
+    std::string media_type;
+    uint32_t width_px{0};
+    uint32_t height_px{0};
+    uint32_t decoded_pixel_bytes{0};
+    uint32_t source_bits_per_pixel{0};
+    uint32_t frame_index{0};
+    uint32_t frame_count{1};
+    uint16_t exif_orientation{1};
+    bool orientation_applied{false};
+    bool dpi_from_source{false};
+    double dpi_x{96.0};
+    double dpi_y{96.0};
+    std::vector<uint8_t> icc_profile;
+};
+
+struct ImportRasterImageChunkRecord {
+    uint32_t local_id{0};
+    uint32_t byte_offset{0};
+    uint32_t total_bytes{0};
+    std::vector<uint8_t> bytes;
+};
+
 struct ImportFidelityReportRecord {
     std::string coverage_profile;
     ImportParseOutcome parse_outcome{ImportParseOutcome::Complete};
@@ -112,6 +140,8 @@ using ImportRecordValue = std::variant<
     ImportPageRecord,
     ImportLayerRecord,
     ImportGroupRecord,
+    ImportRasterImageRecord,
+    ImportRasterImageChunkRecord,
     ImportPathRecord,
     ImportTextRecord,
     ImportFidelityReportRecord,

@@ -1,8 +1,11 @@
 #include "pikdraw/desktop/runtime/composition_root.hpp"
+#include "pikdraw/desktop/shell/native_window.hpp"
 #include "pikdraw/desktop/workflows/document_workflow.hpp"
+#include "pikdraw/interop/adapters/svg_importer.hpp"
 #include "pikdraw/interop/capabilities/format_capabilities.hpp"
 #include "pikdraw/document/async/async_proposal.hpp"
 #include "pikdraw/document/commands/appearance_commands.hpp"
+#include "pikdraw/document/commands/page_commands.hpp"
 #include "pikdraw/document/storage/native_format.hpp"
 #include "../src/workflows/document_workflow_internal.hpp"
 #include <iostream>
@@ -11,9 +14,21 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <thread>
+#include <chrono>
 
 using namespace pikdraw;
 using namespace pikdraw::desktop;
+
+#ifdef _WIN32
+namespace pikdraw::desktop {
+struct NativeWindowExportE2eAccess {
+    static bool active(const NativeWindow& window) noexcept {
+        return window.export_job_active();
+    }
+};
+}
+#endif
 
 void test_page_size_preserves_history_and_dirty_state() {
     CompositionRoot root;
@@ -185,10 +200,14 @@ void test_e2e_m06_m07_interop_and_diagnostics() {
     assert(interop::FormatCapabilities::is_worker_import_profile_supported(
         interop::FormatType::Dxf, "dxf-entities-v1"));
     assert(!interop::FormatCapabilities::is_import_supported(interop::FormatType::Pdf));
-    assert(!interop::FormatCapabilities::is_import_supported(interop::FormatType::Cdr));
+    assert(interop::FormatCapabilities::is_import_supported(interop::FormatType::Cdr));
+    assert(interop::FormatCapabilities::is_worker_import_profile_supported(
+        interop::FormatType::Cdr, "cdr-preview-v1"));
     assert(!interop::FormatCapabilities::is_import_supported(interop::FormatType::Ai));
-    assert(!interop::FormatCapabilities::is_import_supported(interop::FormatType::Png));
-    assert(!interop::FormatCapabilities::is_import_supported(interop::FormatType::Jpeg));
+    assert(interop::FormatCapabilities::is_import_supported(interop::FormatType::Png));
+    assert(interop::FormatCapabilities::is_import_supported(interop::FormatType::Jpeg));
+    assert(interop::FormatCapabilities::is_import_supported(interop::FormatType::Tiff));
+    assert(!interop::FormatCapabilities::is_export_supported(interop::FormatType::Png));
 
     std::cout << "[PASS] M1-E06 and M1-E07: SVG import/export and declared format capabilities\n";
 }
@@ -232,6 +251,127 @@ void test_e2e_svg_save_preserves_existing_target_on_unsupported_appearance() {
 
     std::cout << "[PASS] AC-BF-13: refused SVG export preserves existing destination bytes\n";
 }
+
+void test_e2e_svg_workflow_rejects_mismatched_extension() {
+    CompositionRoot root;
+    root.initialize();
+    DocumentWorkflow workflow(root);
+    assert(workflow.add_rectangle(10.0, 10.0, 40.0, 30.0) != document::kInvalidObjectId);
+
+    const auto target = std::filesystem::temp_directory_path() /
+        "pikdraw-svg-extension-guard.pdf";
+    const std::string sentinel = "keep this non-SVG destination intact";
+    {
+        std::ofstream output(target, std::ios::binary | std::ios::trunc);
+        assert(output.good());
+        output.write(sentinel.data(), static_cast<std::streamsize>(sentinel.size()));
+        assert(output.good());
+    }
+
+    assert(!workflow.save_svg(target.string()));
+    std::string preserved;
+    {
+        std::ifstream input(target, std::ios::binary);
+        preserved.assign(std::istreambuf_iterator<char>(input),
+                         std::istreambuf_iterator<char>());
+    }
+    assert(preserved == sentinel);
+    std::error_code ignored;
+    std::filesystem::remove(target, ignored);
+    root.shutdown();
+    std::cout << "[PASS] SVG workflow rejects a mismatched output extension before writing\n";
+}
+
+#ifdef _WIN32
+void test_e2e_svg_export_uses_atomic_executor_and_selection_scope() {
+    NativeWindow window;
+    const auto selected = window.active_tab().workflow->add_rectangle(
+        10.0, 10.0, 40.0, 30.0);
+    window.active_tab().workflow->add_rectangle(100.0, 100.0, 40.0, 30.0);
+    window.active_tab().root->vector_controller().selection().select(selected);
+
+    const auto target = std::filesystem::temp_directory_path() /
+        ("pikdraw-svg-atomic-" + std::to_string(selected) + ".svg");
+    std::error_code ignored;
+    std::filesystem::remove(target, ignored);
+    assert(window.export_svg_to(target.string(), true));
+    for (size_t attempt = 0; attempt < 2000 &&
+         NativeWindowExportE2eAccess::active(window); ++attempt)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    assert(!NativeWindowExportE2eAccess::active(window));
+    assert(std::filesystem::exists(target));
+
+    std::string bytes;
+    {
+        std::ifstream input(target, std::ios::binary);
+        assert(input.good());
+        bytes.assign(std::istreambuf_iterator<char>(input),
+                     std::istreambuf_iterator<char>());
+    }
+    const auto reopened = interop::SvgImporter::import_from_string(bytes);
+    assert(reopened.success && reopened.objects.size() == 1);
+    assert(std::get<document::PathObject>(reopened.objects.front()).bounds().x == 10.0);
+    std::filesystem::remove(target, ignored);
+    std::cout << "[PASS] atomic SVG executor publishes a validated selected-object export\n";
+}
+
+void test_e2e_svg_export_writes_each_page_as_a_separate_atomic_file() {
+    NativeWindow window;
+    const auto first_id = window.active_tab().workflow->add_rectangle(
+        10.0, 10.0, 40.0, 30.0);
+    auto& model = window.active_tab().root->document();
+    const auto first_page_id = model.active_page_id();
+    auto second_layout = document::Page::make_default();
+    second_layout.width_mm = 420.0;
+    second_layout.height_mm = 297.0;
+    const auto second_page = document::make_document_page(
+        "Page 2", second_layout, document::PersistentObjectMap{});
+    const auto second_page_id = second_page.id;
+    assert(model.execute_command(
+        std::make_unique<document::AddPageCommand>(second_page, false)).success);
+    assert(model.set_active_page(second_page_id));
+    const auto second_id = window.active_tab().workflow->add_rectangle(
+        80.0, 60.0, 50.0, 40.0);
+
+    const auto base = std::filesystem::temp_directory_path() /
+        ("pikdraw-svg-page-batch-" + std::to_string(first_id) + ".svg");
+    const auto first_output = base.parent_path() /
+        (base.stem().string() + "-page-001.svg");
+    const auto second_output = base.parent_path() /
+        (base.stem().string() + "-page-002.svg");
+    std::error_code ignored;
+    std::filesystem::remove(first_output, ignored);
+    std::filesystem::remove(second_output, ignored);
+    assert(window.export_svg_to(base.string(), false, false, true));
+    for (size_t attempt = 0; attempt < 2000 &&
+         NativeWindowExportE2eAccess::active(window); ++attempt)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    assert(!NativeWindowExportE2eAccess::active(window));
+    assert(std::filesystem::exists(first_output));
+    assert(std::filesystem::exists(second_output));
+
+    const auto verify_page = [](const std::filesystem::path& path,
+                                double width_mm, double expected_x) {
+        std::ifstream input(path, std::ios::binary);
+        assert(input.good());
+        const std::string bytes{
+            std::istreambuf_iterator<char>(input),
+            std::istreambuf_iterator<char>()};
+        const auto reopened = interop::SvgImporter::import_from_string(bytes);
+        assert(reopened.success && reopened.objects.size() == 1);
+        assert(reopened.page.width_mm == width_mm);
+        assert(std::get<document::PathObject>(reopened.objects.front()).bounds().x == expected_x);
+    };
+    verify_page(first_output, 297.0, 10.0);
+    verify_page(second_output, 420.0, 80.0);
+    assert(model.pages().size() == 2 && model.pages().front().id == first_page_id);
+    assert(model.active_page_id() == second_page_id);
+    assert(second_id != document::kInvalidObjectId);
+    std::filesystem::remove(first_output, ignored);
+    std::filesystem::remove(second_output, ignored);
+    std::cout << "[PASS] SVG all-page export commits one validated file per page\n";
+}
+#endif
 
 void test_e2e_m08_to_m10_stale_proposals_and_fault_recovery() {
     CompositionRoot root;
@@ -307,6 +447,11 @@ int main() {
     test_e2e_m01_to_m05_shapes_text_undo_save(temp_file);
     test_e2e_m06_m07_interop_and_diagnostics();
     test_e2e_svg_save_preserves_existing_target_on_unsupported_appearance();
+    test_e2e_svg_workflow_rejects_mismatched_extension();
+#ifdef _WIN32
+    test_e2e_svg_export_uses_atomic_executor_and_selection_scope();
+    test_e2e_svg_export_writes_each_page_as_a_separate_atomic_file();
+#endif
     test_e2e_m08_to_m10_stale_proposals_and_fault_recovery();
     test_e2e_m11_to_m13_reload_render_and_shutdown();
 

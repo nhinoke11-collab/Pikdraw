@@ -1,5 +1,7 @@
 #include "native_style_dialog.hpp"
 #include "native_window_menus.hpp"
+#include "native_window_gradient_properties_paint.hpp"
+#include "../tools/gradient_tool_controller.hpp"
 #include "pikdraw/desktop/actions/action_id.hpp"
 #include <algorithm>
 #include <cstddef>
@@ -25,22 +27,47 @@ bool effect_numeric_field(NativeWindow::NumericFieldId field) {
 } // namespace
 
 void NativeWindow::open_style_editor(bool stroke) {
-    const auto summary =
-        selection_style(*root().document().current_snapshot(),
-                        root().vector_controller().selection().selected_ids(), default_style_);
+    const auto snapshot = root().document().current_snapshot();
+    const auto &ids = root().vector_controller().selection().selected_ids();
+    const auto summary = selection_style(*snapshot, ids, default_style_);
     if (stroke && !summary.all_paths)
         return;
+    bool mixed_overprint = false, first_overprint = false, have_overprint = false;
+    if (!ids.empty()) for (const auto id : ids) {
+        const auto *object = snapshot->objects().lookup_ref(id);
+        if (!object) continue;
+        std::visit([&](const auto &value) {
+            using T = std::decay_t<decltype(value)>;
+            const color::ColorValue *source = nullptr;
+            if constexpr (std::is_same_v<T, document::PathObject>)
+                source = stroke ? &value.stroke : &value.fill;
+            else if constexpr (std::is_same_v<T, document::TextObject>)
+                if (!stroke) source = &value.fill;
+            if (!source) return;
+            const bool enabled = stroke ? source->overprint().stroke : source->overprint().fill;
+            if (!have_overprint) { first_overprint = enabled; have_overprint = true; }
+            else mixed_overprint = mixed_overprint || first_overprint != enabled;
+        }, *object);
+    }
     if (const auto edited =
             edit_source_color(hwnd_, stroke ? summary.values.stroke : summary.values.fill,
-                              summary.values.width_mm, stroke, language_ == UILanguage::Vietnamese)) {
+                              summary.values.width_mm, stroke, language_ == UILanguage::Vietnamese,
+                              stroke ? ColorEditContext::Stroke : ColorEditContext::Fill,
+                              stroke ? summary.mixed_stroke : summary.mixed_fill,
+                              mixed_overprint, snapshot->color_mode(),
+                              theme_ == ThemeMode::CyberDark)) {
         vector::StylePatch patch;
-        if (stroke) {
-            patch.stroke = edited->color;
-            patch.width_mm = edited->width_mm;
-        } else {
-            patch.fill = edited->color;
+        if (edited->color_changed) {
+            if (stroke) patch.stroke = edited->color;
+            else patch.fill = edited->color;
         }
-        (void)apply_style_patch(patch);
+        if (stroke && edited->width_changed) patch.width_mm = edited->width_mm;
+        if (edited->overprint) {
+            if (stroke) patch.stroke_overprint = edited->overprint;
+            else patch.fill_overprint = edited->overprint;
+        }
+        if (patch.fill || patch.stroke || patch.width_mm || patch.fill_overprint || patch.stroke_overprint)
+            (void)apply_style_patch(patch);
     }
 }
 
@@ -107,6 +134,12 @@ void NativeWindow::scroll_style_inspector(int wheel_delta) {
 }
 
 bool NativeWindow::style_numeric_field_at(int x, int y) const {
+    if (y >= 66 && y <= 102) {
+        if (active_num_field_ == NumericFieldId::EffectOffsetX) return x >= 160 && x <= 245;
+        if (active_num_field_ == NumericFieldId::EffectOffsetY) return x >= 250 && x <= 335;
+        if (active_num_field_ == NumericFieldId::EffectSigmaX || active_num_field_ == NumericFieldId::EffectSigmaY) return x >= 340 && x <= 435;
+        if (active_num_field_ == NumericFieldId::EffectOpacity) return x >= 440 && x <= 530;
+    }
     const int dx = x - (width_ - 280);
     const int logical_y = y - kStylePanelTop + style_inspector_scroll_;
     if (active_num_field_ == NumericFieldId::ObjectOpacity)
@@ -167,7 +200,8 @@ bool NativeWindow::handle_style_click(int x, int y, bool right_click) {
         if ((dx - 12) % 28 < 24 && (dy - 424) % 28 < 24 && column < 9 && row < 2) {
             const bool target_stroke = right_click || palette_stroke_;
             (void)apply_selection_color(
-                target_stroke, editor_palette(palette_cmyk_)[static_cast<size_t>(row * 9 + column)]);
+                target_stroke, editor_palette(snapshot->color_mode() == color::DocumentColorMode::Cmyk)
+                    [static_cast<size_t>(row * 9 + column)]);
         }
         InvalidateRect(hwnd_, nullptr, FALSE);
         return true;
@@ -205,8 +239,8 @@ bool NativeWindow::handle_style_click(int x, int y, bool right_click) {
     } else if (dy >= 236 && dy < 266 && dx >= 12 && dx < 268 && style.all_paths) {
         choose_stroke_width(x, y);
     } else if (dy >= 386 && dy < 414) {
-        if (dx >= 12 && dx < 134) palette_cmyk_ = false;
-        if (dx >= 142 && dx < 268) palette_cmyk_ = true;
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Đổi hệ màu tài liệu trong menu Edit"
+                                                       : "Change document color mode in the Edit menu";
     } else if (dy >= 536 && dy < 568 && dx >= 12 && dx < 268) {
         show_color_profiles();
     } else if (dy >= kAppearanceBlendTop + 26 && dy < kAppearanceBlendTop + 80 &&
@@ -283,7 +317,8 @@ bool NativeWindow::handle_style_click(int x, int y, bool right_click) {
                 workflow().commit_effect_draft_numeric_input()) {
                 if (const auto edited = edit_source_color(
                         hwnd_, shadow->color, 0.0, false,
-                        language_ == UILanguage::Vietnamese)) {
+                        language_ == UILanguage::Vietnamese, ColorEditContext::Generic,
+                        false, false, snapshot->color_mode(), theme_ == ThemeMode::CyberDark)) {
                     auto parameters = draft->parameters;
                     std::get<document::DropShadowEffect>(parameters).color = edited->color;
                     if (workflow().set_effect_draft_parameters(std::move(parameters)))
@@ -397,7 +432,8 @@ bool NativeWindow::handle_style_click(int x, int y, bool right_click) {
                         const auto &shadow = std::get<document::DropShadowEffect>(effect.parameters);
                         if (const auto edited = edit_source_color(
                                 hwnd_, shadow.color, 0.0, false,
-                                language_ == UILanguage::Vietnamese)) {
+                                language_ == UILanguage::Vietnamese, ColorEditContext::Generic,
+                                false, false, snapshot->color_mode(), theme_ == ThemeMode::CyberDark)) {
                             if (workflow().set_selected_effect_color(index, edited->color))
                                 status_msg_ = language_ == UILanguage::Vietnamese
                                     ? "Đã cập nhật màu nguồn của bóng · Ctrl+Z hoàn tác"
@@ -478,6 +514,273 @@ bool NativeWindow::handle_style_click(int x, int y, bool right_click) {
         }
     }
     InvalidateRect(hwnd_, nullptr, FALSE);
+    return true;
+}
+bool NativeWindow::handle_gradient_property_click(int x, int y) {
+    using Field = NumericFieldId;
+    namespace Layout = GradientPropertiesLayout;
+    if (active_tool_ != 13 || !gradient_tool_ || !gradient_tool_->active()) return false;
+    auto& presenter = gradient_tool_->presenter();
+    auto add_adjacent_stop = [&]() {
+        const auto* paint = presenter.draft_paint();
+        if (!paint || paint->stops.empty() || paint->stops.size() >= document::kMaxGradientStops)
+            return false;
+        const auto selected = std::find_if(paint->stops.begin(), paint->stops.end(),
+            [&](const auto& stop) { return stop.id == presenter.selected_stop_id(); });
+        if (selected == paint->stops.end()) return false;
+        const size_t index = static_cast<size_t>(selected - paint->stops.begin());
+        const double offset = index + 1 < paint->stops.size()
+            ? (selected->offset + paint->stops[index + 1].offset) * 0.5
+            : index > 0 ? (paint->stops[index - 1].offset + selected->offset) * 0.5
+                        : selected->offset;
+        std::vector<uint64_t> ids;
+        for (const auto& stop : paint->stops) ids.push_back(stop.id);
+        if (!presenter.add_stop(offset, selected->color, selected->opacity)) return false;
+        const auto* updated = presenter.draft_paint();
+        const auto inserted = std::find_if(updated->stops.begin(), updated->stops.end(),
+            [&](const auto& stop) { return std::find(ids.begin(), ids.end(), stop.id) == ids.end(); });
+        if (inserted != updated->stops.end()) (void)presenter.select_stop(inserted->id);
+        return true;
+    };
+    auto commit_active = [&]() {
+        if (active_num_field_ == Field::None) return true;
+        commit_numeric_field();
+        return active_num_field_ == Field::None;
+    };
+
+    const int inspector_left = width_ - 280;
+    constexpr int properties_top = 38 + 28 + 36 + 36;
+    if (active_dock_tab_ == 0 && x >= inspector_left && x < width_ &&
+        y >= properties_top && y < height_ - 26) {
+        const int left = inspector_left + Layout::content_left;
+        const int right = std::min(width_ - 14, left + Layout::content_width);
+        const int local_x = x - left;
+        const int local_y = y - properties_top;
+        auto hit = [&](int top, int height = 26) {
+            return local_y >= top && local_y < top + height && x < right;
+        };
+        auto commit_or_stop = [&]() { return !commit_active(); };
+        const auto* paint = presenter.draft_paint();
+        const auto& summary = presenter.summary();
+        const bool can_edit = summary.can_edit_gradient() && paint;
+        const bool mixed_stops = summary.mixed_stops && summary.supported_count > 1;
+        const size_t count = paint ? paint->stops.size() : 0;
+        const int panel_width = right - left;
+        const int kind_half = (panel_width - 6) / 2;
+        const int spread_width = (panel_width - 12) / 3;
+        const int stop_action_width = (panel_width - 18) / 4;
+
+        const int action_half = (panel_width - 6) / 2;
+        if (hit(Layout::actions_top, 30) && local_x < action_half) {
+            if (commit_or_stop()) return true;
+            if (can_edit && gradient_tool_->apply())
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Đã áp dụng chuyển sắc · Ctrl+Z để hoàn tác"
+                    : "Applied Gradient · Ctrl+Z undoes";
+            else
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Không thể áp dụng · chọn Path có thể chỉnh sửa"
+                    : "Could not apply · select an editable Path";
+        } else if (hit(Layout::actions_top, 30) && local_x >= action_half + 6) {
+            if (active_num_field_ != Field::None) cancel_numeric_field();
+            gradient_tool_->cancel();
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã bỏ bản nháp Gradient" : "Discarded Gradient draft";
+        } else if (hit(Layout::kind_top) && can_edit) {
+            if (commit_or_stop()) return true;
+            presenter.set_kind(local_x < kind_half ? document::GradientKind::Linear
+                                                   : document::GradientKind::Radial);
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã cập nhật kiểu trong bản nháp" : "Updated kind in draft";
+        } else if (hit(Layout::spread_top) && can_edit) {
+            if (commit_or_stop()) return true;
+            constexpr document::GradientSpread spreads[] = {
+                document::GradientSpread::Pad, document::GradientSpread::Repeat,
+                document::GradientSpread::Reflect};
+            const int index = std::clamp(local_x / std::max(1, spread_width + 6), 0, 2);
+            presenter.set_spread(spreads[index]);
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã cập nhật tràn viền trong bản nháp" : "Updated spread in draft";
+        } else if (local_y >= Layout::stops_top && local_y < Layout::stops_top +
+                   Layout::visible_stop_rows * (Layout::stop_row_height + Layout::stop_row_gap) && can_edit) {
+            if (commit_or_stop()) return true;
+            const size_t row = static_cast<size_t>((local_y - Layout::stops_top) /
+                (Layout::stop_row_height + Layout::stop_row_gap));
+            const auto* current = presenter.draft_paint();
+            const auto selected = std::find_if(current->stops.begin(), current->stops.end(),
+                [&](const auto& stop) { return stop.id == presenter.selected_stop_id(); });
+            const size_t current_index = selected == current->stops.end()
+                ? 0 : static_cast<size_t>(selected - current->stops.begin());
+            const size_t current_first = current->stops.empty() ? 0 : std::min(
+                current_index > 0 ? current_index - 1 : 0,
+                current->stops.size() > Layout::visible_stop_rows
+                    ? current->stops.size() - Layout::visible_stop_rows : 0);
+            const size_t index = current_first + row;
+            if (!mixed_stops && index < current->stops.size())
+                (void)presenter.select_stop(current->stops[index].id);
+            else if (mixed_stops) status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Stop hỗn hợp bị khóa để giữ khác biệt giữa Path" : "Mixed stops are locked to preserve per-Path values";
+        } else if (hit(Layout::stop_actions_top) && can_edit) {
+            if (mixed_stops) {
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Stop hỗn hợp bị khóa · chọn một Path để chỉnh riêng"
+                    : "Mixed stops are locked · select one Path to edit individually";
+            } else if (stop_action_width > 0) {
+                const auto* current = presenter.draft_paint();
+                const auto selected = std::find_if(current->stops.begin(), current->stops.end(),
+                    [&](const auto& stop) { return stop.id == presenter.selected_stop_id(); });
+                const size_t current_index = selected == current->stops.end()
+                    ? current->stops.size() : static_cast<size_t>(selected - current->stops.begin());
+                const int action = std::clamp(local_x / (stop_action_width + 6), 0, 3);
+                if (action == 0 && current_index > 0 && current_index < current->stops.size()) {
+                    if (commit_or_stop()) return true;
+                    const auto* refreshed = presenter.draft_paint();
+                    const auto selected_after = std::find_if(refreshed->stops.begin(), refreshed->stops.end(),
+                        [&](const auto& stop) { return stop.id == presenter.selected_stop_id(); });
+                    if (selected_after != refreshed->stops.end() &&
+                        selected_after != refreshed->stops.begin())
+                        (void)presenter.select_stop((selected_after - 1)->id);
+                } else if (action == 1) {
+                    if (commit_or_stop()) return true;
+                    if (add_adjacent_stop()) status_msg_ = language_ == UILanguage::Vietnamese
+                        ? "Đã thêm stop liền kề vào bản nháp" : "Added adjacent stop to draft";
+                } else if (action == 2 && current->stops.size() > 2 && current_index < current->stops.size()) {
+                    if (commit_or_stop()) return true;
+                    const auto* refreshed = presenter.draft_paint();
+                    const auto selected_after = std::find_if(refreshed->stops.begin(), refreshed->stops.end(),
+                        [&](const auto& stop) { return stop.id == presenter.selected_stop_id(); });
+                    const size_t remove_index = static_cast<size_t>(selected_after - refreshed->stops.begin());
+                    if (presenter.delete_stop(remove_index)) {
+                        const auto* updated = presenter.draft_paint();
+                        if (updated && !updated->stops.empty())
+                            (void)presenter.select_stop(updated->stops[std::min(remove_index, updated->stops.size() - 1)].id);
+                        status_msg_ = language_ == UILanguage::Vietnamese ? "Đã xóa stop khỏi bản nháp" : "Removed stop from draft";
+                    }
+                } else if (action == 3 && current_index + 1 < current->stops.size()) {
+                    if (commit_or_stop()) return true;
+                    const auto* refreshed = presenter.draft_paint();
+                    const auto selected_after = std::find_if(refreshed->stops.begin(), refreshed->stops.end(),
+                        [&](const auto& stop) { return stop.id == presenter.selected_stop_id(); });
+                    if (selected_after != refreshed->stops.end() && selected_after + 1 != refreshed->stops.end())
+                        (void)presenter.select_stop((selected_after + 1)->id);
+                }
+            }
+        } else if (hit(Layout::color_top) && local_x >= 28 && can_edit) {
+            if (commit_or_stop()) return true;
+            if (!mixed_stops && count > 0) {
+                const auto* current = presenter.draft_paint();
+                const auto selected = std::find_if(current->stops.begin(), current->stops.end(),
+                    [&](const auto& stop) { return stop.id == presenter.selected_stop_id(); });
+                if (selected != current->stops.end()) {
+                    const uint64_t id = selected->id;
+                    if (const auto edited = edit_source_color(hwnd_, selected->color, 0.0, false,
+                            language_ == UILanguage::Vietnamese, ColorEditContext::Generic,
+                            false, false, root().document().color_mode(),
+                            theme_ == ThemeMode::CyberDark)) {
+                        const auto* updated = presenter.draft_paint();
+                        const auto item = std::find_if(updated->stops.begin(), updated->stops.end(),
+                            [id](const auto& stop) { return stop.id == id; });
+                        if (item != updated->stops.end())
+                            (void)presenter.set_stop_color(static_cast<size_t>(item - updated->stops.begin()), edited->color);
+                    }
+                }
+            }
+        } else if (hit(Layout::offset_top, Layout::field_height)) {
+            if (commit_or_stop()) return true;
+            start_numeric_input(Field::EffectOffsetX);
+        } else if (hit(Layout::opacity_top, Layout::field_height)) {
+            if (commit_or_stop()) return true;
+            start_numeric_input(Field::EffectOpacity);
+        } else if (hit(Layout::midpoint_top, Layout::field_height)) {
+            if (commit_or_stop()) return true;
+            start_numeric_input(Field::PolygonSides);
+        } else if (hit(Layout::angle_top, Layout::field_height)) {
+            if (commit_or_stop()) return true;
+            start_numeric_input(Field::PolygonRotation);
+        } else if (hit(Layout::length_top, Layout::field_height)) {
+            if (commit_or_stop()) return true;
+            start_numeric_input(Field::ObjectHeight);
+        } else if (hit(Layout::center_x_top, Layout::field_height)) {
+            if (commit_or_stop()) return true;
+            start_numeric_input(Field::ObjectX);
+        } else if (hit(Layout::center_y_top, Layout::field_height)) {
+            if (commit_or_stop()) return true;
+            start_numeric_input(Field::ObjectY);
+        } else if (x >= left && x < right) {
+            return false;
+        }
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return true;
+    }
+
+    const int topbar_h = 32;
+    const int content_top = topbar_h + 32 + 40;
+    if (y < topbar_h + 32 || y > content_top) return false;
+    if (x >= 820 && x < 880) {
+        if (active_num_field_ != Field::None) cancel_numeric_field();
+        gradient_tool_->cancel();
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Đã hủy thay đổi chuyển sắc" : "Cancelled Gradient edits";
+    } else if (!commit_active()) {
+        return true;
+    } else if (x >= 80 && x < 145) {
+        presenter.set_kind(document::GradientKind::Linear);
+        gradient_tool_->tool().set_kind(document::GradientKind::Linear);
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Kiểu: Tuyến tính (Linear)" : "Kind: Linear";
+    } else if (x >= 150 && x < 215) {
+        presenter.set_kind(document::GradientKind::Radial);
+        gradient_tool_->tool().set_kind(document::GradientKind::Radial);
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Kiểu: Tỏa tròn (Radial)" : "Kind: Radial";
+    } else if (x >= 225 && x < 275) {
+        presenter.set_spread(document::GradientSpread::Pad);
+        gradient_tool_->tool().set_spread(document::GradientSpread::Pad);
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Tràn viền: Chặn (Pad)" : "Spread: Pad";
+    } else if (x >= 280 && x < 345) {
+        presenter.set_spread(document::GradientSpread::Repeat);
+        gradient_tool_->tool().set_spread(document::GradientSpread::Repeat);
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Tràn viền: Lặp lại (Repeat)" : "Spread: Repeat";
+    } else if (x >= 350 && x < 420) {
+        presenter.set_spread(document::GradientSpread::Reflect);
+        gradient_tool_->tool().set_spread(document::GradientSpread::Reflect);
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Tràn viền: Đối xứng (Reflect)" : "Spread: Reflect";
+    } else if (x >= 430 && x < 500) {
+        if (presenter.summary().mixed_stops && presenter.summary().supported_count > 1)
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Stop hỗn hợp bị khóa · chọn một Path để đảo chiều"
+                : "Mixed stops are locked · select one Path before reversing";
+        else {
+            presenter.reverse_stops();
+            gradient_tool_->tool().reverse_stops();
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã đảo chiều dải màu" : "Reversed Gradient stops";
+        }
+    } else if (x >= 505 && x < 575) {
+        const auto snapshot = root().document().current_snapshot();
+        const auto bounds = snapshot ? root().vector_controller().selection().bounds(*snapshot)
+            .value_or(geometry::Rect2D{0, 0, 100, 100}) : geometry::Rect2D{0, 0, 100, 100};
+        presenter.fit_to_bounds(bounds);
+        gradient_tool_->tool().fit_to_object_bounds(bounds);
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Đã khớp dải màu theo khung đối tượng" : "Fit Gradient to bounds";
+    } else if (x >= 585 && x < 665) {
+        const auto& summary = presenter.summary();
+        if (summary.supported_count > 1 &&
+            (summary.mixed_angle || summary.mixed_length || summary.mixed_center || summary.mixed_aspect_ratio))
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Hình học hỗn hợp bị khóa · chọn một Path để đổi góc"
+                : "Mixed geometry is locked · select one Path to change angle";
+        else {
+            auto projection = presenter.geometry_projection();
+            projection.angle_degrees = std::fmod(projection.angle_degrees + 45.0, 360.0);
+            presenter.set_angle_degrees(projection.angle_degrees);
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã cập nhật góc trong bản nháp" : "Updated angle in draft";
+        }
+    } else if (x >= 675 && x < 735) {
+        if (presenter.summary().mixed_stops && presenter.summary().supported_count > 1)
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Stop hỗn hợp bị khóa · chọn một Path" : "Mixed stops are locked · select one Path";
+        else if (add_adjacent_stop()) status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đã thêm stop liền kề vào bản nháp" : "Added adjacent stop to draft";
+    } else if (x >= 745 && x < 815) {
+        if (gradient_tool_->apply()) status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đã áp dụng chuyển sắc vào đối tượng" : "Applied Gradient fill";
+    } else {
+        return false;
+    }
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
     return true;
 }
 #endif

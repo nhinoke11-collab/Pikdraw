@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "pikdraw/desktop/shell/native_window_shortcuts_settings.hpp"
 #include "../automation/native_window_automation.hpp"
 #include <sstream>
 #include <iomanip>
@@ -416,68 +417,9 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
                   &manage, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
     } else if (settings_active_tab_ == 4) {
-        // Tab 4: Phím tắt & Thao tác (Keyboard Shortcuts Model)
-        SelectObject(mem_dc, font_vn_bold);
-        SetTextColor(mem_dc, m_text_pri);
-        RECT rc_sc_t = { cx, cy, cx + 490, cy + 20 };
-        DrawTextW(mem_dc, is_vi ? L"Hồ sơ phím tắt thao tác (Keyboard Shortcut Profile):" : L"Keyboard Shortcut Profile:", -1, &rc_sc_t, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
-
-        const wchar_t* profiles_vi[] = { L"CorelDRAW Standard", L"Adobe Illustrator", L"PikDraw Mặc định" };
-        const wchar_t* profiles_en[] = { L"CorelDRAW Standard", L"Adobe Illustrator", L"PikDraw Default" };
-        for (int i = 0; i < 3; ++i) {
-            int px = cx + i * 160;
-            RECT rc_p = { px, cy + 24, px + 150, cy + 50 };
-            bool is_p_act = (shortcut_profile_ == i);
-            HBRUSH br_p = CreateSolidBrush(is_p_act ? (is_dark ? RGB(18, 38, 48) : RGB(236, 253, 245)) : (is_dark ? RGB(10, 16, 24) : RGB(248, 250, 252)));
-            FillRect(mem_dc, &rc_p, br_p);
-            DeleteObject(br_p);
-            HPEN pen_p = CreatePen(PS_SOLID, 1, is_p_act ? m_teal : m_border);
-            SelectObject(mem_dc, pen_p);
-            SelectObject(mem_dc, GetStockObject(NULL_BRUSH));
-            RoundRect(mem_dc, rc_p.left, rc_p.top, rc_p.right, rc_p.bottom, 6, 6);
-            DeleteObject(pen_p);
-            SelectObject(mem_dc, is_p_act ? font_vn_bold : font_vn_norm);
-            SetTextColor(mem_dc, is_p_act ? m_teal : m_text_mut);
-            DrawTextW(mem_dc, is_vi ? profiles_vi[i] : profiles_en[i], -1, &rc_p, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-        }
-
-        SelectObject(mem_dc, font_mono);
-        SetTextColor(mem_dc, m_teal);
-        RECT rc_sc_tbl_h = { cx, cy + 62, cx + 490, cy + 80 };
-        DrawTextW(mem_dc, is_vi ? L"DANH SÁCH PHÍM TẮT CHUẨN:" : L"MAPPED SHORTCUTS:", -1, &rc_sc_tbl_h, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
-
-        SelectObject(mem_dc, font_sec);
-        SetTextColor(mem_dc, m_text_pri);
-        RECT rc_sc_table = { cx, cy + 84, cx + 490, cy + 340 };
-        const wchar_t* sc_list = is_vi ?
-            L"Ctrl+N          : Hộp thoại Tạo tài liệu mới (New Document Dialog)\n"
-            L"Ctrl+W          : Đóng tab tài liệu đang mở (Close Active Tab)\n"
-            L"Ctrl+Tab        : Chuyển sang tab tài liệu kế tiếp\n"
-            L"Ctrl+O / Ctrl+S : Mở tệp / Lưu tệp tài liệu\n"
-            L"Ctrl+E          : Xuất file đồ họa vector / SVG\n"
-            L"Ctrl+Z / Ctrl+Y : Hoàn tác lệnh (Undo) / Làm lại (Redo)\n"
-            L"Delete / Back   : Xóa các đối tượng đang chọn\n"
-            L"Ctrl+D          : Nhân đôi đối tượng (Duplicate) với bước lệch\n"
-            L"V / R / E       : Công cụ Chọn (Pick) / Hình chữ nhật / Hình Elip\n"
-            L"A               : Soạn thảo Văn bản tiếng Việt Unicode\n"
-            L"H               : Công cụ Di chuyển khung nhìn (Hand Pan)\n"
-            L"F / 1           : Căn vừa toàn trang (Fit) / Phóng to 100% tỷ lệ thực\n"
-            L"Ctrl+J          : Mở bảng Tùy chọn & Cài đặt hệ thống (Options)" :
-            L"Ctrl+N          : New Document Dialog\n"
-            L"Ctrl+W          : Close Active Document Tab\n"
-            L"Ctrl+Tab        : Switch to Next Document Tab\n"
-            L"Ctrl+O / Ctrl+S : Open Document / Save Document\n"
-            L"Ctrl+E          : Export Graphic / SVG\n"
-            L"Ctrl+Z / Ctrl+Y : Undo / Redo atomic transaction\n"
-            L"Delete / Back   : Remove selected objects\n"
-            L"Ctrl+D          : Duplicate selection with offset\n"
-            L"V / R / E       : Pick Tool / Rectangle / Ellipse\n"
-            L"A               : Vietnamese Unicode Text Tool\n"
-            L"H               : Hand Pan Tool\n"
-            L"F / 1           : Fit page / 100% Zoom\n"
-            L"Ctrl+J          : Options & Preferences";
-        DrawTextW(mem_dc, sc_list, -1, &rc_sc_table, DT_LEFT | DT_NOPREFIX);
-
+        paint_shortcuts_settings_tab(*this, mem_dc, cx, cy, is_vi, is_dark,
+            m_text_pri, m_text_mut, m_teal, m_border,
+            font_vn_bold, font_vn_norm, font_sec, font_mono);
     } else if (settings_active_tab_ == 5) {
         // Tab 5: Thi công & CNC
         SelectObject(mem_dc, font_vn_bold);

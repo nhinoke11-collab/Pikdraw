@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pikdraw.local/schemas/file-interop-corpus-manifest.schema.json",
+  "title": "PikDraw local file interoperability corpus manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "generated_at",
+    "baseline_commit",
+    "corpus_root",
+    "gitignored",
+    "working_tree_dirty",
+    "oracle_evidence",
+    "samples"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "baseline_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "corpus_root": { "const": "cdr" },
+    "gitignored": { "const": true },
+    "working_tree_dirty": { "type": "boolean" },
+    "oracle_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["adobe_illustrator_build", "coreldraw_build", "settings_recorded", "rights_status", "runs"],
+      "properties": {
+        "adobe_illustrator_build": { "type": ["string", "null"] },
+        "coreldraw_build": { "type": ["string", "null"] },
+        "settings_recorded": { "type": "boolean" },
+        "rights_status": { "enum": ["verified", "restricted", "unverified"] },
+        "runs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["sample_id", "application", "build", "settings_id", "outcome"],
+            "properties": {
+              "sample_id": { "type": "string", "pattern": "^sample-[0-9]{3}$" },
+              "application": { "enum": ["Adobe Illustrator", "CorelDRAW", "independent reader", "CAM"] },
+              "build": { "type": "string", "minLength": 1 },
+              "settings_id": { "type": "string", "minLength": 1 },
+              "outcome": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "samples": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sample_id", "relative_path", "extension", "byte_size", "sha256", "probe_status"],
+        "properties": {
+          "sample_id": { "type": "string", "pattern": "^sample-[0-9]{3}$" },
+          "relative_path": { "type": "string", "minLength": 1, "pattern": "^(?![/\\\\])(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$)).+" },
+          "extension": { "type": "string", "pattern": "^\\.[a-z0-9]{1,8}$" },
+          "byte_size": { "type": "integer", "minimum": 1 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "probe_status": {
+            "enum": ["not_run", "transport_verified_only", "reader_rejected", "reader_accepted_subset", "oracle_pending"]
+          },
+          "evidence_ref": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

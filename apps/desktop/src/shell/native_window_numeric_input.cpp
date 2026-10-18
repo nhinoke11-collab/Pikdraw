@@ -3,6 +3,7 @@
 #include "pikdraw/desktop/actions/action_id.hpp"
 #include "native_window_menus.hpp"
 #include "native_window_page_presets.hpp"
+#include "native_window_text_properties.hpp"
 #include "native_canvas_frame.hpp"
 #ifdef _WIN32
 #include "../clipboard/native_clipboard.hpp"
@@ -21,6 +22,7 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <limits>
 
 namespace pikdraw::desktop {
 
@@ -31,6 +33,167 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
         commit_numeric_field();
         if (active_num_field_ != NumericFieldId::None)
             return;
+    }
+    if ((field == text_numeric_field(TextPropertyField::FontSize) ||
+         field == text_numeric_field(TextPropertyField::FrameWidth) ||
+         field == text_numeric_field(TextPropertyField::LineSpacing)) &&
+        active_dock_tab_ == 0 && has_text_properties_target(*this)) {
+        const auto view = text_properties_view(*this);
+        if (field == text_numeric_field(TextPropertyField::FontSize) && view.mixed_font) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Kiểu chữ hỗn hợp · chọn một đối tượng hoặc thống nhất trước"
+                : "Font settings are mixed · select one object or unify them first";
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        if (!view.editable) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Văn bản bị khóa hoặc ẩn · không thể sửa thuộc tính"
+                : "Text is locked or hidden · properties cannot be edited";
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        active_num_field_ = field;
+        numeric_effect_index_ = std::numeric_limits<size_t>::max();
+        numeric_effect_targets_ = root().vector_controller().selection().selected_ids();
+        num_input_buffer_.clear();
+        if (field == text_numeric_field(TextPropertyField::FontSize))
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Cỡ chữ 1–2880 pt · Enter áp dụng · Esc hủy"
+                : "Font size 1–2880 pt · Enter applies · Esc cancels";
+        else if (field == text_numeric_field(TextPropertyField::FrameWidth))
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Khung chữ 0–1.000.000 mm · 0 = chữ tự do · Enter áp dụng · Esc hủy"
+                : "Text frame 0–1,000,000 mm · 0 = point text · Enter applies · Esc cancels";
+        else
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Giãn dòng 25–1000% · Enter áp dụng · Esc hủy"
+                : "Line spacing 25–1000% · Enter applies · Esc cancels";
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    if (active_tool_ == 12 &&
+        (field == NumericFieldId::DistributeSpacing ||
+         field == NumericFieldId::PolygonSides ||
+         field == NumericFieldId::PolygonRotation)) {
+        const auto target = contour_tool_ ? contour_tool_->target_object() : document::kInvalidObjectId;
+        const auto snapshot = root().document().current_snapshot();
+        const auto* object = snapshot ? snapshot->objects().lookup_ref(target) : nullptr;
+        const auto* path = object ? std::get_if<document::PathObject>(object) : nullptr;
+        if (!contour_tool_ || !contour_tool_->active() || !path || path->locked) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Chọn Path không khóa để sửa thông số Contour"
+                : "Select an unlocked Path to edit Contour settings";
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        active_num_field_ = field;
+        num_input_buffer_.clear();
+        std::ostringstream value;
+        value << std::fixed << std::setprecision(field == NumericFieldId::PolygonSides ? 0 : 3);
+        if (field == NumericFieldId::DistributeSpacing) value << contour_tool_->spacing_mm();
+        else if (field == NumericFieldId::PolygonSides) value << contour_tool_->steps();
+        else value << contour_tool_->miter_limit();
+        num_input_buffer_ = value.str();
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Contour · nhập giá trị · Enter cập nhật xem trước · Tab sang trường kế · Esc bỏ nhập"
+            : "Contour · enter a value · Enter updates preview · Tab moves to next field · Esc cancels editing";
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    if (active_tool_ == 13 &&
+        (field == NumericFieldId::EffectOffsetX || field == NumericFieldId::EffectOpacity ||
+         field == NumericFieldId::PolygonSides || field == NumericFieldId::PolygonRotation ||
+         field == NumericFieldId::ObjectHeight || field == NumericFieldId::ObjectX ||
+         field == NumericFieldId::ObjectY)) {
+        if (!gradient_tool_ || !gradient_tool_->active())
+            return;
+        auto& presenter = gradient_tool_->presenter();
+        const auto& summary = presenter.summary();
+        const auto* paint = presenter.draft_paint();
+        const bool stop_field = field == NumericFieldId::EffectOffsetX ||
+            field == NumericFieldId::EffectOpacity || field == NumericFieldId::PolygonSides;
+        if (!summary.can_edit_gradient() || !paint ||
+            (stop_field && summary.mixed_stops && summary.supported_count > 1)) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Thuộc tính Gradient này đang khóa do chưa chọn Path hoặc stop bị hỗn hợp"
+                : "This Gradient property is unavailable without a Path or while stops are mixed";
+#ifdef _WIN32
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+            return;
+        }
+        const auto stop_it = std::find_if(paint->stops.begin(), paint->stops.end(),
+            [&](const auto& stop) { return stop.id == presenter.selected_stop_id(); });
+        const size_t stop_index = stop_it == paint->stops.end()
+            ? paint->stops.size() : static_cast<size_t>(stop_it - paint->stops.begin());
+        if (stop_field && (stop_index >= paint->stops.size() ||
+            (field == NumericFieldId::PolygonSides && stop_index + 1 >= paint->stops.size()))) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Chọn một stop có đoạn kế tiếp để sửa trung điểm"
+                : "Select a stop with a following segment to edit its midpoint";
+#ifdef _WIN32
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+            return;
+        }
+        const bool geometry_field = field == NumericFieldId::PolygonRotation ||
+            field == NumericFieldId::ObjectHeight || field == NumericFieldId::ObjectX ||
+            field == NumericFieldId::ObjectY;
+        const bool geometry_mixed = summary.supported_count > 1 &&
+            (summary.mixed_angle || summary.mixed_length || summary.mixed_center ||
+             summary.mixed_aspect_ratio);
+        if (geometry_field && geometry_mixed) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Hình học Gradient đang hỗn hợp · chọn một Path để sửa riêng"
+                : "Gradient geometry is mixed · select one Path to edit safely";
+#ifdef _WIN32
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+            return;
+        }
+        active_num_field_ = field;
+        num_input_buffer_.clear();
+        std::ostringstream value;
+        value << std::fixed << std::setprecision(2);
+        if (field == NumericFieldId::EffectOffsetX)
+            value << paint->stops[stop_index].offset * 100.0;
+        else if (field == NumericFieldId::EffectOpacity)
+            value << paint->stops[stop_index].opacity * 100.0;
+        else if (field == NumericFieldId::PolygonSides)
+            value << paint->stops[stop_index].midpoint_to_next * 100.0;
+        else {
+            const auto projection = presenter.geometry_projection();
+            const bool mixed = (field == NumericFieldId::PolygonRotation && summary.mixed_angle) ||
+                               (field == NumericFieldId::ObjectHeight && summary.mixed_length);
+            if (!mixed) {
+                if (field == NumericFieldId::PolygonRotation) value << projection.angle_degrees;
+                else if (field == NumericFieldId::ObjectHeight) value << projection.length_mm;
+                else if (field == NumericFieldId::ObjectX) value << projection.center_mm.x;
+                else value << projection.center_mm.y;
+                num_input_buffer_ = value.str();
+            }
+        }
+        if (stop_field)
+            num_input_buffer_ = value.str();
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Nhập Gradient · Enter cập nhật bản nháp · Tab chuyển ô · Apply ghi tài liệu · Esc hủy ô"
+            : "Edit Gradient · Enter updates the draft · Tab next · Apply writes the document · Esc cancels field";
+#ifdef _WIN32
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+        return;
+    }
+    if (active_tool_ == 11 &&
+        (field == NumericFieldId::ObjectX || field == NumericFieldId::ObjectY) &&
+        (!node_tool_ || !node_tool_->single_selected_node_position())) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Chọn đúng một node để nhập tọa độ X/Y"
+            : "Select exactly one node before entering X/Y coordinates";
+#ifdef _WIN32
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+        return;
     }
     if (field == NumericFieldId::ObjectOpacity && !workflow().can_set_selected_object_opacity()) {
         const auto snapshot = root().document().current_snapshot();
@@ -184,6 +347,10 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
             effect_value << std::setprecision(10) << value;
             num_input_buffer_ = effect_value.str();
         }
+    } else if (active_tool_ == 11 &&
+               (field == NumericFieldId::ObjectX || field == NumericFieldId::ObjectY)) {
+        // The current coordinate remains visible in Properties; typing replaces it.
+        num_input_buffer_.clear();
     } else {
         const auto ids = root().vector_controller().selection().selected_ids();
         if (!ids.empty()) {
@@ -200,6 +367,16 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
                     else if (field == NumericFieldId::ObjectY) ss << bounds_opt->y;
                     else if (field == NumericFieldId::ObjectWidth) ss << bounds_opt->width;
                     else if (field == NumericFieldId::ObjectHeight) ss << bounds_opt->height;
+                    else if (field == NumericFieldId::ObjectRotation) {
+                        const auto transform = std::visit([](const auto& val) -> geometry::Transform2D {
+                            using T = std::decay_t<decltype(val)>;
+                            if constexpr (std::is_same_v<T, document::GroupObject>) return {};
+                            else return val.transform;
+                        }, *obj);
+                        double deg = std::atan2(transform.b, transform.a) * (180.0 / 3.14159265358979323846);
+                        if (deg < 0.0) deg += 360.0;
+                        ss << std::fixed << std::setprecision(1) << deg;
+                    }
                     num_input_buffer_ = ss.str();
                 }
             }
@@ -210,7 +387,12 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
         num_input_buffer_.erase(num_input_buffer_.size() - 2);
     }
 
-    if (field == NumericFieldId::ObjectOpacity) {
+    if (active_tool_ == 11 &&
+        (field == NumericFieldId::ObjectX || field == NumericFieldId::ObjectY)) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Nhập tọa độ node (mm) · Enter áp dụng · Tab đổi X/Y · Esc hủy · Ctrl+Z hoàn tác"
+            : "Enter node coordinate in mm · Enter applies · Tab switches X/Y · Esc cancels · Ctrl+Z undoes";
+    } else if (field == NumericFieldId::ObjectOpacity) {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Nhập Opacity 0–100% (dấu phẩy hoặc chấm) · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
             : "Enter Opacity from 0–100% · comma or dot decimals · Enter applies · Esc cancels · Ctrl+Z undoes";
@@ -377,6 +559,50 @@ void NativeWindow::handle_numeric_char_input(wchar_t ch) {
         return;
     } else if (ch == 9) { // Tab: cycle to next field
         NumericFieldId next = NumericFieldId::None;
+        if (numeric_effect_index_ == std::numeric_limits<size_t>::max() &&
+            (active_num_field_ == text_numeric_field(TextPropertyField::FontSize) ||
+             active_num_field_ == text_numeric_field(TextPropertyField::FrameWidth) ||
+             active_num_field_ == text_numeric_field(TextPropertyField::LineSpacing))) {
+            next = active_num_field_ == text_numeric_field(TextPropertyField::FontSize)
+                ? text_numeric_field(TextPropertyField::FrameWidth)
+                : active_num_field_ == text_numeric_field(TextPropertyField::FrameWidth)
+                    ? text_numeric_field(TextPropertyField::LineSpacing)
+                    : text_numeric_field(TextPropertyField::FontSize);
+            commit_numeric_field();
+            if (active_num_field_ != NumericFieldId::None) return;
+            start_numeric_input(next);
+            return;
+        }
+        if (active_tool_ == 13) {
+            switch (active_num_field_) {
+                case NumericFieldId::EffectOffsetX: next = NumericFieldId::EffectOpacity; break;
+                case NumericFieldId::EffectOpacity: next = NumericFieldId::PolygonSides; break;
+                case NumericFieldId::PolygonSides: next = NumericFieldId::PolygonRotation; break;
+                case NumericFieldId::PolygonRotation: next = NumericFieldId::ObjectHeight; break;
+                case NumericFieldId::ObjectHeight: next = NumericFieldId::ObjectX; break;
+                case NumericFieldId::ObjectX: next = NumericFieldId::ObjectY; break;
+                case NumericFieldId::ObjectY: next = NumericFieldId::EffectOffsetX; break;
+                default: break;
+            }
+            commit_numeric_field();
+            if (active_num_field_ != NumericFieldId::None)
+                return;
+            if (next != NumericFieldId::None)
+                start_numeric_input(next);
+            return;
+        }
+        if (active_tool_ == 12) {
+            switch (active_num_field_) {
+                case NumericFieldId::DistributeSpacing: next = NumericFieldId::PolygonSides; break;
+                case NumericFieldId::PolygonSides: next = NumericFieldId::PolygonRotation; break;
+                case NumericFieldId::PolygonRotation: next = NumericFieldId::DistributeSpacing; break;
+                default: break;
+            }
+            commit_numeric_field();
+            if (active_num_field_ != NumericFieldId::None) return;
+            if (next != NumericFieldId::None) start_numeric_input(next);
+            return;
+        }
         switch (active_num_field_) {
             case NumericFieldId::PageWidth: next = NumericFieldId::PageHeight; break;
             case NumericFieldId::PageHeight: next = NumericFieldId::PageWidth; break;
@@ -385,9 +611,11 @@ void NativeWindow::handle_numeric_char_input(wchar_t ch) {
             case NumericFieldId::ModalWidth: next = NumericFieldId::ModalHeight; break;
             case NumericFieldId::ModalHeight: next = NumericFieldId::ModalWidth; break;
             case NumericFieldId::ObjectX: next = NumericFieldId::ObjectY; break;
-            case NumericFieldId::ObjectY: next = NumericFieldId::ObjectWidth; break;
+            case NumericFieldId::ObjectY: next = active_tool_ == 11
+                ? NumericFieldId::ObjectX : NumericFieldId::ObjectWidth; break;
             case NumericFieldId::ObjectWidth: next = NumericFieldId::ObjectHeight; break;
-            case NumericFieldId::ObjectHeight: next = NumericFieldId::ObjectX; break;
+            case NumericFieldId::ObjectHeight: next = NumericFieldId::ObjectRotation; break;
+            case NumericFieldId::ObjectRotation: next = NumericFieldId::ObjectX; break;
             case NumericFieldId::EffectOffsetX: next = NumericFieldId::EffectOffsetY; break;
             case NumericFieldId::EffectOffsetY: next = NumericFieldId::EffectSigmaX; break;
             case NumericFieldId::EffectSigmaX: next = NumericFieldId::EffectSigmaY; break;
@@ -412,8 +640,14 @@ void NativeWindow::handle_numeric_char_input(wchar_t ch) {
         }
         return;
     } else if ((ch >= L'0' && ch <= L'9') ||
-               (active_num_field_ != NumericFieldId::PolygonSides && ch == L'.') ||
+               ((active_num_field_ != NumericFieldId::PolygonSides || active_tool_ == 13) && ch == L'.') ||
                (ch == L',' && active_num_field_ == NumericFieldId::DistributeSpacing) ||
+               (ch == L',' && (active_num_field_ == text_numeric_field(TextPropertyField::FontSize) ||
+                               active_num_field_ == text_numeric_field(TextPropertyField::FrameWidth) ||
+                               active_num_field_ == text_numeric_field(TextPropertyField::LineSpacing))) ||
+               (ch == L',' && active_tool_ == 11 &&
+                (active_num_field_ == NumericFieldId::ObjectX ||
+                 active_num_field_ == NumericFieldId::ObjectY)) ||
                (ch == L',' && active_num_field_ == NumericFieldId::ObjectOpacity) ||
                (ch == L',' && (active_num_field_ == NumericFieldId::FillOpacity ||
                                active_num_field_ == NumericFieldId::StrokeOpacity)) ||
@@ -422,7 +656,17 @@ void NativeWindow::handle_numeric_char_input(wchar_t ch) {
                                active_num_field_ == NumericFieldId::EffectOffsetX ||
                                active_num_field_ == NumericFieldId::EffectOffsetY ||
                                active_num_field_ == NumericFieldId::EffectOpacity)) ||
-               (active_num_field_ != NumericFieldId::PolygonSides && ch == L'-')) {
+               (ch == L',' && active_tool_ == 13 &&
+                (active_num_field_ == NumericFieldId::PolygonSides ||
+                 active_num_field_ == NumericFieldId::PolygonRotation ||
+                 active_num_field_ == NumericFieldId::ObjectHeight ||
+                 active_num_field_ == NumericFieldId::ObjectX ||
+                 active_num_field_ == NumericFieldId::ObjectY)) ||
+               (ch == L',' && active_tool_ == 12 &&
+                (active_num_field_ == NumericFieldId::DistributeSpacing ||
+                 active_num_field_ == NumericFieldId::PolygonRotation)) ||
+               ((active_num_field_ != NumericFieldId::PolygonSides || active_tool_ == 13) &&
+                (active_tool_ != 12 || active_num_field_ != NumericFieldId::PolygonRotation) && ch == L'-')) {
         if ((ch == L'.' || ch == L',') &&
             (num_input_buffer_.find('.') != std::string::npos || num_input_buffer_.find(',') != std::string::npos)) {
             return;

@@ -1,161 +1,15 @@
 #include "native_window_paint_icons.hpp"
+#ifdef _WIN32
+#include "native_gdiplus_api.hpp"
+#endif
 #include <cmath>
 #include <numbers>
 
 namespace pikdraw::desktop {
 
 #ifdef _WIN32
+
 namespace {
-struct GpPointF {
-    float X;
-    float Y;
-};
-
-using GpStatus = int;
-using GpGraphics = void*;
-using GpPen = void*;
-using GpBrush = void*;
-using GpSolidFill = void*;
-using GpPath = void*;
-
-constexpr int kSmoothingModeAntiAlias = 4;
-constexpr int kPixelOffsetModeHalf = 4;
-constexpr int kLineCapRound = 2;
-constexpr int kLineJoinRound = 2;
-constexpr int kUnitPixel = 2;
-constexpr int kFillModeAlternate = 0;
-
-struct GdiplusStartupInput {
-    UINT32 GdiplusVersion{1};
-    void* DebugEventCallback{nullptr};
-    BOOL SuppressBackgroundThread{FALSE};
-    BOOL SuppressExternalCodecs{FALSE};
-};
-
-using FnGdiplusStartup = GpStatus(WINAPI*)(ULONG_PTR*, const GdiplusStartupInput*, void*);
-using FnGdiplusShutdown = void(WINAPI*)(ULONG_PTR);
-using FnGdipCreateFromHDC = GpStatus(WINAPI*)(HDC, GpGraphics**);
-using FnGdipDeleteGraphics = GpStatus(WINAPI*)(GpGraphics*);
-using FnGdipSetSmoothingMode = GpStatus(WINAPI*)(GpGraphics*, int);
-using FnGdipSetPixelOffsetMode = GpStatus(WINAPI*)(GpGraphics*, int);
-using FnGdipCreatePen1 = GpStatus(WINAPI*)(DWORD, float, int, GpPen**);
-using FnGdipDeletePen = GpStatus(WINAPI*)(GpPen*);
-using FnGdipSetPenLineCap197819 = GpStatus(WINAPI*)(GpPen*, int, int, int);
-using FnGdipSetPenLineJoin = GpStatus(WINAPI*)(GpPen*, int);
-using FnGdipDrawLine = GpStatus(WINAPI*)(GpGraphics*, GpPen*, float, float, float, float);
-using FnGdipDrawLines = GpStatus(WINAPI*)(GpGraphics*, GpPen*, const GpPointF*, int);
-using FnGdipDrawEllipse = GpStatus(WINAPI*)(GpGraphics*, GpPen*, float, float, float, float);
-using FnGdipFillEllipse = GpStatus(WINAPI*)(GpGraphics*, GpBrush*, float, float, float, float);
-using FnGdipDrawRectangle = GpStatus(WINAPI*)(GpGraphics*, GpPen*, float, float, float, float);
-using FnGdipFillRectangle = GpStatus(WINAPI*)(GpGraphics*, GpBrush*, float, float, float, float);
-using FnGdipCreateSolidFill = GpStatus(WINAPI*)(DWORD, GpSolidFill**);
-using FnGdipDeleteBrush = GpStatus(WINAPI*)(GpBrush*);
-using FnGdipCreatePath = GpStatus(WINAPI*)(int, GpPath**);
-using FnGdipDeletePath = GpStatus(WINAPI*)(GpPath*);
-using FnGdipAddPathLine = GpStatus(WINAPI*)(GpPath*, float, float, float, float);
-using FnGdipAddPathArc = GpStatus(WINAPI*)(GpPath*, float, float, float, float, float, float);
-using FnGdipClosePathFigure = GpStatus(WINAPI*)(GpPath*);
-using FnGdipDrawPath = GpStatus(WINAPI*)(GpGraphics*, GpPen*, GpPath*);
-using FnGdipFillPath = GpStatus(WINAPI*)(GpGraphics*, GpBrush*, GpPath*);
-using FnGdipFillPolygon = GpStatus(WINAPI*)(GpGraphics*, GpBrush*, const GpPointF*, int, int);
-
-struct GdiplusApi {
-    HMODULE hModule{nullptr};
-    ULONG_PTR token{0};
-    bool valid{false};
-
-    FnGdiplusStartup Startup{nullptr};
-    FnGdiplusShutdown Shutdown{nullptr};
-    FnGdipCreateFromHDC CreateFromHDC{nullptr};
-    FnGdipDeleteGraphics DeleteGraphics{nullptr};
-    FnGdipSetSmoothingMode SetSmoothingMode{nullptr};
-    FnGdipSetPixelOffsetMode SetPixelOffsetMode{nullptr};
-    FnGdipCreatePen1 CreatePen1{nullptr};
-    FnGdipDeletePen DeletePen{nullptr};
-    FnGdipSetPenLineCap197819 SetPenLineCap197819{nullptr};
-    FnGdipSetPenLineJoin SetPenLineJoin{nullptr};
-    FnGdipDrawLine DrawLine{nullptr};
-    FnGdipDrawLines DrawLines{nullptr};
-    FnGdipDrawEllipse DrawEllipse{nullptr};
-    FnGdipFillEllipse FillEllipse{nullptr};
-    FnGdipDrawRectangle DrawRectangle{nullptr};
-    FnGdipFillRectangle FillRectangle{nullptr};
-    FnGdipCreateSolidFill CreateSolidFill{nullptr};
-    FnGdipDeleteBrush DeleteBrush{nullptr};
-    FnGdipCreatePath CreatePath{nullptr};
-    FnGdipDeletePath DeletePath{nullptr};
-    FnGdipAddPathLine AddPathLine{nullptr};
-    FnGdipAddPathArc AddPathArc{nullptr};
-    FnGdipClosePathFigure ClosePathFigure{nullptr};
-    FnGdipDrawPath DrawPath{nullptr};
-    FnGdipFillPath FillPath{nullptr};
-    FnGdipFillPolygon FillPolygon{nullptr};
-
-    static GdiplusApi* get() {
-        static GdiplusApi instance;
-        return instance.valid ? &instance : nullptr;
-    }
-
-private:
-    GdiplusApi() {
-        hModule = LoadLibraryW(L"gdiplus.dll");
-        if (!hModule) return;
-
-        #define LOAD_PROC(member, name) \
-            member = reinterpret_cast<Fn##name>(GetProcAddress(hModule, #name)); \
-            if (!member) return
-
-        LOAD_PROC(Startup, GdiplusStartup);
-        LOAD_PROC(Shutdown, GdiplusShutdown);
-        LOAD_PROC(CreateFromHDC, GdipCreateFromHDC);
-        LOAD_PROC(DeleteGraphics, GdipDeleteGraphics);
-        LOAD_PROC(SetSmoothingMode, GdipSetSmoothingMode);
-        LOAD_PROC(SetPixelOffsetMode, GdipSetPixelOffsetMode);
-        LOAD_PROC(CreatePen1, GdipCreatePen1);
-        LOAD_PROC(DeletePen, GdipDeletePen);
-        LOAD_PROC(SetPenLineCap197819, GdipSetPenLineCap197819);
-        LOAD_PROC(SetPenLineJoin, GdipSetPenLineJoin);
-        LOAD_PROC(DrawLine, GdipDrawLine);
-        LOAD_PROC(DrawLines, GdipDrawLines);
-        LOAD_PROC(DrawEllipse, GdipDrawEllipse);
-        LOAD_PROC(FillEllipse, GdipFillEllipse);
-        LOAD_PROC(DrawRectangle, GdipDrawRectangle);
-        LOAD_PROC(FillRectangle, GdipFillRectangle);
-        LOAD_PROC(CreateSolidFill, GdipCreateSolidFill);
-        LOAD_PROC(DeleteBrush, GdipDeleteBrush);
-        LOAD_PROC(CreatePath, GdipCreatePath);
-        LOAD_PROC(DeletePath, GdipDeletePath);
-        LOAD_PROC(AddPathLine, GdipAddPathLine);
-        LOAD_PROC(AddPathArc, GdipAddPathArc);
-        LOAD_PROC(ClosePathFigure, GdipClosePathFigure);
-        LOAD_PROC(DrawPath, GdipDrawPath);
-        LOAD_PROC(FillPath, GdipFillPath);
-        LOAD_PROC(FillPolygon, GdipFillPolygon);
-
-        #undef LOAD_PROC
-
-        GdiplusStartupInput input{};
-        if (Startup(&token, &input, nullptr) == 0) {
-            valid = true;
-        }
-    }
-
-    ~GdiplusApi() {
-        if (valid && Shutdown) {
-            Shutdown(token);
-        }
-        if (hModule) {
-            FreeLibrary(hModule);
-        }
-    }
-};
-
-inline DWORD MakeGdiplusARGB(COLORREF c, BYTE alpha = 255) {
-    return (static_cast<DWORD>(alpha) << 24) |
-           (static_cast<DWORD>(GetRValue(c)) << 16) |
-           (static_cast<DWORD>(GetGValue(c)) << 8) |
-           static_cast<DWORD>(GetBValue(c));
-}
 void draw_tool_icon_gdiplus(GdiplusApi* api, GpGraphics* g, int tool, float cx, float cy, COLORREF color) {
     GpPen* pen = nullptr;
     api->CreatePen1(MakeGdiplusARGB(color, 255), 1.55f, kUnitPixel, &pen);
@@ -356,6 +210,16 @@ void draw_tool_icon_gdiplus(GdiplusApi* api, GpGraphics* g, int tool, float cx, 
         api->CreatePen1(MakeGdiplusARGB(color, 160), 1.0f, kUnitPixel, &inner_pen);
         api->DrawRectangle(g, inner_pen, cx - 3.5f, cy - 3.5f, 7.0f, 7.0f);
         api->DeletePen(inner_pen);
+    } else if (tool == 15) {
+        // Node edit: editable segment with three visible anchor points.
+        api->DrawLine(g, pen, cx - 7.0f, cy + 5.0f, cx, cy - 5.0f);
+        api->DrawLine(g, pen, cx, cy - 5.0f, cx + 7.0f, cy + 5.0f);
+        api->FillRectangle(g, fill_brush, cx - 8.5f, cy + 3.5f, 3.0f, 3.0f);
+        api->FillRectangle(g, fill_brush, cx - 1.5f, cy - 6.5f, 3.0f, 3.0f);
+        api->FillRectangle(g, fill_brush, cx + 5.5f, cy + 3.5f, 3.0f, 3.0f);
+        api->DrawRectangle(g, pen, cx - 8.5f, cy + 3.5f, 3.0f, 3.0f);
+        api->DrawRectangle(g, pen, cx - 1.5f, cy - 6.5f, 3.0f, 3.0f);
+        api->DrawRectangle(g, pen, cx + 5.5f, cy + 3.5f, 3.0f, 3.0f);
     }
 
     api->DeleteBrush(fill_brush);
@@ -447,6 +311,13 @@ void draw_tool_icon_gdi_fallback(HDC dc, int tool, int center_x, int center_y, C
     } else if (tool == 14) {
         Rectangle(dc, center_x - 7, center_y - 7, center_x + 8, center_y + 8);
         Rectangle(dc, center_x - 3, center_y - 3, center_x + 4, center_y + 4);
+    } else if (tool == 15) {
+        MoveToEx(dc, center_x - 7, center_y + 5, nullptr);
+        LineTo(dc, center_x, center_y - 5);
+        LineTo(dc, center_x + 7, center_y + 5);
+        Rectangle(dc, center_x - 9, center_y + 3, center_x - 4, center_y + 8);
+        Rectangle(dc, center_x - 2, center_y - 7, center_x + 3, center_y - 2);
+        Rectangle(dc, center_x + 5, center_y + 3, center_x + 10, center_y + 8);
     }
     SelectObject(dc, old_brush);
     SelectObject(dc, old_pen);
@@ -507,7 +378,151 @@ void draw_tool_icon(HDC dc, int tool, int center_x, int center_y, COLORREF color
     draw_tool_icon_gdi_fallback(dc, tool, center_x, center_y, color);
 }
 
+static void draw_object_context_icon_gdiplus(GdiplusApi* api, GpGraphics* g, ObjectContextAction action, float cx, float cy, COLORREF color) {
+    GpPen* pen = nullptr;
+    api->CreatePen1(MakeGdiplusARGB(color, 255), 1.5f, kUnitPixel, &pen);
+    api->SetPenLineCap197819(pen, kLineCapRound, kLineCapRound, 0);
+    api->SetPenLineJoin(pen, kLineJoinRound);
+
+    GpSolidFill* brush = nullptr;
+    api->CreateSolidFill(MakeGdiplusARGB(color, 255), &brush);
+
+    GpPen* thin_pen = nullptr;
+    api->CreatePen1(MakeGdiplusARGB(color, 160), 1.0f, kUnitPixel, &thin_pen);
+
+    switch (action) {
+    case ObjectContextAction::FlipHorizontal: {
+        api->DrawLine(g, thin_pen, cx, cy - 7.5f, cx, cy + 7.5f);
+        const GpPointF left_tri[3] = {{cx - 1.5f, cy - 5.5f}, {cx - 1.5f, cy + 5.5f}, {cx - 7.5f, cy}};
+        api->FillPolygon(g, brush, left_tri, 3, kFillModeAlternate);
+        const GpPointF right_tri[3] = {{cx + 1.5f, cy - 5.5f}, {cx + 1.5f, cy + 5.5f}, {cx + 7.5f, cy}};
+        api->DrawLines(g, pen, right_tri, 3);
+        api->DrawLine(g, pen, right_tri[2].X, right_tri[2].Y, right_tri[0].X, right_tri[0].Y);
+        break;
+    }
+    case ObjectContextAction::FlipVertical: {
+        api->DrawLine(g, thin_pen, cx - 7.5f, cy, cx + 7.5f, cy);
+        const GpPointF top_tri[3] = {{cx - 5.5f, cy - 1.5f}, {cx + 5.5f, cy - 1.5f}, {cx, cy - 7.5f}};
+        api->FillPolygon(g, brush, top_tri, 3, kFillModeAlternate);
+        const GpPointF btm_tri[3] = {{cx - 5.5f, cy + 1.5f}, {cx + 5.5f, cy + 1.5f}, {cx, cy + 7.5f}};
+        api->DrawLines(g, pen, btm_tri, 3);
+        api->DrawLine(g, pen, btm_tri[2].X, btm_tri[2].Y, btm_tri[0].X, btm_tri[0].Y);
+        break;
+    }
+    case ObjectContextAction::Rotate90CW: {
+        GpPath* path = nullptr;
+        api->CreatePath(kFillModeAlternate, &path);
+        api->AddPathArc(path, cx - 6.0f, cy - 5.5f, 11.5f, 11.5f, 165.0f, 125.0f);
+        api->DrawPath(g, pen, path);
+        api->DeletePath(path);
+        const GpPointF arrow[3] = {{cx + 3.0f, cy - 3.5f}, {cx + 7.0f, cy + 1.5f}, {cx + 1.5f, cy + 1.0f}};
+        api->FillPolygon(g, brush, arrow, 3, kFillModeAlternate);
+        break;
+    }
+    case ObjectContextAction::Rotate90CCW: {
+        GpPath* path = nullptr;
+        api->CreatePath(kFillModeAlternate, &path);
+        api->AddPathArc(path, cx - 5.5f, cy - 5.5f, 11.5f, 11.5f, 15.0f, -125.0f);
+        api->DrawPath(g, pen, path);
+        api->DeletePath(path);
+        const GpPointF arrow[3] = {{cx - 3.0f, cy - 3.5f}, {cx - 7.0f, cy + 1.5f}, {cx - 1.5f, cy + 1.0f}};
+        api->FillPolygon(g, brush, arrow, 3, kFillModeAlternate);
+        break;
+    }
+    case ObjectContextAction::AlignLeft:
+        api->DrawLine(g, pen, cx - 7.0f, cy - 7.0f, cx - 7.0f, cy + 7.0f);
+        api->DrawRectangle(g, pen, cx - 7.0f, cy - 5.0f, 11.0f, 4.0f);
+        api->DrawRectangle(g, pen, cx - 7.0f, cy + 1.0f, 7.0f, 4.0f);
+        break;
+    case ObjectContextAction::AlignCenterHorizontal:
+        api->DrawLine(g, thin_pen, cx, cy - 7.5f, cx, cy + 7.5f);
+        api->DrawRectangle(g, pen, cx - 5.0f, cy - 5.0f, 10.0f, 4.0f);
+        api->DrawRectangle(g, pen, cx - 3.0f, cy + 1.0f, 6.0f, 4.0f);
+        break;
+    case ObjectContextAction::AlignRight:
+        api->DrawLine(g, pen, cx + 7.0f, cy - 7.0f, cx + 7.0f, cy + 7.0f);
+        api->DrawRectangle(g, pen, cx - 4.0f, cy - 5.0f, 11.0f, 4.0f);
+        api->DrawRectangle(g, pen, cx, cy + 1.0f, 7.0f, 4.0f);
+        break;
+    case ObjectContextAction::AlignTop:
+        api->DrawLine(g, pen, cx - 7.0f, cy - 7.0f, cx + 7.0f, cy - 7.0f);
+        api->DrawRectangle(g, pen, cx - 5.0f, cy - 7.0f, 4.0f, 11.0f);
+        api->DrawRectangle(g, pen, cx + 1.0f, cy - 7.0f, 4.0f, 7.0f);
+        break;
+    case ObjectContextAction::AlignCenterVertical:
+        api->DrawLine(g, thin_pen, cx - 7.5f, cy, cx + 7.5f, cy);
+        api->DrawRectangle(g, pen, cx - 5.0f, cy - 5.0f, 4.0f, 10.0f);
+        api->DrawRectangle(g, pen, cx + 1.0f, cy - 3.0f, 4.0f, 6.0f);
+        break;
+    case ObjectContextAction::AlignBottom:
+        api->DrawLine(g, pen, cx - 7.0f, cy + 7.0f, cx + 7.0f, cy + 7.0f);
+        api->DrawRectangle(g, pen, cx - 5.0f, cy - 4.0f, 4.0f, 11.0f);
+        api->DrawRectangle(g, pen, cx + 1.0f, cy, 4.0f, 7.0f);
+        break;
+    case ObjectContextAction::CenterPage:
+        api->DrawRectangle(g, pen, cx - 6.0f, cy - 8.0f, 12.0f, 16.0f);
+        api->DrawLine(g, thin_pen, cx, cy - 4.0f, cx, cy + 4.0f);
+        api->DrawLine(g, thin_pen, cx - 4.0f, cy, cx + 4.0f, cy);
+        break;
+    case ObjectContextAction::DistributeHorizontal:
+        api->DrawRectangle(g, pen, cx - 8.0f, cy - 3.5f, 4.0f, 7.0f);
+        api->DrawRectangle(g, pen, cx - 2.0f, cy - 3.5f, 4.0f, 7.0f);
+        api->DrawRectangle(g, pen, cx + 4.0f, cy - 3.5f, 4.0f, 7.0f);
+        break;
+    case ObjectContextAction::DistributeVertical:
+        api->DrawRectangle(g, pen, cx - 3.5f, cy - 8.0f, 7.0f, 4.0f);
+        api->DrawRectangle(g, pen, cx - 3.5f, cy - 2.0f, 7.0f, 4.0f);
+        api->DrawRectangle(g, pen, cx - 3.5f, cy + 4.0f, 7.0f, 4.0f);
+        break;
+    case ObjectContextAction::Group:
+        api->DrawRectangle(g, pen, cx - 7.0f, cy - 5.0f, 8.0f, 7.0f);
+        api->DrawRectangle(g, pen, cx - 1.0f, cy - 2.0f, 8.0f, 7.0f);
+        break;
+    case ObjectContextAction::BooleanUnion:
+        api->DrawRectangle(g, pen, cx - 7.0f, cy - 5.0f, 8.0f, 7.0f);
+        api->DrawRectangle(g, pen, cx - 1.0f, cy - 2.0f, 8.0f, 7.0f);
+        api->DrawLine(g, pen, cx - 2.0f, cy, cx + 2.0f, cy);
+        api->DrawLine(g, pen, cx, cy - 2.0f, cx, cy + 2.0f);
+        break;
+    case ObjectContextAction::BooleanDifference:
+        api->DrawRectangle(g, pen, cx - 7.0f, cy - 5.0f, 8.0f, 7.0f);
+        api->DrawRectangle(g, pen, cx - 1.0f, cy - 2.0f, 8.0f, 7.0f);
+        api->DrawLine(g, pen, cx - 4.0f, cy, cx, cy);
+        break;
+    case ObjectContextAction::BooleanIntersection:
+        api->DrawRectangle(g, pen, cx - 7.0f, cy - 5.0f, 8.0f, 7.0f);
+        api->DrawRectangle(g, pen, cx - 1.0f, cy - 2.0f, 8.0f, 7.0f);
+        api->FillRectangle(g, brush, cx - 1.0f, cy - 2.0f, 2.0f, 4.0f);
+        break;
+    case ObjectContextAction::BooleanExclude:
+        api->DrawRectangle(g, pen, cx - 7.0f, cy - 5.0f, 8.0f, 7.0f);
+        api->DrawRectangle(g, pen, cx - 1.0f, cy - 2.0f, 8.0f, 7.0f);
+        api->DrawLine(g, pen, cx - 2.0f, cy - 2.0f, cx + 2.0f, cy + 2.0f);
+        api->DrawLine(g, pen, cx + 2.0f, cy - 2.0f, cx - 2.0f, cy + 2.0f);
+        break;
+    case ObjectContextAction::BooleanReverseDifference:
+        api->DrawRectangle(g, pen, cx - 7.0f, cy - 5.0f, 8.0f, 7.0f);
+        api->DrawRectangle(g, pen, cx - 1.0f, cy - 2.0f, 8.0f, 7.0f);
+        api->DrawLine(g, pen, cx, cy, cx + 4.0f, cy);
+        break;
+    }
+    api->DeletePen(thin_pen);
+    api->DeleteBrush(brush);
+    api->DeletePen(pen);
+}
+
 void draw_object_context_icon(HDC dc, ObjectContextAction action, int cx, int cy, COLORREF color) {
+    auto* api = GdiplusApi::get();
+    if (api) {
+        GpGraphics* g = nullptr;
+        if (api->CreateFromHDC(dc, &g) == 0 && g) {
+            api->SetSmoothingMode(g, kSmoothingModeAntiAlias);
+            api->SetPixelOffsetMode(g, kPixelOffsetModeHalf);
+            draw_object_context_icon_gdiplus(api, g, action, static_cast<float>(cx), static_cast<float>(cy), color);
+            api->DeleteGraphics(g);
+            return;
+        }
+    }
     HPEN pen = CreatePen(PS_SOLID, 1, color);
     const HGDIOBJ old_pen = SelectObject(dc, pen);
     const HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
@@ -556,23 +571,18 @@ void draw_object_context_icon(HDC dc, ObjectContextAction action, int cx, int cy
         break;
     case ObjectContextAction::CenterPage:
         box(cx - 6, cy - 8, cx + 6, cy + 8);
-        box(cx - 2, cy - 2, cx + 2, cy + 2);
-        line(cx, cy - 5, cx, cy + 5);
+        line(cx, cy - 4, cx, cy + 4);
         line(cx - 4, cy, cx + 4, cy);
         break;
     case ObjectContextAction::DistributeHorizontal:
         box(cx - 8, cy - 3, cx - 4, cy + 3);
         box(cx - 2, cy - 3, cx + 2, cy + 3);
         box(cx + 4, cy - 3, cx + 8, cy + 3);
-        line(cx - 6, cy - 6, cx + 6, cy - 6);
-        line(cx - 6, cy + 6, cx + 6, cy + 6);
         break;
     case ObjectContextAction::DistributeVertical:
         box(cx - 3, cy - 8, cx + 3, cy - 4);
         box(cx - 3, cy - 2, cx + 3, cy + 2);
         box(cx - 3, cy + 4, cx + 3, cy + 8);
-        line(cx - 6, cy - 6, cx - 6, cy + 6);
-        line(cx + 6, cy - 6, cx + 6, cy + 6);
         break;
     case ObjectContextAction::Group:
         two_objects();
@@ -584,8 +594,7 @@ void draw_object_context_icon(HDC dc, ObjectContextAction action, int cx, int cy
         break;
     case ObjectContextAction::BooleanDifference:
         two_objects();
-        line(cx - 2, cy - 5, cx - 2, cy + 5);
-        line(cx - 4, cy - 3, cx, cy + 3);
+        line(cx - 4, cy, cx, cy);
         break;
     case ObjectContextAction::BooleanIntersection: {
         two_objects();
@@ -603,8 +612,7 @@ void draw_object_context_icon(HDC dc, ObjectContextAction action, int cx, int cy
         break;
     case ObjectContextAction::BooleanReverseDifference:
         two_objects();
-        line(cx + 2, cy - 5, cx + 2, cy + 5);
-        line(cx, cy - 3, cx + 4, cy + 3);
+        line(cx, cy, cx + 4, cy);
         break;
     case ObjectContextAction::FlipHorizontal:
         line(cx, cy - 6, cx, cy + 6);
@@ -636,6 +644,107 @@ void draw_object_context_icon(HDC dc, ObjectContextAction action, int cx, int cy
         break;
     }
     SelectObject(dc, old_brush);
+    SelectObject(dc, old_pen);
+    DeleteObject(pen);
+}
+
+void draw_lock_icon(HDC dc, int cx, int cy, bool locked, COLORREF color) {
+    auto* api = GdiplusApi::get();
+    if (api) {
+        GpGraphics* g = nullptr;
+        if (api->CreateFromHDC(dc, &g) == 0 && g) {
+            api->SetSmoothingMode(g, kSmoothingModeAntiAlias);
+            api->SetPixelOffsetMode(g, kPixelOffsetModeHalf);
+            const float fcx = static_cast<float>(cx);
+            const float fcy = static_cast<float>(cy);
+
+            GpPen* pen = nullptr;
+            api->CreatePen1(MakeGdiplusARGB(color, 255), 1.5f, kUnitPixel, &pen);
+            api->SetPenLineCap197819(pen, kLineCapRound, kLineCapRound, 0);
+
+            GpSolidFill* brush = nullptr;
+            api->CreateSolidFill(MakeGdiplusARGB(color, 255), &brush);
+
+            if (locked) {
+                GpPath* shackle = nullptr;
+                api->CreatePath(kFillModeAlternate, &shackle);
+                api->AddPathArc(shackle, fcx - 3.5f, fcy - 7.5f, 7.0f, 7.0f, 180.0f, 180.0f);
+                api->AddPathLine(shackle, fcx + 3.5f, fcy - 4.0f, fcx + 3.5f, fcy - 1.0f);
+                api->AddPathLine(shackle, fcx - 3.5f, fcy - 1.0f, fcx - 3.5f, fcy - 4.0f);
+                api->DrawPath(g, pen, shackle);
+                api->DeletePath(shackle);
+
+                api->FillRectangle(g, brush, fcx - 5.0f, fcy - 1.0f, 10.0f, 8.0f);
+                GpSolidFill* hole = nullptr;
+                api->CreateSolidFill(MakeGdiplusARGB(RGB(255, 255, 255), 230), &hole);
+                api->FillEllipse(g, hole, fcx - 1.2f, fcy + 1.8f, 2.4f, 2.4f);
+                api->DeleteBrush(hole);
+            } else {
+                GpPath* shackle = nullptr;
+                api->CreatePath(kFillModeAlternate, &shackle);
+                api->AddPathArc(shackle, fcx - 4.5f, fcy - 9.5f, 7.0f, 7.0f, 180.0f, 180.0f);
+                api->AddPathLine(shackle, fcx - 4.5f, fcy - 6.0f, fcx - 4.5f, fcy - 1.0f);
+                api->DrawPath(g, pen, shackle);
+                api->DeletePath(shackle);
+
+                api->FillRectangle(g, brush, fcx - 5.0f, fcy - 1.0f, 10.0f, 8.0f);
+                GpSolidFill* hole = nullptr;
+                api->CreateSolidFill(MakeGdiplusARGB(RGB(255, 255, 255), 230), &hole);
+                api->FillEllipse(g, hole, fcx - 1.2f, fcy + 1.8f, 2.4f, 2.4f);
+                api->DeleteBrush(hole);
+            }
+            api->DeleteBrush(brush);
+            api->DeletePen(pen);
+            api->DeleteGraphics(g);
+            return;
+        }
+    }
+    HPEN pen = CreatePen(PS_SOLID, 1, color);
+    HBRUSH brush = CreateSolidBrush(color);
+    const HGDIOBJ old_pen = SelectObject(dc, pen);
+    const HGDIOBJ old_brush = SelectObject(dc, brush);
+    Rectangle(dc, cx - 5, cy - 1, cx + 5, cy + 7);
+    Arc(dc, cx - 4, cy - 7, cx + 4, cy + 1, cx + 4, cy - 1, cx - 4, cy - 1);
+    SelectObject(dc, old_brush);
+    SelectObject(dc, old_pen);
+    DeleteObject(brush);
+    DeleteObject(pen);
+}
+
+void draw_angle_icon(HDC dc, int cx, int cy, COLORREF color) {
+    auto* api = GdiplusApi::get();
+    if (api) {
+        GpGraphics* g = nullptr;
+        if (api->CreateFromHDC(dc, &g) == 0 && g) {
+            api->SetSmoothingMode(g, kSmoothingModeAntiAlias);
+            api->SetPixelOffsetMode(g, kPixelOffsetModeHalf);
+            const float fcx = static_cast<float>(cx);
+            const float fcy = static_cast<float>(cy);
+
+            GpPen* pen = nullptr;
+            api->CreatePen1(MakeGdiplusARGB(color, 255), 1.5f, kUnitPixel, &pen);
+            api->SetPenLineCap197819(pen, kLineCapRound, kLineCapRound, 0);
+
+            api->DrawLine(g, pen, fcx - 6.0f, fcy + 5.0f, fcx + 6.0f, fcy + 5.0f);
+            api->DrawLine(g, pen, fcx - 6.0f, fcy + 5.0f, fcx + 3.0f, fcy - 4.0f);
+
+            GpPath* arc = nullptr;
+            api->CreatePath(kFillModeAlternate, &arc);
+            api->AddPathArc(arc, fcx - 11.0f, fcy, 10.0f, 10.0f, 315.0f, 45.0f);
+            api->DrawPath(g, pen, arc);
+            api->DeletePath(arc);
+
+            api->DeletePen(pen);
+            api->DeleteGraphics(g);
+            return;
+        }
+    }
+    HPEN pen = CreatePen(PS_SOLID, 1, color);
+    const HGDIOBJ old_pen = SelectObject(dc, pen);
+    MoveToEx(dc, cx - 6, cy + 5, nullptr);
+    LineTo(dc, cx + 6, cy + 5);
+    MoveToEx(dc, cx - 6, cy + 5, nullptr);
+    LineTo(dc, cx + 3, cy - 4);
     SelectObject(dc, old_pen);
     DeleteObject(pen);
 }

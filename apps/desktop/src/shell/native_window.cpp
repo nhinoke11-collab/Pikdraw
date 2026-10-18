@@ -4,6 +4,8 @@
 #include "native_window_menus.hpp"
 #include "native_window_page_presets.hpp"
 #include "native_canvas_frame.hpp"
+#include "native_window_document_color.hpp"
+#include "pikdraw/color/preview/color_transform.hpp"
 #ifdef _WIN32
 #include "../clipboard/native_clipboard.hpp"
 #endif
@@ -54,23 +56,62 @@ void NativeWindow::initialize_default_tab() {
     tab.title = (language_ == UILanguage::Vietnamese) ? "Bản vẽ 1" : "Document 1";
     tab.page_width_mm = 297.0;
     tab.page_height_mm = 210.0;
-    tab.color_mode = "CMYK";
-    tab.dpi = 300;
     tab.unit = "mm";
     tab.root = std::make_unique<CompositionRoot>();
     tab.root->initialize(static_cast<double>(width_), static_cast<double>(height_), 1.0);
     tab.root->renderer().backend().set_canvas_background(canvas_background_color());
     tab.workflow = std::make_unique<DocumentWorkflow>(*tab.root);
-    tab.workflow->new_document(297.0, 210.0);
+    tab.workflow->new_document(297.0, 210.0, color::DocumentColorMode::Cmyk, 300);
     register_drawing_actions(*tab.root);
     tabs_.push_back(std::move(tab));
     active_tab_index_ = 0;
     document_path_ = active_tab().file_path;
     bind_drawing_tool_to_active_document();
+#ifdef _WIN32
+    load_color_preferences();
+#endif
 }
 
 void NativeWindow::register_drawing_actions(CompositionRoot& document_root) {
+    document_root.document().add_snapshot_listener([this, document = &document_root.document()](auto snapshot) {
+        if (tabs_.empty() || &root().document() != document) return;
+        default_style_.fill = color::convert_color_to_mode(default_style_.fill, snapshot->color_mode());
+        default_style_.stroke = color::convert_color_to_mode(default_style_.stroke, snapshot->color_mode());
+    });
     auto& dispatcher = document_root.window().action_dispatcher();
+    document_color_ui::register_actions(dispatcher, [this](color::DocumentColorMode mode) {
+#ifdef _WIN32
+        const auto snapshot = root().document().current_snapshot();
+        if (snapshot->page().color_mode_explicit && snapshot->color_mode() == mode) return;
+        if (!document_color_ui::confirm_conversion(hwnd_, language_ == UILanguage::Vietnamese)) return;
+        if (is_inline_text_editing_) commit_inline_text_editing();
+        cancel_canvas_interaction();
+#endif
+        const bool success = workflow().convert_document_color_mode(mode, color_preview_);
+        const std::string mode_name = mode == color::DocumentColorMode::Cmyk ? "CMYK" : "RGB";
+        const bool icc_active = color_preview_ && color_preview_->has_cmyk_transform();
+        const std::string conversion_method = icc_active ? "ICC"
+            : (language_ == UILanguage::Vietnamese ? "gần đúng" : "approximate");
+        status_msg_ = success ? (language_ == UILanguage::Vietnamese
+            ? "Hệ màu tài liệu: " + mode_name + " · " + conversion_method + " · Ctrl+Z hoàn tác"
+            : "Document color mode: " + mode_name + " · " + conversion_method + " · Ctrl+Z to undo")
+            : (language_ == UILanguage::Vietnamese ? "Không thể chuyển hệ màu" : "Color conversion failed");
+#ifdef _WIN32
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+    }, [this](int32_t dpi) {
+#ifdef _WIN32
+        if (is_inline_text_editing_) commit_inline_text_editing();
+        cancel_canvas_interaction();
+#endif
+        const bool success = workflow().set_document_raster_dpi(dpi);
+        status_msg_ = success ? (language_ == UILanguage::Vietnamese ? "DPI hiệu ứng raster: " : "Raster effects DPI: ")
+            + std::to_string(dpi) + " · Ctrl+Z"
+            : (language_ == UILanguage::Vietnamese ? "Không thể đổi DPI" : "DPI change failed");
+#ifdef _WIN32
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+    });
     dispatcher.register_action({std::string(actions::ActionId::kToolNodeEdit),
         "Chỉnh sửa điểm Node", "Node Edit Tool", "", [this] { set_active_tool(11); }, nullptr});
     dispatcher.register_action({std::string(actions::ActionId::kToolLine),
@@ -114,6 +155,9 @@ void NativeWindow::bind_drawing_tool_to_active_document() {
     }
     if (tabs_.empty() || !active_tab().root)
         return;
+    const auto snapshot = root().document().current_snapshot();
+    default_style_.fill = color::convert_color_to_mode(default_style_.fill, snapshot->color_mode());
+    default_style_.stroke = color::convert_color_to_mode(default_style_.stroke, snapshot->color_mode());
     if (color_preview_)
         (void)root().renderer().backend().set_color_preview(color_preview_);
     const auto mode = active_tool_ == 1 ? vector::ToolMode::Rectangle
@@ -207,6 +251,7 @@ size_t NativeWindow::drawing_path_point_count() const noexcept {
 
 void NativeWindow::switch_to_tab(size_t index) noexcept {
     if (index < tabs_.size() && index != active_tab_index_) {
+        if (is_inline_text_editing_) commit_inline_text_editing();
         if (drawing_tool_) drawing_tool_->cancel();
         active_tab_index_ = index;
         document_path_ = active_tab().file_path;
@@ -220,6 +265,7 @@ void NativeWindow::switch_to_tab(size_t index) noexcept {
 
 void NativeWindow::close_tab(size_t index) noexcept {
     if (index >= tabs_.size()) return;
+    if (is_inline_text_editing_) commit_inline_text_editing();
     if (tabs_.size() > 1) {
         const bool closing_active = index == active_tab_index_;
         if (closing_active && drawing_tool_) {
@@ -241,7 +287,7 @@ void NativeWindow::close_tab(size_t index) noexcept {
 #endif
     } else {
         if (drawing_tool_) drawing_tool_->cancel();
-        workflow().new_document(297.0, 210.0);
+        workflow().new_document(297.0, 210.0, color::DocumentColorMode::Cmyk, 300);
         bind_drawing_tool_to_active_document();
         active_tab().title = (language_ == UILanguage::Vietnamese) ? "Bản vẽ 1" : "Document 1";
         active_tab().file_path = "";
@@ -257,19 +303,19 @@ void NativeWindow::close_tab(size_t index) noexcept {
 
 void NativeWindow::create_new_tab(const std::string& title, double w_mm, double h_mm,
                                   const std::string& color_mode, int dpi) {
+    if (is_inline_text_editing_) commit_inline_text_editing();
     DocumentTab tab;
     tab.id = "doc-" + std::to_string(next_doc_counter_++);
     tab.title = title.empty() ? ("Bản vẽ " + std::to_string(tabs_.size() + 1)) : title;
     tab.page_width_mm = w_mm;
     tab.page_height_mm = h_mm;
-    tab.color_mode = color_mode;
-    tab.dpi = dpi;
     tab.unit = "mm";
     tab.root = std::make_unique<CompositionRoot>();
     tab.root->initialize(static_cast<double>(width_), static_cast<double>(height_), 1.0);
     tab.root->renderer().backend().set_canvas_background(canvas_background_color());
     tab.workflow = std::make_unique<DocumentWorkflow>(*tab.root);
-    tab.workflow->new_document(w_mm, h_mm);
+    tab.workflow->new_document(w_mm, h_mm, color_mode == "CMYK"
+        ? color::DocumentColorMode::Cmyk : color::DocumentColorMode::Rgb, dpi);
     register_drawing_actions(*tab.root);
     if (drawing_tool_) drawing_tool_->cancel();
     tabs_.push_back(std::move(tab));
@@ -283,6 +329,7 @@ void NativeWindow::create_new_tab(const std::string& title, double w_mm, double 
 }
 
 void NativeWindow::open_new_doc_modal() noexcept {
+    if (is_inline_text_editing_) commit_inline_text_editing();
     show_new_doc_modal_ = true;
     new_doc_name_ = utf8_to_wide("Bản vẽ " + std::to_string(next_doc_counter_));
     new_doc_preset_ = 0;
@@ -530,6 +577,9 @@ NativeWindow::NativeWindow(int width, int height)
 }
 
 NativeWindow::~NativeWindow() {
+#ifdef _WIN32
+    cancel_export_job();
+#endif
     mcp_runtime_.reset();
 #ifdef _WIN32
     cleanup_canvas_cache();

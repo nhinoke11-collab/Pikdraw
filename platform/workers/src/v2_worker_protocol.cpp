@@ -1,7 +1,9 @@
 #include "v2_worker_protocol.hpp"
 
+#include "pikdraw/interop/adapters/cdr_extractor.hpp"
 #include "pikdraw/interop/adapters/dxf_importer.hpp"
 #include "pikdraw/interop/adapters/dxf_worker_adapter.hpp"
+#include "pikdraw/interop/adapters/raster_worker_adapter.hpp"
 #include "pikdraw/interop/adapters/svg_worker_adapter.hpp"
 #include "pikdraw/workers/source_snapshot.hpp"
 
@@ -132,7 +134,7 @@ bool VerifySource(HANDLE source, const V2ImportBegin& request) {
 
 bool ReadVerifiedSource(HANDLE source, uint64_t expected_bytes, std::vector<uint8_t>& bytes) {
     if (source == INVALID_HANDLE_VALUE || expected_bytes == 0 ||
-        expected_bytes > std::max(SvgImporter::kMaxSourceBytes, DxfImporter::kMaxSourceBytes) ||
+        expected_bytes > 64ULL * 1024ULL * 1024ULL ||
         expected_bytes > SIZE_MAX) return false;
     LARGE_INTEGER beginning{};
     if (!SetFilePointerEx(source, beginning, nullptr, FILE_BEGIN)) return false;
@@ -166,7 +168,8 @@ bool SendImportProposal(HANDLE output, const V2ImportBegin& request,
     std::string diagnostic;
     if (!build_records(source, records, diagnostic)) {
         const char* fallback = format == "DXF" ? "DXF subset rejected source"
-                                                : "SVG subset rejected source";
+            : format == "RASTER" ? "Raster source rejected by the bounded RGBA8 profile"
+                                  : "SVG subset rejected source";
         return SendError(output, request_sequence, 3,
                          diagnostic.empty() ? fallback : diagnostic.c_str());
     }
@@ -179,7 +182,8 @@ bool SendImportProposal(HANDLE output, const V2ImportBegin& request,
     V2ProposalChunk chunk;
     chunk.job = request.job;
     uint32_t next_record_ordinal = 0;
-    constexpr size_t max_stream_bytes = 16 * 1024 * 1024;
+    const size_t max_stream_bytes = format == "RASTER" ? 20 * 1024 * 1024
+                                                        : 16 * 1024 * 1024;
     constexpr size_t chunk_target_bytes = IPC_V2_MAX_FRAME_BYTES - 256;
     try {
         canonical_stream.reserve(1024 * 1024);
@@ -268,11 +272,21 @@ bool HandleImportBegin(
     const bool is_dxf = request->format_id == "DXF" &&
         FormatCapabilities::is_worker_import_profile_supported(
             FormatType::Dxf, request->profile_id);
-    if (!is_svg && !is_dxf) {
+    const bool is_png = request->format_id == "PNG";
+    const bool is_jpeg = request->format_id == "JPEG";
+    const bool is_tiff = request->format_id == "TIFF";
+    const bool is_raster = (is_png || is_jpeg || is_tiff) &&
+        FormatCapabilities::is_worker_import_profile_supported(
+            is_png ? FormatType::Png : is_jpeg ? FormatType::Jpeg : FormatType::Tiff,
+            request->profile_id);
+    const bool is_cdr = request->format_id == "CDR" &&
+        FormatCapabilities::is_worker_import_profile_supported(
+            FormatType::Cdr, request->profile_id);
+    if (!is_svg && !is_dxf && !is_raster && !is_cdr) {
         return SendError(output, header.sequence_id, 1, "unsupported format or profile");
     }
-    const uint64_t source_limit = is_dxf ? DxfImporter::kMaxSourceBytes
-                                         : SvgImporter::kMaxSourceBytes;
+    const uint64_t source_limit = (is_raster || is_cdr) ? 64ULL * 1024ULL * 1024ULL
+        : is_dxf ? DxfImporter::kMaxSourceBytes : SvgImporter::kMaxSourceBytes;
     if (request->source_bytes > source_limit) {
         return SendError(output, header.sequence_id, 4, "source exceeds import profile byte limit");
     }
@@ -280,9 +294,39 @@ bool HandleImportBegin(
     if (!ReadVerifiedSource(source, request->source_bytes, source_bytes)) {
         return SendError(output, header.sequence_id, 2, "source capability read failed");
     }
+    if (is_cdr) {
+        const auto build_cdr = [](std::span<const uint8_t> source,
+                                  std::vector<CanonicalImportRecord>& records,
+                                  std::string& diagnostic) -> bool {
+            auto extracted = CdrExtractor::extract_preview(source);
+            if (!extracted.success || extracted.thumbnail_png.empty()) {
+                diagnostic = extracted.error_message.empty()
+                    ? "Failed to extract preview from CorelDRAW container"
+                    : extracted.error_message;
+                return false;
+            }
+            if (!BuildRasterImportRecords(extracted.thumbnail_png, records, diagnostic)) {
+                return false;
+            }
+            if (extracted.page_width_mm > 0.0 && extracted.page_height_mm > 0.0 && !records.empty()) {
+                ImportPageRecord page_record{extracted.page_width_mm, extracted.page_height_mm};
+                auto encoded = SerializeImportRecord(page_record);
+                if (encoded) {
+                    records.front() = std::move(*encoded);
+                }
+            }
+            return true;
+        };
+        return SendImportProposal(output, *request, source_bytes, header.sequence_id,
+            "CorelDRAW", 80, build_cdr);
+    }
     if (is_dxf) {
         return SendImportProposal(output, *request, source_bytes, header.sequence_id,
             "DXF", DxfImporter::kMaxObjects * 4 + 2, BuildDxfImportRecords);
+    }
+    if (is_raster) {
+        return SendImportProposal(output, *request, source_bytes, header.sequence_id,
+            "RASTER", 80, BuildRasterImportRecords);
     }
     return SendImportProposal(output, *request, source_bytes, header.sequence_id,
         "SVG", SvgImporter::kMaxObjects * 2 + 2, BuildSvgImportRecords);

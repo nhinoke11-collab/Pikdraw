@@ -18,7 +18,7 @@ namespace pikdraw::color {
 struct IccPreview::Impl {
     mutable std::atomic<uint64_t> failures{0};
 #ifdef _WIN32
-    HTRANSFORM rgb{nullptr}, cmyk{nullptr};
+    HTRANSFORM rgb{nullptr}, cmyk{nullptr}, to_cmyk{nullptr}, to_rgb{nullptr};
     mutable std::mutex mutex;
     mutable std::map<std::array<WORD, 5>, PreviewRGBA> cache;
     ~Impl() {
@@ -26,6 +26,8 @@ struct IccPreview::Impl {
             DeleteColorTransform(rgb);
         if (cmyk)
             DeleteColorTransform(cmyk);
+        if (to_cmyk) DeleteColorTransform(to_cmyk);
+        if (to_rgb) DeleteColorTransform(to_rgb);
     }
 #endif
 };
@@ -66,8 +68,8 @@ struct ProfileHandle {
     }
 };
 HTRANSFORM make_transform(const std::filesystem::path &source, DWORD expected,
-                          const std::filesystem::path &destination) {
-    ProfileHandle input(source, expected), output(destination, SPACE_RGB);
+                          const std::filesystem::path &destination, DWORD output_space = SPACE_RGB) {
+    ProfileHandle input(source, expected), output(destination, output_space);
     HPROFILE profiles[] = {input.value, output.value};
     DWORD intents[] = {INTENT_RELATIVE_COLORIMETRIC, INTENT_RELATIVE_COLORIMETRIC};
     const auto transform = CreateMultiProfileTransform(profiles, 2, intents, 2, BEST_MODE, INDEX_DONT_CARE);
@@ -92,8 +94,12 @@ std::shared_ptr<const IccPreview> IccPreview::create(const std::filesystem::path
             throw std::runtime_error("System sRGB ICC profile is unavailable");
         auto impl = std::make_unique<Impl>();
         impl->rgb = make_transform(rgb_source.empty() ? output : rgb_source, SPACE_RGB, output);
-        if (!cmyk_source.empty())
+        if (!cmyk_source.empty()) {
             impl->cmyk = make_transform(cmyk_source, SPACE_CMYK, output);
+            const auto input_rgb = rgb_source.empty() ? output : rgb_source;
+            impl->to_cmyk = make_transform(input_rgb, SPACE_RGB, cmyk_source, SPACE_CMYK);
+            impl->to_rgb = make_transform(cmyk_source, SPACE_CMYK, input_rgb);
+        }
         return std::shared_ptr<const IccPreview>(new IccPreview(std::move(impl)));
     } catch (const std::exception &failure) {
         if (error)
@@ -116,6 +122,46 @@ bool IccPreview::has_cmyk_transform() const noexcept {
 }
 uint64_t IccPreview::conversion_failure_count() const noexcept {
     return impl_->failures.load(std::memory_order_relaxed);
+}
+bool IccPreview::convert_process(const ColorValue& source, DocumentColorMode target,
+                                 ColorValue& result) const noexcept {
+#ifdef _WIN32
+    if (!source.is_valid()) return false;
+    COLOR input{}, output{};
+    HTRANSFORM transform = nullptr;
+    COLORTYPE input_type = COLOR_RGB, output_type = COLOR_CMYK;
+    double alpha = 1;
+    if (target == DocumentColorMode::Cmyk) {
+        const auto* rgb = std::get_if<RGBColor>(&source.payload());
+        if (!rgb || !impl_->to_cmyk) return false;
+        input.rgb = {channel(rgb->r), channel(rgb->g), channel(rgb->b)};
+        alpha = rgb->a;
+        transform = impl_->to_cmyk;
+    } else {
+        const auto* cmyk = std::get_if<CMYKColor>(&source.payload());
+        if (!cmyk || !impl_->to_rgb) return false;
+        input.cmyk = {channel(cmyk->c), channel(cmyk->m), channel(cmyk->y), channel(cmyk->k)};
+        alpha = cmyk->a;
+        input_type = COLOR_CMYK;
+        output_type = COLOR_RGB;
+        transform = impl_->to_rgb;
+    }
+    std::lock_guard lock(impl_->mutex);
+    if (!TranslateColors(transform, &input, 1, input_type, &output, output_type)) {
+        impl_->failures.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    result = target == DocumentColorMode::Cmyk
+        ? ColorValue{CMYKColor{output.cmyk.cyan / 65535.0, output.cmyk.magenta / 65535.0,
+                               output.cmyk.yellow / 65535.0, output.cmyk.black / 65535.0, alpha}}
+        : ColorValue{RGBColor{output.rgb.red / 65535.0, output.rgb.green / 65535.0,
+                              output.rgb.blue / 65535.0, alpha}};
+    result.set_overprint(source.overprint());
+    return true;
+#else
+    (void)source; (void)target; (void)result;
+    return false;
+#endif
 }
 PreviewRGBA IccPreview::convert(const ColorValue &source) const noexcept {
     auto fallback = to_preview_rgba(source);

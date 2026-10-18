@@ -40,6 +40,17 @@ int main() {
             REQUIRE(channels.c == 0 && channels.m == 1 && channels.y == 1 && channels.k == 0);
             const auto different_alpha = print->convert(ColorValue::make_cmyk(0, 1, 1, 0, .2));
             REQUIRE(std::abs(different_alpha.a - .2) < 1e-6);
+            auto rgb_source = ColorValue::make_rgb(.17, .42, .83, .37);
+            rgb_source.set_overprint({true, true});
+            const auto cmyk = convert_color_to_mode(rgb_source, DocumentColorMode::Cmyk, print.get());
+            const auto& process = std::get<CMYKColor>(cmyk.payload());
+            REQUIRE(process.a == .37 && cmyk.overprint().fill && cmyk.overprint().stroke);
+            const auto fallback = convert_color_to_mode(rgb_source, DocumentColorMode::Cmyk);
+            REQUIRE(!process.approx_equal(std::get<CMYKColor>(fallback.payload()), .001));
+            const auto restored_rgb = convert_color_to_mode(cmyk, DocumentColorMode::Rgb, print.get());
+            REQUIRE(std::get<RGBColor>(restored_rgb.payload()).a == .37);
+            const auto black = convert_color_to_mode(ColorValue::make_rgb(0, 0, 0), DocumentColorMode::Cmyk, print.get());
+            REQUIRE((std::get<CMYKColor>(black.payload()).approx_equal({0, 0, 0, 1, 1}, 0)));
             std::cout
                 << "[PASS] Installed SWOP CMYK -> sRGB ICC, independent channels, alpha cache; difference="
                 << difference << '\n';

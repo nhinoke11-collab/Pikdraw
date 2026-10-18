@@ -93,7 +93,7 @@ bool D2DEffectsPipeline::apply_effects(
             const float sigma_px = static_cast<float>(
                 std::max(effect.sigma_x_mm, effect.sigma_y_mm) * camera_zoom);
             const float dx_px = static_cast<float>(effect.dx_mm * camera_zoom);
-            const float dy_px = static_cast<float>(effect.dy_mm * camera_zoom);
+            const float dy_px = static_cast<float>(-effect.dy_mm * camera_zoom);
 
             if (sigma_px * 4.0f > kMaxTextureDimensionPx) {
               diagnostics.push_back({object_id, true,

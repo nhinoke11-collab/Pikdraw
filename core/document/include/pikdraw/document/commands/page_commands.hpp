@@ -53,7 +53,14 @@ inline CommandResult AddPageCommand::execute(Document& doc) {
         previous_pages_ = next;
         previous_active_page_id_ = doc.active_page_id();
     }
-    next.push_back(page_);
+    auto added = page_;
+    const auto& settings = doc.page();
+    added.layout.color_mode = settings.color_mode;
+    added.layout.color_profile_name = settings.color_profile_name;
+    added.layout.raster_dpi = settings.raster_dpi;
+    added.layout.color_mode_explicit = settings.color_mode_explicit;
+    added.layout.raster_dpi_explicit = settings.raster_dpi_explicit;
+    next.push_back(std::move(added));
     const auto active_id = activate_ ? page_.id : previous_active_page_id_;
     doc.apply_page_collection(std::move(next), active_id);
     applied_ = true;

@@ -165,6 +165,9 @@ GradientSelectionSummary summarize_gradient_selection(
                 if (std::abs(proj.length_mm - summary.length_mm) > 0.05) {
                     summary.mixed_length = true;
                 }
+                if (std::abs(proj.aspect_ratio - summary.aspect_ratio) > 0.001) {
+                    summary.mixed_aspect_ratio = true;
+                }
                 if (std::hypot(proj.center_mm.x - summary.center_mm.x,
                                proj.center_mm.y - summary.center_mm.y) > 0.05) {
                     summary.mixed_center = true;
@@ -198,6 +201,8 @@ void GradientPropertiesPresenter::load_selection(
     } else {
         draft_paint_.reset();
     }
+    selected_stop_id_ = draft_paint_ && !draft_paint_->stops.empty()
+        ? draft_paint_->stops.front().id : 0;
 
     bump_generation();
 }
@@ -206,6 +211,7 @@ void GradientPropertiesPresenter::ensure_draft() {
     if (!draft_paint_.has_value()) {
         const uint64_t paint_id = document::allocate_gradient_paint_id();
         draft_paint_ = document::GradientPaint::make_default_linear(paint_id, bounds_);
+        selected_stop_id_ = draft_paint_->stops.empty() ? 0 : draft_paint_->stops.front().id;
         bump_generation();
     }
 }
@@ -219,6 +225,14 @@ GradientGeometryProjection GradientPropertiesPresenter::geometry_projection() co
         return project_gradient_geometry(draft_paint_->kind, draft_paint_->gradient_to_object);
     }
     return GradientGeometryProjection{};
+}
+
+bool GradientPropertiesPresenter::select_stop(uint64_t stop_id) noexcept {
+    if (!draft_paint_ || std::none_of(draft_paint_->stops.begin(), draft_paint_->stops.end(),
+            [stop_id](const auto& stop) { return stop.id == stop_id; }))
+        return false;
+    selected_stop_id_ = stop_id;
+    return true;
 }
 
 void GradientPropertiesPresenter::set_kind(document::GradientKind kind) {
@@ -455,6 +469,8 @@ void GradientPropertiesPresenter::cancel() {
     } else {
         draft_paint_.reset();
     }
+    selected_stop_id_ = draft_paint_ && !draft_paint_->stops.empty()
+        ? draft_paint_->stops.front().id : 0;
     bump_generation();
 }
 
@@ -463,6 +479,7 @@ void GradientPropertiesPresenter::set_draft_paint(document::GradientPaint paint)
         return;
     }
     draft_paint_ = std::move(paint);
+    selected_stop_id_ = draft_paint_->stops.empty() ? 0 : draft_paint_->stops.front().id;
     is_dirty_ = true;
     kind_modified_ = true;
     spread_modified_ = true;

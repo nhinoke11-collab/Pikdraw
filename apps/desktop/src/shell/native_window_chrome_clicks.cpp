@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "native_window_text_properties.hpp"
 #include "native_window_file_menu.hpp"
 #include "native_window_menus.hpp"
 #include "native_window_page_presets.hpp"
@@ -7,6 +8,7 @@
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/gradient_tool_controller.hpp"
+#include "native_window_drop_shadow_paint.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -20,6 +22,10 @@
 #endif
 
 namespace pikdraw::desktop {
+
+#ifdef _WIN32
+void show_spot_palette_picker(NativeWindow& window, bool target_stroke);
+#endif
 
 #ifdef _WIN32
 
@@ -122,7 +128,41 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                 start_numeric_input(NumericFieldId::ObjectOpacity);
                 return true;
             }
-            if (x >= 52 && x <= 192) { cycle_font_family(); return true; }
+            if (x >= 52 && x <= 192) {
+                const auto view = text_properties_view(*this);
+                if (view.context && !view.editable) {
+                    status_msg_ = language_ == UILanguage::Vietnamese
+                        ? "Không thể sửa phông chữ của văn bản bị khóa hoặc ẩn"
+                        : "Cannot change the font of locked or hidden text";
+                    return true;
+                }
+                if (view.context && view.mixed_font) {
+                    status_msg_ = language_ == UILanguage::Vietnamese
+                        ? "Kiểu chữ đang hỗn hợp · chọn một đối tượng hoặc thống nhất trước"
+                        : "Font settings are mixed · select one object or unify them first";
+                    return true;
+                }
+                POINT screen_point{x, y};
+                ClientToScreen(hwnd_, &screen_point);
+                const auto family = choose_and_store_installed_text_font(hwnd_, screen_point, view,
+                    font_family_index_, font_size_pt_, font_bold_, font_italic_, font_underline_, font_alignment_);
+                if (family) {
+                    apply_text_style_controls(true);
+                    status_msg_ = view.context
+                        ? is_inline_editing()
+                            ? language_ == UILanguage::Vietnamese
+                                ? "Đã xem trước phông chữ · Ctrl+Enter lưu, Esc hủy"
+                                : "Font preview updated · Ctrl+Enter saves, Esc cancels"
+                            : language_ == UILanguage::Vietnamese
+                                ? "Đã cập nhật phông chữ · Ctrl+Z hoàn tác"
+                                : "Font updated · Ctrl+Z undoes"
+                        : language_ == UILanguage::Vietnamese
+                            ? "Phông mặc định cho Văn bản mới đã cập nhật"
+                            : "Default font for new Text updated";
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                }
+                return true;
+            }
             if (x >= 220 && x <= 240) { adjust_font_size(-2.0); return true; }
             if (x >= 294 && x <= 314) { adjust_font_size(2.0); return true; }
             if (x >= 322 && x <= 350) { toggle_font_bold(); return true; }
@@ -162,12 +202,21 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
             close_page_preset_dropdown();
             commit_numeric_field();
         } else {
+            size_t sidx = 0;
+            document::DropShadowEffect sval;
+            const bool has_shadow = selection.size() == 1 &&
+                DropShadowRibbon::get_shadow(*this, sidx, sval);
+            if (ribbon_drop_shadow_mode_ && has_shadow) {
+                if (DropShadowRibbon::handle_click(*this, x, y, w, 280))
+                    return true;
+            }
             // OBJECT MODE (Direct Numeric Input)
             if (x >= 10 && x <= 95) { start_numeric_input(NumericFieldId::ObjectX); return true; } // X box
             if (x >= 100 && x <= 185) { start_numeric_input(NumericFieldId::ObjectY); return true; } // Y box
-            if (x >= 190 && x <= 285) { start_numeric_input(NumericFieldId::ObjectWidth); return true; } // W box
-            if (x >= 290 && x <= 360) { commit_numeric_field(); toggle_aspect_ratio_lock(); InvalidateRect(hwnd_, nullptr, FALSE); return true; } // Lock toggle
-            if (x >= 365 && x <= 460) { start_numeric_input(NumericFieldId::ObjectHeight); return true; } // H box
+            if (x >= 190 && x <= 275) { start_numeric_input(NumericFieldId::ObjectWidth); return true; } // W box
+            if (x >= 280 && x <= 335) { commit_numeric_field(); toggle_aspect_ratio_lock(); InvalidateRect(hwnd_, nullptr, FALSE); return true; } // Lock toggle
+            if (x >= 340 && x <= 425) { start_numeric_input(NumericFieldId::ObjectHeight); return true; } // H box
+            if (x >= 435 && x <= 525) { start_numeric_input(NumericFieldId::ObjectRotation); return true; } // Rotation angle box
             if (selection.size() == 1 && workflow().can_set_selected_object_opacity() &&
                 x >= 720 && x <= 844 && x + 124 <= w - 280) {
                 start_numeric_input(NumericFieldId::ObjectOpacity);
@@ -217,7 +266,7 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                         return true;
                     }
                 } else if (selection.size() == 1) {
-                    int rx = 580;
+                    int rx = 540;
                     if (x >= rx && x < rx + 28) {
                         execute_menu_action(static_cast<int>(MenuActionId::ObjectFlipHorizontal));
                         return true;
@@ -235,6 +284,16 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                         return true;
                     }
                     rx += 130;
+                    if (has_shadow && x >= rx && x < rx + 66) {
+                        commit_numeric_field();
+                        ribbon_drop_shadow_mode_ = true;
+                        status_msg_ = language_ == UILanguage::Vietnamese
+                            ? "Đang hiển thị thanh thuộc tính Bóng đổ"
+                            : "Showing Drop Shadow properties";
+                        InvalidateRect(hwnd_, nullptr, FALSE);
+                        return true;
+                    }
+                    if (has_shadow) rx += 72;
                     if (workflow().is_group(selection.front())) {
                         if (x >= rx && x < rx + 66) {
                             if (workflow().ungroup_selected()) {
@@ -286,12 +345,14 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
         const int group_row = toolbox_open_group_ == 1 ? 1
                             : toolbox_open_group_ == 2 ? 2 : 6;
         const int flyout_top = 112 + group_row * 42;
-        const int flyout_height = toolbox_open_group_ == 3 ? 174 : 116;
+        const int flyout_height = toolbox_open_group_ == 3 ? 174
+            : toolbox_open_group_ == 2 ? 145 : 116;
         const bool inside_flyout = x >= 54 && x <= 242 &&
             y >= flyout_top && y < flyout_top + flyout_height;
         if (inside_flyout && y >= flyout_top + 26) {
             const int item = (y - flyout_top - 26) / 29;
-            const int max_items = toolbox_open_group_ == 3 ? 5 : 3;
+            const int max_items = toolbox_open_group_ == 3 ? 5
+                : toolbox_open_group_ == 2 ? 4 : 3;
             if (item >= 0 && item < max_items) {
                 if (toolbox_open_group_ == 3) {
                     activate_toolbox_effect_item(item);
@@ -300,7 +361,7 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                 }
                 const int tool = toolbox_open_group_ == 1
                     ? (item == 0 ? 1 : item == 1 ? 2 : 9)
-                    : (item == 0 ? 6 : item == 1 ? 7 : 8);
+                    : (item == 0 ? 6 : item == 1 ? 7 : item == 2 ? 8 : 11);
                 toolbox_open_group_ = 0;
                 workflow().cancel_effect_draft(); set_active_tool(tool);
                 InvalidateRect(hwnd_, nullptr, FALSE);
@@ -333,7 +394,7 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                             const int active = group == 1 ? quick_shapes_last_tool_ : path_drawing_last_tool_;
                             toolbox_flyout_index_ = group == 1
                                 ? (active == 1 ? 0 : active == 2 ? 1 : 2)
-                                : (active == 6 ? 0 : active == 7 ? 1 : 2);
+                                : (active == 6 ? 0 : active == 7 ? 1 : active == 8 ? 2 : 3);
                         }
                     }
                 } else if (group == 3) {
@@ -347,6 +408,7 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                         ? ((active_tool_ == 1 || active_tool_ == 2 || active_tool_ == 9)
                                ? active_tool_ : quick_shapes_last_tool_)
                         : ((active_tool_ >= 6 && active_tool_ <= 8)
+                               || active_tool_ == 11
                                ? active_tool_ : path_drawing_last_tool_);
                     workflow().cancel_effect_draft(); set_active_tool(active_in_group);
                 }
@@ -371,6 +433,11 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
             }
         }
         const int inspector_content_y = 138;
+        if (active_dock_tab_ == 0 && active_tool_ == 11 &&
+            y >= inspector_content_y + 24) {
+            (void)handle_node_property_click(x, y);
+            return true;
+        }
         if (active_dock_tab_ == 0 && active_tool_ == 9 && y >= inspector_content_y + 24) {
             if (x >= w - 148 && x <= w - 14 && y >= 172 && y <= 206) {
                 start_numeric_input(NumericFieldId::PolygonSides);
@@ -381,6 +448,153 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                 return true;
             }
             return true;
+        }
+        if (active_dock_tab_ == 0 && has_text_properties_target(*this) &&
+            y >= inspector_content_y) {
+            const auto view = text_properties_view(*this);
+            const int local_y = y - inspector_content_y;
+            if (local_y >= TextPropertiesLayout::font_button_top &&
+                local_y < TextPropertiesLayout::font_button_top + TextPropertiesLayout::font_button_height) {
+                const int panel_left = w - AlignPanelMetrics::dock_width + AlignPanelMetrics::content_left;
+                const int row_width = AlignPanelMetrics::content_width;
+                const int family_width = std::max(72, row_width - TextPropertiesLayout::font_size_width -
+                    3 * TextPropertiesLayout::style_button_width - 4 * TextPropertiesLayout::font_row_gap);
+                const int size_left = panel_left + family_width + TextPropertiesLayout::font_row_gap;
+                const int style_left = size_left + TextPropertiesLayout::font_size_width + TextPropertiesLayout::font_row_gap;
+                if (x >= size_left) {
+                    if (!view.editable) status_msg_ = language_ == UILanguage::Vietnamese ? "Văn bản bị khóa hoặc ẩn · không thể sửa thuộc tính" : "Text is locked or hidden · properties cannot be edited";
+                    else if (x < style_left) {
+                        if (!view.mixed_font) start_numeric_input(text_numeric_field(TextPropertyField::FontSize));
+                        else status_msg_ = language_ == UILanguage::Vietnamese ? "Kiểu chữ đang hỗn hợp · chọn một đối tượng hoặc thống nhất trước" : "Font settings are mixed · select one object or unify them first";
+                    } else if (!view.mixed_font) {
+                        const int index = std::clamp((x - style_left) / (TextPropertiesLayout::style_button_width + TextPropertiesLayout::font_row_gap), 0, 2);
+                        font_size_pt_ = view.size_pt; font_bold_ = view.bold; font_italic_ = view.italic;
+                        font_underline_ = view.underline; font_alignment_ = view.alignment;
+                        if (index == 0) toggle_font_bold(); else if (index == 1) toggle_font_italic(); else toggle_font_underline();
+                    } else status_msg_ = language_ == UILanguage::Vietnamese ? "Kiểu chữ đang hỗn hợp · chọn một đối tượng hoặc thống nhất trước" : "Font settings are mixed · select one object or unify them first";
+                    InvalidateRect(hwnd_, nullptr, FALSE); return true;
+                }
+                if (!view.editable) {
+                    status_msg_ = language_ == UILanguage::Vietnamese
+                        ? "Văn bản bị khóa hoặc ẩn · không thể sửa thuộc tính"
+                        : "Text is locked or hidden · properties cannot be edited";
+                } else if (view.mixed_font) {
+                    status_msg_ = language_ == UILanguage::Vietnamese
+                        ? "Kiểu chữ đang hỗn hợp · chọn một đối tượng hoặc thống nhất trước"
+                        : "Font settings are mixed · select one object or unify them first";
+                } else {
+                    POINT screen_point{x, y};
+                    ClientToScreen(hwnd_, &screen_point);
+                    const auto family = choose_installed_text_font(hwnd_, screen_point, view.family);
+                    if (family) {
+                        font_family_index_ = remember_text_font_family(*family);
+                        font_size_pt_ = view.size_pt;
+                        font_bold_ = view.bold;
+                        font_italic_ = view.italic;
+                        font_underline_ = view.underline;
+                        font_alignment_ = view.alignment;
+                        apply_text_style_controls(true);
+                        status_msg_ = is_inline_editing()
+                            ? language_ == UILanguage::Vietnamese
+                                ? "Đã xem trước họ phông · Ctrl+Enter lưu, Esc hủy"
+                                : "Font family previewed · Ctrl+Enter saves, Esc cancels"
+                            : language_ == UILanguage::Vietnamese
+                                ? "Đã cập nhật họ phông · Ctrl+Z hoàn tác"
+                                : "Font family updated · Ctrl+Z undoes";
+                    }
+                }
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return true;
+            }
+            if (local_y >= TextPropertiesLayout::size_field_top &&
+                local_y < TextPropertiesLayout::size_field_top + TextPropertiesLayout::field_height) {
+                if (view.editable && !view.mixed_font)
+                    start_numeric_input(text_numeric_field(TextPropertyField::FontSize));
+                else status_msg_ = view.editable
+                    ? language_ == UILanguage::Vietnamese
+                        ? "Kiểu chữ hỗn hợp · chọn một đối tượng hoặc thống nhất trước"
+                        : "Font settings are mixed · select one object or unify them first"
+                    : language_ == UILanguage::Vietnamese
+                        ? "Văn bản bị khóa hoặc ẩn · không thể sửa thuộc tính"
+                        : "Text is locked or hidden · properties cannot be edited";
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return true;
+            }
+            if (local_y >= TextPropertiesLayout::style_buttons_top &&
+                local_y < TextPropertiesLayout::style_buttons_top + TextPropertiesLayout::style_buttons_height) {
+                if (view.editable && !view.mixed_font) {
+                    const int button_width = (AlignPanelMetrics::content_width - 12) / 3;
+                    const int panel_left = w - AlignPanelMetrics::dock_width + AlignPanelMetrics::content_left;
+                    const int index = std::clamp((x - panel_left) / (button_width + 6), 0, 2);
+                    font_size_pt_ = view.size_pt;
+                    font_bold_ = view.bold;
+                    font_italic_ = view.italic;
+                    font_underline_ = view.underline;
+                    font_alignment_ = view.alignment;
+                    if (index == 0) toggle_font_bold();
+                    else if (index == 1) toggle_font_italic();
+                    else toggle_font_underline();
+                } else status_msg_ = view.editable
+                    ? language_ == UILanguage::Vietnamese
+                        ? "Kiểu chữ hỗn hợp · chọn một đối tượng hoặc thống nhất trước"
+                        : "Font settings are mixed · select one object or unify them first"
+                    : language_ == UILanguage::Vietnamese
+                        ? "Văn bản bị khóa hoặc ẩn · không thể sửa thuộc tính"
+                        : "Text is locked or hidden · properties cannot be edited";
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return true;
+            }
+            if (local_y >= TextPropertiesLayout::alignment_buttons_top &&
+                local_y < TextPropertiesLayout::alignment_buttons_top + TextPropertiesLayout::alignment_buttons_height) {
+                if (view.editable && !view.mixed_font) {
+                    const int button_width = (AlignPanelMetrics::content_width - 12) / 3;
+                    const int panel_left = w - AlignPanelMetrics::dock_width + AlignPanelMetrics::content_left;
+                    const int index = std::clamp((x - panel_left) / (button_width + 6), 0, 2);
+                    font_size_pt_ = view.size_pt;
+                    font_bold_ = view.bold;
+                    font_italic_ = view.italic;
+                    font_underline_ = view.underline;
+                    font_alignment_ = view.alignment;
+                    set_font_alignment(index == 0 ? typography::TextAlignment::Left
+                        : index == 1 ? typography::TextAlignment::Center
+                                      : typography::TextAlignment::Right);
+                } else status_msg_ = view.editable
+                    ? language_ == UILanguage::Vietnamese
+                        ? "Kiểu chữ hỗn hợp · chọn một đối tượng hoặc thống nhất trước"
+                        : "Font settings are mixed · select one object or unify them first"
+                    : language_ == UILanguage::Vietnamese
+                        ? "Văn bản bị khóa hoặc ẩn · không thể sửa thuộc tính"
+                        : "Text is locked or hidden · properties cannot be edited";
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return true;
+            }
+            if (local_y >= TextPropertiesLayout::frame_field_top &&
+                local_y < TextPropertiesLayout::frame_field_top + TextPropertiesLayout::field_height) {
+                if (view.editable) start_numeric_input(text_numeric_field(TextPropertyField::FrameWidth));
+                else status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Văn bản bị khóa hoặc ẩn · không thể sửa thuộc tính"
+                    : "Text is locked or hidden · properties cannot be edited";
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return true;
+            }
+            if (local_y >= TextPropertiesLayout::spacing_field_top &&
+                local_y < TextPropertiesLayout::spacing_field_top + TextPropertiesLayout::field_height) {
+                if (view.editable) start_numeric_input(text_numeric_field(TextPropertyField::LineSpacing));
+                else status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Văn bản bị khóa hoặc ẩn · không thể sửa thuộc tính"
+                    : "Text is locked or hidden · properties cannot be edited";
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return true;
+            }
+            if (local_y >= TextPropertiesLayout::image_search_top &&
+                local_y < TextPropertiesLayout::image_search_top + TextPropertiesLayout::image_search_height) {
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Tìm font bằng ảnh sẽ được phát triển sau"
+                    : "Font search from an image is planned for a later update";
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return true;
+            }
+            if (local_y >= 0) return true;
         }
         if (active_dock_tab_ == 0 && y >= inspector_content_y && y < inspector_content_y + 24) {
             const int panel_left = w - AlignPanelMetrics::dock_width + AlignPanelMetrics::content_left;
@@ -394,9 +608,19 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
         if (active_dock_tab_ == 0 && show_align_panel_ && handle_align_panel_click(x, y))
             return true;
         if (active_dock_tab_ == 0 && show_style_inspector_) {
+            const int style_x = x - (w - 280);
+            const int style_y = y - kStylePanelTop + style_inspector_scroll_;
+            if (style_y >= 504 && style_y < 532 && style_x >= 12 && style_x < 268) {
+                show_spot_palette_picker(*this, palette_stroke_);
+                return true;
+            }
             if (handle_style_click(x, y))
                 return true;
             if (y >= inspector_content_y + 24) return true;
+        }
+        if (active_dock_tab_ == 1) {
+            if (handle_layers_dock_click(x, y))
+                return true;
         }
     }
 

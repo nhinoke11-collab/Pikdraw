@@ -1,7 +1,9 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
 #include "pikdraw/desktop/actions/action_id.hpp"
 #include "../src/shell/native_window_menus.hpp"
+#include "../src/tools/node_tool_controller.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cctype>
 #include <cmath>
@@ -40,6 +42,8 @@ struct DrawingUiFixture {
 
     explicit DrawingUiFixture(std::filesystem::path output) : evidence(std::move(output)) {
         REQUIRE(window.initialize("PikDraw D09 Line and Polyline verification"));
+        if (window.is_recovery_modal_open())
+            SendMessageW(window.hwnd(), WM_KEYDOWN, VK_ESCAPE, 0);
         ShowWindow(window.hwnd(), SW_SHOW);
         SetForegroundWindow(window.hwnd());
         SetFocus(window.hwnd());
@@ -112,6 +116,8 @@ void test_per_monitor_dpi_mapping(const std::filesystem::path& evidence) {
     desktop::NativeWindow window(1440, 900);
     REQUIRE(window.dip(100) == 100); // Headless default.
     REQUIRE(window.initialize("PikDraw DPI regression"));
+    if (window.is_recovery_modal_open())
+        SendMessageW(window.hwnd(), WM_KEYDOWN, VK_ESCAPE, 0);
     RECT bounds{}; GetWindowRect(window.hwnd(), &bounds);
     const auto revision = window.root().document().revision();
     for (const unsigned dpi : {120u, 144u, 192u, 96u}) {
@@ -265,6 +271,88 @@ int main(int argc, char** argv) {
         REQUIRE(!action_dispatcher.dispatch_shortcut("F8"));
         REQUIRE(!action_dispatcher.dispatch_shortcut("F10"));
         REQUIRE(!action_dispatcher.dispatch_shortcut("Shift+F2"));
+
+        const auto node_menu = std::find_if(desktop::kToolsMenuItems.begin(),
+            desktop::kToolsMenuItems.end(), [](const desktop::MenuItem& item) {
+                return item.action == desktop::MenuActionId::ToolNode;
+            });
+        REQUIRE(node_menu != desktop::kToolsMenuItems.end() && !node_menu->is_disabled);
+        REQUIRE(action_dispatcher.get_action(desktop::actions::ActionId::kToolNodeEdit));
+        REQUIRE(action_dispatcher.dispatch(desktop::actions::ActionId::kToolNodeEdit));
+        REQUIRE(window.active_tool() == 11 && window.node_tool()->active());
+        window.execute_menu_action(static_cast<int>(desktop::MenuActionId::ToolNode));
+        REQUIRE(window.active_tool() == 11 && window.node_tool()->active());
+
+        // The Path Drawing flyout exposes Node to mouse and keyboard users.
+        window.set_active_tool(6);
+        window.handle_mouse_down(42, 214);
+        REQUIRE(window.toolbox_open_group() == 2);
+        if (!fixture.evidence.empty()) fixture.capture(L"node-tool-flyout.bmp");
+        window.handle_mouse_down(120, 323);
+        REQUIRE(window.active_tool() == 11 && window.node_tool()->active());
+        window.set_active_tool(6);
+        REQUIRE(window.handle_toolbox_key(VK_TAB));
+        REQUIRE(window.handle_toolbox_key(VK_TAB));
+        REQUIRE(window.handle_toolbox_key(VK_DOWN, true));
+        for (int i = 0; i < 3; ++i) REQUIRE(window.handle_toolbox_key(VK_DOWN));
+        REQUIRE(window.handle_toolbox_key(VK_RETURN));
+        REQUIRE(window.active_tool() == 11 && window.node_tool()->active());
+
+        // Select a real node, then exercise its Inspector mode and X/Y controls.
+        auto* node_tool = window.node_tool();
+        const auto target_id = node_tool->target_object();
+        const auto node_snapshot = document.current_snapshot();
+        REQUIRE(target_id != document::kInvalidObjectId && node_snapshot);
+        const auto* target_value = node_snapshot->objects().lookup_ref(target_id);
+        REQUIRE(target_value);
+        const auto* target = std::get_if<document::PathObject>(target_value);
+        REQUIRE(target && target->authoring_source &&
+                !target->authoring_source->subpaths.empty());
+        const auto original_node = target->authoring_source->subpaths.front().nodes.front();
+        const auto node_screen = fixture.point(original_node.anchor.x, original_node.anchor.y);
+        window.handle_mouse_down(node_screen.x, node_screen.y);
+        window.handle_mouse_up(node_screen.x, node_screen.y);
+        REQUIRE(node_tool->selected_node_count() == 1);
+        REQUIRE(node_tool->single_selected_node_position());
+        const auto original_position = *node_tool->single_selected_node_position();
+        const auto original_mode = node_tool->selected_nodes_mode();
+        REQUIRE(original_mode);
+
+        const int inspector_left = window.width() - 280;
+        const int button_width = (252 - 12) / 3;
+        const int smooth_button_x = inspector_left + 14 + button_width + 6 + button_width / 2;
+        window.handle_mouse_down(smooth_button_x, 288);
+        REQUIRE(node_tool->selected_nodes_mode() == document::PathNodeMode::Smooth);
+        REQUIRE(document.undo());
+        REQUIRE(node_tool->selected_nodes_mode() == original_mode);
+
+        const int coordinate_x = inspector_left + 160;
+        window.handle_mouse_down(coordinate_x, 196);
+        REQUIRE(window.active_numeric_field() == desktop::NativeWindow::NumericFieldId::ObjectX);
+        for (const wchar_t ch : std::wstring(L"24.5")) window.handle_numeric_char_input(ch);
+        window.handle_numeric_char_input(9); // Tab commits X and focuses Y.
+        REQUIRE(window.active_numeric_field() == desktop::NativeWindow::NumericFieldId::ObjectY);
+        for (const wchar_t ch : std::wstring(L"35")) window.handle_numeric_char_input(ch);
+        window.handle_numeric_char_input(13);
+        auto moved_position = node_tool->single_selected_node_position();
+        REQUIRE(moved_position && std::abs(moved_position->x - 24.5) < 1e-6);
+        REQUIRE(std::abs(moved_position->y - 35.0) < 1e-6);
+        REQUIRE(document.undo() && document.undo());
+        auto restored_position = node_tool->single_selected_node_position();
+        REQUIRE(restored_position && std::abs(restored_position->x - original_position.x) < 1e-6);
+        REQUIRE(std::abs(restored_position->y - original_position.y) < 1e-6);
+
+        window.handle_mouse_down(coordinate_x, 196);
+        for (const wchar_t ch : std::wstring(L"20001")) window.handle_numeric_char_input(ch);
+        window.handle_numeric_char_input(13);
+        REQUIRE(window.active_numeric_field() == desktop::NativeWindow::NumericFieldId::ObjectX);
+        REQUIRE(node_tool->single_selected_node_position() == restored_position);
+        window.handle_numeric_char_input(27);
+        window.handle_mouse_down(coordinate_x, 196);
+        for (const wchar_t ch : std::wstring(L"99")) window.handle_numeric_char_input(ch);
+        window.handle_numeric_char_input(27);
+        REQUIRE(node_tool->single_selected_node_position() == restored_position);
+        if (!fixture.evidence.empty()) fixture.capture(L"node-tool-properties.bmp");
 
         window.set_active_tool(6);
         const auto first_document_objects = document.current_snapshot()->object_count();

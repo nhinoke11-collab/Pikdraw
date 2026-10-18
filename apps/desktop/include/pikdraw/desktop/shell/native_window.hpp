@@ -6,6 +6,8 @@
 #include "pikdraw/desktop/presenters/object_style.hpp"
 #include "pikdraw/color/preview/color_transform.hpp"
 #include "pikdraw/document/storage/save_recovery.hpp"
+#include "pikdraw/desktop/tools/canvas_text_editor.hpp"
+#include "pikdraw/desktop/shell/native_window_layers_dock.hpp"
 
 #include <string>
 #include <memory>
@@ -31,8 +33,10 @@ struct CanvasFrameCache;
 struct NativeWindowAutomationRuntime;
 #ifdef _WIN32
 inline constexpr UINT kImportWorkerMessage = WM_APP + 0x37;
+inline constexpr UINT kExportWorkerMessage = WM_APP + 0x38;
 #endif
 struct ImportJobSession;
+struct ExportJobSession;
 enum class MenuActionId;
 namespace tools { class DrawingToolController; class PenToolController; class NodeToolController; class ContourToolController; class GradientToolController; }
 
@@ -92,13 +96,17 @@ public:
 
     [[nodiscard]] int active_dock_tab() const noexcept { return active_dock_tab_; }
     void set_active_dock_tab(int tab_index) noexcept;
+    [[nodiscard]] LayersDockState& layers_dock_state() noexcept { return layers_state_; }
+    [[nodiscard]] const LayersDockState& layers_dock_state() const noexcept { return layers_state_; }
     [[nodiscard]] bool align_distribute_panel_visible() const noexcept { return show_align_panel_; }
 
     void zoom_in() noexcept;
     void zoom_out() noexcept;
     void fit_page_to_canvas() noexcept;
     void trigger_export() noexcept;
-    bool export_svg_to(const std::string& file_path);
+    bool export_svg_to(const std::string& file_path, bool selected_objects = false,
+                       bool allow_replace_existing = false,
+                       bool all_pages = false);
     void create_new_document();
     bool apply_selection_color(bool stroke, color::ColorValue value);
     bool set_selection_fill_enabled(bool enabled);
@@ -113,13 +121,11 @@ public:
     void open_menu(int menu_id) noexcept;
     void close_menu() noexcept;
     void toggle_menu(int menu_id) noexcept;
-
     // File Menu (CorelDRAW Reference - Backward Compatibility)
     [[nodiscard]] bool is_file_menu_open() const noexcept { return open_menu_id_ == 0 || show_file_menu_; }
     void open_file_menu() noexcept;
     void close_file_menu() noexcept;
     void toggle_file_menu() noexcept;
-
     // Home Screen (Trang chủ)
     [[nodiscard]] bool is_home_screen_open() const noexcept { return show_home_screen_; }
     void open_home_screen() noexcept;
@@ -129,13 +135,11 @@ public:
     void set_active_home_tab(int tab) noexcept;
     void open_recent_document(int doc_index) noexcept;
     void create_from_template(int template_index) noexcept;
-
     [[nodiscard]] bool is_settings_modal_open() const noexcept { return show_settings_modal_; }
     void open_settings_modal() noexcept;
     void open_ai_connections_settings() noexcept;
     void close_settings_modal() noexcept;
     void toggle_settings_modal() noexcept;
-
     [[nodiscard]] int settings_active_tab() const noexcept { return settings_active_tab_; }
     void set_settings_tab(int tab) noexcept;
     void toggle_ai_connections_read_choice() noexcept;
@@ -146,16 +150,12 @@ public:
     [[nodiscard]] int ai_connections_focus_index() const noexcept { return settings_ai_focus_index_; }
     [[nodiscard]] bool ai_connections_read_choice() const noexcept { return settings_mcp_enabled_choice_; }
     [[nodiscard]] bool ai_connections_edit_choice() const noexcept { return settings_mcp_edit_choice_; }
-
     [[nodiscard]] int settings_theme_choice() const noexcept { return settings_theme_choice_; }
     void set_settings_theme_choice(int theme) noexcept;
-
     [[nodiscard]] int settings_accent_choice() const noexcept { return settings_accent_choice_; }
     void set_settings_accent_choice(int accent) noexcept;
-
     [[nodiscard]] int settings_unit_choice() const noexcept { return settings_unit_choice_; }
     void set_settings_unit_choice(int unit) noexcept;
-
     [[nodiscard]] DesktopWindow& shell() noexcept { return shell_; }
     [[nodiscard]] const DesktopWindow& shell() const noexcept { return shell_; }
 
@@ -170,8 +170,6 @@ public:
         bool recovery_written{false};
         double page_width_mm{297.0};
         double page_height_mm{210.0};
-        std::string color_mode{"CMYK"}; // CMYK or RGB
-        int dpi{300};
         std::string unit{"mm"};
         std::unique_ptr<CompositionRoot> root;
         std::unique_ptr<DocumentWorkflow> workflow;
@@ -189,7 +187,7 @@ public:
     void switch_to_tab(size_t index) noexcept;
     void close_tab(size_t index) noexcept;
     void create_new_tab(const std::string& title, double w_mm, double h_mm,
-                        const std::string& color_mode = "CMYK", int dpi = 300);
+                        const std::string& color_mode = "CMYK", int dpi = 0);
 
     // New Document Modal (Corel / Illus style)
     [[nodiscard]] bool is_new_doc_modal_open() const noexcept { return show_new_doc_modal_; }
@@ -214,8 +212,7 @@ public:
     // Group Isolation Mode (Chế độ cô lập nhóm - Corel & Illustrator style)
     [[nodiscard]] bool is_in_isolation_mode() const noexcept { return !isolation_stack_.empty(); }
     [[nodiscard]] std::optional<document::ObjectId> current_isolated_group_id() const noexcept {
-        if (isolation_stack_.empty()) return std::nullopt;
-        return isolation_stack_.back();
+        return isolation_stack_.empty() ? std::nullopt : std::optional{isolation_stack_.back()};
     }
     [[nodiscard]] const std::vector<document::ObjectId>& isolation_stack() const noexcept { return isolation_stack_; }
     void enter_group_isolation(document::ObjectId group_id);
@@ -231,15 +228,12 @@ public:
     void close_page_preset_dropdown() noexcept;
     [[nodiscard]] bool is_page_preset_dropdown_open() const noexcept { return show_page_preset_dropdown_; }
     void select_page_preset(int preset_index) noexcept;
-
     // Object transform
     void resize_selected_object(double delta_w, double delta_h, bool change_w = true);
     void move_selected_object(double delta_x, double delta_y);
-
     // Color operations
     void apply_fill_to_selection(const std::string& hex);
     void apply_stroke_to_selection(const std::string& hex, double width_mm);
-
     // Solid & Shaping operations
     bool trigger_boolean_operation(geometry::BooleanOp op);
     [[nodiscard]] bool keep_source_object() const noexcept { return keep_source_object_; }
@@ -254,6 +248,16 @@ public:
     void start_inline_text_editing(geometry::Point2D pos_mm, document::ObjectId existing_id = document::kInvalidObjectId);
     void commit_inline_text_editing();
     void cancel_inline_text_editing();
+    bool handle_inline_text_key(uint32_t key, bool control, bool shift);
+    bool handle_inline_text_character(uint32_t character);
+    bool handle_inline_text_mouse(int x, int y, int phase, bool shift = false);
+    void refresh_inline_text_preview();
+    void sync_inline_text_controls();
+    void apply_text_style_controls(bool change_family = false);
+#ifdef _WIN32
+    void paint_inline_text_overlay(HDC dc);
+    bool handle_inline_text_ime(LPARAM flags);
+#endif
     void cycle_font_family();
     void adjust_font_size(double delta_pt);
     void toggle_font_bold();
@@ -264,8 +268,14 @@ public:
     void insert_table(int rows = 3, int cols = 3);
     [[nodiscard]] bool is_text_object_selected() const;
     [[nodiscard]] bool is_inline_editing() const noexcept { return is_inline_text_editing_; }
+    [[nodiscard]] bool is_inline_text_editing() const noexcept { return is_inline_text_editing_; }
     [[nodiscard]] const std::string& inline_text_buffer() const noexcept { return inline_text_buffer_; }
     [[nodiscard]] const std::string& status_message() const noexcept { return status_msg_; }
+    void set_status_message(std::string message) { status_msg_ = std::move(message); }
+    [[nodiscard]] int shortcut_profile() const noexcept { return shortcut_profile_; }
+    void set_shortcut_profile(int profile) noexcept {
+        shortcut_profile_ = profile < 0 ? 0 : profile > 2 ? 2 : profile;
+    }
 
     // Align & Distribute (CorelDRAW & Illustrator Style)
     void align_selected_objects(geometry::AlignMode mode);
@@ -301,11 +311,7 @@ public:
     [[nodiscard]] WORD canvas_cursor_at(int x, int y) const;
 
     // Guideline System (CorelDRAW & Illustrator Style)
-    enum class GuidelineOrientation {
-        Horizontal,
-        Vertical
-    };
-
+    enum class GuidelineOrientation { Horizontal, Vertical };
     struct Guideline {
         GuidelineOrientation orientation{GuidelineOrientation::Horizontal};
         double position_mm{0.0};
@@ -335,22 +341,10 @@ public:
         PolygonRotation,
         ObjectX,
         ObjectY,
-        ObjectWidth,
-        ObjectHeight,
-        ObjectOpacity,
-        FillOpacity,
-        StrokeOpacity,
-        EffectSigmaX,
-        EffectSigmaY,
-        EffectOffsetX,
-        EffectOffsetY,
-        EffectOpacity,
-        DistributeSpacing,
-        PenExpression,
-        PenLength,
-        PenAngle,
-        ModalWidth,
-        ModalHeight
+        ObjectWidth, ObjectHeight, ObjectRotation, ObjectOpacity,
+        FillOpacity, StrokeOpacity, EffectSigmaX, EffectSigmaY, TextFontSize,
+        EffectOffsetX, EffectOffsetY, EffectOpacity, DistributeSpacing,
+        PenExpression, PenLength, PenAngle, ModalWidth, ModalHeight
     };
 
     [[nodiscard]] NumericFieldId active_numeric_field() const noexcept { return active_num_field_; }
@@ -377,20 +371,16 @@ public:
 
     [[nodiscard]] CompositionRoot& root() noexcept;
     [[nodiscard]] const CompositionRoot& root() const noexcept;
-
     [[nodiscard]] DocumentWorkflow& workflow() noexcept;
     [[nodiscard]] const DocumentWorkflow& workflow() const noexcept;
-
     [[nodiscard]] tools::NodeToolController* node_tool() noexcept { return node_tool_.get(); }
     [[nodiscard]] const tools::NodeToolController* node_tool() const noexcept { return node_tool_.get(); }
-
     [[nodiscard]] tools::ContourToolController* contour_tool() noexcept { return contour_tool_.get(); }
     [[nodiscard]] const tools::ContourToolController* contour_tool() const noexcept { return contour_tool_.get(); }
     void trigger_effects_contour();
     void trigger_break_contour_apart();
     bool handle_contour_property_click(int x, int y);
     void paint_contour_canvas_overlay(HDC hdc, const RECT& canvas);
-
     [[nodiscard]] tools::GradientToolController* gradient_tool() noexcept { return gradient_tool_.get(); }
     [[nodiscard]] const tools::GradientToolController* gradient_tool() const noexcept { return gradient_tool_.get(); }
     bool handle_gradient_property_click(int x, int y);
@@ -418,11 +408,16 @@ public:
     [[nodiscard]] bool is_canvas_point(int x, int y) const noexcept;
     [[nodiscard]] geometry::Point2D canvas_to_world(int x, int y) noexcept;
     [[nodiscard]] int selection_handle_at(int x, int y) const;
+    bool handle_chrome_click(int x, int y) { return handle_workspace_chrome_mouse_down(x, y, 0); }
+    bool handle_layers_dock_mouse_wheel(int delta);
+    bool apply_style_patch(const vector::StylePatch &patch);
 #endif
 
 private:
     // Narrow test seam for the in-process MCP E2E; credentials stay out of the public API.
     friend struct NativeWindowMcpE2eAccess;
+    friend struct NativeWindowExportE2eAccess;
+    friend struct DropShadowRibbon;
 
     bool start_mcp_gateway();
     void discard_ai_connections_choices() noexcept;
@@ -440,10 +435,20 @@ private:
 #ifdef _WIN32
     static LRESULT CALLBACK window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
     void open_import_dialog();
+    bool import_file_to_tab(const std::wstring& path, bool is_open_action = false);
     void request_cancel_import_job();
     void cancel_import_job();
     void handle_import_worker_message(WPARAM kind);
     [[nodiscard]] bool import_job_active() const noexcept;
+    void export_svg_dialog(bool selected_objects, bool all_pages);
+    [[nodiscard]] bool start_svg_export(const std::string& file_path,
+                                        bool selected_objects,
+                                        bool allow_replace_existing,
+                                        bool all_pages);
+    void request_cancel_export_job();
+    void cancel_export_job();
+    void handle_export_worker_message(WPARAM kind);
+    [[nodiscard]] bool export_job_active() const noexcept;
     void paint(HDC hdc, int width, int height);
     void paint_settings_modal(HDC mem_dc, int width, int height);
     void paint_new_document_modal(HDC mem_dc, int width, int height);
@@ -452,6 +457,8 @@ private:
     void paint_status_bar(HDC mem_dc, int width, int height, int status_height);
     void paint_left_toolbox(HDC mem_dc, int w, int h);
     void paint_right_inspector_dock(HDC mem_dc, int w, int h);
+    void paint_layers_dock(HDC mem_dc, int insp_x, int content_y, int w, int h, int status_h);
+    bool handle_layers_dock_click(int x, int y, bool is_double_click = false);
     void paint_main_menu_bar(HDC mem_dc, int w, int topbar_h);
     void paint_dropdown_menu(HDC mem_dc, int menu_id, int x, int y);
     RECT get_menu_bar_item_rect(int menu_index, int topbar_h) const noexcept;
@@ -514,19 +521,14 @@ private:
 
     HWND hwnd_{nullptr};
     void configure_ui_dc(HDC dc) const noexcept {
-        SetMapMode(dc, MM_ANISOTROPIC);
-        SetWindowExtEx(dc, 96, 96, nullptr);
-        const int dpi = static_cast<int>(std::lround(dpi_scale_ * 96));
-        SetViewportExtEx(dc, dpi, dpi, nullptr);
+        SetMapMode(dc, MM_ANISOTROPIC); SetWindowExtEx(dc, 96, 96, nullptr);
+        const int dpi = static_cast<int>(std::lround(dpi_scale_ * 96)); SetViewportExtEx(dc, dpi, dpi, nullptr);
     }
     HWND tooltip_hwnd_{nullptr};
     HINSTANCE hinstance_{nullptr};
 #endif
     float dpi_scale_{1.0f};
-    [[nodiscard]] int logical_pixel(int value) const noexcept {
-        return static_cast<int>(std::lround(value / dpi_scale_));
-    }
-    bool apply_style_patch(const vector::StylePatch &patch);
+    [[nodiscard]] int logical_pixel(int value) const noexcept { return static_cast<int>(std::lround(value / dpi_scale_)); }
     int width_{1440};
     int height_{900};
     UILanguage language_{UILanguage::English};
@@ -547,6 +549,7 @@ private:
     bool show_style_inspector_{false};
     bool show_align_panel_{false};
     int style_inspector_scroll_{0};
+    LayersDockState layers_state_{};
     int zoom_level_{100}; // 50, 75, 100, 125, 150, 200
 
     // Multi-Document Tabs
@@ -603,16 +606,14 @@ private:
     // Inline Text Editing & Typography State (Corel / Word Reference)
     bool is_inline_text_editing_{false};
     document::ObjectId inline_editing_text_id_{document::kInvalidObjectId};
+    std::optional<tools::CanvasTextEditor> text_editor_;
     std::string inline_text_buffer_;
     geometry::Point2D inline_text_pos_mm_{};
     int font_family_index_{0}; // 0: "Be Vietnam Pro", 1: "Segoe UI", 2: "Arial", 3: "Times New Roman", 4: "JetBrains Mono"
     double font_size_pt_{24.0};
-    bool font_bold_{false};
-    bool font_italic_{false};
-    bool font_underline_{false};
+    bool font_bold_{false}, font_italic_{false}, font_underline_{false};
     typography::TextAlignment font_alignment_{typography::TextAlignment::Left};
-    int table_rows_{3};
-    int table_cols_{3};
+    int table_rows_{3}, table_cols_{3};
 
     // Align & Distribute State (Corel / Illustrator)
     geometry::AlignReference align_reference_{geometry::AlignReference::Selection};
@@ -662,6 +663,7 @@ private:
     bool space_down_{false};
     int wheel_delta_accumulator_{0};
     bool pointer_active_{false};
+    bool force_live_text_scale_update_{false};
     bool is_creating_shape_{false};
     unsigned shape_drag_modifiers_{0};
     uint64_t pointer_start_revision_{0};
@@ -682,7 +684,6 @@ private:
     vector::GestureStamp pointer_stamp_;
     std::optional<document::ObjectId> hover_object_;
     EditorStyle default_style_;
-    bool palette_cmyk_{false};
     bool palette_stroke_{false};
     std::shared_ptr<const color::IccPreview> color_preview_;
     std::filesystem::path rgb_preview_profile_, cmyk_preview_profile_;
@@ -695,6 +696,7 @@ private:
     std::unique_ptr<tools::GradientToolController> gradient_tool_;
 #ifdef _WIN32
     std::shared_ptr<ImportJobSession> import_job_;
+    std::shared_ptr<ExportJobSession> export_job_;
 #endif
     std::string pen_numeric_buffer_;
     std::string pen_numeric_length_;
@@ -729,6 +731,7 @@ private:
     std::vector<document::ObjectId> numeric_effect_targets_;
     size_t property_effect_index_{0};
     size_t numeric_effect_index_{0};
+    bool ribbon_drop_shadow_mode_{false};
     std::string array_input_buffer_;
 
     // Quick Shape Dimension input (SketchUp style VCB)
@@ -781,9 +784,11 @@ private:
     HFONT font_ruler_{nullptr};
     void ensure_ui_fonts() noexcept;
     void cleanup_ui_fonts() noexcept;
+    friend struct DropShadowRibbon;
 #endif
 
     DesktopWindow shell_;
 };
 
+using NumericFieldId = NativeWindow::NumericFieldId;
 } // namespace pikdraw::desktop

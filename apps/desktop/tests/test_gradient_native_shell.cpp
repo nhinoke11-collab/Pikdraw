@@ -6,6 +6,7 @@
 
 #include <cassert>
 #include <cmath>
+#include <cstdlib>
 #include <iostream>
 #include <string>
 #include <variant>
@@ -203,6 +204,119 @@ void test_canvas_drag_gesture_commits_gradient() {
     assert(path->fill_gradient->kind == document::GradientKind::Linear);
 }
 
+void test_properties_stop_and_geometry_draft() {
+    std::cout << "--- Shell Test 5: Gradient Properties draft editing ---" << std::endl;
+    NativeWindow window(1440, 900);
+    const auto id = add_test_rect(window, 5.0, 8.0, 90.0, 55.0);
+    select_only(window, id);
+    window.set_active_tool(13);
+    auto* controller = window.gradient_tool();
+    assert(controller && controller->active());
+    if (const char* evidence_path = std::getenv("PIKDRAW_GRADIENT_PROPERTIES_SCREENSHOT"))
+        window.capture_screenshot_bmp(evidence_path);
+    const auto capture_layout = [&](const char* variable, int width, int height, UILanguage language) {
+        const char* evidence_path = std::getenv(variable);
+        if (!evidence_path) return;
+        NativeWindow specimen(width, height);
+        specimen.set_language(language);
+        const auto specimen_id = add_test_rect(specimen, 0.0, 0.0, 60.0, 45.0);
+        select_only(specimen, specimen_id);
+        specimen.set_active_tool(13);
+        specimen.capture_screenshot_bmp(evidence_path);
+    };
+    capture_layout("PIKDRAW_GRADIENT_PROPERTIES_1366_VI", 1366, 768, UILanguage::Vietnamese);
+    capture_layout("PIKDRAW_GRADIENT_PROPERTIES_1920_EN", 1920, 1080, UILanguage::English);
+    const auto revision = window.root().document().revision();
+    constexpr int inspector_left = 1440 - 280;
+    constexpr int panel_left = inspector_left + 14;
+    constexpr int panel_top = 38 + 28 + 36 + 36;
+    const int input_x = panel_left + 124;
+    const auto enter_value = [&](const std::wstring& value) {
+        const size_t existing = window.numeric_input_buffer().size();
+        for (size_t i = 0; i < existing; ++i) window.handle_numeric_char_input(8);
+        for (const wchar_t ch : value) window.handle_numeric_char_input(ch);
+        window.handle_numeric_char_input(13);
+    };
+
+    assert(window.handle_gradient_property_click(input_x, panel_top + 257 + 12));
+    assert(window.active_numeric_field() == NativeWindow::NumericFieldId::EffectOffsetX);
+    enter_value(L"25");
+    assert(controller->presenter().is_dirty());
+    assert(window.root().document().revision() == revision);
+    const auto* draft = controller->presenter().draft_paint();
+    assert(draft && std::abs(draft->stops.front().offset - 0.25) < 1e-6);
+
+    assert(window.handle_gradient_property_click(input_x, panel_top + 286 + 12));
+    assert(window.active_numeric_field() == NativeWindow::NumericFieldId::EffectOpacity);
+    enter_value(L"80");
+    assert(std::abs(controller->presenter().draft_paint()->stops.front().opacity - 0.8) < 1e-6);
+
+    assert(window.handle_gradient_property_click(input_x, panel_top + 315 + 12));
+    assert(window.active_numeric_field() == NativeWindow::NumericFieldId::PolygonSides);
+    enter_value(L"60");
+    assert(std::abs(controller->presenter().draft_paint()->stops.front().midpoint_to_next - 0.6) < 1e-6);
+
+    assert(window.handle_gradient_property_click(input_x, panel_top + 363 + 12));
+    assert(window.active_numeric_field() == NativeWindow::NumericFieldId::PolygonRotation);
+    enter_value(L"35");
+    assert(std::abs(controller->presenter().geometry_projection().angle_degrees - 35.0) < 1e-6);
+    assert(window.root().document().revision() == revision);
+
+    assert(window.handle_gradient_property_click(panel_left + 10, panel_top + 517 + 12));
+    assert(!controller->presenter().is_dirty());
+    const auto applied_snapshot = window.root().document().current_snapshot();
+    const auto applied_object = applied_snapshot->objects().get(id);
+    assert(applied_object);
+    const auto* applied_path = std::get_if<document::PathObject>(&*applied_object);
+    assert(applied_path && applied_path->fill_gradient);
+    assert(std::abs(applied_path->fill_gradient->stops.front().offset - 0.25) < 1e-6);
+    assert(std::abs(applied_path->fill_gradient->stops.front().opacity - 0.8) < 1e-6);
+    assert(std::abs(applied_path->fill_gradient->stops.front().midpoint_to_next - 0.6) < 1e-6);
+    assert(std::abs(project_gradient_geometry(applied_path->fill_gradient->kind,
+        applied_path->fill_gradient->gradient_to_object).angle_degrees - 35.0) < 1e-5);
+
+    assert(window.handle_gradient_property_click(input_x, panel_top + 257 + 12));
+    enter_value(L"35");
+    assert(controller->presenter().is_dirty());
+    assert(window.handle_gradient_property_click(panel_left + 140, panel_top + 517 + 12));
+    assert(!controller->presenter().is_dirty());
+    const auto cancelled_snapshot = window.root().document().current_snapshot();
+    const auto cancelled_object = cancelled_snapshot->objects().get(id);
+    const auto* cancelled_path = cancelled_object
+        ? std::get_if<document::PathObject>(&*cancelled_object) : nullptr;
+    assert(cancelled_path && cancelled_path->fill_gradient);
+    assert(std::abs(cancelled_path->fill_gradient->stops.front().offset - 0.25) < 1e-6);
+}
+
+void test_properties_stop_list_controls() {
+    std::cout << "--- Shell Test 6: Gradient Properties stop list controls ---" << std::endl;
+    NativeWindow window(1440, 900);
+    const auto id = add_test_rect(window, 0.0, 0.0, 60.0, 45.0);
+    select_only(window, id);
+    window.set_active_tool(13);
+    auto* controller = window.gradient_tool();
+    assert(controller && controller->presenter().draft_paint());
+    constexpr int panel_left = 1440 - 280 + 14;
+    constexpr int panel_top = 38 + 28 + 36 + 36;
+    const size_t initial_count = controller->presenter().draft_paint()->stops.size();
+    const uint64_t initial_selected = controller->presenter().selected_stop_id();
+
+    assert(window.handle_gradient_property_click(panel_left + 74, panel_top + 188 + 12));
+    const auto* after_add = controller->presenter().draft_paint();
+    assert(after_add && after_add->stops.size() == initial_count + 1);
+    const uint64_t inserted_id = controller->presenter().selected_stop_id();
+    assert(inserted_id != 0 && inserted_id != initial_selected);
+    assert(std::abs(after_add->stops[1].offset - 0.5) < 1e-6);
+
+    assert(window.handle_gradient_property_click(panel_left + 202, panel_top + 188 + 12));
+    assert(controller->presenter().selected_stop_id() == after_add->stops.back().id);
+    assert(window.handle_gradient_property_click(panel_left + 138, panel_top + 188 + 12));
+    assert(controller->presenter().draft_paint()->stops.size() == initial_count);
+    assert(!controller->presenter().has_draft() || controller->presenter().is_dirty());
+    assert(window.handle_gradient_property_click(panel_left + 140, panel_top + 517 + 12));
+    assert(!controller->presenter().is_dirty());
+}
+
 } // namespace
 
 int main() {
@@ -211,6 +325,8 @@ int main() {
     test_property_bar_interactions_and_apply();
     test_toolbox_appearance_flyout_activation();
     test_canvas_drag_gesture_commits_gradient();
+    test_properties_stop_and_geometry_draft();
+    test_properties_stop_list_controls();
     std::cout << "=== All Gradient Native Shell Tests Passed! ===" << std::endl;
     return 0;
 }

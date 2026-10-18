@@ -37,6 +37,9 @@ public:
     [[nodiscard]] const PersistentObjectMap& objects() const { require_writer(); return current_objects_; }
     [[nodiscard]] const std::vector<DocumentPage>& pages() const { require_writer(); return pages_; }
     [[nodiscard]] PageId active_page_id() const { require_writer(); return active_page_id_; }
+    [[nodiscard]] color::DocumentColorMode color_mode() const { return page().color_mode; }
+    [[nodiscard]] const std::string& color_profile_name() const { return page().color_profile_name; }
+    [[nodiscard]] int32_t raster_dpi() const { return page().raster_dpi; }
 
     [[nodiscard]] bool can_undo() const { require_writer(); return history_.can_undo(); }
     [[nodiscard]] bool can_redo() const { require_writer(); return history_.can_redo(); }

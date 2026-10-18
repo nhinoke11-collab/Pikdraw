@@ -9,15 +9,6 @@ namespace pikdraw::document {
 
 namespace {
 
-std::atomic<uint64_t> g_next_paint_id{1};
-std::atomic<uint64_t> g_next_stop_id{1};
-
-void atomic_reserve(std::atomic<uint64_t>& counter, uint64_t id) {
-    uint64_t current = counter.load(std::memory_order_relaxed);
-    while (id >= current && !counter.compare_exchange_weak(current, id + 1, std::memory_order_relaxed)) {
-    }
-}
-
 bool same_color_values(const color::ColorValue& lhs, const color::ColorValue& rhs) {
     if (lhs.payload().index() != rhs.payload().index()) {
         return false;
@@ -270,24 +261,24 @@ GradientPaint GradientPaint::make_default_radial(
 }
 
 uint64_t allocate_gradient_paint_id() {
-    return g_next_paint_id.fetch_add(1, std::memory_order_relaxed);
+    return generate_object_id();
 }
 
 uint64_t allocate_gradient_stop_id() {
-    return g_next_stop_id.fetch_add(1, std::memory_order_relaxed);
+    return generate_object_id();
 }
 
 void reserve_gradient_paint_id(uint64_t id) {
-    atomic_reserve(g_next_paint_id, id);
+    reserve_object_id(id);
 }
 
 void reserve_gradient_stop_id(uint64_t id) {
-    atomic_reserve(g_next_stop_id, id);
+    reserve_object_id(id);
 }
 
 void reset_gradient_id_allocators_for_tests() {
-    g_next_paint_id.store(1, std::memory_order_relaxed);
-    g_next_stop_id.store(1, std::memory_order_relaxed);
+    // IDs share the global object/path/effect allocator. Never rewind it while
+    // immutable snapshots may still own IDs, including in another test fixture.
 }
 
 } // namespace pikdraw::document

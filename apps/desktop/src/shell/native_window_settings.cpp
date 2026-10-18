@@ -250,8 +250,23 @@ void NativeWindow::set_active_tool(int tool_index) noexcept {
     active_tool_ = tool_index;
     if (tool_index == 1 || tool_index == 2 || tool_index == 9)
         quick_shapes_last_tool_ = tool_index;
-    if (tool_index == 6 || tool_index == 7 || tool_index == 8)
+    if (tool_index == 6 || tool_index == 7 || tool_index == 8 || tool_index == 11)
         path_drawing_last_tool_ = tool_index;
+    if (node_tool) {
+        active_dock_tab_ = 0;
+        show_style_inspector_ = false;
+        show_align_panel_ = false;
+    }
+    if (contour_tool) {
+        active_dock_tab_ = 0;
+        show_style_inspector_ = false;
+        show_align_panel_ = false;
+    }
+    if (gradient_tool) {
+        active_dock_tab_ = 0;
+        show_style_inspector_ = false;
+        show_align_panel_ = false;
+    }
     toolbox_open_group_ = 0;
     const auto mode = tool_index == 1 ? vector::ToolMode::Rectangle
                     : tool_index == 2 ? vector::ToolMode::Ellipse
@@ -347,17 +362,32 @@ void NativeWindow::set_active_tool(int tool_index) noexcept {
         (void)gradient_tool_->activate(sel);
     }
     if (tool_index == 11) {
-        status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Chỉnh sửa điểm Node · F10 · Kéo chọn điểm · Chỉnh tiếp tuyến Bézier"
-            : "Node Edit Tool · F10 · Marquee select nodes · Edit Bézier handles";
+        const auto snapshot = root().document().current_snapshot();
+        const auto* target_value = snapshot && node_tool_
+            ? snapshot->objects().lookup_ref(node_tool_->target_object()) : nullptr;
+        const auto* target_path = target_value
+            ? std::get_if<document::PathObject>(target_value) : nullptr;
+        const bool can_edit_target = target_path && target_path->authoring_source &&
+            !target_path->locked && target_path->visible;
+        status_msg_ = can_edit_target
+            ? (language_ == UILanguage::Vietnamese
+                ? "Node · nhấp chọn, kéo node/tay nắm · nhập tọa độ X/Y trong Properties · F10"
+                : "Node · click to select, drag nodes/handles · edit X/Y in Properties · F10")
+            : (language_ == UILanguage::Vietnamese
+                ? "Node · chọn một Path có thể chỉnh sửa rồi chọn node · F10"
+                : "Node · select an editable Path, then choose a node · F10");
     } else if (tool_index == 12) {
         status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Contour / Offset · Tạo viền có tham số · Ctrl+K để rã khối viền"
-            : "Contour / Offset · Parametric contour offset · Ctrl+K to break apart";
+            ? "Contour · Sửa thông số trong Properties · Enter cập nhật xem trước · Áp dụng để lưu · Ctrl+K rã khối"
+            : "Contour · Edit settings in Properties · Enter updates preview · Apply to save · Ctrl+K breaks apart";
     } else if (tool_index == 13) {
         status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Công cụ Gradient · Kéo chuột trên canvas để tạo/chỉnh chuyển sắc · Phím Esc hủy"
-            : "Gradient Tool · Drag on canvas to create or edit gradient · Esc to cancel";
+            ? "Gradient · Properties sửa stop/hình học · Apply lưu · Cancel bỏ · kéo canvas khi bản nháp sạch"
+            : "Gradient · edit stops/geometry in Properties · Apply to save · Cancel to discard · drag when draft is clean";
+    } else if (tool_index == 4) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Text · chọn phông trên thanh thuộc tính · khung và giãn dòng trong Properties"
+            : "Editing text · choose a font on the property bar · frame and spacing in Properties";
     } else {
         const char* vi_tools[] = { "Chọn và di chuyển · V", "Kéo vẽ chữ nhật · Shift vuông · Ctrl từ tâm",
             "Kéo vẽ elip · Shift tròn · Ctrl từ tâm", "Di chuyển khung nhìn · Space/chuột giữa",

@@ -61,7 +61,8 @@ void NativeWindow::paint_document_tab_bar(HDC mem_dc, int w, int topbar_h, int t
         SelectObject(mem_dc, is_act ? font_tab_bold : font_tab);
         SetTextColor(mem_dc, is_act ? col_teal : col_text_mut);
         std::wstring wtitle = L"📄 " + utf8_to_wide(tab.title);
-        const std::wstring wmode = utf8_to_wide(tab.color_mode);
+        const auto snapshot = tab.root->document().current_snapshot();
+        const std::wstring wmode = snapshot->color_mode() == color::DocumentColorMode::Cmyk ? L"CMYK" : L"RGB";
         if (wtitle.find(wmode) == std::wstring::npos)
             wtitle += L" (" + wmode + L")";
         RECT rc_txt{rc_tab.left + 8, rc_tab.top, rc_tab.right - 24, rc_tab.bottom};

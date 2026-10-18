@@ -25,6 +25,7 @@ add_library(pikdraw_rendering STATIC
     src/gpu/d2d/d2d_device_manager.cpp
     src/gpu/d2d/d2d_geometry_cache.cpp
     src/gpu/d2d/d2d_effects_pipeline.cpp
+    src/gpu/d2d/d2d_document_effects.cpp
     src/gpu/d2d/d2d_scene_compositor.cpp
     src/gpu/d2d/d2d_render_backend.cpp
 )
@@ -95,6 +96,7 @@ if(PIKDRAW_BUILD_TESTS)
     add_rendering_test(test_pikdraw_rendering_camera tests/camera/test_camera.cpp)
     add_rendering_test(test_pikdraw_rendering_culling tests/culling/test_culling.cpp)
     add_rendering_test(test_pikdraw_rendering_rasterizer tests/rasterizer/test_rasterizer.cpp)
+    target_sources(test_pikdraw_rendering_rasterizer PRIVATE tests/rasterizer/test_document_raster_dpi.cpp)
     add_rendering_test(test_pikdraw_rendering_authoring_path_adapter tests/rasterizer/test_authoring_path_adapter.cpp)
     add_rendering_test(test_pikdraw_rendering_effect_compositor tests/effects/test_object_compositor.cpp)
     add_rendering_test(test_pikdraw_rendering_float_scratch_paint tests/rasterizer/test_float_scratch_paint.cpp)

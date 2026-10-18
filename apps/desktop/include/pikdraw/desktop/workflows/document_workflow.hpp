@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pikdraw/desktop/runtime/composition_root.hpp"
+#include "pikdraw/color/preview/icc_preview.hpp"
 #include "pikdraw/interop/writers/svg_exporter.hpp"
 #include "pikdraw/rendering/frame_target.hpp"
 #include "pikdraw/geometry/primitives/transform.hpp"
@@ -12,6 +13,7 @@
 
 #include <functional>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -171,7 +173,11 @@ public:
     bool redo();
 
     /// Reset to an empty page and begin a new document epoch. New documents default to A4 landscape.
-    void new_document(double page_width_mm = 297.0, double page_height_mm = 210.0);
+    void new_document(double page_width_mm = 297.0, double page_height_mm = 210.0,
+        color::DocumentColorMode mode = color::DocumentColorMode::Rgb, int32_t dpi = 0);
+    bool convert_document_color_mode(color::DocumentColorMode mode,
+        std::shared_ptr<const color::IccPreview> icc = {});
+    bool set_document_raster_dpi(int32_t dpi);
 
     /// Resize document page size without clearing objects
     void set_page_size(double page_width_mm, double page_height_mm);
@@ -343,6 +349,17 @@ public:
     bool handle_effect_draft_keydown(uint32_t key);
     /// Returns the immutable candidate snapshot only while Preview is enabled and current.
     [[nodiscard]] document::SnapshotPtr snapshot_for_canvas();
+    bool preview_text_edit(const document::TextObject& text, document::SnapshotPtr base,
+                           bool existing, document::ObjectId parent = document::kInvalidObjectId);
+    bool commit_text_edit(const document::TextObject& text, document::SnapshotPtr base,
+                          bool existing, document::ObjectId parent = document::kInvalidObjectId);
+    void clear_text_preview() noexcept { text_preview_.reset(); text_preview_base_.reset(); }
+    bool style_selected_text(const std::string& family, double size, bool bold,
+                             bool italic, bool underline, typography::TextAlignment alignment);
+    bool set_selected_text_font(const std::string& family, double size_pt,
+                                bool bold, bool italic);
+    bool set_selected_text_layout(std::optional<double> frame_width_mm,
+                                  std::optional<double> line_spacing_ratio);
     [[nodiscard]] bool can_clear_selected_effects() const;
     [[nodiscard]] bool can_edit_selected_effect(size_t effect_index) const;
     bool set_selected_blend_mode(document::BlendMode mode);
@@ -444,6 +461,7 @@ private:
     CompositionRoot& root_;
     interop::SvgExporter svg_exporter_;
     std::optional<EffectDraftState> effect_draft_;
+    document::SnapshotPtr text_preview_, text_preview_base_;
     ArraySession array_session_{};
 };
 

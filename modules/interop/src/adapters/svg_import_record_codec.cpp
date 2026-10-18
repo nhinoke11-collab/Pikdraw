@@ -8,6 +8,9 @@
 
 namespace pikdraw::interop {
 namespace {
+constexpr uint32_t kMaxRasterPixelBytes = 16u * 1024u * 1024u;
+constexpr uint32_t kMaxRasterChunkBytes = 256u * 1024u;
+constexpr uint32_t kMaxRasterIccBytes = 256u * 1024u;
 
 bool IsValidRecordUtf8(std::string_view input) {
     size_t index = 0;
@@ -81,6 +84,12 @@ public:
         value.assign(reinterpret_cast<const char*>(bytes_.data()), size);
         bytes_ = bytes_.subspan(size);
         return value.find('\0') == std::string::npos && IsValidRecordUtf8(value);
+    }
+    bool RawBytes(std::vector<uint8_t>& value, size_t count, size_t maximum) {
+        if (count > maximum || count > bytes_.size()) return false;
+        value.assign(bytes_.begin(), bytes_.begin() + static_cast<std::ptrdiff_t>(count));
+        bytes_ = bytes_.subspan(count);
+        return true;
     }
     [[nodiscard]] bool Done() const noexcept { return bytes_.empty(); }
 
@@ -246,6 +255,51 @@ std::optional<CanonicalImportRecord> SerializeImportRecord(const ImportRecordVal
             return record.local_id != 0 && writer.U32(record.local_id) &&
                    writer.String16(record.source_id, 128) && writer.String16(record.name, 128) &&
                    WriteLocalReferences(writer, record.child_local_ids, record.local_id);
+        } else if constexpr (std::is_same_v<T, ImportRasterImageRecord>) {
+            type = ImportRecordType::RasterImage;
+            const uint64_t expected_pixel_bytes =
+                static_cast<uint64_t>(record.width_px) * record.height_px * 4;
+            const bool supported_media_type = record.media_type == "image/png" ||
+                record.media_type == "image/jpeg" || record.media_type == "image/tiff";
+            if (record.local_id == 0 || !supported_media_type ||
+                record.width_px == 0 || record.height_px == 0 ||
+                expected_pixel_bytes == 0 || expected_pixel_bytes > kMaxRasterPixelBytes ||
+                record.decoded_pixel_bytes != expected_pixel_bytes ||
+                record.source_bits_per_pixel == 0 || record.source_bits_per_pixel > 32 ||
+                record.frame_count == 0 || record.frame_count > 256 ||
+                record.frame_index >= record.frame_count ||
+                record.exif_orientation == 0 || record.exif_orientation > 8 ||
+                !std::isfinite(record.dpi_x) || !std::isfinite(record.dpi_y) ||
+                record.dpi_x <= 0 || record.dpi_y <= 0 ||
+                record.dpi_x > 1000000 || record.dpi_y > 1000000 ||
+                record.icc_profile.size() > kMaxRasterIccBytes)
+                return false;
+            return writer.U32(record.local_id) &&
+                   writer.String16(record.source_id, 128) &&
+                   writer.String16(record.name, 128) &&
+                   writer.String16(record.media_type, 32) &&
+                   writer.U32(record.width_px) && writer.U32(record.height_px) &&
+                   writer.U32(record.decoded_pixel_bytes) &&
+                   writer.U32(record.source_bits_per_pixel) &&
+                   writer.U32(record.frame_index) && writer.U32(record.frame_count) &&
+                   writer.U16(record.exif_orientation) &&
+                   writer.U8(record.orientation_applied ? 1 : 0) &&
+                   writer.U8(record.dpi_from_source ? 1 : 0) &&
+                   writer.Double(record.dpi_x) && writer.Double(record.dpi_y) &&
+                   writer.U32(static_cast<uint32_t>(record.icc_profile.size())) &&
+                   writer.Bytes(record.icc_profile);
+        } else if constexpr (std::is_same_v<T, ImportRasterImageChunkRecord>) {
+            type = ImportRecordType::RasterImageChunk;
+            if (record.local_id == 0 || record.total_bytes == 0 ||
+                record.total_bytes > kMaxRasterPixelBytes || record.bytes.empty() ||
+                record.bytes.size() > kMaxRasterChunkBytes ||
+                record.byte_offset > record.total_bytes ||
+                record.bytes.size() > record.total_bytes - record.byte_offset)
+                return false;
+            return writer.U32(record.local_id) && writer.U32(record.byte_offset) &&
+                   writer.U32(record.total_bytes) &&
+                   writer.U32(static_cast<uint32_t>(record.bytes.size())) &&
+                   writer.Bytes(record.bytes);
         } else if constexpr (std::is_same_v<T, ImportPathRecord>) {
             type = ImportRecordType::Path;
             if (record.local_id == 0 || record.winding_rule > 1 || record.elements.empty() ||
@@ -329,6 +383,59 @@ std::optional<ImportRecordValue> DeserializeImportRecord(
         if (!reader.U32(record.local_id) || record.local_id == 0 ||
             !reader.String16(record.source_id, 128) || !reader.String16(record.name, 128) ||
             !ReadLocalReferences(reader, record.child_local_ids, record.local_id) || !reader.Done()) return std::nullopt;
+        return record;
+    }
+    if (type == ImportRecordType::RasterImage) {
+        ImportRasterImageRecord record;
+        uint8_t orientation_applied = 0, dpi_from_source = 0;
+        uint32_t icc_bytes = 0;
+        if (!reader.U32(record.local_id) || record.local_id == 0 ||
+            !reader.String16(record.source_id, 128) ||
+            !reader.String16(record.name, 128) ||
+            !reader.String16(record.media_type, 32) ||
+            !reader.U32(record.width_px) || !reader.U32(record.height_px) ||
+            !reader.U32(record.decoded_pixel_bytes) ||
+            !reader.U32(record.source_bits_per_pixel) ||
+            !reader.U32(record.frame_index) || !reader.U32(record.frame_count) ||
+            !reader.U16(record.exif_orientation) ||
+            !reader.U8(orientation_applied) || orientation_applied > 1 ||
+            !reader.U8(dpi_from_source) || dpi_from_source > 1 ||
+            !reader.Double(record.dpi_x) || !reader.Double(record.dpi_y) ||
+            !reader.U32(icc_bytes) || icc_bytes > kMaxRasterIccBytes ||
+            !reader.RawBytes(record.icc_profile, icc_bytes, kMaxRasterIccBytes) ||
+            !reader.Done())
+            return std::nullopt;
+        record.orientation_applied = orientation_applied != 0;
+        record.dpi_from_source = dpi_from_source != 0;
+        const uint64_t expected_pixel_bytes =
+            static_cast<uint64_t>(record.width_px) * record.height_px * 4;
+        if ((record.media_type != "image/png" && record.media_type != "image/jpeg" &&
+             record.media_type != "image/tiff") ||
+            record.width_px == 0 || record.height_px == 0 ||
+            expected_pixel_bytes == 0 || expected_pixel_bytes > kMaxRasterPixelBytes ||
+            record.decoded_pixel_bytes != expected_pixel_bytes ||
+            record.source_bits_per_pixel == 0 || record.source_bits_per_pixel > 32 ||
+            record.frame_count == 0 || record.frame_count > 256 ||
+            record.frame_index >= record.frame_count ||
+            record.exif_orientation == 0 || record.exif_orientation > 8 ||
+            record.dpi_x <= 0 || record.dpi_y <= 0 ||
+            record.dpi_x > 1000000 || record.dpi_y > 1000000)
+            return std::nullopt;
+        return record;
+    }
+    if (type == ImportRecordType::RasterImageChunk) {
+        ImportRasterImageChunkRecord record;
+        uint32_t chunk_bytes = 0;
+        if (!reader.U32(record.local_id) || record.local_id == 0 ||
+            !reader.U32(record.byte_offset) || !reader.U32(record.total_bytes) ||
+            !reader.U32(chunk_bytes) || chunk_bytes == 0 ||
+            chunk_bytes > kMaxRasterChunkBytes ||
+            !reader.RawBytes(record.bytes, chunk_bytes, kMaxRasterChunkBytes) ||
+            !reader.Done() || record.total_bytes == 0 ||
+            record.total_bytes > kMaxRasterPixelBytes ||
+            record.byte_offset > record.total_bytes ||
+            chunk_bytes > record.total_bytes - record.byte_offset)
+            return std::nullopt;
         return record;
     }
     if (type == ImportRecordType::Path) {

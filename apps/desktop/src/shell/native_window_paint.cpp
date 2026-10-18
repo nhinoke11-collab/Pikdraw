@@ -1,5 +1,6 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
 #include "native_window_paint_icons.hpp"
+#include "native_window_text_properties.hpp"
 #include "native_window_file_menu.hpp"
 #include "native_window_menus.hpp"
 #include "native_window_page_presets.hpp"
@@ -8,6 +9,7 @@
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/gradient_tool_controller.hpp"
+#include "native_window_drop_shadow_paint.hpp"
 
 #include <iostream>
 #include <fstream>
@@ -24,6 +26,8 @@ namespace pikdraw::desktop {
 #ifdef _WIN32
 
 void NativeWindow::paint(HDC hdc, int w, int h) {
+    if (text_editor_ && (active_tool_ != 4 || text_editor_->base != root().document().current_snapshot()))
+        refresh_inline_text_preview();
     ensure_ui_fonts();
     const int device_w = dip(w), device_h = dip(h);
 
@@ -333,7 +337,9 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
             draw_rib_btn(410, 435, L"+", false, col_text_white);
 
             draw_rib_btn(445, 470, L"-", false, col_text_white);
-            std::wstring st_label = std::to_wstring(contour_tool_->steps()) + (is_vi ? L" bước" : L" steps");
+            const int contour_steps = contour_tool_->steps();
+            std::wstring st_label = std::to_wstring(contour_steps) +
+                (is_vi ? L" bước" : contour_steps == 1 ? L" step" : L" steps");
             draw_rib_btn(475, 535, st_label.c_str(), false, col_teal);
             draw_rib_btn(540, 565, L"+", false, col_text_white);
 
@@ -417,22 +423,21 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
             DrawTextW(mem_dc, is_vi ? L"Chữ:" : L"Text:", -1, &rc_t_lbl, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
             // 1. Font Family Selector Button
-            const wchar_t* font_names_w[] = {
-                L"Be Vietnam Pro ▾",
-                L"Segoe UI ▾",
-                L"Arial ▾",
-                L"Times New Roman ▾",
-                L"JetBrains Mono ▾"
-            };
-            int fam_idx = font_family_index_ % 5;
-            draw_rib_btn(52, 192, font_names_w[fam_idx], false, col_text_white);
+            const auto text_view = text_properties_view(*this);
+            const auto family = text_view.context
+                ? (text_view.mixed_font ? std::string{"Mixed fonts"} : text_view.family)
+                : text_font_family_at(font_family_index_);
+            const auto actual_font = utf8_to_wide(family) + L" ▾";
+            draw_rib_btn(52, 192, actual_font.c_str(), false, col_text_white);
 
             // 2. Font Size pt Controls
             RECT rc_sz_lbl = { 198, topbar_h + tabbar_h, 218, content_top };
             SetTextColor(mem_dc, col_text_muted);
             DrawTextW(mem_dc, L"Pt:", -1, &rc_sz_lbl, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
             draw_rib_btn(220, 240, L"-", false, col_teal);
-            std::wstring sz_str = std::to_wstring(static_cast<int>(font_size_pt_)) + L" pt";
+            std::wstring sz_str = text_view.context
+                ? text_view.mixed_font ? L"Mixed" : std::to_wstring(static_cast<int>(text_view.size_pt)) + L" pt"
+                : std::to_wstring(static_cast<int>(font_size_pt_)) + L" pt";
             RECT rc_sz_val = { 242, topbar_h + tabbar_h, 292, content_top };
             SetTextColor(mem_dc, col_text_white);
             DrawTextW(mem_dc, sz_str.c_str(), -1, &rc_sz_val, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
@@ -443,13 +448,9 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
             draw_rib_btn(354, 382, L"I", font_italic_, font_italic_ ? col_teal : col_text_white);
             draw_rib_btn(386, 414, L"U", font_underline_, font_underline_ ? col_teal : col_text_white);
 
-            // 4. Alignment: Left, Center, Right (Compact icon buttons)
-            bool is_left = (font_alignment_ == typography::TextAlignment::Left);
-            bool is_center = (font_alignment_ == typography::TextAlignment::Center);
-            bool is_right = (font_alignment_ == typography::TextAlignment::Right);
-            draw_rib_btn(422, 462, L"|◀ L", is_left, is_left ? col_teal : col_text_white);
-            draw_rib_btn(466, 506, L"▶|◀ C", is_center, is_center ? col_teal : col_text_white);
-            draw_rib_btn(510, 550, L"▶| R", is_right, is_right ? col_teal : col_text_white);
+            draw_rib_btn(422, 462, L"|◀ L", font_alignment_ == typography::TextAlignment::Left, font_alignment_ == typography::TextAlignment::Left ? col_teal : col_text_white);
+            draw_rib_btn(466, 506, L"▶|◀ C", font_alignment_ == typography::TextAlignment::Center, font_alignment_ == typography::TextAlignment::Center ? col_teal : col_text_white);
+            draw_rib_btn(510, 550, L"▶| R", font_alignment_ == typography::TextAlignment::Right, font_alignment_ == typography::TextAlignment::Right ? col_teal : col_text_white);
 
             // 5. Convert to Curves (CorelDRAW Ctrl+Q) - Compact icon
             draw_rib_btn(556, 616, L"⤹ Q", false, col_teal);
@@ -519,10 +520,9 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
             std::ostringstream spw, sph;
             spw << std::fixed << std::setprecision(1) << pw;
             sph << std::fixed << std::setprecision(1) << ph;
-            std::string pw_str = spw.str();
-            std::string ph_str = sph.str();
-            if (pw_str.size() > 2 && pw_str.substr(pw_str.size() - 2) == ".0") pw_str.erase(pw_str.size() - 2);
-            if (ph_str.size() > 2 && ph_str.substr(ph_str.size() - 2) == ".0") ph_str.erase(ph_str.size() - 2);
+            std::string pw_str = spw.str(), ph_str = sph.str();
+            if (pw_str.ends_with(".0")) pw_str.erase(pw_str.size() - 2);
+            if (ph_str.ends_with(".0")) ph_str.erase(ph_str.size() - 2);
 
             draw_num_input(175, 275, L"W:", pw_str, NumericFieldId::PageWidth);
             draw_num_input(283, 383, L"H:", ph_str, NumericFieldId::PageHeight);
@@ -530,7 +530,6 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
             bool is_land = (pw > ph);
             draw_rib_btn(391, 455, is_vi ? L"▯ Dọc" : L"▯ Port", !is_land, !is_land ? col_teal : col_text_white);
             draw_rib_btn(461, 525, is_vi ? L"▭ Ngang" : L"▭ Land", is_land, is_land ? col_teal : col_text_white);
-            draw_rib_btn(533, 665, L"CMYK · 300 DPI", false, col_teal);
             if (workflow().is_array_session_active()) {
                 std::wstring array_text = is_vi ? L"Mảng sao chép: " : L"Array: ";
                 if (!array_input_buffer_.empty()) {
@@ -543,30 +542,47 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
                 draw_rib_btn(675, (std::min)(960, w - inspect_w - 10), array_text.c_str(), true, col_teal);
             }
         } else {
-            // OBJECT TRANSFORM & EDIT MODE (Selection Ribbon - Direct Numeric Input)
-            const auto obj_id = selection.front();
+            size_t shadow_effect_idx = 0;
+            document::DropShadowEffect shadow_val;
+            const bool has_shadow = selection.size() == 1 &&
+                DropShadowRibbon::get_shadow(*this, shadow_effect_idx, shadow_val);
+            if (ribbon_drop_shadow_mode_ && has_shadow) {
+                DropShadowRibbon::paint(*this, mem_dc, w, topbar_h, tabbar_h, content_top,
+                                        inspect_w, col_teal, col_text_white, col_text_muted,
+                                        col_border, is_dark, is_vi, draw_rib_btn, draw_num_input);
+            } else {
+                // OBJECT TRANSFORM & EDIT MODE (Selection Ribbon - Direct Numeric Input)
+                const auto obj_id = selection.front();
             auto bounds_opt = workflow().get_object_bounds(obj_id);
             double obj_x = bounds_opt ? bounds_opt->x : 0.0;
             double obj_y = bounds_opt ? bounds_opt->y : 0.0;
             double obj_w = bounds_opt ? bounds_opt->width : 0.0;
             double obj_h = bounds_opt ? bounds_opt->height : 0.0;
 
-            std::ostringstream sx, sy, sw, sh;
-            sx << std::fixed << std::setprecision(1) << obj_x;
-            sy << std::fixed << std::setprecision(1) << obj_y;
-            sw << std::fixed << std::setprecision(1) << obj_w;
-            sh << std::fixed << std::setprecision(1) << obj_h;
+            std::ostringstream sx, sy, sw, sh, srot;
+            sx << std::fixed << std::setprecision(1) << obj_x; sy << std::fixed << std::setprecision(1) << obj_y;
+            sw << std::fixed << std::setprecision(1) << obj_w; sh << std::fixed << std::setprecision(1) << obj_h;
+            double obj_rot = 0.0;
+            if (const auto obj_opt = snapshot->objects().get(obj_id)) {
+                const auto transform = std::visit([](const auto& o) { return o.transform; }, *obj_opt);
+                obj_rot = std::atan2(transform.b, transform.a) * 180.0 / 3.14159265358979323846;
+                if (std::abs(obj_rot) < 0.05) obj_rot = 0.0;
+            }
+            srot << std::fixed << std::setprecision(1) << obj_rot;
 
             draw_num_input(10, 95, L"X:", sx.str(), NumericFieldId::ObjectX);
             draw_num_input(100, 185, L"Y:", sy.str(), NumericFieldId::ObjectY);
-            draw_num_input(190, 285, L"W:", sw.str(), NumericFieldId::ObjectWidth);
+            draw_num_input(190, 275, L"W:", sw.str(), NumericFieldId::ObjectWidth);
 
-            const wchar_t* lock_lbl = aspect_ratio_locked_ ?
-                (is_vi ? L"🔒 Khóa" : L"🔒 Lock") :
-                (is_vi ? L"🔓 Mở" : L"🔓 Free");
-            draw_rib_btn(290, 360, lock_lbl, aspect_ratio_locked_, aspect_ratio_locked_ ? col_teal : col_text_muted);
+            const int btn_y = (topbar_h + tabbar_h + 4 + content_top - 4) / 2;
+            draw_rib_btn(280, 335, L"", aspect_ratio_locked_, aspect_ratio_locked_ ? col_teal : col_text_muted);
+            draw_lock_icon(mem_dc, 292, btn_y, aspect_ratio_locked_, aspect_ratio_locked_ ? col_teal : col_text_muted);
+            RECT r_lock_txt{ 304, topbar_h + tabbar_h + 4, 333, content_top - 4 };
+            DrawTextW(mem_dc, aspect_ratio_locked_ ? (is_vi ? L"Khóa" : L"Lock") : (is_vi ? L"Mở" : L"Free"),
+                      -1, &r_lock_txt, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-            draw_num_input(365, 460, L"H:", sh.str(), NumericFieldId::ObjectHeight);
+            draw_num_input(340, 425, L"H:", sh.str(), NumericFieldId::ObjectHeight);
+            draw_num_input(435, 525, L"∡:", srot.str() + "°", NumericFieldId::ObjectRotation);
 
             if (is_in_isolation_mode()) {
                 draw_rib_btn(580, 670, is_vi ? L"⬅ Thoát (Esc)" : L"⬅ Exit (Esc)", true, col_teal);
@@ -589,23 +605,20 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
                     }
                 } else if (selection.size() == 1) {
                     const int button_y = (topbar_h + tabbar_h + 4 + content_top - 4) / 2;
-                    int rx = 580;
-                    draw_rib_btn(rx, rx + 28, L"", false, col_text_white);
-                    draw_object_context_icon(mem_dc, ObjectContextAction::FlipHorizontal, rx + 14, button_y, col_text_white);
-                    rx += 32;
-
-                    draw_rib_btn(rx, rx + 28, L"", false, col_text_white);
-                    draw_object_context_icon(mem_dc, ObjectContextAction::FlipVertical, rx + 14, button_y, col_text_white);
-                    rx += 32;
-
-                    draw_rib_btn(rx, rx + 28, L"", false, col_text_white);
-                    draw_object_context_icon(mem_dc, ObjectContextAction::Rotate90CW, rx + 14, button_y, col_text_white);
-                    rx += 32;
-
-                    draw_rib_btn(rx, rx + 28, L"", false, col_text_white);
-                    draw_object_context_icon(mem_dc, ObjectContextAction::Rotate90CCW, rx + 14, button_y, col_text_white);
-                    rx += 36;
-
+                    int rx = 540;
+                    for (auto act : {ObjectContextAction::FlipHorizontal, ObjectContextAction::FlipVertical,
+                                     ObjectContextAction::Rotate90CW, ObjectContextAction::Rotate90CCW}) {
+                        draw_rib_btn(rx, rx + 28, L"", false, col_text_white);
+                        draw_object_context_icon(mem_dc, act, rx + 14, button_y, col_text_white);
+                        rx += 32;
+                    }
+                    rx += 4;
+                    size_t sidx = 0;
+                    document::DropShadowEffect sval;
+                    if (DropShadowRibbon::get_shadow(*this, sidx, sval)) {
+                        draw_rib_btn(rx, rx + 66, is_vi ? L"◐ Bóng" : L"◐ Shadow", false, col_teal);
+                        rx += 72;
+                    }
                     if (workflow().is_group(selection.front())) {
                         draw_rib_btn(rx, rx + 66, is_vi ? L"⛶ Rã" : L"⛶ Ungroup", false, col_teal);
                         rx += 72;
@@ -633,6 +646,7 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
                 draw_num_input(720, 844, is_vi ? L"Độ mờ:" : L"Opacity:",
                                opacity_percent_text(appearance.object_opacity),
                                NumericFieldId::ObjectOpacity, false);
+            }
             }
         }
 

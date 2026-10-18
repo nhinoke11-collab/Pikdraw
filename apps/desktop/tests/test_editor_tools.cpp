@@ -18,6 +18,7 @@ struct EditorFixture {
     explicit EditorFixture(std::filesystem::path output) : evidence(std::move(output)) {
         REQUIRE(window.initialize("PikDraw editor tools verification"));
         ShowWindow(window.hwnd(), SW_HIDE);
+        if (window.is_recovery_modal_open()) SendMessageW(window.hwnd(), WM_KEYDOWN, VK_ESCAPE, 0);
         RECT client{};
         GetClientRect(window.hwnd(), &client);
         width = client.right;
@@ -52,6 +53,7 @@ struct EditorFixture {
 struct DialogScript {
     bool cancel{false}, stroke{false}, seen{false};
     int attempts{0};
+    int viewer{3};
 };
 DialogScript *active_script = nullptr;
 void CALLBACK edit_dialog(HWND owner, UINT, UINT_PTR timer, DWORD) {
@@ -69,20 +71,31 @@ void CALLBACK edit_dialog(HWND owner, UINT, UINT_PTR timer, DWORD) {
         if (active_script->stroke) {
             SetDlgItemTextW(dialog, 206, L"3.125");
         } else {
-            SendDlgItemMessageW(dialog, 100, CB_SETCURSEL, 1, 0);
-            SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(100, CBN_SELCHANGE),
-                         reinterpret_cast<LPARAM>(GetDlgItem(dialog, 100)));
-            const wchar_t *values[] = {L"25", L"50", L"75", L"10", L"80"};
-            for (int i = 0; i < 5; ++i)
+            REQUIRE(SendDlgItemMessageW(dialog, 100, CB_GETCOUNT, 0, 0) == 3);
+            REQUIRE(SendDlgItemMessageW(dialog, 100, CB_GETITEMDATA, 0, 0) == 1); // CMYK; RGB unavailable.
+            REQUIRE(SendDlgItemMessageW(dialog, 110, CB_GETCOUNT, 0, 0) == 4);
+            SendDlgItemMessageW(dialog, 110, CB_SETCURSEL, active_script->viewer, 0);
+            SendMessageW(dialog, WM_COMMAND, MAKEWPARAM(110, CBN_SELCHANGE),
+                         reinterpret_cast<LPARAM>(GetDlgItem(dialog, 110)));
+            const wchar_t *values_cmyk[] = {L"25", L"50", L"75", L"10"};
+            const wchar_t *values_hsb[] = {L"210", L"50", L"80"};
+            const wchar_t *values_hsl[] = {L"120", L"100", L"25"};
+            const wchar_t **values = active_script->viewer == 0 ? values_hsb
+                : active_script->viewer == 1 ? values_hsl : values_cmyk;
+            const int count = active_script->viewer == 3 ? 4 : 3;
+            for (int i = 0; i < count; ++i)
                 SetDlgItemTextW(dialog, 201 + i, values[i]);
+            SetDlgItemTextW(dialog, 207, active_script->viewer == 0 ? L"60"
+                : active_script->viewer == 3 ? L"80" : L"100");
         }
     }
     PostMessageW(dialog, WM_COMMAND, active_script->cancel ? IDCANCEL : IDOK, 0);
 }
-void exercise_dialog(EditorFixture &f, bool stroke, bool cancel) {
+void exercise_dialog(EditorFixture &f, bool stroke, bool cancel, int viewer = 3) {
     const int dock = f.width - 280;
     f.mouse(WM_LBUTTONDOWN, {dock + (stroke ? 200 : 70), 162 + 94}, MK_LBUTTON);
     DialogScript script{cancel, stroke};
+    script.viewer = viewer;
     active_script = &script;
     REQUIRE(SetTimer(f.window.hwnd(), 991, 20, edit_dialog));
     f.mouse(WM_LBUTTONDOWN, {dock + 130, 162 + 140}, MK_LBUTTON);
@@ -163,8 +176,10 @@ void verify_editor(EditorFixture &f) {
     f.mouse(WM_RBUTTONDOWN, palette_red); // Right-click applies the RGB swatch to Stroke.
     REQUIRE(f.object(a).stroke.color_space() == color::ColorSpace::Rgb);
     REQUIRE(std::get<color::RGBColor>(f.object(a).stroke.payload()).approx_equal({1, 0, 0, 1}, 1e-12));
-    f.mouse(WM_LBUTTONDOWN, {dock + 200, 162 + 400}, MK_LBUTTON); // CMYK tab
+    f.mouse(WM_LBUTTONDOWN, {dock + 200, 162 + 400}, MK_LBUTTON); // Profile label is not a mode toggle.
     f.mouse(WM_LBUTTONUP, {dock + 200, 162 + 400});
+    REQUIRE(doc.color_mode() == color::DocumentColorMode::Rgb);
+    REQUIRE(window.workflow().convert_document_color_mode(color::DocumentColorMode::Cmyk));
     f.mouse(WM_LBUTTONDOWN, palette_red, MK_LBUTTON);
     f.mouse(WM_LBUTTONUP, palette_red);
     REQUIRE(f.object(a).fill.color_space() == color::ColorSpace::Cmyk);
@@ -175,6 +190,12 @@ void verify_editor(EditorFixture &f) {
     REQUIRE(f.object(a).stroke.color_space() == color::ColorSpace::Cmyk);
     const auto cyan = std::get<color::CMYKColor>(f.object(a).stroke.payload());
     REQUIRE(cyan.c == 1 && cyan.m == 0 && cyan.y == 0 && cyan.k == 0);
+    exercise_dialog(f, false, false, 0); // HSB values convert back into the document's CMYK source model.
+    const auto hsb_color = std::get<color::CMYKColor>(f.object(a).fill.payload());
+    REQUIRE(hsb_color.approx_equal({.5, .25, 0, .2, .6}, 1e-6));
+    exercise_dialog(f, false, false, 1); // HSL editing follows the same source-model rule.
+    const auto hsl_color = std::get<color::CMYKColor>(f.object(a).fill.payload());
+    REQUIRE(hsl_color.approx_equal({1, 0, 1, .5, 1}, 1e-6));
     const auto before_dialog = doc.revision();
     exercise_dialog(f, false, false);
     const auto numeric_color = std::get<color::CMYKColor>(f.object(a).fill.payload());
@@ -198,7 +219,7 @@ void verify_editor(EditorFixture &f) {
             f.object(b).fill.color_space() == color::ColorSpace::Cmyk);
     REQUIRE(doc.undo());
     REQUIRE(std::get<color::CMYKColor>(f.object(a).fill.payload()).approx_equal(numeric_color, 1e-12));
-    REQUIRE(f.object(b).fill.color_space() == color::ColorSpace::Rgb);
+    REQUIRE(f.object(b).fill.color_space() == color::ColorSpace::Cmyk);
     REQUIRE(doc.redo());
     REQUIRE(window.set_selection_stroke_width(2.25));
     REQUIRE(f.object(a).stroke_width_mm == 2.25 && f.object(b).stroke_width_mm == 2.25);
@@ -252,7 +273,7 @@ void verify_editor(EditorFixture &f) {
     f.capture("pick-style-light.bmp");
 
     // Empty selection edits set typed defaults; creating a shape is still one undo unit.
-    window.workflow().new_document(200, 150);
+    window.workflow().new_document(200, 150, color::DocumentColorMode::Cmyk);
     const auto empty_revision = doc.revision();
     REQUIRE(window.apply_selection_color(false, source));
     REQUIRE(window.set_selection_stroke_width(.75));

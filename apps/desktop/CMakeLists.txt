@@ -16,11 +16,14 @@ add_library(pikdraw_desktop STATIC
     src/presenters/ribbon_presenter.cpp
     src/presenters/inspector_presenter.cpp
     src/presenters/object_style.cpp
+    src/presenters/spot_palette_catalog.cpp
     src/presenters/gradient_properties.cpp
     src/themes/theme_tokens.cpp
     src/development/ui_reload_controller.cpp
     src/runtime/composition_root.cpp
     src/workflows/document_workflow.cpp
+    src/workflows/document_workflow_color.cpp
+    src/shell/native_window_document_color.cpp
     src/workflows/document_workflow_clipboard_transform.cpp
     src/workflows/document_workflow_group_transform.cpp
     src/workflows/document_workflow_appearance.cpp
@@ -42,6 +45,11 @@ add_library(pikdraw_desktop STATIC
     src/shell/native_window_isolation_menus.cpp
     src/shell/native_window_settings.cpp
     src/shell/native_window_text_align.cpp
+    src/shell/native_window_text_editor.cpp
+    src/shell/native_window_text_input.cpp
+    src/shell/native_window_text_overlay.cpp
+    src/tools/canvas_text_editor.cpp
+    src/workflows/document_workflow_text.cpp
     src/shell/native_window_tooltips_guides.cpp
     src/shell/native_window_numeric_input.cpp
     src/shell/native_window_numeric_edit.cpp
@@ -55,6 +63,7 @@ add_library(pikdraw_desktop STATIC
     src/shell/native_window_modal_clicks.cpp
     src/shell/native_window_chrome_clicks.cpp
     src/shell/native_window_shortcuts.cpp
+    src/shell/native_window_shortcuts_settings.cpp
     src/shell/native_window_canvas.cpp
     src/shell/native_window_canvas_overlays.cpp
     src/shell/native_window_canvas_snap.cpp
@@ -63,13 +72,18 @@ add_library(pikdraw_desktop STATIC
     src/shell/native_window_style.cpp
     src/shell/native_window_style_events.cpp
     src/shell/native_window_style_paint.cpp
+    src/shell/native_window_spot_palette.cpp
     src/shell/native_window_color_profiles.cpp
     src/shell/native_style_dialog.cpp
     src/shell/native_window_files.cpp
+    src/shell/native_window_svg_export.cpp
     src/shell/native_window_import.cpp
     src/shell/native_window_recovery.cpp
     src/shell/native_window_paint_icons.cpp
+    src/shell/native_window_paint_context_icons.cpp
     src/shell/native_window_paint_docks.cpp
+    src/shell/native_window_layers_dock.cpp
+    src/shell/native_window_layers_events.cpp
     src/shell/native_window_paint.cpp
     src/shell/native_window_paint_status.cpp
     src/shell/native_window_paint_menu.cpp
@@ -96,7 +110,7 @@ target_link_libraries(pikdraw_desktop PUBLIC
 
 if(WIN32)
     target_link_libraries(pikdraw_desktop PUBLIC pikdraw_worker_common)
-    target_link_libraries(pikdraw_desktop PUBLIC user32 gdi32 msimg32 comdlg32 comctl32)
+    target_link_libraries(pikdraw_desktop PUBLIC user32 gdi32 msimg32 comdlg32 comctl32 imm32)
     if(MSVC)
         target_compile_options(pikdraw_desktop PRIVATE /utf-8)
     endif()
@@ -123,6 +137,10 @@ target_link_libraries(pikdraw PRIVATE
 
 # Native unit and lifecycle tests
 if(PIKDRAW_BUILD_TESTS)
+    add_executable(test_pikdraw_document_color_workflow tests/test_document_color_workflow.cpp)
+    target_link_libraries(test_pikdraw_document_color_workflow PRIVATE pikdraw_desktop)
+    add_test(NAME test_pikdraw_document_color_workflow COMMAND test_pikdraw_document_color_workflow)
+    set_tests_properties(test_pikdraw_document_color_workflow PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
     add_executable(test_pikdraw_save_recovery tests/test_save_recovery.cpp)
     target_link_libraries(test_pikdraw_save_recovery PRIVATE pikdraw_desktop)
     add_test(NAME test_pikdraw_save_recovery COMMAND test_pikdraw_save_recovery)
@@ -138,6 +156,7 @@ if(PIKDRAW_BUILD_TESTS)
         tests/test_desktop_shell_align_boolean.cpp
         tests/test_desktop_shell_appearance.cpp
         tests/test_desktop_shell_text_settings.cpp
+        tests/test_desktop_shell_settings.cpp
     )
     target_link_libraries(test_pikdraw_desktop_shell PRIVATE
         pikdraw_desktop

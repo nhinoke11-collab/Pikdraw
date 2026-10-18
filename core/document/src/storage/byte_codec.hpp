@@ -86,6 +86,10 @@ public:
     ensure(value.size());
     bytes.insert(bytes.end(), value.begin(), value.end());
   }
+  void blob(std::span<const uint8_t> value, uint32_t limit) {
+    count(value.size(), limit);
+    append(value);
+  }
   void transform(const geometry::Transform2D &value) {
     f64(value.a);
     f64(value.b);
@@ -154,6 +158,15 @@ public:
     position_ += length;
     if (validate_utf8_ && !is_valid_utf8(result))
       throw std::invalid_argument("Native string is not valid UTF-8");
+    return result;
+  }
+  std::vector<uint8_t> blob(uint32_t limit) {
+    const auto length = count(limit);
+    require(length);
+    std::vector<uint8_t> result(
+        data_.begin() + static_cast<std::ptrdiff_t>(position_),
+        data_.begin() + static_cast<std::ptrdiff_t>(position_ + length));
+    position_ += length;
     return result;
   }
   Reader subreader(size_t length) {

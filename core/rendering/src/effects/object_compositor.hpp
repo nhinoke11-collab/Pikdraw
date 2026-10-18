@@ -22,6 +22,7 @@ namespace pikdraw::rendering::effects {
     const document::Appearance &appearance, const Camera2D &camera,
     PixelBufferTarget &target, const color::IccPreview *preview = nullptr,
     std::size_t *out_peak_gaussian_blur_scratch_capacity_bytes = nullptr,
-    std::size_t *out_peak_drop_shadow_scratch_capacity_bytes = nullptr);
+    std::size_t *out_peak_drop_shadow_scratch_capacity_bytes = nullptr,
+    int32_t raster_dpi = 0);
 
 } // namespace pikdraw::rendering::effects

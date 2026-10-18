@@ -6,6 +6,7 @@
 #include "native_canvas_frame.hpp"
 #ifdef _WIN32
 #include "../clipboard/native_clipboard.hpp"
+#include <commctrl.h>
 #endif
 #include "../tools/drawing_tool_controller.hpp"
 #include "../tools/pen_tool_controller.hpp"
@@ -20,9 +21,26 @@
 #include <sstream>
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <stdexcept>
+#include <system_error>
 
 namespace pikdraw::desktop {
+namespace {
+
+bool has_svg_extension(const std::string& path) {
+    const auto separator = path.find_last_of("/\\");
+    const auto dot = path.find_last_of('.');
+    if (dot == std::string::npos || (separator != std::string::npos && dot < separator))
+        return false;
+    std::string extension = path.substr(dot);
+    for (auto& character : extension)
+        if (character >= 'A' && character <= 'Z')
+            character = static_cast<char>(character - 'A' + 'a');
+    return extension == ".svg";
+}
+
+} // namespace
 
 void NativeWindow::set_active_workspace(int ws_index) noexcept {
     if (ws_index != 0)
@@ -89,6 +107,7 @@ void NativeWindow::fit_page_to_canvas() noexcept {
 
 void NativeWindow::open_menu(int menu_id) noexcept {
     if (menu_id < 0 || menu_id >= static_cast<int>(MenuId::Count)) return;
+    if (is_inline_text_editing_ && menu_id != static_cast<int>(MenuId::Text)) commit_inline_text_editing();
     open_menu_id_ = menu_id;
     hovered_menu_bar_item_ = menu_id;
     hovered_menu_item_ = -1;
@@ -211,13 +230,104 @@ void NativeWindow::create_from_template(int template_index) noexcept {
 
 void NativeWindow::trigger_export() noexcept {
 #ifdef _WIN32
-    export_svg_dialog();
+    if (export_job_active()) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đang xuất SVG · nhấn Esc để hủy"
+            : "SVG export is running · press Esc to cancel";
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    constexpr int kSelectionScope = 4201;
+    constexpr int kActivePageScope = 4202;
+    constexpr int kAllPagesScope = 4203;
+    constexpr int kCancelScope = 4204;
+    const bool has_selection =
+        !root().vector_controller().selection().selected_ids().empty();
+    const std::wstring selection_label = language_ == UILanguage::Vietnamese
+        ? L"Đối tượng đang chọn\nChỉ xuất các đối tượng đã chọn trên trang hiện tại"
+        : L"Selected objects\nExport only the selected objects on the active page";
+    const std::wstring page_label = language_ == UILanguage::Vietnamese
+        ? L"Trang hiện tại\nXuất toàn bộ artwork hiển thị trên trang hiện tại"
+        : L"Active page\nExport visible artwork from the current page";
+    const std::wstring all_label = language_ == UILanguage::Vietnamese
+        ? L"Tất cả trang · mỗi trang một SVG\nTạo một tệp riêng cho từng trang"
+        : L"All pages · one SVG per page\nCreate a separate file for each page";
+    const std::wstring cancel_label = language_ == UILanguage::Vietnamese ? L"Hủy" : L"Cancel";
+    std::vector<TASKDIALOG_BUTTON> buttons;
+    if (has_selection) buttons.push_back({kSelectionScope, selection_label.c_str()});
+    buttons.push_back({kActivePageScope, page_label.c_str()});
+    buttons.push_back({kAllPagesScope, all_label.c_str()});
+    buttons.push_back({kCancelScope, cancel_label.c_str()});
+    TASKDIALOGCONFIG config{};
+    config.cbSize = sizeof(config);
+    config.hwndParent = hwnd_;
+    config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_USE_COMMAND_LINKS;
+    config.pszWindowTitle = language_ == UILanguage::Vietnamese
+        ? L"Phạm vi xuất SVG" : L"SVG export scope";
+    config.pszMainInstruction = language_ == UILanguage::Vietnamese
+        ? L"Chọn nội dung cần xuất" : L"Choose what to export";
+    config.pszContent = language_ == UILanguage::Vietnamese
+        ? L"Các trang nhiều trang sẽ được lưu thành các tệp riêng."
+        : L"Multi-page documents are written as separate files.";
+    config.cButtons = static_cast<UINT>(buttons.size());
+    config.pButtons = buttons.data();
+    config.nDefaultButton = kActivePageScope;
+    int choice = kActivePageScope;
+    using TaskDialogFunction = HRESULT(WINAPI*)(const TASKDIALOGCONFIG*, int*, int*, BOOL*);
+    HMODULE common_controls = LoadLibraryW(L"comctl32.dll");
+    const auto task_dialog = common_controls ? reinterpret_cast<TaskDialogFunction>(
+        GetProcAddress(common_controls, "TaskDialogIndirect")) : nullptr;
+    const HRESULT dialog_result = task_dialog
+        ? task_dialog(&config, &choice, nullptr, nullptr) : E_NOTIMPL;
+    if (common_controls) FreeLibrary(common_controls);
+    if (FAILED(dialog_result)) {
+        const auto fallback = MessageBoxW(hwnd_,
+            language_ == UILanguage::Vietnamese
+                ? L"Xuất trang hiện tại? Chọn Không để xuất các trang thành từng tệp riêng."
+                : L"Export the active page? Choose No to export every page to its own file.",
+            language_ == UILanguage::Vietnamese ? L"Phạm vi xuất SVG" : L"SVG export scope",
+            MB_YESNOCANCEL | MB_ICONQUESTION);
+        if (fallback == IDCANCEL) return;
+        choice = fallback == IDYES ? kActivePageScope : kAllPagesScope;
+    }
+      if (choice == kCancelScope || choice == 0) return;
+    const bool selected_objects = choice == kSelectionScope;
+    const bool all_pages = choice == kAllPagesScope;
+    export_svg_dialog(selected_objects, all_pages);
 #else
     status_msg_ = "SVG export requires the Windows desktop file dialog";
 #endif
 }
 
-bool NativeWindow::export_svg_to(const std::string& file_path) {
+bool NativeWindow::export_svg_to(const std::string& file_path, bool selected_objects,
+                                 bool allow_replace_existing, bool all_pages) {
+    if (!has_svg_extension(file_path)) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "SVG cần phần mở rộng .svg; chưa ghi tệp"
+            : "SVG export requires a .svg extension; no file was written";
+#ifdef _WIN32
+        if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
+#endif
+        return false;
+    }
+#ifdef _WIN32
+    return start_svg_export(file_path, selected_objects, allow_replace_existing,
+                            all_pages);
+#else
+    if (all_pages) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Xuất SVG nhiều trang cần Windows"
+            : "Multi-page SVG export requires the Windows desktop";
+        return false;
+    }
+    std::error_code existence_error;
+    if (std::filesystem::exists(std::filesystem::u8path(file_path), existence_error) &&
+        !allow_replace_existing) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Tệp đã tồn tại · cần xác nhận ghi đè"
+            : "The file already exists · overwrite confirmation is required";
+        return false;
+    }
     const bool saved = workflow().save_svg(file_path);
     status_msg_ = saved
         ? (language_ == UILanguage::Vietnamese ? "Đã xuất SVG ra tệp" : "SVG exported")
@@ -226,6 +336,7 @@ bool NativeWindow::export_svg_to(const std::string& file_path) {
     if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
 #endif
     return saved;
+#endif
 }
 
 void NativeWindow::create_new_document() {
@@ -319,6 +430,7 @@ bool NativeWindow::is_object_in_isolated_group(document::ObjectId id) const {
 }
 
 void NativeWindow::handle_double_click(int x, int y) {
+    if (is_inline_text_editing_ && is_canvas_point(x, y) && handle_inline_text_mouse(x, y, 3)) return;
     if (!is_canvas_point(x, y))
         return;
 

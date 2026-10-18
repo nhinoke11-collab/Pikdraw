@@ -77,6 +77,19 @@ TextLayout TextLayout::layout_text(std::string_view text, const FontIdentity &fo
         if (text[paragraph_end] == '\r' && paragraph_start < text.size() && text[paragraph_start] == '\n')
             ++paragraph_start;
     } while (paragraph_start <= text.size());
+    if (options.max_width_mm == 0 && options.alignment != TextAlignment::Left) {
+        // Unbounded point text aligns its shorter lines within the longest line.
+        const double width = result.bounds_.width;
+        TextLayout aligned;
+        for (auto line : result.lines_) {
+            const double remaining = width - line.run.total_advance_mm;
+            const double shift = options.alignment == TextAlignment::Center ? remaining / 2 : remaining;
+            line.baseline_origin.x += shift;
+            line.line_bounds.x += shift;
+            aligned.add_line(std::move(line));
+        }
+        return aligned;
+    }
     return result;
 }
 } // namespace pikdraw::typography

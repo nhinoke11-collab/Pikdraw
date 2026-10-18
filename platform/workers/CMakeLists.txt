@@ -38,6 +38,9 @@ target_link_libraries(spike_worker PRIVATE
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_compile_options(spike_worker PRIVATE -fms-extensions)
 endif()
+if(WIN32)
+    target_link_options(spike_worker PRIVATE -static)
+endif()
 
 if(PIKDRAW_BUILD_TESTS)
     # Test hooks and sandbox bypasses are compiled into repository-owned fixtures only.
@@ -103,6 +106,15 @@ if(PIKDRAW_BUILD_TESTS)
     )
     add_dependencies(test_pikdraw_worker_svg_import spike_worker_test)
     add_test(NAME test_pikdraw_worker_svg_import COMMAND test_pikdraw_worker_svg_import)
+
+    add_executable(test_pikdraw_worker_raster_import
+        tests/raster_worker_import_tests.cpp
+    )
+    target_link_libraries(test_pikdraw_worker_raster_import PRIVATE
+        pikdraw_worker_test_support
+    )
+    add_dependencies(test_pikdraw_worker_raster_import spike_worker_test)
+    add_test(NAME test_pikdraw_worker_raster_import COMMAND test_pikdraw_worker_raster_import)
 
     add_executable(test_pikdraw_worker_dxf_import
         tests/dxf_worker_import_tests.cpp

@@ -2,6 +2,7 @@
 
 #include "pikdraw/geometry/operations/align.hpp"
 #include "pikdraw/geometry/operations/boolean.hpp"
+#include "native_window_document_color.hpp"
 
 #include <array>
 #include <optional>
@@ -38,7 +39,7 @@ enum class MenuActionId {
     FileRecoverAutosave,
     FileSave,
     FileSaveAs,
-    FileExportSvg,
+    FileExport,
     FileToggleGuidelines,
     FileClearGuidelines,
     FileProperties,
@@ -122,6 +123,7 @@ enum class MenuActionId {
     BitmapsColorMask,
     // Text
     TextEdit,
+    TextFont,
     TextBold,
     TextItalic,
     TextConvertToCurves,
@@ -340,19 +342,19 @@ struct AlignPanelMetrics {
 // 1. File Menu
 inline constexpr std::array<MenuItem, 10> kFileMenuItems{{
     {MenuActionId::FileNew, L"New Document", L"Bản vẽ mới", L"Ctrl+N"},
-    {MenuActionId::FileOpen, L"Open PikDraw File…", L"Mở tệp PikDraw…", L"Ctrl+O"},
-    {MenuActionId::FileImport, L"Import…", L"Nhập…", L""},
+    {MenuActionId::FileOpen, L"Open…", L"Mở…", L"Ctrl+O"},
+    {MenuActionId::FileImport, L"Import…", L"Nhập…", L"Ctrl+I"},
     {MenuActionId::FileRecoverAutosave, L"Recover Autosave…", L"Phục hồi bản tự lưu…", L""},
     {MenuActionId::FileSave, L"Save", L"Lưu", L"Ctrl+S"},
     {MenuActionId::FileSaveAs, L"Save As…", L"Lưu thành…", L"Ctrl+Shift+S"},
-    {MenuActionId::FileExportSvg, L"Export SVG…", L"Xuất SVG…", L"Ctrl+E"},
+    {MenuActionId::FileExport, L"Export…", L"Xuất…", L"Ctrl+E"},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::FileProperties, L"Document Properties…", L"Thuộc tính tài liệu…", L"", false, true},
     {MenuActionId::FileExit, L"Exit PikDraw", L"Thoát PikDraw", L"Alt+F4"}
 }};
 
 // 2. Edit Menu
-inline constexpr std::array<MenuItem, 17> kEditMenuItems{{
+inline constexpr std::array<MenuItem, 20> kEditMenuItems{{
     {MenuActionId::EditUndo, L"Undo", L"Hoàn tác", L"Ctrl+Z"},
     {MenuActionId::EditRedo, L"Redo", L"Làm lại", L"Ctrl+Y"},
     {MenuActionId::Separator, L"", L"", L"", true},
@@ -369,7 +371,10 @@ inline constexpr std::array<MenuItem, 17> kEditMenuItems{{
     {MenuActionId::EditStepAndRepeat, L"Step and Repeat…", L"Nhân bản lặp lại…", L"Ctrl+Shift+D"},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::EditSelectAll, L"Select All", L"Chọn tất cả", L"Ctrl+A"},
-    {MenuActionId::EditDeselect, L"Deselect", L"Bỏ chọn", L"Esc"}
+    {MenuActionId::EditDeselect, L"Deselect", L"Bỏ chọn", L"Esc"},
+    {MenuActionId::Separator, L"", L"", L"", true},
+    {static_cast<MenuActionId>(document_color_ui::kModeMenu), L"Document Color Mode", L"Hệ màu tài liệu", L"▸"},
+    {static_cast<MenuActionId>(document_color_ui::kDpiMenu), L"Raster Effects DPI", L"DPI hiệu ứng raster", L"▸"}
 }};
 
 // 3. View Menu
@@ -464,8 +469,9 @@ inline constexpr std::array<MenuItem, 5> kBitmapsMenuItems{{
 }};
 
 // 8. Text Menu
-inline constexpr std::array<MenuItem, 5> kTextMenuItems{{
+inline constexpr std::array<MenuItem, 6> kTextMenuItems{{
     {MenuActionId::TextEdit, L"Edit Text", L"Sửa văn bản", L""},
+    {MenuActionId::TextFont, L"Choose Font…", L"Chọn phông chữ…", L""},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::TextBold, L"Bold Font", L"Chữ đậm", L"Ctrl+B"},
     {MenuActionId::TextItalic, L"Italic Font", L"Chữ nghiêng", L"Ctrl+I"},
@@ -489,7 +495,7 @@ inline constexpr std::array<MenuItem, 11> kToolsMenuItems{{
 
 // 10. Window Menu
 inline constexpr std::array<MenuItem, 6> kWindowMenuItems{{
-    {MenuActionId::WindowProperties, L"Properties Inspector", L"Bảng thuộc tính", L""},
+    {MenuActionId::WindowProperties, L"Properties Inspector", L"Bảng thuộc tính", L"Ctrl+T"},
     {MenuActionId::WindowAlignDistributePanel, L"Align & Distribute Panel", L"Bảng Căn chỉnh & Phân bổ", L"Ctrl+Shift+A"},
     {MenuActionId::WindowTabs, L"Document Tabs Bar", L"Thanh tab tài liệu", L"", false, true},
     {MenuActionId::Separator, L"", L"", L"", true},

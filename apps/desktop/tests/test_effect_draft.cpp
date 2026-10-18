@@ -70,11 +70,16 @@ void test_effect_tool_reactivation_and_shadow_drag() {
     assert(std::abs(shadow.sigma_x_mm - customized.sigma_x_mm) < 1e-9);
     assert(std::abs(shadow.sigma_y_mm - customized.sigma_y_mm) < 1e-9);
     assert(std::abs(shadow.opacity - customized.opacity) < 1e-9);
-    const auto shadow_color = std::get<pikdraw::color::RGBColor>(shadow.color.payload());
-    assert(std::abs(shadow_color.r - 0.2) < 1e-9);
-    assert(std::abs(shadow_color.g - 0.4) < 1e-9);
-    assert(std::abs(shadow_color.b - 0.8) < 1e-9);
-    assert(std::abs(shadow_color.a - 0.65) < 1e-9);
+    if (const auto* rgb = std::get_if<pikdraw::color::RGBColor>(&shadow.color.payload())) {
+        assert(std::abs(rgb->r - 0.2) < 1e-4);
+        assert(std::abs(rgb->g - 0.4) < 1e-4);
+        assert(std::abs(rgb->b - 0.8) < 1e-4);
+        assert(std::abs(rgb->a - 0.65) < 1e-4);
+    } else if (const auto* cmyk = std::get_if<pikdraw::color::CMYKColor>(&shadow.color.payload())) {
+        assert(std::abs(cmyk->a - 0.65) < 1e-4);
+    } else {
+        assert(false && "unexpected color payload");
+    }
     assert(!window.workflow().add_selected_effect(pikdraw::document::DropShadowEffect{}));
     assert(window.root().document().current_snapshot()->revision() == multiply_revision);
     assert(window.workflow().undo());
@@ -402,14 +407,68 @@ void test_properties_draft_preview_buttons_and_localized_captures() {
     assert(window.root().document().current_snapshot() == before);
 }
 
+void test_drop_shadow_property_bar_ribbon() {
+    NativeWindow window(1440, 900);
+    const auto path_id = window.workflow().add_rectangle(
+        20.0, 20.0, 60.0, 40.0, "#336699", "#112233", 1.0);
+    window.root().vector_controller().selection().select(path_id);
+
+    // 1. Activate drop shadow
+    window.execute_menu_action(static_cast<int>(MenuActionId::EffectsDropShadow));
+    auto appearance = appearance_of(window, path_id);
+    assert(appearance.effects.size() == 1);
+    assert(std::holds_alternative<pikdraw::document::DropShadowEffect>(appearance.effects.front().parameters));
+
+    // 2. Click Preset button at x = 100, y = 80
+    const auto rev_before_preset = window.root().document().current_snapshot()->revision();
+    window.handle_mouse_down(100, 80);
+    assert(window.root().document().current_snapshot()->revision() > rev_before_preset);
+    appearance = appearance_of(window, path_id);
+    auto shadow = std::get<pikdraw::document::DropShadowEffect>(appearance.effects.front().parameters);
+    assert(std::abs(shadow.dx_mm) > 0.0 || std::abs(shadow.dy_mm) > 0.0);
+
+    // 3. Click Blend Mode button at x = 650, y = 80
+    const auto rev_before_blend = window.root().document().current_snapshot()->revision();
+    window.handle_mouse_down(650, 80);
+    assert(window.root().document().current_snapshot()->revision() > rev_before_blend);
+    appearance = appearance_of(window, path_id);
+    shadow = std::get<pikdraw::document::DropShadowEffect>(appearance.effects.front().parameters);
+    assert(shadow.blend_mode != pikdraw::document::BlendMode::Normal);
+
+    // 4. Click Toggle Object button at x = 820, y = 80
+    window.handle_mouse_down(820, 80);
+
+    // 5. Toggle back to shadow ribbon via "◐ Bóng" button
+    window.handle_mouse_down(700, 80);
+
+    // 6. Click Clear Shadow button at x = 750, y = 80
+    const auto rev_before_clear = window.root().document().current_snapshot()->revision();
+    window.handle_mouse_down(750, 80);
+    assert(window.root().document().current_snapshot()->revision() > rev_before_clear);
+    appearance = appearance_of(window, path_id);
+    assert(appearance.effects.empty());
+
+    // 7. Undo restores the shadow
+    assert(window.workflow().undo());
+    appearance = appearance_of(window, path_id);
+    assert(appearance.effects.size() == 1);
+}
+
 } // namespace
 
 int main() {
+    std::cerr << "Running test 1: test_effect_tool_reactivation_and_shadow_drag" << std::endl;
     test_effect_tool_reactivation_and_shadow_drag();
+    std::cerr << "Running test 2: test_non_normal_shadow_must_be_last_enabled_effect" << std::endl;
     test_non_normal_shadow_must_be_last_enabled_effect();
+    std::cerr << "Running test 3: test_shadow_blend_property_and_reactivation_edit_existing_node" << std::endl;
     test_shadow_blend_property_and_reactivation_edit_existing_node();
+    std::cerr << "Running test 4: test_preview_cancel_apply_and_stale_guards" << std::endl;
     test_preview_cancel_apply_and_stale_guards();
+    std::cerr << "Running test 5: test_properties_draft_preview_buttons_and_localized_captures" << std::endl;
     test_properties_draft_preview_buttons_and_localized_captures();
+    std::cerr << "Running test 6: test_drop_shadow_property_bar_ribbon" << std::endl;
+    test_drop_shadow_property_bar_ribbon();
     std::cout << "[PASS] test_pikdraw_effect_draft\n";
     return 0;
 }

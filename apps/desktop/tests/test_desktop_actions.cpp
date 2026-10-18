@@ -85,10 +85,85 @@ void test_action_dispatcher_routing_and_shortcuts() {
     std::cout << "[PASS] test_action_dispatcher_routing_and_shortcuts\n";
 }
 
+void test_file_actions_bind_runtime_handlers_before_dispatch() {
+    ActionDispatcher dispatcher;
+    bool imported = false;
+    bool exported = false;
+    const std::string import_id(ActionId::kFileImport);
+    const std::string export_id(ActionId::kFileExport);
+
+    dispatcher.register_action({import_id, "Import...", "Import...", "Ctrl+I", {}, nullptr});
+    dispatcher.register_action({export_id, "Export...", "Export...", "Ctrl+E", {}, nullptr});
+    assert(!dispatcher.get_action(import_id)->handler);
+    assert(!dispatcher.get_action(export_id)->handler);
+
+    dispatcher.register_action({import_id, "Import...", "Import...", "Ctrl+I",
+                                [&] { imported = true; }, nullptr});
+    dispatcher.register_action({export_id, "Export...", "Export...", "Ctrl+E",
+                                [&] { exported = true; }, nullptr});
+    assert(dispatcher.dispatch_shortcut("Ctrl+I"));
+    assert(dispatcher.dispatch_shortcut("Ctrl+E"));
+    assert(imported && exported);
+    std::cout << "[PASS] test_file_actions_bind_runtime_handlers_before_dispatch\n";
+}
+
+void test_action_dispatcher_shortcut_customization_and_conflicts() {
+    ActionDispatcher dispatcher;
+    bool action1_run = false;
+    bool action2_run = false;
+
+    dispatcher.register_action({
+        std::string(ActionId::kObjectOrderToFront), "Lên trên cùng", "To Front", "Shift+PgUp",
+        [&] { action1_run = true; }, nullptr
+    });
+    dispatcher.register_action({
+        std::string(ActionId::kObjectOrderForwardOne), "Lên một lớp", "Forward One", "Ctrl+PgUp",
+        [&] { action2_run = true; }, nullptr
+    });
+
+    assert(dispatcher.get_action_shortcut(ActionId::kObjectOrderToFront) == "Shift+PgUp");
+    assert(dispatcher.get_default_shortcut(ActionId::kObjectOrderToFront) == "Shift+PgUp");
+    assert(dispatcher.find_action_for_shortcut("Shift+PgUp") == ActionId::kObjectOrderToFront);
+
+    // Dispatch default
+    assert(dispatcher.dispatch_shortcut("Shift+PgUp"));
+    assert(action1_run);
+    action1_run = false;
+
+    // Customize shortcut: Change To Front to Ctrl+Shift+F
+    assert(dispatcher.set_action_shortcut(ActionId::kObjectOrderToFront, "Ctrl+Shift+F"));
+    assert(dispatcher.get_action_shortcut(ActionId::kObjectOrderToFront) == "Ctrl+Shift+F");
+    assert(dispatcher.find_action_for_shortcut("Shift+PgUp").empty());
+    assert(dispatcher.find_action_for_shortcut("Ctrl+Shift+F") == ActionId::kObjectOrderToFront);
+
+    assert(!dispatcher.dispatch_shortcut("Shift+PgUp"));
+    assert(!action1_run);
+    assert(dispatcher.dispatch_shortcut("Ctrl+Shift+F"));
+    assert(action1_run);
+    action1_run = false;
+
+    // Conflict resolution: Assign "Ctrl+PgUp" (already on Forward One) to To Front
+    assert(dispatcher.set_action_shortcut(ActionId::kObjectOrderToFront, "Ctrl+PgUp"));
+    assert(dispatcher.get_action_shortcut(ActionId::kObjectOrderToFront) == "Ctrl+PgUp");
+    // Forward One should have had its conflicting shortcut cleared
+    assert(dispatcher.get_action_shortcut(ActionId::kObjectOrderForwardOne).empty());
+
+    // Reset to defaults
+    dispatcher.reset_to_default_shortcuts();
+    assert(dispatcher.get_action_shortcut(ActionId::kObjectOrderToFront) == "Shift+PgUp");
+    assert(dispatcher.get_action_shortcut(ActionId::kObjectOrderForwardOne) == "Ctrl+PgUp");
+
+    assert(dispatcher.all_actions().size() == 2);
+    std::cout << "[PASS] test_action_dispatcher_shortcut_customization_and_conflicts\n";
+}
+
 int main() {
     std::cout << "=== Running Desktop Actions Tests ===\n";
     test_action_id_validation();
     test_action_dispatcher_routing_and_shortcuts();
+    test_file_actions_bind_runtime_handlers_before_dispatch();
+    test_action_dispatcher_shortcut_customization_and_conflicts();
     std::cout << "All Desktop Actions Tests PASSED.\n";
     return 0;
 }
+

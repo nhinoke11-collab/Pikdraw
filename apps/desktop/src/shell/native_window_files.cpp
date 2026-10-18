@@ -85,11 +85,24 @@ void NativeWindow::autosave_documents() {
 }
 
 void NativeWindow::open_document_dialog() {
+    if (is_inline_text_editing_) commit_inline_text_editing();
     std::wstring path(32768, L'\0');
     OPENFILENAMEW dialog{};
     dialog.lStructSize = sizeof(dialog);
     dialog.hwndOwner = hwnd_;
-    dialog.lpstrFilter = kPikdrawFilter;
+    dialog.lpstrFilter = language_ == UILanguage::Vietnamese
+        ? L"Tất cả định dạng hỗ trợ (*.pikdraw;*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr)\0*.pikdraw;*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr\0"
+          L"Tài liệu PikDraw (*.pikdraw)\0*.pikdraw\0"
+          L"Đồ họa Vector (*.svg;*.dxf)\0*.svg;*.dxf\0"
+          L"Bản vẽ CorelDRAW (*.cdr)\0*.cdr\0"
+          L"Hình ảnh raster (*.png;*.jpg;*.jpeg;*.tif;*.tiff)\0*.png;*.jpg;*.jpeg;*.tif;*.tiff\0"
+          L"Tất cả tệp (*.*)\0*.*\0\0"
+        : L"All Supported Files (*.pikdraw;*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr)\0*.pikdraw;*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr\0"
+          L"PikDraw Document (*.pikdraw)\0*.pikdraw\0"
+          L"Vector Drawings (*.svg;*.dxf)\0*.svg;*.dxf\0"
+          L"CorelDRAW Files (*.cdr)\0*.cdr\0"
+          L"Raster Images (*.png;*.jpg;*.jpeg;*.tif;*.tiff)\0*.png;*.jpg;*.jpeg;*.tif;*.tiff\0"
+          L"All Files (*.*)\0*.*\0\0";
     dialog.lpstrFile = path.data();
     dialog.nMaxFile = static_cast<DWORD>(path.size());
     dialog.lpstrDefExt = L"pikdraw";
@@ -97,33 +110,40 @@ void NativeWindow::open_document_dialog() {
     if (!GetOpenFileNameW(&dialog))
         return;
 
-    if (root().document().is_dirty() && root().document().current_snapshot()->object_count() > 0) {
-        const auto prompt = utf8_to_wide(language_ == UILanguage::Vietnamese
-            ? "Bỏ các thay đổi chưa lưu và mở tệp khác?"
-            : "Discard unsaved changes and open another file?");
-        const auto title = utf8_to_wide(language_ == UILanguage::Vietnamese
-            ? "Mở tài liệu" : "Open document");
-        if (MessageBoxW(hwnd_, prompt.c_str(), title.c_str(), MB_YESNO | MB_ICONWARNING) != IDYES)
-            return;
+    const std::wstring extension = std::filesystem::path(path.c_str()).extension().wstring();
+    if (_wcsicmp(extension.c_str(), L".pikdraw") == 0) {
+        if (root().document().is_dirty() && root().document().current_snapshot()->object_count() > 0) {
+            const auto prompt = utf8_to_wide(language_ == UILanguage::Vietnamese
+                ? "Bỏ các thay đổi chưa lưu và mở tệp khác?"
+                : "Discard unsaved changes and open another file?");
+            const auto title = utf8_to_wide(language_ == UILanguage::Vietnamese
+                ? "Mở tài liệu" : "Open document");
+            if (MessageBoxW(hwnd_, prompt.c_str(), title.c_str(), MB_YESNO | MB_ICONWARNING) != IDYES)
+                return;
+        }
+
+        const auto utf8_path = wide_to_utf8(path.c_str());
+        if (utf8_path.empty() || !workflow().open_native(utf8_path)) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Không thể mở tệp PikDraw" : "Could not open PikDraw file";
+        } else {
+            active_tab().file_path = utf8_path;
+            document_path_ = utf8_path;
+            root().vector_controller().selection().clear();
+            set_active_tool(0);
+            fit_page_to_canvas();
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Đã mở tài liệu PikDraw" : "PikDraw document opened";
+        }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
     }
 
-    const auto utf8_path = wide_to_utf8(path.c_str());
-    if (utf8_path.empty() || !workflow().open_native(utf8_path)) {
-        status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Không thể mở tệp PikDraw" : "Could not open PikDraw file";
-    } else {
-        active_tab().file_path = utf8_path;
-        document_path_ = utf8_path;
-        root().vector_controller().selection().clear();
-        set_active_tool(0);
-        fit_page_to_canvas();
-        status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Đã mở tài liệu PikDraw" : "PikDraw document opened";
-    }
-    InvalidateRect(hwnd_, nullptr, FALSE);
+    import_file_to_tab(path.c_str(), true);
 }
 
 void NativeWindow::save_document_dialog(bool force_save_as) {
+    if (is_inline_text_editing_) commit_inline_text_editing();
     std::string path = active_tab().file_path;
     if (path.empty() || force_save_as) {
         std::wstring wide_path(32768, L'\0');
@@ -156,18 +176,25 @@ void NativeWindow::save_document_dialog(bool force_save_as) {
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
-void NativeWindow::export_svg_dialog() {
+void NativeWindow::export_svg_dialog(bool selected_objects, bool all_pages) {
     std::wstring path(32768, L'\0');
     OPENFILENAMEW dialog{};
     dialog.lStructSize = sizeof(dialog);
     dialog.hwndOwner = hwnd_;
-    dialog.lpstrFilter = L"SVG vector (*.svg)\0*.svg\0All files\0*.*\0\0";
+    dialog.lpstrFilter = L"SVG vector (*.svg)\0*.svg\0\0";
+    dialog.lpstrTitle = all_pages
+        ? (language_ == UILanguage::Vietnamese ? L"Xuất từng trang thành tệp SVG riêng" : L"Export each page to a separate SVG")
+        : selected_objects
+        ? (language_ == UILanguage::Vietnamese ? L"Xuất đối tượng đang chọn thành SVG" : L"Export selected objects as SVG")
+        : (language_ == UILanguage::Vietnamese ? L"Xuất trang hiện tại thành SVG" : L"Export active page as SVG");
     dialog.lpstrFile = path.data();
     dialog.nMaxFile = static_cast<DWORD>(path.size());
     dialog.lpstrDefExt = L"svg";
-    dialog.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+    dialog.Flags = OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR |
+        (all_pages ? 0 : OFN_OVERWRITEPROMPT);
     if (GetSaveFileNameW(&dialog))
-        export_svg_to(wide_to_utf8(path.c_str()));
+        export_svg_to(wide_to_utf8(path.c_str()), selected_objects,
+                      !all_pages, all_pages);
 }
 
 #endif

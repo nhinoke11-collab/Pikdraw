@@ -9,6 +9,7 @@
 #include <optional>
 #include <sstream>
 #include <type_traits>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 
@@ -54,7 +55,7 @@ bool is_unit_opacity(double value) {
   return std::isfinite(value) && value >= 0.0 && value <= 1.0;
 }
 
-void report_unsupported_appearance(SvgExportResult &result,
+void report_unsupported_appearance(SvgStreamExportResult &result,
                                    document::ObjectId id,
                                    const document::Appearance &appearance) {
   const auto element = "object " + std::to_string(id);
@@ -84,19 +85,28 @@ void report_unsupported_appearance(SvgExportResult &result,
 }
 
 void preflight_appearance_export(
-    const document::DocumentSnapshot &snapshot, SvgExportResult &result) {
-  for (const auto &[id, object] : snapshot.objects().all()) {
-    if (const auto *path = std::get_if<document::PathObject>(&object)) {
+    const document::DocumentSnapshot &snapshot,
+    const std::vector<document::ObjectId> &object_ids,
+    SvgStreamExportResult &result) {
+  for (const auto id : object_ids) {
+    const auto object = snapshot.objects().get(id);
+    if (!object) {
+      result.report.add_issue(FidelitySeverity::Unsupported,
+                              "object " + std::to_string(id), "Object scope",
+                              "The selected object is not present on the active page");
+      continue;
+    }
+    if (const auto *path = std::get_if<document::PathObject>(&*object)) {
       if (path->visible)
         report_unsupported_appearance(result, id, path->appearance);
-    } else if (const auto *text = std::get_if<document::TextObject>(&object)) {
+    } else if (const auto *text = std::get_if<document::TextObject>(&*object)) {
       if (text->visible)
         report_unsupported_appearance(result, id, text->appearance);
     }
   }
 }
 
-void write_paint_opacity(std::ostringstream &stream, const char *attribute,
+void write_paint_opacity(std::ostream &stream, const char *attribute,
                          const color::ColorValue &color,
                          double component_opacity) {
   const double combined = color_alpha(color) * component_opacity;
@@ -104,7 +114,7 @@ void write_paint_opacity(std::ostringstream &stream, const char *attribute,
     stream << ' ' << attribute << "=\"" << combined << '"';
 }
 
-void write_object_opacity(std::ostringstream &stream, double opacity) {
+void write_object_opacity(std::ostream &stream, double opacity) {
   if (opacity < 1.0)
     stream << " opacity=\"" << opacity << '"';
 }
@@ -114,7 +124,7 @@ bool has_transform(const geometry::Transform2D &value) {
          value.d != 1.0 || value.tx != 0.0 || value.ty != 0.0;
 }
 
-void warn_preview_color(SvgExportResult &result, document::ObjectId id,
+void warn_preview_color(SvgStreamExportResult &result, document::ObjectId id,
                         const color::ColorValue &value,
                         const char *property) {
   if (value.color_space() != color::ColorSpace::Rgb ||
@@ -125,7 +135,7 @@ void warn_preview_color(SvgExportResult &result, document::ObjectId id,
   }
 }
 
-void write_transform(std::ostringstream &stream,
+void write_transform(std::ostream &stream,
                      const geometry::Transform2D &transform) {
   if (!has_transform(transform))
     return;
@@ -135,18 +145,51 @@ void write_transform(std::ostringstream &stream,
 }
 } // namespace
 
-SvgExportResult SvgExporter::export_with_report(
+SvgStreamExportResult SvgExporter::write_to_stream(
     const document::DocumentSnapshot &snapshot,
-    const SvgExportOptions &options) {
-  SvgExportResult result;
-  preflight_appearance_export(snapshot, result);
+    std::ostream &stream,
+    const SvgExportOptions &options,
+    const std::vector<document::ObjectId> *included_object_ids) {
+  SvgStreamExportResult result;
+  std::vector<document::ObjectId> object_ids;
+  object_ids.reserve(included_object_ids ? included_object_ids->size()
+                                         : snapshot.objects().size());
+  if (included_object_ids) {
+    object_ids = *included_object_ids;
+  } else {
+    for (const auto &[id, object] : snapshot.objects().all()) {
+      (void)object;
+      object_ids.push_back(id);
+    }
+  }
+
+  std::unordered_set<document::ObjectId> root_ids;
+  for (const auto &layer : snapshot.active_page().layout.layers)
+    root_ids.insert(layer.object_ids.begin(), layer.object_ids.end());
+  std::unordered_set<document::ObjectId> unique_ids;
+  for (const auto id : object_ids) {
+    if (!unique_ids.insert(id).second) {
+      result.report.add_issue(FidelitySeverity::Unsupported,
+                              "object " + std::to_string(id), "Object scope",
+                              "An object ID appears more than once in the export scope");
+    } else if (!snapshot.objects().contains(id)) {
+      result.report.add_issue(FidelitySeverity::Unsupported,
+                              "object " + std::to_string(id), "Object scope",
+                              "The selected object is not present on the active page");
+    } else if (!root_ids.contains(id)) {
+      result.report.add_issue(FidelitySeverity::Unsupported,
+                              "object " + std::to_string(id), "Group transforms",
+                              "A nested object cannot be exported independently until its group transforms are supported");
+    }
+  }
+  if (!result.report.has_unsupported())
+    preflight_appearance_export(snapshot, object_ids, result);
   if (result.report.has_unsupported()) {
     result.error_message =
-        "SVG export stopped before output because an appearance value has no verified mapping";
+        "SVG export stopped before output because the selected scope or an appearance value has no verified mapping";
     return result;
   }
 
-  std::ostringstream stream;
   stream.imbue(std::locale::classic());
   stream << std::setprecision(std::numeric_limits<double>::max_digits10);
   if (options.include_xml_header)
@@ -158,6 +201,8 @@ SvgExportResult SvgExporter::export_with_report(
          << "mm\" viewBox=\"0 0 " << page.width_mm << ' ' << page.height_mm
          << "\">\n";
   for (const auto &[id, object] : snapshot.objects().all()) {
+    if (!unique_ids.contains(id))
+      continue;
     if (const auto *path = std::get_if<document::PathObject>(&object)) {
       if (!path->visible)
         continue;
@@ -226,6 +271,24 @@ SvgExportResult SvgExporter::export_with_report(
     return result;
   }
   stream << "</svg>\n";
+  if (!stream.good()) {
+    result.error_message = "SVG output stream failed while writing";
+    return result;
+  }
+  result.success = true;
+  return result;
+}
+
+SvgExportResult SvgExporter::export_with_report(
+    const document::DocumentSnapshot &snapshot,
+    const SvgExportOptions &options) {
+  SvgExportResult result;
+  std::ostringstream stream;
+  const auto streamed = write_to_stream(snapshot, stream, options);
+  result.report = streamed.report;
+  result.error_message = streamed.error_message;
+  if (!streamed.success)
+    return result;
   result.svg = stream.str();
   result.success = true;
   return result;

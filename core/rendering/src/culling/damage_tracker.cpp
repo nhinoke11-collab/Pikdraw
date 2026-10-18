@@ -25,6 +25,10 @@ geometry::Rect2D union_rects(const geometry::Rect2D &a,
 bool same_render_structure(const document::Page &lhs,
                            const document::Page &rhs) {
   if (lhs.width_mm != rhs.width_mm || lhs.height_mm != rhs.height_mm ||
+      lhs.raster_dpi != rhs.raster_dpi || lhs.color_mode != rhs.color_mode ||
+      lhs.color_profile_name != rhs.color_profile_name ||
+      lhs.color_mode_explicit != rhs.color_mode_explicit ||
+      lhs.raster_dpi_explicit != rhs.raster_dpi_explicit ||
       lhs.layers.size() != rhs.layers.size())
     return false;
   std::unordered_map<document::ObjectId, size_t> lhs_layer_by_id;

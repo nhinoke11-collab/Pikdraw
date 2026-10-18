@@ -5,6 +5,12 @@
 
 namespace pikdraw::color {
 
+class IccPreview;
+// Explicit source edit. Spot identity/alternate and all overprint metadata survive.
+// A missing ICC transform uses deterministic subtractive conversion, not print proofing.
+[[nodiscard]] ColorValue convert_color_to_mode(const ColorValue& source,
+    DocumentColorMode target_mode, const IccPreview* icc = nullptr);
+
 /// Device-ready RGBA color (8-bit per channel)
 struct DeviceRGBA {
     uint8_t r{0};

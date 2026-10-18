@@ -14,6 +14,7 @@
 #include <cstring>
 #include <filesystem>
 #include <future>
+#include <iomanip>
 #include <iostream>
 #include <map>
 #include <optional>
@@ -294,6 +295,8 @@ void verify_settings_copy_controls(pikdraw::desktop::NativeWindow& window,
         std::cout << "SKIP: credential-copy UI check because the existing clipboard contains non-text formats.\n";
         return;
     }
+    BYTE keys[256] = {};
+    SetKeyboardState(keys);
     window.open_ai_connections_settings();
     SendMessageW(window.hwnd(), WM_KEYDOWN, VK_TAB, 0);
     SendMessageW(window.hwnd(), WM_KEYDOWN, VK_TAB, 0);
@@ -460,6 +463,8 @@ void run_live_mcp(pikdraw::desktop::NativeWindow& window, std::string_view endpo
     require_ok(design_disconnect, "disconnect design session");
 }
 
+#include "billboard_5x2m_design.hpp"
+
 #endif
 
 } // namespace
@@ -494,9 +499,21 @@ int main() {
         generated_file = granted_file_path(file_name);
         run_live_mcp(window, endpoint, access_key, file_name);
 
+        const auto billboard_screenshot = std::filesystem::temp_directory_path() / "billboard_5x2m.bmp";
+        const std::string billboard_file_name = "bien_hieu_quang_cao_5x2m";
+        run_billboard_5x2m_design(window, endpoint, access_key, billboard_screenshot, billboard_file_name);
+
+        BYTE keys[256] = {};
+        SetKeyboardState(keys);
         window.open_ai_connections_settings();
-        for (int step = 0; step < 4; ++step)
+        std::cout << "DEBUG: is_settings_modal_open=" << window.is_settings_modal_open()
+                  << " settings_active_tab=" << window.settings_active_tab()
+                  << " is_menu_open=" << window.is_menu_open()
+                  << " initial_focus=" << window.ai_connections_focus_index() << "\n";
+        for (int step = 0; step < 4; ++step) {
             SendMessageW(window.hwnd(), WM_KEYDOWN, VK_TAB, 0);
+            std::cout << "After step " << step << " focus: " << window.ai_connections_focus_index() << "\n";
+        }
         require(window.ai_connections_focus_index() == 4, "Tab reaches Settings Reset control");
         SendMessageW(window.hwnd(), WM_KEYDOWN, VK_RETURN, 0);
         require(!window.ai_connections_read_choice() && !window.ai_connections_edit_choice(),

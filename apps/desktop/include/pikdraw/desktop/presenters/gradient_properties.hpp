@@ -32,6 +32,7 @@ struct GradientSelectionSummary {
     bool mixed_angle{false};
     bool mixed_length{false};
     bool mixed_center{false};
+    bool mixed_aspect_ratio{false};
 
     // Representative values when uniform (or initial defaults)
     document::GradientKind kind{document::GradientKind::Linear};
@@ -93,6 +94,8 @@ public:
 
     [[nodiscard]] const GradientSelectionSummary& summary() const noexcept { return summary_; }
     [[nodiscard]] GradientGeometryProjection geometry_projection() const;
+    [[nodiscard]] uint64_t selected_stop_id() const noexcept { return selected_stop_id_; }
+    bool select_stop(uint64_t stop_id) noexcept;
 
     // Field modifications
     void set_kind(document::GradientKind kind);
@@ -134,6 +137,7 @@ private:
     GradientSelectionSummary summary_;
     geometry::Rect2D bounds_{0.0, 0.0, 100.0, 100.0};
     std::optional<document::GradientPaint> draft_paint_;
+    uint64_t selected_stop_id_{0};
 
     bool is_dirty_{false};
     bool preview_enabled_{true};

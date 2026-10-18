@@ -630,7 +630,9 @@ void test_import_content_preserves_layers_and_undoes_atomically() {
     assert(rejected.current_snapshot()->page().layers.size() == 1);
 }
 
+void test_document_color_commands();
 int main() {
+    test_document_color_commands();
     std::cout << "[test_commands] Running command tests...\n";
     test_add_and_undo_path();
     test_remove_and_transform();

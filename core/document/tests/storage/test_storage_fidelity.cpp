@@ -244,6 +244,17 @@ void image_source_roundtrip() {
   image.width_px = 2;
   image.height_px = 2;
   image.pixels_rgba = {0x10203040, 0x50607080, 0x90a0b0c0, 0xd0e0f001};
+  image.source.media_type = "image/png";
+  image.source.original_bytes = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+  image.source.dpi_x = 300.0;
+  image.source.dpi_y = 150.0;
+  image.source.dpi_from_source = true;
+  image.source.frame_index = 1;
+  image.source.frame_count = 2;
+  image.source.source_bits_per_pixel = 32;
+  image.source.exif_orientation = 6;
+  image.source.orientation_applied = true;
+  image.source.icc_profile = {0, 1, 2, 3, 4, 5};
   auto clip = geometry::Path2D::make_rect(0.25, 0.5, 1.5, 1.25);
   clip.set_winding_rule(geometry::WindingRule::EvenOdd);
   image.clip_path = clip;
@@ -262,7 +273,18 @@ void image_source_roundtrip() {
             restored.transform.ty == image.transform.ty &&
             restored.width_px == image.width_px &&
             restored.height_px == image.height_px &&
-            restored.pixels_rgba == image.pixels_rgba,
+            restored.pixels_rgba == image.pixels_rgba &&
+            restored.source.media_type == image.source.media_type &&
+            restored.source.original_bytes == image.source.original_bytes &&
+            restored.source.dpi_x == image.source.dpi_x &&
+            restored.source.dpi_y == image.source.dpi_y &&
+            restored.source.dpi_from_source &&
+            restored.source.frame_index == 1 &&
+            restored.source.frame_count == 2 &&
+            restored.source.source_bits_per_pixel == 32 &&
+            restored.source.exif_orientation == 6 &&
+            restored.source.orientation_applied &&
+            restored.source.icc_profile == image.source.icc_profile,
         "native image source properties or RGBA pixels changed");
   check(restored.clip_path &&
             restored.clip_path->winding_rule() == geometry::WindingRule::EvenOdd &&
@@ -270,6 +292,23 @@ void image_source_roundtrip() {
             restored.clip_path->elements().front().pt ==
                 clip.elements().front().pt,
         "native image clipping path changed");
+
+  ImageObject invalid = image;
+  invalid.id = generate_object_id();
+  invalid.source.dpi_x = 0.0;
+  Document invalid_doc("invalid-raster-metadata");
+  check(!invalid_doc.execute_command(
+            std::make_unique<AddObjectCommand>(invalid)).success,
+        "invalid raster resolution metadata was accepted");
+
+  ImageObject oversized_icc = image;
+  oversized_icc.id = generate_object_id();
+  oversized_icc.source.icc_profile.resize(
+      RasterSourceMetadata::kMaxIccProfileBytes + 1);
+  Document oversized_doc("oversized-raster-profile");
+  check(!oversized_doc.execute_command(
+            std::make_unique<AddObjectCommand>(oversized_icc)).success,
+        "oversized embedded raster ICC profile was accepted");
 }
 
 void save_faults_and_paths() {

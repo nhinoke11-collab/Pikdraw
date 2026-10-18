@@ -7,6 +7,7 @@
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/gradient_tool_controller.hpp"
+#include "pikdraw/desktop/shell/native_window_shortcuts_settings.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -23,11 +24,36 @@ namespace pikdraw::desktop {
 
 #ifdef _WIN32
 
+static std::pair<double, double> snap_shadow_offset(double raw_dx, double raw_dy, unsigned modifiers) {
+    double dx = raw_dx;
+    double dy = raw_dy;
+    if ((modifiers & MK_SHIFT) != 0) {
+        const double radius = std::hypot(dx, dy);
+        if (radius > 1e-4) {
+            double angle = std::atan2(dy, dx);
+            constexpr double k15Deg = 15.0 * 3.14159265358979323846 / 180.0;
+            angle = std::round(angle / k15Deg) * k15Deg;
+            dx = radius * std::cos(angle);
+            dy = radius * std::sin(angle);
+        }
+    }
+    if ((modifiers & MK_CONTROL) != 0) {
+        dx = std::round(dx * 2.0) / 2.0;
+        dy = std::round(dy * 2.0) / 2.0;
+    } else {
+        dx = std::round(dx * 10.0) / 10.0;
+        dy = std::round(dy * 10.0) / 10.0;
+    }
+    return {dx, dy};
+}
+
 void NativeWindow::handle_mouse_down(int x, int y) {
     handle_mouse_down(x, y, 0);
 }
 
 void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
+    if (is_inline_text_editing_ && (active_tool_ != 4 || (x < 52 && y >= 122)))
+        commit_inline_text_editing();
     int w = width_;
     int h = height_;
     if (hwnd_) {
@@ -79,6 +105,11 @@ void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
         }
     }
 
+    if (show_settings_modal_ && settings_active_tab_ == 4) {
+        if (handle_shortcuts_settings_click(*this, x, y))
+            return;
+    }
+
     if (handle_modal_and_home_mouse_down(x, y))
         return;
 
@@ -116,9 +147,10 @@ void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
                     drag_start_x_ = x;
                     drag_start_y_ = y;
                     resize_handle_ = -2;
+                    ribbon_drop_shadow_mode_ = true;
                     status_msg_ = language_ == UILanguage::Vietnamese
-                        ? "Kéo tay nắm để đổi lệch X/Y · thả chuột lưu một bước · Esc hủy"
-                        : "Drag the handle to change X/Y offset · release saves once · Esc cancels";
+                        ? "Kéo bóng · Shift: góc 15° · Ctrl: bước 0.5mm · thả chuột lưu · Esc hủy"
+                        : "Drag shadow · Shift: 15° · Ctrl: 0.5mm step · release saves · Esc cancels";
                     if (hwnd_) SetCapture(hwnd_);
                     InvalidateRect(hwnd_, nullptr, FALSE);
                     return;
@@ -144,8 +176,10 @@ void NativeWindow::handle_mouse_move(int x, int y, unsigned modifiers) {
         const int group_row = toolbox_open_group_ == 1 ? 1
                             : toolbox_open_group_ == 2 ? 2 : 6;
         const int flyout_top = 112 + group_row * 42;
-        const int flyout_height = toolbox_open_group_ == 3 ? 145 : 116;
-        const int max_items = toolbox_open_group_ == 3 ? 4 : 3;
+        const int flyout_height = toolbox_open_group_ == 3 ? 174
+            : toolbox_open_group_ == 2 ? 145 : 116;
+        const int max_items = toolbox_open_group_ == 3 ? 5
+            : toolbox_open_group_ == 2 ? 4 : 3;
         if (x >= 54 && x <= 242 && y >= flyout_top + 26 && y < flyout_top + flyout_height) {
             const int item = (y - flyout_top - 26) / 29;
             if (item >= 0 && item < max_items && toolbox_flyout_index_ != item) {
@@ -159,7 +193,7 @@ void NativeWindow::handle_mouse_move(int x, int y, unsigned modifiers) {
 
     if (toolbox_open_group_ == 3) {
         const int flyout_top = 112 + 6 * 42;
-        if (x >= 54 && x <= 242 && y >= flyout_top + 26 && y < flyout_top + 145) {
+        if (x >= 54 && x <= 242 && y >= flyout_top + 26 && y < flyout_top + 174) {
             const int item = (y - flyout_top - 26) / 29;
             if (item == 1 || item == 2) {
                 const auto parameters = item == 1
@@ -259,8 +293,12 @@ void NativeWindow::handle_mouse_move(int x, int y, unsigned modifiers) {
             return;
         }
         auto shadow = *source_shadow;
-        shadow.dx_mm = drag_init_shape_x_ + current_world.x - pointer_down_world_.x;
-        shadow.dy_mm = drag_init_shape_y_ + current_world.y - pointer_down_world_.y;
+        const auto snapped = snap_shadow_offset(
+            drag_init_shape_x_ + current_world.x - pointer_down_world_.x,
+            drag_init_shape_y_ + current_world.y - pointer_down_world_.y,
+            modifiers);
+        shadow.dx_mm = snapped.first;
+        shadow.dy_mm = snapped.second;
         if (!workflow().set_effect_draft_parameters(shadow)) {
             workflow().cancel_effect_draft();
             resize_handle_ = -1;
@@ -273,9 +311,12 @@ void NativeWindow::handle_mouse_move(int x, int y, unsigned modifiers) {
             std::ostringstream values;
             values << std::fixed << std::setprecision(1)
                    << shadow.dx_mm << ", " << shadow.dy_mm << " mm";
+            std::string mod_hints;
+            if ((modifiers & MK_SHIFT) != 0) mod_hints += " · Shift: 15°";
+            if ((modifiers & MK_CONTROL) != 0) mod_hints += " · Ctrl: 0.5mm";
             status_msg_ = language_ == UILanguage::Vietnamese
-                ? "Lệch bóng X, Y: " + values.str() + " · Enter lưu · Esc hủy"
-                : "Shadow offset X, Y: " + values.str() + " · Enter applies · Esc cancels";
+                ? "Lệch bóng X, Y: " + values.str() + mod_hints + " · Enter lưu · Esc hủy"
+                : "Shadow offset X, Y: " + values.str() + mod_hints + " · Enter applies · Esc cancels";
         }
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
         return;
@@ -344,8 +385,12 @@ void NativeWindow::handle_mouse_up(int x, int y, unsigned modifiers) {
                         &draft->parameters)) {
                     auto shadow = *current_shadow;
                     const auto current_world = canvas_to_world(x, y);
-                    shadow.dx_mm = drag_init_shape_x_ + current_world.x - pointer_down_world_.x;
-                    shadow.dy_mm = drag_init_shape_y_ + current_world.y - pointer_down_world_.y;
+                    const auto snapped = snap_shadow_offset(
+                        drag_init_shape_x_ + current_world.x - pointer_down_world_.x,
+                        drag_init_shape_y_ + current_world.y - pointer_down_world_.y,
+                        modifiers);
+                    shadow.dx_mm = snapped.first;
+                    shadow.dy_mm = snapped.second;
                     applied = workflow().set_effect_draft_parameters(shadow) &&
                               workflow().apply_effect_draft();
                 }

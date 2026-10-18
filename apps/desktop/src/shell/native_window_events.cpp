@@ -7,6 +7,7 @@
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/gradient_tool_controller.hpp"
+#include "pikdraw/desktop/shell/native_window_shortcuts_settings.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -34,6 +35,9 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
     switch (uMsg) {
     case kImportWorkerMessage:
         if (self) self->handle_import_worker_message(wParam);
+        return 0;
+    case kExportWorkerMessage:
+        if (self) self->handle_export_worker_message(wParam);
         return 0;
     case WM_CHAR:
         if (self && self->show_recovery_modal_)
@@ -115,35 +119,23 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         if (self && !self->is_inline_text_editing_ && wParam >= 0x20 && wParam <= 0x7e &&
             self->handle_drawing_character(static_cast<char>(wParam)))
             return 0;
-        if (self && self->is_inline_text_editing_) {
-            if (wParam == VK_BACK) {
-                if (!self->inline_text_buffer_.empty()) {
-                    while (!self->inline_text_buffer_.empty()) {
-                        char c = self->inline_text_buffer_.back();
-                        self->inline_text_buffer_.pop_back();
-                        if ((c & 0xC0) != 0x80) break;
-                    }
-                }
-            } else if (wParam == VK_RETURN) {
-                if ((GetKeyState(VK_SHIFT) & 0x8000) != 0) {
-                    self->inline_text_buffer_ += '\n';
-                } else {
-                    self->commit_inline_text_editing();
-                }
-            } else if (wParam == VK_ESCAPE) {
-                self->cancel_inline_text_editing();
-            } else if (wParam >= 32) {
-                wchar_t wc = static_cast<wchar_t>(wParam);
-                char utf8[8] = {0};
-                WideCharToMultiByte(CP_UTF8, 0, &wc, 1, utf8, sizeof(utf8), nullptr, nullptr);
-                self->inline_text_buffer_ += utf8;
-            }
-            InvalidateRect(hwnd, nullptr, FALSE);
-            return 0;
-        }
+        if (self && self->handle_inline_text_character(static_cast<uint32_t>(wParam))) return 0;
         if (self && wParam >= 0x20 && wParam <= 0x7e &&
             self->handle_drawing_character(static_cast<char>(wParam)))
             return 0;
+        break;
+    case WM_UNICHAR:
+        if (wParam == UNICODE_NOCHAR) return TRUE;
+        if (self && self->handle_inline_text_character(static_cast<uint32_t>(wParam))) return 0;
+        break;
+    case WM_IME_COMPOSITION:
+        if (self && self->handle_inline_text_ime(lParam)) return 0;
+        break;
+    case WM_IME_ENDCOMPOSITION:
+        if (self && self->text_editor_) {
+            self->text_editor_->composition.clear();
+            self->refresh_inline_text_preview();
+        }
         break;
     case WM_SYSKEYDOWN:
         if (self && self->show_recovery_modal_)
@@ -168,6 +160,10 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
     case WM_KEYDOWN:
         if (self && self->show_recovery_modal_ && self->handle_recovery_key(wParam))
             return 0;
+        if (self && wParam == VK_ESCAPE && self->export_job_active()) {
+            self->request_cancel_export_job();
+            return 0;
+        }
         if (self && wParam == VK_ESCAPE && self->import_job_active()) {
             self->request_cancel_import_job();
             return 0;
@@ -233,6 +229,9 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
             }
             return 0;
         }
+        if (self && !self->is_menu_open() && self->handle_inline_text_key(
+                static_cast<uint32_t>(wParam), (GetKeyState(VK_CONTROL) & 0x8000) != 0,
+                (GetKeyState(VK_SHIFT) & 0x8000) != 0)) return 0;
         if (self && self->handle_toolbox_key(
                 wParam, false, (GetKeyState(VK_SHIFT) & 0x8000) != 0)) {
             InvalidateRect(hwnd, nullptr, FALSE);
@@ -296,6 +295,12 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
             self->space_down_ = true;
             return 0;
         }
+        if (self && self->show_settings_modal_ && self->settings_active_tab_ == 4) {
+            if (handle_shortcuts_settings_key(*self, wParam))
+                return 0;
+        }
+        if (self && !self->show_settings_modal_ && dispatch_canvas_shortcuts(*self, wParam))
+            return 0;
         if (self && self->handle_key_down(wParam))
             return 0;
         break;
@@ -424,6 +429,10 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
             ScreenToClient(hwnd, &point);
             point.x = self->logical_pixel(point.x);
             point.y = self->logical_pixel(point.y);
+            if (self->show_settings_modal_ && self->settings_active_tab_ == 4) {
+                if (handle_shortcuts_settings_wheel(*self, GET_WHEEL_DELTA_WPARAM(wParam)))
+                    return 0;
+            }
             if (self->active_dock_tab_ == 0 && self->show_style_inspector_ &&
                 point.x >= self->width_ - 280 && point.x < self->width_ &&
                 point.y >= 162 && point.y < self->height_ - 26) {
@@ -444,6 +453,11 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         }
         return 0;
     case WM_TIMER:
+        if (self && wParam == 12 && self->text_editor_) {
+            self->text_editor_->caret_visible = !self->text_editor_->caret_visible;
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
         if (self && wParam == kAutoSaveTimerId) {
             self->autosave_documents();
             return 0;
@@ -469,7 +483,7 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         if (self && LOWORD(lParam) == HTCLIENT) {
             const WORD cursor_id = self->is_panning_ ? 32646
                 : self->active_tool_ == 3 ? 32649
-                : self->active_tool_ >= 6 ? 32515 : 32512;
+                : self->active_tool_ == 4 ? 32513 : self->active_tool_ >= 6 ? 32515 : 32512;
             SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(cursor_id)));
             return TRUE;
         }
@@ -523,6 +537,7 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
     }
     case WM_CAPTURECHANGED:
         if (self) {
+            if (self->text_editor_) self->text_editor_->selecting = self->text_editor_->creating_frame = false;
             if (self->resize_handle_ == -2) {
                 self->resize_handle_ = -1;
                 self->workflow().cancel_effect_draft();
@@ -562,7 +577,11 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         return 0;
     case WM_DESTROY:
         KillTimer(hwnd, kAutoSaveTimerId);
-        if (self) self->cancel_import_job();
+        KillTimer(hwnd, 12);
+        if (self) {
+            self->cancel_import_job();
+            self->cancel_export_job();
+        }
         PostQuitMessage(0);
         return 0;
     default:
