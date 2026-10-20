@@ -23,6 +23,9 @@ constexpr int kLineCapRound = 2;
 constexpr int kLineJoinRound = 2;
 constexpr int kUnitPixel = 2;
 constexpr int kFillModeAlternate = 0;
+constexpr int kDashStyleSolid = 0;
+constexpr int kDashStyleDash = 1;
+constexpr int kDashStyleDot = 2;
 
 struct GdiplusStartupInput {
     UINT32 GdiplusVersion{1};
@@ -43,6 +46,8 @@ using FnGdipSetPenLineCap197819 = GpStatus(WINAPI*)(GpPen*, int, int, int);
 using FnGdipSetPenLineJoin = GpStatus(WINAPI*)(GpPen*, int);
 using FnGdipDrawLine = GpStatus(WINAPI*)(GpGraphics*, GpPen*, float, float, float, float);
 using FnGdipDrawLines = GpStatus(WINAPI*)(GpGraphics*, GpPen*, const GpPointF*, int);
+using FnGdipDrawBezier = GpStatus(WINAPI*)(GpGraphics*, GpPen*, float, float, float, float, float, float, float, float);
+using FnGdipSetPenDashStyle = GpStatus(WINAPI*)(GpPen*, int);
 using FnGdipDrawEllipse = GpStatus(WINAPI*)(GpGraphics*, GpPen*, float, float, float, float);
 using FnGdipFillEllipse = GpStatus(WINAPI*)(GpGraphics*, GpBrush*, float, float, float, float);
 using FnGdipDrawRectangle = GpStatus(WINAPI*)(GpGraphics*, GpPen*, float, float, float, float);
@@ -75,6 +80,8 @@ struct GdiplusApi {
     FnGdipSetPenLineJoin SetPenLineJoin{nullptr};
     FnGdipDrawLine DrawLine{nullptr};
     FnGdipDrawLines DrawLines{nullptr};
+    FnGdipDrawBezier DrawBezier{nullptr};
+    FnGdipSetPenDashStyle SetPenDashStyle{nullptr};
     FnGdipDrawEllipse DrawEllipse{nullptr};
     FnGdipFillEllipse FillEllipse{nullptr};
     FnGdipDrawRectangle DrawRectangle{nullptr};
@@ -116,6 +123,8 @@ private:
         LOAD_PROC(SetPenLineJoin, GdipSetPenLineJoin);
         LOAD_PROC(DrawLine, GdipDrawLine);
         LOAD_PROC(DrawLines, GdipDrawLines);
+        LOAD_PROC(DrawBezier, GdipDrawBezier);
+        LOAD_PROC(SetPenDashStyle, GdipSetPenDashStyle);
         LOAD_PROC(DrawEllipse, GdipDrawEllipse);
         LOAD_PROC(FillEllipse, GdipFillEllipse);
         LOAD_PROC(DrawRectangle, GdipDrawRectangle);

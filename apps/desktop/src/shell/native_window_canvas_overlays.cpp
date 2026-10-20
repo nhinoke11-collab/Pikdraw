@@ -4,6 +4,7 @@
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/gradient_tool_controller.hpp"
+#include "native_gdiplus_api.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -18,6 +19,114 @@
 namespace pikdraw::desktop {
 
 #ifdef _WIN32
+
+namespace {
+
+struct AntialiasedOverlayRenderer {
+    GdiplusApi* api{nullptr};
+    GpGraphics* g{nullptr};
+    HDC dc{nullptr};
+
+    explicit AntialiasedOverlayRenderer(HDC hdc) : dc(hdc) {
+        api = GdiplusApi::get();
+        if (api) {
+            if (api->CreateFromHDC(dc, &g) != 0 || !g) {
+                g = nullptr;
+            } else {
+                api->SetSmoothingMode(g, kSmoothingModeAntiAlias);
+                api->SetPixelOffsetMode(g, kPixelOffsetModeHalf);
+            }
+        }
+    }
+
+    ~AntialiasedOverlayRenderer() {
+        if (api && g) {
+            api->DeleteGraphics(g);
+        }
+    }
+
+    void draw_bezier(float x0, float y0, float x1, float y1, float x2, float y2, float x3, float y3,
+                     COLORREF color, float width = 1.2f, BYTE alpha = 255) {
+        if (api && g && api->DrawBezier) {
+            GpPen* pen = nullptr;
+            if (api->CreatePen1(MakeGdiplusARGB(color, alpha), width, kUnitPixel, &pen) == 0 && pen) {
+                api->DrawBezier(g, pen, x0, y0, x1, y1, x2, y2, x3, y3);
+                api->DeletePen(pen);
+            }
+        } else {
+            HPEN hpen = CreatePen(PS_SOLID, static_cast<int>(std::max(1.0f, std::round(width))), color);
+            HGDIOBJ old_pen = SelectObject(dc, hpen);
+            POINT pts[4]{
+                POINT{static_cast<LONG>(std::lround(x0)), static_cast<LONG>(std::lround(y0))},
+                POINT{static_cast<LONG>(std::lround(x1)), static_cast<LONG>(std::lround(y1))},
+                POINT{static_cast<LONG>(std::lround(x2)), static_cast<LONG>(std::lround(y2))},
+                POINT{static_cast<LONG>(std::lround(x3)), static_cast<LONG>(std::lround(y3))}
+            };
+            PolyBezier(dc, pts, 4);
+            SelectObject(dc, old_pen);
+            DeleteObject(hpen);
+        }
+    }
+
+    void draw_line(float x0, float y0, float x1, float y1,
+                   COLORREF color, float width = 1.0f, BYTE alpha = 255, int dash_style = kDashStyleSolid) {
+        if (api && g) {
+            GpPen* pen = nullptr;
+            if (api->CreatePen1(MakeGdiplusARGB(color, alpha), width, kUnitPixel, &pen) == 0 && pen) {
+                if (dash_style != kDashStyleSolid && api->SetPenDashStyle) {
+                    api->SetPenDashStyle(pen, dash_style);
+                }
+                api->DrawLine(g, pen, x0, y0, x1, y1);
+                api->DeletePen(pen);
+            }
+        } else {
+            int gdi_style = (dash_style == kDashStyleDash) ? PS_DASH :
+                            (dash_style == kDashStyleDot) ? PS_DOT : PS_SOLID;
+            HPEN hpen = CreatePen(gdi_style, static_cast<int>(std::max(1.0f, std::round(width))), color);
+            HGDIOBJ old_pen = SelectObject(dc, hpen);
+            MoveToEx(dc, static_cast<int>(std::lround(x0)), static_cast<int>(std::lround(y0)), nullptr);
+            LineTo(dc, static_cast<int>(std::lround(x1)), static_cast<int>(std::lround(y1)));
+            SelectObject(dc, old_pen);
+            DeleteObject(hpen);
+        }
+    }
+
+    void draw_circle(float cx, float cy, float radius,
+                     COLORREF stroke_color, COLORREF fill_color,
+                     float stroke_width = 1.0f, BYTE stroke_alpha = 255, BYTE fill_alpha = 255) {
+        if (api && g) {
+            if (fill_alpha > 0) {
+                GpSolidFill* brush = nullptr;
+                if (api->CreateSolidFill(MakeGdiplusARGB(fill_color, fill_alpha), &brush) == 0 && brush) {
+                    api->FillEllipse(g, brush, cx - radius, cy - radius, radius * 2.0f, radius * 2.0f);
+                    api->DeleteBrush(brush);
+                }
+            }
+            if (stroke_alpha > 0 && stroke_width > 0.0f) {
+                GpPen* pen = nullptr;
+                if (api->CreatePen1(MakeGdiplusARGB(stroke_color, stroke_alpha), stroke_width, kUnitPixel, &pen) == 0 && pen) {
+                    api->DrawEllipse(g, pen, cx - radius, cy - radius, radius * 2.0f, radius * 2.0f);
+                    api->DeletePen(pen);
+                }
+            }
+        } else {
+            HBRUSH hbrush = (fill_alpha > 0) ? CreateSolidBrush(fill_color) : reinterpret_cast<HBRUSH>(GetStockObject(NULL_BRUSH));
+            HPEN hpen = CreatePen(PS_SOLID, static_cast<int>(std::max(1.0f, std::round(stroke_width))), stroke_color);
+            HGDIOBJ old_b = SelectObject(dc, hbrush);
+            HGDIOBJ old_p = SelectObject(dc, hpen);
+            int r = static_cast<int>(std::lround(radius));
+            int icx = static_cast<int>(std::lround(cx));
+            int icy = static_cast<int>(std::lround(cy));
+            Ellipse(dc, icx - r, icy - r, icx + r + 1, icy + r + 1);
+            SelectObject(dc, old_p);
+            SelectObject(dc, old_b);
+            DeleteObject(hpen);
+            if (fill_alpha > 0) DeleteObject(hbrush);
+        }
+    }
+};
+
+} // namespace
 
 void NativeWindow::paint_pen_overlay(HDC dc) {
     if (!pen_tool_ || !pen_tool_->active()) return;
@@ -40,9 +149,8 @@ void NativeWindow::paint_pen_overlay(HDC dc) {
     const int saved = SaveDC(dc);
     SetBkMode(dc, TRANSPARENT);
 
-    HPEN path_pen = CreatePen(PS_SOLID, 2, ink);
-    HGDIOBJ previous_pen = SelectObject(dc, path_pen);
-    HGDIOBJ previous_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+    AntialiasedOverlayRenderer aa(dc);
+
     for (size_t i = 0; i < draft.segments.size() && i + 1 < draft.nodes.size(); ++i) {
         const auto& start_node = draft.nodes[i];
         const auto& end_node = draft.nodes[i + 1];
@@ -53,11 +161,17 @@ void NativeWindow::paint_pen_overlay(HDC dc) {
                 ? start_node.outgoing_handle : start_node.anchor;
             const auto in = end_node.has_incoming_handle
                 ? end_node.incoming_handle : end_node.anchor;
-            POINT curve[4]{start, screen(out), screen(in), end};
-            PolyBezier(dc, curve, 4);
+            const POINT c1 = screen(out);
+            const POINT c2 = screen(in);
+            aa.draw_bezier(static_cast<float>(start.x), static_cast<float>(start.y),
+                           static_cast<float>(c1.x), static_cast<float>(c1.y),
+                           static_cast<float>(c2.x), static_cast<float>(c2.y),
+                           static_cast<float>(end.x), static_cast<float>(end.y),
+                           ink, 1.2f);
         } else {
-            MoveToEx(dc, start.x, start.y, nullptr);
-            LineTo(dc, end.x, end.y);
+            aa.draw_line(static_cast<float>(start.x), static_cast<float>(start.y),
+                         static_cast<float>(end.x), static_cast<float>(end.y),
+                         ink, 1.2f);
         }
     }
 
@@ -85,18 +199,19 @@ void NativeWindow::paint_pen_overlay(HDC dc) {
             ? start_node.outgoing_handle : start_node.anchor;
         const auto preview_control = preview_incoming.value_or(*preview_anchor);
         const bool curved = start_node.has_outgoing_handle || preview_incoming.has_value();
-        HPEN candidate_pen = CreatePen(PS_DASH, 1, preview_color);
-        SelectObject(dc, candidate_pen);
         if (curved) {
-            POINT curve[4]{start, screen(start_control),
-                preview_world_coordinates ? screen_world(preview_control) : screen(preview_control), end};
-            PolyBezier(dc, curve, 4);
+            const POINT c1 = screen(start_control);
+            const POINT c2 = preview_world_coordinates ? screen_world(preview_control) : screen(preview_control);
+            aa.draw_bezier(static_cast<float>(start.x), static_cast<float>(start.y),
+                           static_cast<float>(c1.x), static_cast<float>(c1.y),
+                           static_cast<float>(c2.x), static_cast<float>(c2.y),
+                           static_cast<float>(end.x), static_cast<float>(end.y),
+                           preview_color, 1.0f, 220);
         } else {
-            MoveToEx(dc, start.x, start.y, nullptr);
-            LineTo(dc, end.x, end.y);
+            aa.draw_line(static_cast<float>(start.x), static_cast<float>(start.y),
+                         static_cast<float>(end.x), static_cast<float>(end.y),
+                         preview_color, 1.0f, 220, kDashStyleDash);
         }
-        SelectObject(dc, path_pen);
-        DeleteObject(candidate_pen);
 
         const auto base_pt = pen_tool_->world_point_from_source(start_node.anchor);
         const auto cand_pt = preview_world_coordinates ? *preview_anchor : pen_tool_->world_point_from_source(*preview_anchor);
@@ -122,12 +237,10 @@ void NativeWindow::paint_pen_overlay(HDC dc) {
                 const auto ray_e_world = base_pt + geometry::Point2D{ray_dir.x * 3000.0, ray_dir.y * 3000.0};
                 const POINT rs = screen_world(ray_s_world);
                 const POINT re = screen_world(ray_e_world);
-                HPEN track_pen = CreatePen(PS_DOT, 1, theme_ == ThemeMode::CyberDark ? RGB(56, 189, 248) : RGB(14, 165, 233));
-                HGDIOBJ old_p = SelectObject(dc, track_pen);
-                MoveToEx(dc, rs.x, rs.y, nullptr);
-                LineTo(dc, re.x, re.y);
-                SelectObject(dc, old_p);
-                DeleteObject(track_pen);
+                aa.draw_line(static_cast<float>(rs.x), static_cast<float>(rs.y),
+                             static_cast<float>(re.x), static_cast<float>(re.y),
+                             theme_ == ThemeMode::CyberDark ? RGB(56, 189, 248) : RGB(14, 165, 233),
+                             1.0f, 200, kDashStyleDot);
             }
 
             const int hud_w = 176;
@@ -201,50 +314,42 @@ void NativeWindow::paint_pen_overlay(HDC dc) {
     }
 
     HBRUSH anchor_brush = CreateSolidBrush(ink);
-    SelectObject(dc, anchor_brush);
+    HGDIOBJ prev_brush = SelectObject(dc, anchor_brush);
+    HPEN anchor_pen = CreatePen(PS_SOLID, 1, theme_ == ThemeMode::CyberDark ? RGB(15, 23, 42) : RGB(255, 255, 255));
+    HGDIOBJ prev_pen = SelectObject(dc, anchor_pen);
     for (const auto& node : draft.nodes) {
         const POINT point = screen(node.anchor);
         Rectangle(dc, point.x - 3, point.y - 3, point.x + 4, point.y + 4);
     }
     if (pen_close_candidate_ && !draft.nodes.empty()) {
         const POINT first_pt = screen(draft.nodes.front().anchor);
-        HPEN halo_pen = CreatePen(PS_SOLID, 2, RGB(0, 242, 195));
-        HGDIOBJ old_hp = SelectObject(dc, halo_pen);
-        HGDIOBJ old_hb = SelectObject(dc, GetStockObject(NULL_BRUSH));
-        Ellipse(dc, first_pt.x - 7, first_pt.y - 7, first_pt.x + 8, first_pt.y + 8);
-        SelectObject(dc, old_hb);
-        SelectObject(dc, old_hp);
-        DeleteObject(halo_pen);
+        aa.draw_circle(static_cast<float>(first_pt.x), static_cast<float>(first_pt.y), 7.5f,
+                       RGB(0, 242, 195), RGB(0, 0, 0), 1.5f, 255, 0);
     }
     if (preview_anchor) {
         const POINT point = preview_world_coordinates ? screen_world(*preview_anchor)
                                                      : screen(*preview_anchor);
-        HBRUSH preview_brush = CreateSolidBrush(preview_color);
-        SelectObject(dc, preview_brush);
-        Ellipse(dc, point.x - 5, point.y - 5, point.x + 6, point.y + 6);
+        aa.draw_circle(static_cast<float>(point.x), static_cast<float>(point.y), 4.5f,
+                       preview_color, preview_color, 1.0f);
         if (preview_incoming || preview_outgoing) {
             const auto draw_handle = [&](std::optional<geometry::Point2D> handle) {
                 if (!handle) return;
                 const POINT hp = preview_world_coordinates ? screen_world(*handle) : screen(*handle);
-                MoveToEx(dc, point.x, point.y, nullptr);
-                LineTo(dc, hp.x, hp.y);
-                Ellipse(dc, hp.x - 3, hp.y - 3, hp.x + 4, hp.y + 4);
+                aa.draw_line(static_cast<float>(point.x), static_cast<float>(point.y),
+                             static_cast<float>(hp.x), static_cast<float>(hp.y),
+                             RGB(245, 158, 11), 1.0f, 220, kDashStyleDot);
+                aa.draw_circle(static_cast<float>(hp.x), static_cast<float>(hp.y), 3.0f,
+                               RGB(15, 23, 42), RGB(245, 158, 11), 1.0f);
             };
-            HPEN handle_pen = CreatePen(PS_SOLID, 1, RGB(245, 158, 11));
-            SelectObject(dc, handle_pen);
             draw_handle(preview_incoming);
             draw_handle(preview_outgoing);
-            SelectObject(dc, path_pen);
-            DeleteObject(handle_pen);
         }
-        SelectObject(dc, anchor_brush);
-        DeleteObject(preview_brush);
     }
 
-    SelectObject(dc, previous_brush);
-    SelectObject(dc, previous_pen);
+    SelectObject(dc, prev_pen);
+    SelectObject(dc, prev_brush);
+    DeleteObject(anchor_pen);
     DeleteObject(anchor_brush);
-    DeleteObject(path_pen);
 
     std::wostringstream hud;
     hud << L"PEN  ·  " << draft.nodes.size() << L" nodes";
@@ -302,86 +407,69 @@ void NativeWindow::paint_node_canvas_overlay(HDC dc, int width, int height) {
     const bool is_dragging_bend = (node_tool_->tool().drag_mode() == vector::tools::node::NodeDragMode::BendSegment &&
                                    node_tool_->tool().active_segment_drag().has_value());
 
+    AntialiasedOverlayRenderer aa(dc);
+
     // 1b. Live preview for Direct Segment Bending (BendSegment)
     if (is_dragging_bend) {
         const auto asd = *node_tool_->tool().active_segment_drag();
         const auto [c1_w, c2_w] = node_tool_->tool().current_segment_bend_handles();
-        HPEN bend_pen = CreatePen(PS_SOLID, 2, RGB(0, 242, 195));
-        HGDIOBJ old_pen = SelectObject(dc, bend_pen);
-        HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        const COLORREF bend_col = theme_ == ThemeMode::CyberDark ? RGB(0, 242, 195) : RGB(14, 165, 233);
+        const COLORREF handle_col = RGB(0, 210, 210);
 
-        POINT pts[4]{screen(asd.p0_world), screen(c1_w), screen(c2_w), screen(asd.p3_world)};
-        PolyBezier(dc, pts, 4);
+        const POINT p0 = screen(asd.p0_world);
+        const POINT c1 = screen(c1_w);
+        const POINT c2 = screen(c2_w);
+        const POINT p3 = screen(asd.p3_world);
 
-        // Tangent lines and control handle grips
-        HPEN handle_pen = CreatePen(PS_DOT, 1, RGB(0, 210, 210));
-        HBRUSH handle_brush = CreateSolidBrush(RGB(0, 210, 210));
-        SelectObject(dc, handle_pen);
-        SelectObject(dc, handle_brush);
+        aa.draw_bezier(static_cast<float>(p0.x), static_cast<float>(p0.y),
+                       static_cast<float>(c1.x), static_cast<float>(c1.y),
+                       static_cast<float>(c2.x), static_cast<float>(c2.y),
+                       static_cast<float>(p3.x), static_cast<float>(p3.y),
+                       bend_col, 1.2f);
 
-        POINT p0 = screen(asd.p0_world);
-        POINT c1 = screen(c1_w);
-        MoveToEx(dc, p0.x, p0.y, nullptr);
-        LineTo(dc, c1.x, c1.y);
-        Ellipse(dc, c1.x - 3, c1.y - 3, c1.x + 4, c1.y + 4);
+        aa.draw_line(static_cast<float>(p0.x), static_cast<float>(p0.y),
+                     static_cast<float>(c1.x), static_cast<float>(c1.y),
+                     handle_col, 1.0f, 220, kDashStyleDot);
+        aa.draw_circle(static_cast<float>(c1.x), static_cast<float>(c1.y), 3.0f,
+                       RGB(15, 23, 42), handle_col, 1.0f);
 
-        POINT p3 = screen(asd.p3_world);
-        POINT c2 = screen(c2_w);
-        MoveToEx(dc, p3.x, p3.y, nullptr);
-        LineTo(dc, c2.x, c2.y);
-        Ellipse(dc, c2.x - 3, c2.y - 3, c2.x + 4, c2.y + 4);
-
-        SelectObject(dc, old_brush);
-        SelectObject(dc, old_pen);
-        DeleteObject(handle_brush);
-        DeleteObject(handle_pen);
-        DeleteObject(bend_pen);
+        aa.draw_line(static_cast<float>(p3.x), static_cast<float>(p3.y),
+                     static_cast<float>(c2.x), static_cast<float>(c2.y),
+                     handle_col, 1.0f, 220, kDashStyleDot);
+        aa.draw_circle(static_cast<float>(c2.x), static_cast<float>(c2.y), 3.0f,
+                       RGB(15, 23, 42), handle_col, 1.0f);
     }
 
     // 1. Live preview for corner rounding (Live Corners)
     if (node_tool_->tool().is_rounding_corners()) {
         const auto preview = node_tool_->tool().preview_rounded_path();
         if (preview) {
-            HPEN preview_pen = CreatePen(PS_SOLID, 2, RGB(0, 242, 195));
-            HGDIOBJ old_pen = SelectObject(dc, preview_pen);
-            HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+            const COLORREF preview_stroke = theme_ == ThemeMode::CyberDark ? RGB(0, 242, 195) : RGB(14, 165, 233);
 
             for (const auto& sub : preview->subpaths) {
                 const size_t n = sub.nodes.size();
                 if (n == 0) continue;
-                POINT start = screen(tr.map_point(sub.nodes[0].anchor));
-                MoveToEx(dc, start.x, start.y, nullptr);
-                for (size_t i = 0; i < sub.segments.size() && i + 1 < n; ++i) {
+                for (size_t i = 0; i < sub.segments.size() && i < n; ++i) {
+                    if (sub.segments[i].kind != document::PathSegmentKind::CubicBezier) {
+                        continue; // Crucial: ONLY render corner fillet arcs, NEVER connecting straight lines!
+                    }
+                    const size_t next_i = (i + 1 < n) ? (i + 1) : 0;
+                    if (next_i == 0 && !sub.closed) continue;
+
                     const auto& n1 = sub.nodes[i];
-                    const auto& n2 = sub.nodes[i + 1];
-                    const POINT p2 = screen(tr.map_point(n2.anchor));
-                    if (sub.segments[i].kind == document::PathSegmentKind::CubicBezier) {
-                        const POINT c1 = screen(tr.map_point(n1.has_outgoing_handle ? n1.outgoing_handle : n1.anchor));
-                        const POINT c2 = screen(tr.map_point(n2.has_incoming_handle ? n2.incoming_handle : n2.anchor));
-                        POINT pts[4]{screen(tr.map_point(n1.anchor)), c1, c2, p2};
-                        PolyBezier(dc, pts, 4);
-                    } else {
-                        LineTo(dc, p2.x, p2.y);
-                    }
-                }
-                if (sub.closed && !sub.segments.empty() && sub.segments.size() >= n) {
-                    const auto& n1 = sub.nodes[n - 1];
-                    const auto& n2 = sub.nodes[0];
-                    const POINT p2 = screen(tr.map_point(n2.anchor));
-                    if (sub.segments[n - 1].kind == document::PathSegmentKind::CubicBezier) {
-                        const POINT c1 = screen(tr.map_point(n1.has_outgoing_handle ? n1.outgoing_handle : n1.anchor));
-                        const POINT c2 = screen(tr.map_point(n2.has_incoming_handle ? n2.incoming_handle : n2.anchor));
-                        POINT pts[4]{screen(tr.map_point(n1.anchor)), c1, c2, p2};
-                        PolyBezier(dc, pts, 4);
-                    } else {
-                        LineTo(dc, p2.x, p2.y);
-                    }
+                    const auto& n2 = sub.nodes[next_i];
+                    const POINT p0 = screen(tr.map_point(n1.anchor));
+                    const POINT p3 = screen(tr.map_point(n2.anchor));
+                    const POINT c1 = screen(tr.map_point(n1.has_outgoing_handle ? n1.outgoing_handle : n1.anchor));
+                    const POINT c2 = screen(tr.map_point(n2.has_incoming_handle ? n2.incoming_handle : n2.anchor));
+
+                    aa.draw_bezier(static_cast<float>(p0.x), static_cast<float>(p0.y),
+                                   static_cast<float>(c1.x), static_cast<float>(c1.y),
+                                   static_cast<float>(c2.x), static_cast<float>(c2.y),
+                                   static_cast<float>(p3.x), static_cast<float>(p3.y),
+                                   preview_stroke, 1.2f);
                 }
             }
-
-            SelectObject(dc, old_brush);
-            SelectObject(dc, old_pen);
-            DeleteObject(preview_pen);
         }
 
         // Floating radius badge near active corner widget
@@ -423,9 +511,7 @@ void NativeWindow::paint_node_canvas_overlay(HDC dc, int width, int height) {
 
     // 3. Draw live preview connecting curves for moving nodes or deforming Bézier handles
     if ((is_dragging_node && (drag_delta.x != 0.0 || drag_delta.y != 0.0)) || is_dragging_handle) {
-        HPEN move_pen = CreatePen(PS_SOLID, 2, RGB(0, 242, 195));
-        HGDIOBJ old_pen = SelectObject(dc, move_pen);
-        HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        const COLORREF move_col = theme_ == ThemeMode::CyberDark ? RGB(0, 242, 195) : RGB(14, 165, 233);
 
         for (const auto& sub : po.authoring_source->subpaths) {
             const size_t n = sub.nodes.size();
@@ -443,16 +529,22 @@ void NativeWindow::paint_node_canvas_overlay(HDC dc, int width, int height) {
                 const auto p3_w = get_anchor_w(i + 1);
                 const bool is_bezier = (sub.segments[i].kind == document::PathSegmentKind::CubicBezier) ||
                                        n1.has_outgoing_handle || n2.has_incoming_handle;
+                const POINT p0 = screen(p0_w);
+                const POINT p3 = screen(p3_w);
                 if (is_bezier) {
                     const auto c1_w = n1.has_outgoing_handle ? get_handle_pos_w(sub.id, n1.id, false, n1.outgoing_handle) : p0_w;
                     const auto c2_w = n2.has_incoming_handle ? get_handle_pos_w(sub.id, n2.id, true, n2.incoming_handle) : p3_w;
-                    POINT pts[4]{screen(p0_w), screen(c1_w), screen(c2_w), screen(p3_w)};
-                    PolyBezier(dc, pts, 4);
+                    const POINT c1 = screen(c1_w);
+                    const POINT c2 = screen(c2_w);
+                    aa.draw_bezier(static_cast<float>(p0.x), static_cast<float>(p0.y),
+                                   static_cast<float>(c1.x), static_cast<float>(c1.y),
+                                   static_cast<float>(c2.x), static_cast<float>(c2.y),
+                                   static_cast<float>(p3.x), static_cast<float>(p3.y),
+                                   move_col, 1.2f);
                 } else {
-                    POINT p0 = screen(p0_w);
-                    POINT p3 = screen(p3_w);
-                    MoveToEx(dc, p0.x, p0.y, nullptr);
-                    LineTo(dc, p3.x, p3.y);
+                    aa.draw_line(static_cast<float>(p0.x), static_cast<float>(p0.y),
+                                 static_cast<float>(p3.x), static_cast<float>(p3.y),
+                                 move_col, 1.0f);
                 }
             }
             if (sub.closed && !sub.segments.empty() && sub.segments.size() >= n) {
@@ -462,32 +554,30 @@ void NativeWindow::paint_node_canvas_overlay(HDC dc, int width, int height) {
                 const auto p3_w = get_anchor_w(0);
                 const bool is_bezier = (sub.segments[n - 1].kind == document::PathSegmentKind::CubicBezier) ||
                                        n1.has_outgoing_handle || n2.has_incoming_handle;
+                const POINT p0 = screen(p0_w);
+                const POINT p3 = screen(p3_w);
                 if (is_bezier) {
                     const auto c1_w = n1.has_outgoing_handle ? get_handle_pos_w(sub.id, n1.id, false, n1.outgoing_handle) : p0_w;
                     const auto c2_w = n2.has_incoming_handle ? get_handle_pos_w(sub.id, n2.id, true, n2.incoming_handle) : p3_w;
-                    POINT pts[4]{screen(p0_w), screen(c1_w), screen(c2_w), screen(p3_w)};
-                    PolyBezier(dc, pts, 4);
+                    const POINT c1 = screen(c1_w);
+                    const POINT c2 = screen(c2_w);
+                    aa.draw_bezier(static_cast<float>(p0.x), static_cast<float>(p0.y),
+                                   static_cast<float>(c1.x), static_cast<float>(c1.y),
+                                   static_cast<float>(c2.x), static_cast<float>(c2.y),
+                                   static_cast<float>(p3.x), static_cast<float>(p3.y),
+                                   move_col, 1.2f);
                 } else {
-                    POINT p0 = screen(p0_w);
-                    POINT p3 = screen(p3_w);
-                    MoveToEx(dc, p0.x, p0.y, nullptr);
-                    LineTo(dc, p3.x, p3.y);
+                    aa.draw_line(static_cast<float>(p0.x), static_cast<float>(p0.y),
+                                 static_cast<float>(p3.x), static_cast<float>(p3.y),
+                                 move_col, 1.0f);
                 }
             }
         }
-
-        SelectObject(dc, old_brush);
-        SelectObject(dc, old_pen);
-        DeleteObject(move_pen);
     }
 
     // 4. Draw handles for selected nodes (using tool().visible_handles() which includes drag delta and mirroring)
     if (!handles.empty()) {
         const COLORREF handle_color = RGB(0, 210, 210);
-        HPEN handle_pen = CreatePen(PS_DOT, 1, handle_color);
-        HBRUSH handle_brush = CreateSolidBrush(handle_color);
-        SelectObject(dc, handle_pen);
-        SelectObject(dc, handle_brush);
 
         for (const auto& h : handles) {
             geometry::Point2D base_anchor_w{};
@@ -504,13 +594,12 @@ void NativeWindow::paint_node_canvas_overlay(HDC dc, int width, int height) {
             }
             const POINT a = screen(base_anchor_w);
             const POINT hp = screen(h.position);
-            MoveToEx(dc, a.x, a.y, nullptr);
-            LineTo(dc, hp.x, hp.y);
-            Ellipse(dc, hp.x - 4, hp.y - 4, hp.x + 5, hp.y + 5);
+            aa.draw_line(static_cast<float>(a.x), static_cast<float>(a.y),
+                         static_cast<float>(hp.x), static_cast<float>(hp.y),
+                         handle_color, 1.0f, 220, kDashStyleDot);
+            aa.draw_circle(static_cast<float>(hp.x), static_cast<float>(hp.y), 3.0f,
+                           RGB(15, 23, 42), handle_color, 1.0f);
         }
-
-        DeleteObject(handle_pen);
-        DeleteObject(handle_brush);
     }
 
     // 5. Draw Illustrator-style Live Corner Rounding widgets (transformed to world space)
@@ -525,21 +614,10 @@ void NativeWindow::paint_node_canvas_overlay(HDC dc, int width, int height) {
         COLORREF fill_color = is_active_corner ? RGB(14, 165, 233) : RGB(255, 255, 255);
         COLORREF dot_color = is_active_corner ? RGB(255, 255, 255) : RGB(14, 165, 233);
 
-        HPEN cw_pen = CreatePen(PS_SOLID, 1, border_color);
-        HBRUSH cw_brush = CreateSolidBrush(fill_color);
-        HGDIOBJ op = SelectObject(dc, cw_pen);
-        HGDIOBJ ob = SelectObject(dc, cw_brush);
-        Ellipse(dc, cp.x - 5, cp.y - 5, cp.x + 6, cp.y + 6);
-
-        HBRUSH dot_brush = CreateSolidBrush(dot_color);
-        SelectObject(dc, dot_brush);
-        Ellipse(dc, cp.x - 2, cp.y - 2, cp.x + 3, cp.y + 3);
-
-        SelectObject(dc, ob);
-        SelectObject(dc, op);
-        DeleteObject(dot_brush);
-        DeleteObject(cw_brush);
-        DeleteObject(cw_pen);
+        aa.draw_circle(static_cast<float>(cp.x), static_cast<float>(cp.y), 4.5f,
+                       border_color, fill_color, 1.0f);
+        aa.draw_circle(static_cast<float>(cp.x), static_cast<float>(cp.y), 1.8f,
+                       dot_color, dot_color, 1.0f);
     }
 
     // 6. Draw nodes (anchor points) in world space
