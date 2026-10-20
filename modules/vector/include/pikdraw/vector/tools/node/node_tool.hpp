@@ -86,12 +86,15 @@ public:
     [[nodiscard]] bool is_dragging() const noexcept { return drag_mode_ != NodeDragMode::None; }
     [[nodiscard]] bool is_rounding_corners() const noexcept { return drag_mode_ == NodeDragMode::RoundCorner; }
     [[nodiscard]] double current_corner_radius() const noexcept { return current_corner_radius_; }
+    void set_corner_type(RectCornerType type) noexcept { corner_type_ = type; }
+    [[nodiscard]] RectCornerType corner_type() const noexcept { return corner_type_; }
     [[nodiscard]] geometry::Point2D drag_delta() const noexcept {
         return (drag_mode_ != NodeDragMode::None) ? (current_drag_world_ - drag_start_world_) : geometry::Point2D{0.0, 0.0};
     }
     [[nodiscard]] std::optional<CornerWidget> active_corner_widget() const noexcept { return active_corner_widget_; }
     [[nodiscard]] std::vector<CornerWidget> corner_widgets(double zoom = 1.0) const;
     [[nodiscard]] std::optional<document::EditablePath> preview_rounded_path() const;
+    [[nodiscard]] std::vector<FilletPreviewSegment> fillet_preview_segments() const;
     [[nodiscard]] std::optional<ActiveSegmentDrag> active_segment_drag() const noexcept { return active_segment_drag_; }
     [[nodiscard]] std::pair<geometry::Point2D, geometry::Point2D> current_segment_bend_handles() const;
 
@@ -129,6 +132,7 @@ private:
     std::optional<CornerWidget> active_corner_widget_;
     std::optional<document::EditablePath> baseline_path_;
     double current_corner_radius_{0.0};
+    RectCornerType corner_type_{RectCornerType::Round};
 
     // Direct Segment Bending
     std::optional<ActiveSegmentDrag> active_segment_drag_;

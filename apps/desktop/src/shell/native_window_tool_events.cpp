@@ -341,7 +341,7 @@ bool NativeWindow::handle_pen_pointer_up(int x, int y, unsigned modifiers) {
 }
 
 bool NativeWindow::handle_node_pointer_down(int x, int y, unsigned modifiers) {
-    if (active_tool_ != 11 || !node_tool_ || !node_tool_->active() || is_panning_)
+    if ((active_tool_ != 11 && !is_corner_dragging_in_pick_tool_) || !node_tool_ || !node_tool_->active() || is_panning_)
         return false;
     if (!is_canvas_point(x, y))
         return false;
@@ -403,7 +403,7 @@ bool NativeWindow::handle_node_pointer_down(int x, int y, unsigned modifiers) {
 
 bool NativeWindow::handle_node_pointer_move(int x, int y, unsigned modifiers) {
     (void)modifiers;
-    if (active_tool_ != 11 || !node_tool_ || !node_tool_->active() || is_panning_)
+    if ((active_tool_ != 11 && !is_corner_dragging_in_pick_tool_) || !node_tool_ || !node_tool_->active() || is_panning_)
         return false;
 
     // Hover guidance when mouse is not captured
@@ -444,12 +444,42 @@ bool NativeWindow::handle_node_pointer_move(int x, int y, unsigned modifiers) {
             const double r = node_tool_->tool().current_corner_radius();
             const auto active_cw = node_tool_->tool().active_corner_widget();
             const double max_r = active_cw ? active_cw->max_radius : 0.0;
+
+            // Live-update Property Bar 4 corner values in real time!
+            if (rect_corners_locked_) {
+                rect_corner_tl_ = r;
+                rect_corner_tr_ = r;
+                rect_corner_br_ = r;
+                rect_corner_bl_ = r;
+            } else if (active_cw) {
+                const auto target_id = node_tool_->target_object();
+                const auto snap = root().document().current_snapshot();
+                if (snap) {
+                    const auto obj_opt = snap->get_object(target_id);
+                    if (obj_opt && std::holds_alternative<document::PathObject>(*obj_opt)) {
+                        const auto& po = std::get<document::PathObject>(*obj_opt);
+                        const auto b = po.path.bounds();
+                        const double cx = b.center().x;
+                        const double cy = b.center().y;
+                        const auto v = active_cw->corner_anchor;
+                        if (v.x < cx && v.y < cy) rect_corner_tl_ = r;
+                        else if (v.x >= cx && v.y < cy) rect_corner_tr_ = r;
+                        else if (v.x >= cx && v.y >= cy) rect_corner_br_ = r;
+                        else rect_corner_bl_ = r;
+                    }
+                }
+            }
+
             std::ostringstream ss;
             ss << std::fixed << std::setprecision(1);
             if (language_ == UILanguage::Vietnamese) {
-                ss << "Bo góc: " << r << " mm (Tối đa: " << max_r << " mm) · Thả chuột để áp dụng";
+                const char* type_str = (node_tool_->tool().corner_type() == vector::RectCornerType::Chamfer) ? "Vát góc (Chamfer)" :
+                    ((node_tool_->tool().corner_type() == vector::RectCornerType::Scallop) ? "Bo lõm (Scallop)" : "Bo tròn (Round)");
+                ss << type_str << ": " << r << " mm (Tối đa: " << max_r << " mm) · Thả chuột để áp dụng";
             } else {
-                ss << "Corner radius: " << r << " mm (Max: " << max_r << " mm) · Release to apply";
+                const char* type_str = (node_tool_->tool().corner_type() == vector::RectCornerType::Chamfer) ? "Chamfer" :
+                    ((node_tool_->tool().corner_type() == vector::RectCornerType::Scallop) ? "Scallop" : "Round fillet");
+                ss << type_str << ": " << r << " mm (Max: " << max_r << " mm) · Release to apply";
             }
             status_msg_ = ss.str();
         } else if (node_tool_->tool().drag_mode() == vector::tools::node::NodeDragMode::MoveHandle) {
@@ -490,13 +520,16 @@ bool NativeWindow::handle_node_pointer_move(int x, int y, unsigned modifiers) {
 
 bool NativeWindow::handle_node_pointer_up(int x, int y, unsigned modifiers) {
     (void)modifiers;
-    if (active_tool_ != 11 || !node_tool_ || !node_tool_->active())
+    if ((active_tool_ != 11 && !is_corner_dragging_in_pick_tool_) || !node_tool_ || !node_tool_->active())
         return false;
     if (GetCapture() == hwnd_)
         ReleaseCapture();
     const auto world_pt = canvas_to_world(x, y);
     const bool handled = node_tool_->pointer_up(world_pt);
     if (handled) {
+        if (node_tool_->tool().target_object() != document::kInvalidObjectId) {
+            sync_rect_corner_controls_from_selection();
+        }
         const size_t count = node_tool_->selected_node_count();
         if (count > 0) {
             status_msg_ = language_ == UILanguage::Vietnamese
@@ -504,8 +537,8 @@ bool NativeWindow::handle_node_pointer_up(int x, int y, unsigned modifiers) {
                 : "Updated (" + std::to_string(count) + " node(s) selected) · Press Ctrl+Z to undo in a single step";
         } else {
             status_msg_ = language_ == UILanguage::Vietnamese
-                ? "Công cụ Node (F10) · Nhấp chọn node · Quét chọn vùng · Ctrl+A chọn toàn bộ"
-                : "Node Tool (F10) · Click to select · Marquee select · Ctrl+A select all";
+                ? "Đã hoàn thành bo góc · Nhấn Ctrl+Z để hoàn tác duy nhất 1 bước"
+                : "Finished corner rounding · Press Ctrl+Z to undo in a single step";
         }
     }
     if (hwnd_) {
@@ -731,52 +764,66 @@ bool NativeWindow::handle_contour_property_click(int x, int y) {
     if (y < topbar_h + tabbar_h || y > content_top)
         return false;
 
-    if (x >= 80 && x < 145) {
-        contour_tool_->set_direction(geometry::ContourDirection::Outside);
-        status_msg_ = language_ == UILanguage::Vietnamese ? "Đổi hướng: Viền ngoài (Outside)" : "Direction: Outside";
-    } else if (x >= 150 && x < 215) {
-        contour_tool_->set_direction(geometry::ContourDirection::Inside);
-        status_msg_ = language_ == UILanguage::Vietnamese ? "Đổi hướng: Viền trong (Inside)" : "Direction: Inside";
-    } else if (x >= 220 && x < 295) {
+    if (x >= 75 && x < 135) {
         contour_tool_->set_direction(geometry::ContourDirection::ToCenter);
         status_msg_ = language_ == UILanguage::Vietnamese ? "Đổi hướng: Viền vào tâm (To Center)" : "Direction: To Center";
-    } else if (x >= 305 && x < 330) {
-        contour_tool_->set_spacing_mm(std::max(0.1, contour_tool_->spacing_mm() - 0.5));
-        status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Khoảng cách viền: " + std::to_string(contour_tool_->spacing_mm()) + " mm"
-            : "Contour spacing: " + std::to_string(contour_tool_->spacing_mm()) + " mm";
-    } else if (x >= 410 && x < 435) {
-        contour_tool_->set_spacing_mm(std::min(100000.0, contour_tool_->spacing_mm() + 0.5));
-        status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Khoảng cách viền: " + std::to_string(contour_tool_->spacing_mm()) + " mm"
-            : "Contour spacing: " + std::to_string(contour_tool_->spacing_mm()) + " mm";
-    } else if (x >= 445 && x < 470) {
-        contour_tool_->set_steps(std::max(1, contour_tool_->steps() - 1));
-        status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Số bước viền: " + std::to_string(contour_tool_->steps())
-            : "Contour steps: " + std::to_string(contour_tool_->steps());
-    } else if (x >= 540 && x < 565) {
-        contour_tool_->set_steps(std::min(99, contour_tool_->steps() + 1));
+    } else if (x >= 138 && x < 198) {
+        contour_tool_->set_direction(geometry::ContourDirection::Inside);
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Đổi hướng: Viền trong (Inside)" : "Direction: Inside";
+    } else if (x >= 201 && x < 261) {
+        contour_tool_->set_direction(geometry::ContourDirection::Outside);
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Đổi hướng: Viền ngoài (Outside)" : "Direction: Outside";
+    } else if (x >= 270 && x < 330) {
+        start_numeric_input(NumericFieldId::PolygonSides);
+        return true;
+    } else if (x >= 332 && x <= 352) {
+        if (y < (topbar_h + tabbar_h + 17)) {
+            contour_tool_->set_steps(std::min(99, contour_tool_->steps() + 1));
+        } else {
+            contour_tool_->set_steps(std::max(1, contour_tool_->steps() - 1));
+        }
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Số bước viền: " + std::to_string(contour_tool_->steps())
             : "Contour steps: " + std::to_string(contour_tool_->steps());
-    } else if (x >= 575 && x < 630) {
+    } else if (x >= 360 && x < 440) {
+        start_numeric_input(NumericFieldId::DistributeSpacing);
+        return true;
+    } else if (x >= 442 && x <= 462) {
+        if (y < (topbar_h + tabbar_h + 17)) {
+            contour_tool_->set_spacing_mm(std::min(100000.0, contour_tool_->spacing_mm() + 0.5));
+        } else {
+            contour_tool_->set_spacing_mm(std::max(0.1, contour_tool_->spacing_mm() - 0.5));
+        }
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Khoảng cách viền: " + std::to_string(contour_tool_->spacing_mm()) + " mm"
+            : "Contour spacing: " + std::to_string(contour_tool_->spacing_mm()) + " mm";
+    } else if (x >= 470 && x < 530) {
         contour_tool_->set_join_type(geometry::JoinType::Miter);
         status_msg_ = language_ == UILanguage::Vietnamese ? "Góc nối: Nhọn (Miter)" : "Corner join: Miter";
-    } else if (x >= 635 && x < 690) {
+    } else if (x >= 533 && x < 593) {
         contour_tool_->set_join_type(geometry::JoinType::Round);
         status_msg_ = language_ == UILanguage::Vietnamese ? "Góc nối: Tròn (Round)" : "Corner join: Round";
-    } else if (x >= 695 && x < 750) {
+    } else if (x >= 596 && x < 656) {
         contour_tool_->set_join_type(geometry::JoinType::Bevel);
         status_msg_ = language_ == UILanguage::Vietnamese ? "Góc nối: Vát (Bevel)" : "Corner join: Bevel";
-    } else if (x >= 760 && x < 825) {
+    } else if (x >= 665 && x < 740) {
         if (contour_tool_->apply()) {
             status_msg_ = language_ == UILanguage::Vietnamese
                 ? "Đã áp dụng viền Contour vào đối tượng" : "Applied contour to object";
         }
-    } else if (x >= 830 && x < 940) {
+    } else if (x >= 745 && x < 875) {
         trigger_break_contour_apart();
+    } else if (x >= 880 && x < 950) {
+        if (contour_tool_->remove()) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Đã xóa viền Contour khỏi đối tượng" : "Removed contour from object";
+        }
+    } else if (x >= 955 && x < 1015) {
+        contour_tool_->cancel();
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đã hủy thiết lập Contour" : "Cancelled contour draft";
     } else {
+        commit_numeric_field();
         return false;
     }
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);

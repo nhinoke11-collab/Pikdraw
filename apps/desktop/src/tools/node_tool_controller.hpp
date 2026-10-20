@@ -21,7 +21,7 @@ public:
     [[nodiscard]] bool active() const noexcept { return is_active_; }
     [[nodiscard]] bool is_active() const noexcept { return is_active_; }
 
-    bool pointer_down(geometry::Point2D world, bool shift, double tol_mm = 2.0);
+    bool pointer_down(geometry::Point2D world, bool shift, double tol_mm = 2.0, double zoom = 1.0);
     bool pointer_move(geometry::Point2D world);
     bool pointer_up(geometry::Point2D world);
     void cancel();
@@ -48,6 +48,13 @@ public:
     [[nodiscard]] document::ObjectId target_object() const noexcept;
     [[nodiscard]] bool is_node_selected(document::SubpathId sub_id, document::NodeId node_id) const noexcept {
         return tool_->is_node_selected(sub_id, node_id);
+    }
+    [[nodiscard]] bool is_rounding_corners() const noexcept { return tool_->is_rounding_corners(); }
+    [[nodiscard]] double current_corner_radius() const noexcept { return tool_->current_corner_radius(); }
+    void set_corner_type(vector::RectCornerType type) noexcept { tool_->set_corner_type(type); }
+    [[nodiscard]] vector::RectCornerType corner_type() const noexcept { return tool_->corner_type(); }
+    [[nodiscard]] std::vector<vector::tools::node::CornerWidget> corner_widgets(double zoom = 1.0) const {
+        return tool_->corner_widgets(zoom);
     }
 
     [[nodiscard]] vector::tools::node::NodeTool& tool() noexcept { return *tool_; }

@@ -7,6 +7,7 @@
 using namespace pikdraw;
 using namespace pikdraw::document;
 using namespace pikdraw::vector::tools::node;
+using pikdraw::vector::RectCornerType;
 
 static PathObject make_test_quad() {
     PathObject obj;
@@ -451,6 +452,108 @@ void test_anisotropic_corner_rounding_uniformity() {
     assert(cur_obj.authoring_source->subpaths[0].nodes.size() == 4);
 }
 
+void test_corner_types_round_scallop_chamfer() {
+    Document doc("doc-corner-types-test");
+    auto obj = make_test_quad();
+    const auto obj_id = obj.id;
+    doc.execute_command(std::make_unique<AddObjectCommand>(obj));
+    NodeTool tool(doc);
+    tool.set_target_object(obj_id);
+
+    const auto widgets = tool.corner_widgets(1.0);
+    assert(widgets.size() == 4);
+    const auto w0 = widgets[0];
+
+    // 1. Test Chamfer (straight bevel)
+    tool.set_corner_type(RectCornerType::Chamfer);
+    assert(tool.corner_type() == RectCornerType::Chamfer);
+
+    assert(tool.pointer_down(w0.widget_position, false, 2.0));
+    assert(tool.is_rounding_corners());
+
+    const auto drag_pt = w0.widget_position + w0.bisector * 10.0;
+    assert(tool.pointer_move(drag_pt));
+    assert(tool.current_corner_radius() > 9.0);
+
+    // Live preview fillets for Chamfer must be linear (is_cubic == false)
+    const auto chamfer_fillets = tool.fillet_preview_segments();
+    assert(!chamfer_fillets.empty());
+    assert(!chamfer_fillets[0].is_cubic);
+
+    tool.pointer_up(drag_pt);
+    assert(!tool.is_rounding_corners());
+
+    // Verify committed path has Line fillet
+    auto snap = doc.current_snapshot();
+    auto cur_obj = std::get<PathObject>(*snap->get_object(obj_id));
+    bool all_lines = true;
+    for (const auto& seg : cur_obj.authoring_source->subpaths[0].segments) {
+        if (seg.kind != PathSegmentKind::Line) {
+            all_lines = false;
+            break;
+        }
+    }
+    assert(all_lines);
+    // Chamfer added nodes at the corner
+    assert(cur_obj.authoring_source->subpaths[0].nodes.size() > 4);
+
+    // Undo chamfer
+    assert(doc.undo());
+
+    // 2. Test Scallop (concave arc)
+    tool.set_corner_type(RectCornerType::Scallop);
+    assert(tool.corner_type() == RectCornerType::Scallop);
+
+    assert(tool.pointer_down(w0.widget_position, false, 2.0));
+    assert(tool.is_rounding_corners());
+    assert(tool.pointer_move(drag_pt));
+
+    const auto scallop_fillets = tool.fillet_preview_segments();
+    assert(!scallop_fillets.empty());
+    assert(scallop_fillets[0].is_cubic);
+
+    tool.pointer_up(drag_pt);
+    assert(!tool.is_rounding_corners());
+
+    snap = doc.current_snapshot();
+    cur_obj = std::get<PathObject>(*snap->get_object(obj_id));
+    bool has_cubic = false;
+    for (const auto& seg : cur_obj.authoring_source->subpaths[0].segments) {
+        if (seg.kind == PathSegmentKind::CubicBezier) {
+            has_cubic = true;
+            break;
+        }
+    }
+    assert(has_cubic);
+
+    // Undo scallop
+    assert(doc.undo());
+
+    // 3. Test Round (convex fillet)
+    tool.set_corner_type(RectCornerType::Round);
+    assert(tool.corner_type() == RectCornerType::Round);
+
+    assert(tool.pointer_down(w0.widget_position, false, 2.0));
+    assert(tool.is_rounding_corners());
+    assert(tool.pointer_move(drag_pt));
+
+    const auto round_fillets = tool.fillet_preview_segments();
+    assert(!round_fillets.empty());
+    assert(round_fillets[0].is_cubic);
+
+    // Round and scallop handles must differ (convex vs concave)
+    assert(round_fillets[0].c1 != scallop_fillets[0].c1);
+
+    tool.pointer_up(drag_pt);
+    assert(!tool.is_rounding_corners());
+
+    // Undo round
+    assert(doc.undo());
+    snap = doc.current_snapshot();
+    cur_obj = std::get<PathObject>(*snap->get_object(obj_id));
+    assert(cur_obj.authoring_source->subpaths[0].nodes.size() == 4);
+}
+
 int main() {
     std::cout << "[test_node_tool] Running NodeTool vector tests...\n";
     test_node_tool_selection_and_drag();
@@ -462,6 +565,7 @@ int main() {
     test_transformed_object_nodes_and_live_mirroring();
     test_bend_segment_and_node_to_curve_batch();
     test_anisotropic_corner_rounding_uniformity();
+    test_corner_types_round_scallop_chamfer();
     std::cout << "[test_node_tool] All tests passed!\n";
     return 0;
 }

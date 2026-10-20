@@ -3,6 +3,7 @@
 #include "pikdraw/document/model/editable_path.hpp"
 #include "pikdraw/geometry/primitives/point.hpp"
 #include "pikdraw/geometry/primitives/transform.hpp"
+#include "pikdraw/vector/tools/shape_tools.hpp"
 #include <algorithm>
 #include <cmath>
 #include <numbers>
@@ -19,6 +20,14 @@ struct CornerWidget {
     geometry::Point2D bisector{};
     double max_radius{0.0};
     double current_radius{0.0};
+};
+
+struct FilletPreviewSegment {
+    geometry::Point2D p0;
+    geometry::Point2D c1;
+    geometry::Point2D c2;
+    geometry::Point2D p3;
+    bool is_cubic{true}; // true for Round (convex) & Scallop (concave); false for Chamfer (bevel line)
 };
 
 /// Detect sharp corners on straight segments eligible for Illustrator-style live corner rounding.
@@ -104,7 +113,7 @@ struct CornerWidget {
     return widgets;
 }
 
-/// Constructs a new EditablePath where specified corner nodes are rounded with fillet curves.
+/// Constructs a new EditablePath where specified corner nodes are rounded with fillet curves (Round, Scallop, Chamfer).
 /// When transform is supplied, fillet radii and tangent extents are computed in world millimeters
 /// and pre-compensated into local space, guaranteeing true, isotropic, even circular corners
 /// regardless of anisotropic scaling or rotation.
@@ -112,7 +121,8 @@ struct CornerWidget {
     const document::EditablePath& source,
     const std::vector<document::NodeId>& target_corners,
     double radius,
-    const geometry::Transform2D& transform = geometry::Transform2D::identity()) {
+    const geometry::Transform2D& transform = geometry::Transform2D::identity(),
+    vector::RectCornerType corner_type = vector::RectCornerType::Round) {
     if (radius <= 0.05) return source;
 
     const auto inv_tr = transform.inverted().value_or(geometry::Transform2D::identity());
@@ -195,39 +205,70 @@ struct CornerWidget {
 
             const auto t1_w = v + u * t;
             const auto t2_w = v + w * t;
-            const auto c1_w = t1_w - u * k;
-            const auto c2_w = t2_w - w * k;
 
             const auto t1 = use_tr ? inv_tr.map_point(t1_w) : t1_w;
             const auto t2 = use_tr ? inv_tr.map_point(t2_w) : t2_w;
-            const auto c1 = use_tr ? inv_tr.map_point(c1_w) : c1_w;
-            const auto c2 = use_tr ? inv_tr.map_point(c2_w) : c2_w;
 
-            // First tangent node at T1 with outgoing handle C1 towards V
-            document::PathNode node1;
-            node1.id = document::generate_path_element_id<document::NodeId>();
-            node1.anchor = t1;
-            node1.mode = document::PathNodeMode::Cusp;
-            node1.has_incoming_handle = false;
-            node1.has_outgoing_handle = true;
-            node1.outgoing_handle = c1;
-            new_sub.nodes.push_back(node1);
+            if (corner_type == vector::RectCornerType::Chamfer) {
+                // Bevel diagonal straight segment
+                document::PathNode node1;
+                node1.id = document::generate_path_element_id<document::NodeId>();
+                node1.anchor = t1;
+                node1.mode = document::PathNodeMode::Cusp;
+                node1.has_incoming_handle = false;
+                node1.has_outgoing_handle = false;
+                new_sub.nodes.push_back(node1);
 
-            // Cubic Bézier segment connecting T1 to T2
-            document::EditableSegment fillet_seg;
-            fillet_seg.id = document::generate_path_element_id<document::SegmentId>();
-            fillet_seg.kind = document::PathSegmentKind::CubicBezier;
-            new_sub.segments.push_back(fillet_seg);
+                document::EditableSegment fillet_seg;
+                fillet_seg.id = document::generate_path_element_id<document::SegmentId>();
+                fillet_seg.kind = document::PathSegmentKind::Line;
+                new_sub.segments.push_back(fillet_seg);
 
-            // Second tangent node at T2 with incoming handle C2 from V
-            document::PathNode node2;
-            node2.id = document::generate_path_element_id<document::NodeId>();
-            node2.anchor = t2;
-            node2.mode = document::PathNodeMode::Cusp;
-            node2.has_incoming_handle = true;
-            node2.incoming_handle = c2;
-            node2.has_outgoing_handle = false;
-            new_sub.nodes.push_back(node2);
+                document::PathNode node2;
+                node2.id = document::generate_path_element_id<document::NodeId>();
+                node2.anchor = t2;
+                node2.mode = document::PathNodeMode::Cusp;
+                node2.has_incoming_handle = false;
+                node2.has_outgoing_handle = false;
+                new_sub.nodes.push_back(node2);
+            } else {
+                // Round (convex) or Scallop (concave)
+                const auto c1_w = (corner_type == vector::RectCornerType::Scallop)
+                    ? (t1_w + w * k)
+                    : (t1_w - u * k);
+                const auto c2_w = (corner_type == vector::RectCornerType::Scallop)
+                    ? (t2_w + u * k)
+                    : (t2_w - w * k);
+
+                const auto c1 = use_tr ? inv_tr.map_point(c1_w) : c1_w;
+                const auto c2 = use_tr ? inv_tr.map_point(c2_w) : c2_w;
+
+                // First tangent node at T1 with outgoing handle C1
+                document::PathNode node1;
+                node1.id = document::generate_path_element_id<document::NodeId>();
+                node1.anchor = t1;
+                node1.mode = document::PathNodeMode::Cusp;
+                node1.has_incoming_handle = false;
+                node1.has_outgoing_handle = true;
+                node1.outgoing_handle = c1;
+                new_sub.nodes.push_back(node1);
+
+                // Cubic Bézier segment connecting T1 to T2
+                document::EditableSegment fillet_seg;
+                fillet_seg.id = document::generate_path_element_id<document::SegmentId>();
+                fillet_seg.kind = document::PathSegmentKind::CubicBezier;
+                new_sub.segments.push_back(fillet_seg);
+
+                // Second tangent node at T2 with incoming handle C2
+                document::PathNode node2;
+                node2.id = document::generate_path_element_id<document::NodeId>();
+                node2.anchor = t2;
+                node2.mode = document::PathNodeMode::Cusp;
+                node2.has_incoming_handle = true;
+                node2.incoming_handle = c2;
+                node2.has_outgoing_handle = false;
+                new_sub.nodes.push_back(node2);
+            }
 
             // Line segment continuing from T2 to the next node
             document::EditableSegment line_seg;
@@ -240,6 +281,88 @@ struct CornerWidget {
     }
 
     return result;
+}
+
+/// Generates world-coordinate preview segments (Round, Scallop, or Chamfer) exclusively for the corners being rounded.
+[[nodiscard]] inline std::vector<FilletPreviewSegment> generate_fillet_preview_segments(
+    const document::EditablePath& source,
+    const std::vector<document::NodeId>& target_corners,
+    double radius,
+    const geometry::Transform2D& transform = geometry::Transform2D::identity(),
+    vector::RectCornerType corner_type = vector::RectCornerType::Round) {
+    std::vector<FilletPreviewSegment> previews;
+    if (radius <= 0.05) return previews;
+
+    for (const auto& sub : source.subpaths) {
+        const size_t n = sub.nodes.size();
+        if (n < 3) continue;
+
+        for (size_t i = 0; i < n; ++i) {
+            const size_t prev_i = (i + n - 1) % n;
+            const size_t next_i = (i + 1) % n;
+
+            const auto& curr = sub.nodes[i];
+            const auto& prev = sub.nodes[prev_i];
+            const auto& next = sub.nodes[next_i];
+
+            const bool is_target = target_corners.empty() ||
+                (std::find(target_corners.begin(), target_corners.end(), curr.id) != target_corners.end());
+
+            const bool can_round = is_target &&
+                (!curr.has_incoming_handle && !curr.has_outgoing_handle) &&
+                (prev_i < sub.segments.size() && sub.segments[prev_i].kind == document::PathSegmentKind::Line) &&
+                (i < sub.segments.size() && sub.segments[i].kind == document::PathSegmentKind::Line) &&
+                (sub.closed || (i > 0 && i < n - 1));
+
+            if (!can_round) continue;
+
+            const auto v = transform.map_point(curr.anchor);
+            const auto a = transform.map_point(prev.anchor);
+            const auto b = transform.map_point(next.anchor);
+
+            const auto d1 = a - v;
+            const auto d2 = b - v;
+            const double l1 = std::hypot(d1.x, d1.y);
+            const double l2 = std::hypot(d2.x, d2.y);
+            if (l1 < 0.5 || l2 < 0.5) continue;
+
+            const auto u = geometry::Point2D{d1.x / l1, d1.y / l1};
+            const auto w = geometry::Point2D{d2.x / l2, d2.y / l2};
+
+            const double dot = std::clamp(u.x * w.x + u.y * w.y, -1.0, 1.0);
+            const double angle = std::acos(dot);
+            const double half_angle = angle * 0.5;
+            const double tan_half = std::tan(half_angle);
+            if (tan_half < 1e-4) continue;
+
+            const double max_t = std::min(l1, l2) * 0.49;
+            const double t = std::min(radius / tan_half, max_t);
+            const double actual_r = t * tan_half;
+
+            const double sweep = std::numbers::pi - angle;
+            const double k = (4.0 / 3.0) * std::tan(sweep * 0.25) * actual_r;
+
+            const auto t1_w = v + u * t;
+            const auto t2_w = v + w * t;
+
+            if (corner_type == vector::RectCornerType::Chamfer) {
+                previews.push_back(FilletPreviewSegment{
+                    t1_w, t1_w, t2_w, t2_w, false
+                });
+            } else {
+                const auto c1_w = (corner_type == vector::RectCornerType::Scallop)
+                    ? (t1_w + w * k)
+                    : (t1_w - u * k);
+                const auto c2_w = (corner_type == vector::RectCornerType::Scallop)
+                    ? (t2_w + u * k)
+                    : (t2_w - w * k);
+                previews.push_back(FilletPreviewSegment{
+                    t1_w, c1_w, c2_w, t2_w, true
+                });
+            }
+        }
+    }
+    return previews;
 }
 
 } // namespace pikdraw::vector::tools::node

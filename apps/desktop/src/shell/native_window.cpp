@@ -787,6 +787,9 @@ void NativeWindow::sync_rect_corner_controls_from_selection() {
 
 void NativeWindow::set_rect_corner_type(vector::RectCornerType type) noexcept {
     rect_corner_type_ = type;
+    if (node_tool_) {
+        node_tool_->set_corner_type(type);
+    }
     vector::RectCornerSettings s;
     s.type = rect_corner_type_;
     s.tl = rect_corner_tl_;

@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "native_window_toolbox.hpp"
 #include "native_window_text_properties.hpp"
 #include "../automation/native_window_automation.hpp"
 #include "pikdraw/desktop/actions/action_id.hpp"
@@ -91,6 +92,53 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
                 tip_text = is_vi
                     ? L"Shift khóa hướng theo bước 15° · Ctrl lấy điểm đầu làm tâm"
                     : L"Shift snaps direction to 15° · Ctrl uses the start point as center";
+        } else if (active_tool_ == 1 && selection.empty()) {
+            int rx = 78;
+            if (mouse_x >= rx && mouse_x < rx + 28) {
+                tip_text = is_vi ? L"Bo góc tròn lồi (Round Corner)" : L"Round corner (convex)";
+            } else if (mouse_x >= rx + 32 && mouse_x < rx + 60) {
+                tip_text = is_vi ? L"Bo góc tròn lõm (Scalloped Corner)" : L"Scalloped corner (concave)";
+            } else if (mouse_x >= rx + 64 && mouse_x < rx + 92) {
+                tip_text = is_vi ? L"Vát góc phẳng (Chamfered Corner)" : L"Chamfered corner (bevel)";
+            } else {
+                rx += 98;
+                if (mouse_x >= rx && mouse_x <= rx + 48) {
+                    if (mouse_y < 84) {
+                        tip_text = is_vi ? L"Bán kính bo góc Trên-Trái (TL ⌜) theo mm · Enter áp dụng · Tab chuyển ô"
+                                         : L"Top-Left corner radius (TL ⌜) in mm · Enter applies · Tab cycles fields";
+                    } else {
+                        tip_text = is_vi ? L"Bán kính bo góc Dưới-Trái (BL ⌞) theo mm · Enter áp dụng · Tab chuyển ô"
+                                         : L"Bottom-Left corner radius (BL ⌞) in mm · Enter applies · Tab cycles fields";
+                    }
+                } else if (mouse_x >= rx + 51 && mouse_x <= rx + 73) {
+                    tip_text = is_vi ? (rect_corners_locked_ ? L"Đang khóa 4 góc: chỉnh 1 góc đổi cả 4 góc"
+                                                            : L"Đang mở khóa: chỉnh độc lập từng góc")
+                                     : (rect_corners_locked_ ? L"Corners locked: editing one changes all 4"
+                                                            : L"Corners unlocked: edit each corner independently");
+                } else if (mouse_x >= rx + 76 && mouse_x <= rx + 124) {
+                    if (mouse_y < 84) {
+                        tip_text = is_vi ? L"Bán kính bo góc Trên-Phải (TR ⌝) theo mm · Enter áp dụng · Tab chuyển ô"
+                                         : L"Top-Right corner radius (TR ⌝) in mm · Enter applies · Tab cycles fields";
+                    } else {
+                        tip_text = is_vi ? L"Bán kính bo góc Dưới-Phải (BR ⌟) theo mm · Enter áp dụng · Tab chuyển ô"
+                                         : L"Bottom-Right corner radius (BR ⌟) in mm · Enter applies · Tab cycles fields";
+                    }
+                } else {
+                    rx += 128;
+                    if (mouse_x >= rx && mouse_x <= rx + 68) {
+                        tip_text = is_vi ? (rect_corners_scale_relative_
+                                                ? L"Tỷ lệ bo góc tương đối theo kích thước hình: Đang bật"
+                                                : L"Tỷ lệ bo góc tương đối theo kích thước hình: Đang tắt (cố định mm)")
+                                         : (rect_corners_scale_relative_
+                                                ? L"Relative corner scaling: Enabled"
+                                                : L"Relative corner scaling: Disabled (absolute mm)");
+                    } else {
+                        tip_text = is_vi
+                            ? L"Hình chữ nhật · Bo góc nhanh: tròn, lõm, vát · Shift vẽ hình vuông · Ctrl vẽ từ tâm"
+                            : L"Rectangle · Quick corners: round, scallop, chamfer · Shift for square · Ctrl from center";
+                    }
+                }
+            }
         } else if (is_text_mode) {
             if (mouse_x >= 52 && mouse_x <= 192) {
                 tip_text = is_vi ? L"Chọn phông chữ (Font Picker · Win32 WYSIWYG)" : L"Choose font (Font Picker)";
@@ -154,7 +202,8 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
             }
         } else {
             // Object Selection Mode
-            if (selection.size() == 1 && workflow().can_set_selected_object_opacity() &&
+            const bool is_rect_single = selection.size() == 1 && is_selected_rectangle();
+            if (!is_rect_single && selection.size() == 1 && workflow().can_set_selected_object_opacity() &&
                 mouse_x >= 720 && mouse_x <= 844 && 844 <= w - inspect_w) {
                 tip_text = is_vi
                     ? L"Độ mờ toàn đối tượng 0–100% · nhập số · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
@@ -223,23 +272,64 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
                         break;
                     }
                 } else if (selection.size() == 1) {
-                    int rx = 540;
-                    if (mouse_x >= rx && mouse_x < rx + 28) {
-                        tip_text = is_vi ? L"Lật ngang đối tượng qua tâm (Ctrl+Shift+H)" : L"Flip selection horizontally (Ctrl+Shift+H)";
-                    } else if (mouse_x >= rx + 32 && mouse_x < rx + 60) {
-                        tip_text = is_vi ? L"Lật dọc đối tượng qua tâm (Ctrl+Shift+V)" : L"Flip selection vertically (Ctrl+Shift+V)";
-                    } else if (mouse_x >= rx + 64 && mouse_x < rx + 92) {
-                        tip_text = is_vi ? L"Xoay 90° thuận chiều kim đồng hồ (Ctrl+])" : L"Rotate 90° clockwise (Ctrl+])";
-                    } else if (mouse_x >= rx + 96 && mouse_x < rx + 124) {
-                        tip_text = is_vi ? L"Xoay 90° ngược chiều kim đồng hồ (Ctrl+[)" : L"Rotate 90° counter-clockwise (Ctrl+[)";
-                    } else {
-                        rx += 130;
-                        if (workflow().is_group(selection.front())) {
-                            if (mouse_x >= rx && mouse_x < rx + 66) {
-                                tip_text = is_vi ? L"Rã nhóm đối tượng (Ungroup · Ctrl+Shift+G)" : L"Ungroup selected group (Ctrl+Shift+G)";
-                            } else if (mouse_x >= rx + 72 && mouse_x < rx + 138) {
-                                tip_text = is_vi ? L"Chui vào trong nhóm để chỉnh sửa hình con (Enter hoặc Nhấp đúp)"
-                                                 : L"Enter group isolation mode to edit children (Enter or Double Click)";
+                    int rx = 535;
+                    const bool is_rect = is_selected_rectangle();
+                    if (is_rect) {
+                        if (mouse_x >= rx && mouse_x < rx + 28) {
+                            tip_text = is_vi ? L"Bo góc tròn lồi (Round Corner)" : L"Round corner (convex)";
+                        } else if (mouse_x >= rx + 32 && mouse_x < rx + 60) {
+                            tip_text = is_vi ? L"Bo góc tròn lõm (Scalloped Corner)" : L"Scalloped corner (concave)";
+                        } else if (mouse_x >= rx + 64 && mouse_x < rx + 92) {
+                            tip_text = is_vi ? L"Vát góc phẳng (Chamfered Corner)" : L"Chamfered corner (bevel)";
+                        } else if (mouse_x >= rx + 98 && mouse_x <= rx + 98 + 48) {
+                            if (mouse_y < 84) {
+                                tip_text = is_vi ? L"Bán kính bo góc Trên-Trái (TL ⌜) theo mm · Enter áp dụng · Tab chuyển ô"
+                                                 : L"Top-Left corner radius (TL ⌜) in mm · Enter applies · Tab cycles fields";
+                            } else {
+                                tip_text = is_vi ? L"Bán kính bo góc Dưới-Trái (BL ⌞) theo mm · Enter áp dụng · Tab chuyển ô"
+                                                 : L"Bottom-Left corner radius (BL ⌞) in mm · Enter applies · Tab cycles fields";
+                            }
+                        } else if (mouse_x >= rx + 98 + 51 && mouse_x <= rx + 98 + 73) {
+                            tip_text = is_vi ? (rect_corners_locked_ ? L"Đang khóa 4 góc: chỉnh 1 góc đổi cả 4 góc"
+                                                                    : L"Đang mở khóa: chỉnh độc lập từng góc")
+                                             : (rect_corners_locked_ ? L"Corners locked: editing one changes all 4"
+                                                                    : L"Corners unlocked: edit each corner independently");
+                        } else if (mouse_x >= rx + 98 + 76 && mouse_x <= rx + 98 + 124) {
+                            if (mouse_y < 84) {
+                                tip_text = is_vi ? L"Bán kính bo góc Trên-Phải (TR ⌝) theo mm · Enter áp dụng · Tab chuyển ô"
+                                                 : L"Top-Right corner radius (TR ⌝) in mm · Enter applies · Tab cycles fields";
+                            } else {
+                                tip_text = is_vi ? L"Bán kính bo góc Dưới-Phải (BR ⌟) theo mm · Enter áp dụng · Tab chuyển ô"
+                                                 : L"Bottom-Right corner radius (BR ⌟) in mm · Enter applies · Tab cycles fields";
+                            }
+                        } else if (mouse_x >= rx + 98 + 128 && mouse_x <= rx + 98 + 128 + 68) {
+                            tip_text = is_vi ? (rect_corners_scale_relative_
+                                                    ? L"Tỷ lệ bo góc tương đối theo kích thước hình: Đang bật"
+                                                    : L"Tỷ lệ bo góc tương đối theo kích thước hình: Đang tắt (cố định mm)")
+                                             : (rect_corners_scale_relative_
+                                                    ? L"Relative corner scaling: Enabled"
+                                                    : L"Relative corner scaling: Disabled (absolute mm)");
+                        }
+                        rx += 98 + 128 + 74;
+                    }
+                    if (tip_text.empty()) {
+                        if (mouse_x >= rx && mouse_x < rx + 28) {
+                            tip_text = is_vi ? L"Lật ngang đối tượng qua tâm (Ctrl+Shift+H)" : L"Flip selection horizontally (Ctrl+Shift+H)";
+                        } else if (mouse_x >= rx + 32 && mouse_x < rx + 60) {
+                            tip_text = is_vi ? L"Lật dọc đối tượng qua tâm (Ctrl+Shift+V)" : L"Flip selection vertically (Ctrl+Shift+V)";
+                        } else if (mouse_x >= rx + 64 && mouse_x < rx + 92) {
+                            tip_text = is_vi ? L"Xoay 90° thuận chiều kim đồng hồ (Ctrl+])" : L"Rotate 90° clockwise (Ctrl+])";
+                        } else if (mouse_x >= rx + 96 && mouse_x < rx + 124) {
+                            tip_text = is_vi ? L"Xoay 90° ngược chiều kim đồng hồ (Ctrl+[)" : L"Rotate 90° counter-clockwise (Ctrl+[)";
+                        } else {
+                            rx += 130;
+                            if (workflow().is_group(selection.front())) {
+                                if (mouse_x >= rx && mouse_x < rx + 66) {
+                                    tip_text = is_vi ? L"Rã nhóm đối tượng (Ungroup · Ctrl+Shift+G)" : L"Ungroup selected group (Ctrl+Shift+G)";
+                                } else if (mouse_x >= rx + 72 && mouse_x < rx + 138) {
+                                    tip_text = is_vi ? L"Chui vào trong nhóm để chỉnh sửa hình con (Enter hoặc Nhấp đúp)"
+                                                     : L"Enter group isolation mode to edit children (Enter or Double Click)";
+                                }
                             }
                         }
                     }
@@ -250,9 +340,9 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
 
     // 4. Tool groups and their flyouts.
     else if (toolbox_open_group_ > 0 && mouse_x >= 54 && mouse_x <= 242) {
-        const int group_row = toolbox_open_group_ == 1 ? 1
-                            : toolbox_open_group_ == 2 ? 2 : 6;
-        const int flyout_top = content_top + 10 + group_row * 42;
+        const int group_row = toolbox_open_group_ == 1 ? get_visible_row_for_slot(ToolboxSlotId::QuickShapes)
+                            : toolbox_open_group_ == 2 ? get_visible_row_for_slot(ToolboxSlotId::PathDrawing) : 6;
+        const int flyout_top = content_top + 10 + (group_row >= 0 ? group_row : 1) * 42;
         const int item = (mouse_y - flyout_top - 26) / 29;
         const int max_items = toolbox_open_group_ == 3 ? 5
             : toolbox_open_group_ == 2 ? 4 : 3;
@@ -308,37 +398,47 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
         }
     }
     else if (mouse_x >= 0 && mouse_x <= tool_w && mouse_y >= content_top && mouse_y < h - status_h) {
+        const auto slots = visible_toolbox_slots();
         const int tool_idx = (mouse_y - (content_top + 10)) / 42;
-        if (tool_idx == 0) {
-            tip_text = is_vi ? L"Công cụ chọn & biến đổi đối tượng (Pick Tool) · Phím V hoặc Space"
-                             : L"Pick & Select / Transform Tool · Shortcut: V or Space";
-        } else if (tool_idx == 1) {
-            tip_text = is_vi ? L"Hình cơ bản · Hình chữ nhật, elip, đa giác · Alt+↓ mở nhóm"
-                             : L"Quick Shapes · Rectangle, Ellipse, Polygon · Alt+Down opens group";
-        } else if (tool_idx == 2) {
-            tip_text = is_vi ? L"Đường vẽ · Line, Polyline, Pen, Node · Alt+↓ mở nhóm"
-                             : L"Path Drawing · Line, Polyline, Pen, Node · Alt+Down opens group";
-        } else if (tool_idx == 3) {
-            tip_text = is_vi ? L"Kéo trượt vùng làm việc (Pan Hand Tool) · Phím H hoặc Giữ Chuột giữa"
-                             : L"Pan Viewport Hand Tool · Shortcut: H or Middle Drag";
-        } else if (tool_idx == 4) {
-            tip_text = is_vi ? L"Soạn thảo văn bản & Bảng (Text Tool) · Phím F8"
-                             : L"Text Typography & Table Tool · Shortcut: F8";
-        } else if (tool_idx == 5) {
-            tip_text = is_vi ? L"Dao cắt xén đối tượng vector (Knife Tool) · Phím K"
-                             : L"Knife / Slice Tool · Shortcut: K";
-        } else if (tool_idx == 6) {
-            tip_text = is_vi ? L"Hiệu ứng làm mờ (Gaussian Blur) · Áp dụng hoặc chỉnh sửa độ mờ"
-                             : L"Gaussian Blur Effect · Apply or edit blur on selection";
-        } else if (tool_idx == 7) {
-            tip_text = is_vi ? L"Hiệu ứng đổ bóng (Drop Shadow) · Kéo bóng trực tiếp hoặc chỉnh sửa"
-                             : L"Drop Shadow Effect · Interactive shadow on selection";
-        } else if (tool_idx == 8) {
-            tip_text = is_vi ? L"Công cụ viền Contour · Tạo viền bao quanh đối tượng · Phím tắt: Ctrl+F9"
-                             : L"Contour Tool · Create offset outline around object · Shortcut: Ctrl+F9";
-        } else if (tool_idx == 9) {
-            tip_text = is_vi ? L"Công cụ chuyển sắc tương tác (Gradient Tool) · Phím G"
-                             : L"Interactive Gradient Tool · Shortcut: G";
+        if (tool_idx == static_cast<int>(slots.size())) {
+            tip_text = is_vi ? L"Tùy chỉnh Hộp công cụ (+) · Thêm hoặc xóa bớt icon công cụ"
+                             : L"Quick Customize Toolbox (+) · Add or remove tool icons";
+        } else if (tool_idx >= 0 && tool_idx < static_cast<int>(slots.size())) {
+            const auto slot = slots[tool_idx];
+            if (slot == ToolboxSlotId::Pick) {
+                tip_text = is_vi ? L"Công cụ chọn & biến đổi đối tượng (Pick Tool) · Phím V hoặc Space"
+                                 : L"Pick & Select / Transform Tool · Shortcut: V or Space";
+            } else if (slot == ToolboxSlotId::Node) {
+                tip_text = is_vi ? L"Công cụ chỉnh sửa điểm (Node Edit Tool) · Phím F10 · Chọn và kéo node hoặc tay nắm Bézier"
+                                 : L"Node Edit Tool · Shortcut: F10 · Select, drag nodes and Bézier handles";
+            } else if (slot == ToolboxSlotId::QuickShapes) {
+                tip_text = is_vi ? L"Hình cơ bản · Hình chữ nhật, elip, đa giác · Alt+↓ mở nhóm"
+                                 : L"Quick Shapes · Rectangle, Ellipse, Polygon · Alt+Down opens group";
+            } else if (slot == ToolboxSlotId::PathDrawing) {
+                tip_text = is_vi ? L"Đường vẽ · Line, Polyline, Pen, Node · Alt+↓ mở nhóm"
+                                 : L"Path Drawing · Line, Polyline, Pen, Node · Alt+Down opens group";
+            } else if (slot == ToolboxSlotId::Pan) {
+                tip_text = is_vi ? L"Kéo trượt vùng làm việc (Pan Hand Tool) · Phím H hoặc Giữ Chuột giữa"
+                                 : L"Pan Viewport Hand Tool · Shortcut: H or Middle Drag";
+            } else if (slot == ToolboxSlotId::Text) {
+                tip_text = is_vi ? L"Soạn thảo văn bản & Bảng (Text Tool) · Phím F8"
+                                 : L"Text Typography & Table Tool · Shortcut: F8";
+            } else if (slot == ToolboxSlotId::Knife) {
+                tip_text = is_vi ? L"Dao cắt xén đối tượng vector (Knife Tool) · Phím K"
+                                 : L"Knife / Slice Tool · Shortcut: K";
+            } else if (slot == ToolboxSlotId::Blur) {
+                tip_text = is_vi ? L"Hiệu ứng làm mờ (Gaussian Blur) · Áp dụng hoặc chỉnh sửa độ mờ"
+                                 : L"Gaussian Blur Effect · Apply or edit blur on selection";
+            } else if (slot == ToolboxSlotId::DropShadow) {
+                tip_text = is_vi ? L"Hiệu ứng đổ bóng (Drop Shadow) · Kéo bóng trực tiếp hoặc chỉnh sửa"
+                                 : L"Drop Shadow Effect · Interactive shadow on selection";
+            } else if (slot == ToolboxSlotId::Contour) {
+                tip_text = is_vi ? L"Công cụ viền Contour · Tạo viền bao quanh đối tượng · Phím tắt: Ctrl+F9"
+                                 : L"Contour Tool · Create offset outline around object · Shortcut: Ctrl+F9";
+            } else if (slot == ToolboxSlotId::Gradient) {
+                tip_text = is_vi ? L"Công cụ chuyển sắc tương tác (Gradient Tool) · Phím G"
+                                 : L"Interactive Gradient Tool · Shortcut: G";
+            }
         }
     }
 

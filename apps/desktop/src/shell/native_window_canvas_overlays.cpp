@@ -442,33 +442,24 @@ void NativeWindow::paint_node_canvas_overlay(HDC dc, int width, int height) {
 
     // 1. Live preview for corner rounding (Live Corners)
     if (node_tool_->tool().is_rounding_corners()) {
-        const auto preview = node_tool_->tool().preview_rounded_path();
-        if (preview) {
-            const COLORREF preview_stroke = theme_ == ThemeMode::CyberDark ? RGB(0, 242, 195) : RGB(14, 165, 233);
-
-            for (const auto& sub : preview->subpaths) {
-                const size_t n = sub.nodes.size();
-                if (n == 0) continue;
-                for (size_t i = 0; i < sub.segments.size() && i < n; ++i) {
-                    if (sub.segments[i].kind != document::PathSegmentKind::CubicBezier) {
-                        continue; // Crucial: ONLY render corner fillet arcs, NEVER connecting straight lines!
-                    }
-                    const size_t next_i = (i + 1 < n) ? (i + 1) : 0;
-                    if (next_i == 0 && !sub.closed) continue;
-
-                    const auto& n1 = sub.nodes[i];
-                    const auto& n2 = sub.nodes[next_i];
-                    const POINT p0 = screen(tr.map_point(n1.anchor));
-                    const POINT p3 = screen(tr.map_point(n2.anchor));
-                    const POINT c1 = screen(tr.map_point(n1.has_outgoing_handle ? n1.outgoing_handle : n1.anchor));
-                    const POINT c2 = screen(tr.map_point(n2.has_incoming_handle ? n2.incoming_handle : n2.anchor));
-
-                    aa.draw_bezier(static_cast<float>(p0.x), static_cast<float>(p0.y),
-                                   static_cast<float>(c1.x), static_cast<float>(c1.y),
-                                   static_cast<float>(c2.x), static_cast<float>(c2.y),
-                                   static_cast<float>(p3.x), static_cast<float>(p3.y),
-                                   preview_stroke, 1.2f);
-                }
+        const auto fillets = node_tool_->tool().fillet_preview_segments();
+        const COLORREF preview_stroke = theme_ == ThemeMode::CyberDark ? RGB(0, 242, 195) : RGB(14, 165, 233);
+        for (const auto& fil : fillets) {
+            const POINT p0 = screen(fil.p0);
+            const POINT p3 = screen(fil.p3);
+            if (fil.is_cubic) {
+                const POINT c1 = screen(fil.c1);
+                const POINT c2 = screen(fil.c2);
+                aa.draw_bezier(static_cast<float>(p0.x), static_cast<float>(p0.y),
+                               static_cast<float>(c1.x), static_cast<float>(c1.y),
+                               static_cast<float>(c2.x), static_cast<float>(c2.y),
+                               static_cast<float>(p3.x), static_cast<float>(p3.y),
+                               preview_stroke, 1.2f);
+            } else {
+                // Chamfer bevel diagonal line
+                aa.draw_line(static_cast<float>(p0.x), static_cast<float>(p0.y),
+                             static_cast<float>(p3.x), static_cast<float>(p3.y),
+                             preview_stroke, 1.2f);
             }
         }
 
@@ -624,25 +615,27 @@ void NativeWindow::paint_node_canvas_overlay(HDC dc, int width, int height) {
                        dot_color, dot_color, 1.0f);
     }
 
-    // 6. Draw nodes (anchor points) in world space
-    HPEN node_pen = CreatePen(PS_SOLID, 1, RGB(15, 23, 42));
-    HBRUSH sel_brush = CreateSolidBrush(RGB(0, 242, 195));
-    HBRUSH unsel_brush = CreateSolidBrush(RGB(255, 255, 255));
+    // 6. Draw nodes (anchor points) in world space (only in Node tool)
+    if (active_tool_ == 11) {
+        HPEN node_pen = CreatePen(PS_SOLID, 1, RGB(15, 23, 42));
+        HBRUSH sel_brush = CreateSolidBrush(RGB(0, 242, 195));
+        HBRUSH unsel_brush = CreateSolidBrush(RGB(255, 255, 255));
 
-    for (const auto& sub : po.authoring_source->subpaths) {
-        for (const auto& node : sub.nodes) {
-            const bool is_sel = node_tool_->is_node_selected(sub.id, node.id);
-            const auto base_w = tr.map_point(node.anchor);
-            const auto pt_world = (is_sel && is_dragging_node) ? (base_w + drag_delta) : base_w;
-            const POINT pt = screen(pt_world);
-            SelectObject(dc, node_pen);
-            SelectObject(dc, is_sel ? sel_brush : unsel_brush);
-            Rectangle(dc, pt.x - 4, pt.y - 4, pt.x + 5, pt.y + 5);
+        for (const auto& sub : po.authoring_source->subpaths) {
+            for (const auto& node : sub.nodes) {
+                const bool is_sel = node_tool_->is_node_selected(sub.id, node.id);
+                const auto base_w = tr.map_point(node.anchor);
+                const auto pt_world = (is_sel && is_dragging_node) ? (base_w + drag_delta) : base_w;
+                const POINT pt = screen(pt_world);
+                SelectObject(dc, node_pen);
+                SelectObject(dc, is_sel ? sel_brush : unsel_brush);
+                Rectangle(dc, pt.x - 4, pt.y - 4, pt.x + 5, pt.y + 5);
+            }
         }
+        DeleteObject(node_pen);
+        DeleteObject(sel_brush);
+        DeleteObject(unsel_brush);
     }
-    DeleteObject(node_pen);
-    DeleteObject(sel_brush);
-    DeleteObject(unsel_brush);
 
     // 7. Draw marquee rectangle if active
     if (node_tool_->is_marquee()) {

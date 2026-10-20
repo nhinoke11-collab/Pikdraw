@@ -9,6 +9,21 @@ void NodeTool::set_target_object(document::ObjectId object_id) {
     if (target_object_id_ != object_id) {
         target_object_id_ = object_id;
         clear_selection();
+        if (target_object_id_ != document::kInvalidObjectId) {
+            auto snap = document_.current_snapshot();
+            if (snap) {
+                auto obj = snap->get_object(target_object_id_);
+                if (obj && std::holds_alternative<document::PathObject>(*obj)) {
+                    const auto& po = std::get<document::PathObject>(*obj);
+                    if (po.contour_spec.starts_with("rect_corner:")) {
+                        auto rcs = deserialize_rect_corner_spec(po.contour_spec);
+                        if (rcs) {
+                            corner_type_ = rcs->type;
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -143,7 +158,22 @@ std::optional<document::EditablePath> NodeTool::preview_rounded_path() const {
             target_ids.push_back(nid);
         }
     }
-    return create_rounded_corners_path(*baseline_path_, target_ids, current_corner_radius_, target_transform());
+    return create_rounded_corners_path(*baseline_path_, target_ids, current_corner_radius_, target_transform(), corner_type_);
+}
+
+std::vector<FilletPreviewSegment> NodeTool::fillet_preview_segments() const {
+    if (drag_mode_ != NodeDragMode::RoundCorner || !baseline_path_ || !active_corner_widget_) {
+        return {};
+    }
+    std::vector<document::NodeId> target_ids;
+    if (selected_nodes_.size() == 1 && selected_nodes_[0].second == active_corner_widget_->node_id) {
+        target_ids.push_back(active_corner_widget_->node_id);
+    } else if (selected_nodes_.size() > 1) {
+        for (const auto& [sub_id, nid] : selected_nodes_) {
+            target_ids.push_back(nid);
+        }
+    }
+    return generate_fillet_preview_segments(*baseline_path_, target_ids, current_corner_radius_, target_transform(), corner_type_);
 }
 
 std::pair<geometry::Point2D, geometry::Point2D> NodeTool::current_segment_bend_handles() const {
@@ -430,9 +460,39 @@ bool NodeTool::pointer_up(geometry::Point2D world_pos) {
                     target_ids.push_back(nid);
                 }
             }
-            auto rounded = create_rounded_corners_path(*baseline_path_, target_ids, current_corner_radius_, target_transform());
+            auto rounded = create_rounded_corners_path(*baseline_path_, target_ids, current_corner_radius_, target_transform(), corner_type_);
+            std::optional<std::string> new_spec = std::nullopt;
+            auto snap = document_.current_snapshot();
+            if (snap) {
+                auto obj = snap->get_object(target_object_id_);
+                if (obj && std::holds_alternative<document::PathObject>(*obj)) {
+                    const auto& po = std::get<document::PathObject>(*obj);
+                    if (po.contour_spec.starts_with("rect_corner:")) {
+                        auto rcs = deserialize_rect_corner_spec(po.contour_spec);
+                        if (rcs) {
+                            rcs->type = corner_type_;
+                            if (rcs->locked || target_ids.empty() || target_ids.size() >= 4) {
+                                rcs->tl = current_corner_radius_;
+                                rcs->tr = current_corner_radius_;
+                                rcs->br = current_corner_radius_;
+                                rcs->bl = current_corner_radius_;
+                            } else {
+                                const auto v = active_corner_widget_->corner_anchor;
+                                const auto bounds = po.path.bounds();
+                                const auto cx = bounds.center().x;
+                                const auto cy = bounds.center().y;
+                                if (v.x < cx && v.y < cy) rcs->tl = current_corner_radius_;
+                                else if (v.x >= cx && v.y < cy) rcs->tr = current_corner_radius_;
+                                else if (v.x >= cx && v.y >= cy) rcs->br = current_corner_radius_;
+                                else rcs->bl = current_corner_radius_;
+                            }
+                            new_spec = serialize_rect_corner_spec(*rcs);
+                        }
+                    }
+                }
+            }
             auto cmd = std::make_unique<document::SetAuthoringSourceCommand>(
-                target_object_id_, std::move(rounded));
+                target_object_id_, std::move(rounded), std::move(new_spec));
             (void)document_.execute_command(std::move(cmd));
         }
     } else if (mode == NodeDragMode::BendSegment && active_segment_drag_) {

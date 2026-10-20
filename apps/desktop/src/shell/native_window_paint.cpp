@@ -258,6 +258,39 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
             DrawTextW(mem_dc, display_text.c_str(), -1, &rc_txt, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         };
 
+        auto draw_corner_input = [&](int left, int top, int right, int bottom,
+                                     const wchar_t* prefix, const std::string& current_val,
+                                     NumericFieldId field_id) {
+            bool is_focused = (active_num_field_ == field_id);
+            RECT rect{left, top, right, bottom};
+            HBRUSH brush = CreateSolidBrush(is_focused ? col_active_tab : col_btn_bg);
+            HPEN pen = CreatePen(PS_SOLID, is_focused ? 2 : 1, is_focused ? col_teal : col_btn_bdr);
+            HGDIOBJ old_p = SelectObject(mem_dc, pen);
+            HGDIOBJ old_b = SelectObject(mem_dc, brush);
+            RoundRect(mem_dc, rect.left, rect.top, rect.right, rect.bottom, 3, 3);
+            SelectObject(mem_dc, old_p);
+            SelectObject(mem_dc, old_b);
+            DeleteObject(pen);
+            DeleteObject(brush);
+
+            std::wstring display_text;
+            if (prefix && *prefix) {
+                display_text += prefix;
+                display_text += L" ";
+            }
+            if (is_focused) {
+                display_text += utf8_to_wide(num_input_buffer_);
+                display_text += L"|";
+            } else {
+                display_text += utf8_to_wide(current_val);
+            }
+
+            SetTextColor(mem_dc, is_focused ? col_teal : col_text_white);
+            SelectObject(mem_dc, font_secondary ? font_secondary : font_mono);
+            RECT rc_txt = { rect.left + 2, rect.top, rect.right - 2, rect.bottom };
+            DrawTextW(mem_dc, display_text.c_str(), -1, &rc_txt, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        };
+
         const auto opacity_percent_text = [&](double opacity) {
             std::ostringstream value;
             value << std::fixed << std::setprecision(1) << opacity * 100.0;
@@ -303,60 +336,80 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
             const bool is_smooth = mode_opt && (*mode_opt == document::PathNodeMode::Smooth);
             const bool is_symm = mode_opt && (*mode_opt == document::PathNodeMode::Symmetric);
 
-            draw_rib_btn(90, 165, is_vi ? L"+ Node" : L"+ Node", false, col_teal);
-            draw_rib_btn(170, 245, is_vi ? L"- Node" : L"- Node", false, RGB(239, 68, 68));
-            draw_rib_btn(250, 325, is_vi ? L"Tách" : L"Break", false, col_text_white);
-            draw_rib_btn(330, 405, is_vi ? L"Nối" : L"Join", false, col_text_white);
-            draw_rib_btn(410, 485, is_vi ? L"Đóng" : L"Close", false, col_text_white);
-            draw_rib_btn(490, 570, is_vi ? L"Cusp" : L"Cusp", is_cusp, is_cusp ? col_teal : col_text_white);
-            draw_rib_btn(575, 655, is_vi ? L"Smooth" : L"Smooth", is_smooth, is_smooth ? col_teal : col_text_white);
-            draw_rib_btn(660, 740, is_vi ? L"Symm" : L"Symm", is_symm, is_symm ? col_teal : col_text_white);
-            draw_rib_btn(745, 830, is_vi ? L"→ Thẳng" : L"→ Line", false, col_text_white);
-            draw_rib_btn(835, 920, is_vi ? L"→ Cong" : L"→ Curve", false, col_text_white);
-            draw_rib_btn(925, 1010, is_vi ? L"Đảo chiều" : L"Reverse", false, col_text_white);
+            draw_rib_btn(90, 165, is_vi ? L"+● Node" : L"+● Node", false, col_teal);
+            draw_rib_btn(170, 245, is_vi ? L"-● Node" : L"-● Node", false, RGB(239, 68, 68));
+            draw_rib_btn(250, 325, is_vi ? L"✂ Tách" : L"✂ Break", false, col_text_white);
+            draw_rib_btn(330, 405, is_vi ? L"☍ Nối" : L"☍ Join", false, col_text_white);
+            draw_rib_btn(410, 485, is_vi ? L"⟲ Đóng" : L"⟲ Close", false, col_text_white);
+            draw_rib_btn(490, 570, is_vi ? L"⋀ Cusp" : L"⋀ Cusp", is_cusp, is_cusp ? col_teal : col_text_white);
+            draw_rib_btn(575, 655, is_vi ? L"∿ Smooth" : L"∿ Smooth", is_smooth, is_smooth ? col_teal : col_text_white);
+            draw_rib_btn(660, 740, is_vi ? L"⎚ Symm" : L"⎚ Symm", is_symm, is_symm ? col_teal : col_text_white);
+            draw_rib_btn(745, 830, is_vi ? L"╱ Thẳng" : L"╱ Line", false, col_text_white);
+            draw_rib_btn(835, 920, is_vi ? L"⌒ Cong" : L"⌒ Curve", false, col_text_white);
+            draw_rib_btn(925, 1010, is_vi ? L"⇄ Đảo" : L"⇄ Rev", false, col_text_white);
         } else if (active_tool_ == 12 && contour_tool_ && contour_tool_->active()) {
             SelectObject(mem_dc, font_be_vietnam_bold);
             SetTextColor(mem_dc, col_teal);
-            RECT label{10, topbar_h + tabbar_h, 75, content_top};
+            RECT label{10, topbar_h + tabbar_h, 72, content_top};
             DrawTextW(mem_dc, L"Contour:", -1, &label, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
             const auto dir = contour_tool_->direction();
-            draw_rib_btn(80, 145, is_vi ? L"Ngoài" : L"Outside",
-                         dir == geometry::ContourDirection::Outside,
-                         dir == geometry::ContourDirection::Outside ? col_teal : col_text_white);
-            draw_rib_btn(150, 215, is_vi ? L"Trong" : L"Inside",
-                         dir == geometry::ContourDirection::Inside,
-                         dir == geometry::ContourDirection::Inside ? col_teal : col_text_white);
-            draw_rib_btn(220, 295, is_vi ? L"Vào tâm" : L"To Center",
+            draw_rib_btn(75, 135, is_vi ? L"◎ Tâm" : L"◎ Center",
                          dir == geometry::ContourDirection::ToCenter,
                          dir == geometry::ContourDirection::ToCenter ? col_teal : col_text_white);
+            draw_rib_btn(138, 198, is_vi ? L"⧈ Trong" : L"⧈ Inside",
+                         dir == geometry::ContourDirection::Inside,
+                         dir == geometry::ContourDirection::Inside ? col_teal : col_text_white);
+            draw_rib_btn(201, 261, is_vi ? L"▣ Ngoài" : L"▣ Outside",
+                         dir == geometry::ContourDirection::Outside,
+                         dir == geometry::ContourDirection::Outside ? col_teal : col_text_white);
 
-            draw_rib_btn(305, 330, L"-", false, col_text_white);
-            std::wstringstream ss_sp;
-            ss_sp << std::fixed << std::setprecision(1) << contour_tool_->spacing_mm() << L" mm";
-            draw_rib_btn(335, 405, ss_sp.str().c_str(), false, col_teal);
-            draw_rib_btn(410, 435, L"+", false, col_text_white);
+            auto draw_spinner = [&](int left, int right) {
+                int top = topbar_h + tabbar_h + 4;
+                int mid = topbar_h + tabbar_h + 17;
+                int bottom = content_top - 4;
+                RECT rc_up{left, top, right, mid};
+                RECT rc_dn{left, mid + 1, right, bottom};
+                HBRUSH brush = CreateSolidBrush(col_btn_bg);
+                HPEN pen = CreatePen(PS_SOLID, 1, col_btn_bdr);
+                HGDIOBJ old_p = SelectObject(mem_dc, pen);
+                HGDIOBJ old_b = SelectObject(mem_dc, brush);
+                RoundRect(mem_dc, rc_up.left, rc_up.top, rc_up.right, rc_up.bottom, 2, 2);
+                RoundRect(mem_dc, rc_dn.left, rc_dn.top, rc_dn.right, rc_dn.bottom, 2, 2);
+                SelectObject(mem_dc, old_p);
+                SelectObject(mem_dc, old_b);
+                DeleteObject(pen);
+                DeleteObject(brush);
+                SetTextColor(mem_dc, col_text_white);
+                SelectObject(mem_dc, font_mono);
+                DrawTextW(mem_dc, L"▲", -1, &rc_up, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                DrawTextW(mem_dc, L"▼", -1, &rc_dn, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            };
 
-            draw_rib_btn(445, 470, L"-", false, col_text_white);
             const int contour_steps = contour_tool_->steps();
-            std::wstring st_label = std::to_wstring(contour_steps) +
-                (is_vi ? L" bước" : contour_steps == 1 ? L" step" : L" steps");
-            draw_rib_btn(475, 535, st_label.c_str(), false, col_teal);
-            draw_rib_btn(540, 565, L"+", false, col_text_white);
+            draw_num_input(270, 330, L"☰", std::to_string(contour_steps), NumericFieldId::PolygonSides, false);
+            draw_spinner(332, 352);
+
+            std::ostringstream ss_sp;
+            ss_sp << std::fixed << std::setprecision(1) << contour_tool_->spacing_mm();
+            draw_num_input(360, 440, L"📏", ss_sp.str(), NumericFieldId::DistributeSpacing, true);
+            draw_spinner(442, 462);
 
             const auto join = contour_tool_->join_type();
-            draw_rib_btn(575, 630, is_vi ? L"Nhọn" : L"Miter",
+            draw_rib_btn(470, 530, is_vi ? L"⊿ Nhọn" : L"⊿ Miter",
                          join == geometry::JoinType::Miter,
                          join == geometry::JoinType::Miter ? col_teal : col_text_white);
-            draw_rib_btn(635, 690, is_vi ? L"Tròn" : L"Round",
+            draw_rib_btn(533, 593, is_vi ? L"⌒ Tròn" : L"⌒ Round",
                          join == geometry::JoinType::Round,
                          join == geometry::JoinType::Round ? col_teal : col_text_white);
-            draw_rib_btn(695, 750, is_vi ? L"Vát" : L"Bevel",
+            draw_rib_btn(596, 656, is_vi ? L"⎚ Vát" : L"⎚ Bevel",
                          join == geometry::JoinType::Bevel,
                          join == geometry::JoinType::Bevel ? col_teal : col_text_white);
 
-            draw_rib_btn(760, 825, is_vi ? L"Áp dụng" : L"Apply", false, col_teal);
-            draw_rib_btn(830, 940, is_vi ? L"Rã viền (Ctrl+K)" : L"Break (Ctrl+K)", false, col_text_white);
+            draw_rib_btn(665, 740, is_vi ? L"✔ Áp dụng" : L"✔ Apply", false, col_teal);
+            draw_rib_btn(745, 875, is_vi ? L"⚲ Rã viền (Ctrl+K)" : L"⚲ Break (Ctrl+K)", false, col_text_white);
+            draw_rib_btn(880, 950, is_vi ? L"✕ Xóa" : L"✕ Clear", false, RGB(239, 68, 68));
+            draw_rib_btn(955, 1015, is_vi ? L"↺ Hủy" : L"↺ Reset", false, col_text_white);
         } else if (active_tool_ == 13 && gradient_tool_ && gradient_tool_->active()) {
             SelectObject(mem_dc, font_be_vietnam_bold);
             SetTextColor(mem_dc, col_teal);
@@ -401,6 +454,72 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
             draw_rib_btn(745, 815, is_vi ? L"Áp dụng" : L"Apply", false, col_teal);
             // 820..880: Cancel
             draw_rib_btn(820, 880, is_vi ? L"Hủy" : L"Cancel", false, col_text_white);
+        } else if (active_tool_ == 1 && selection.empty()) {
+            SelectObject(mem_dc, font_be_vietnam_bold);
+            SetTextColor(mem_dc, col_teal);
+            RECT label{10, topbar_h + tabbar_h, 75, content_top};
+            DrawTextW(mem_dc, is_vi ? L"Chữ nhật:" : L"Rect:", -1, &label,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+            const int btn_y = (topbar_h + tabbar_h + 4 + content_top - 4) / 2;
+            int rx = 78;
+
+            draw_rib_btn(rx, rx + 28, L"", rect_corner_type_ == vector::RectCornerType::Round,
+                         rect_corner_type_ == vector::RectCornerType::Round ? col_teal : col_text_white);
+            draw_corner_round_icon(mem_dc, rx + 14, btn_y,
+                                   rect_corner_type_ == vector::RectCornerType::Round ? col_teal : col_text_white);
+
+            draw_rib_btn(rx + 32, rx + 60, L"", rect_corner_type_ == vector::RectCornerType::Scallop,
+                         rect_corner_type_ == vector::RectCornerType::Scallop ? col_teal : col_text_white);
+            draw_corner_scallop_icon(mem_dc, rx + 46, btn_y,
+                                     rect_corner_type_ == vector::RectCornerType::Scallop ? col_teal : col_text_white);
+
+            draw_rib_btn(rx + 64, rx + 92, L"", rect_corner_type_ == vector::RectCornerType::Chamfer,
+                         rect_corner_type_ == vector::RectCornerType::Chamfer ? col_teal : col_text_white);
+            draw_corner_chamfer_icon(mem_dc, rx + 78, btn_y,
+                                     rect_corner_type_ == vector::RectCornerType::Chamfer ? col_teal : col_text_white);
+            rx += 98;
+
+            {
+                HPEN separator = CreatePen(PS_SOLID, 1, col_border);
+                const HGDIOBJ old_pen = SelectObject(mem_dc, separator);
+                MoveToEx(mem_dc, rx - 3, topbar_h + tabbar_h + 8, nullptr);
+                LineTo(mem_dc, rx - 3, content_top - 8);
+                SelectObject(mem_dc, old_pen);
+                DeleteObject(separator);
+            }
+
+            std::ostringstream stl, sbl, str, sbr;
+            stl << std::fixed << std::setprecision(1) << rect_corner_tl_;
+            sbl << std::fixed << std::setprecision(1) << rect_corner_bl_;
+            str << std::fixed << std::setprecision(1) << rect_corner_tr_;
+            sbr << std::fixed << std::setprecision(1) << rect_corner_br_;
+
+            const int y0 = topbar_h + tabbar_h;
+            // Left column (TL / BL)
+            draw_corner_input(rx, y0 + 2, rx + 48, y0 + 17, L"⌜", stl.str(), NumericFieldId::RectCornerRadiusTL);
+            draw_corner_input(rx, y0 + 19, rx + 48, y0 + 34, L"⌞", sbl.str(), NumericFieldId::RectCornerRadiusBL);
+
+            // Center column (Lock toggle)
+            draw_rib_btn(rx + 51, rx + 73, L"", rect_corners_locked_, rect_corners_locked_ ? col_teal : col_text_muted);
+            draw_lock_icon(mem_dc, rx + 62, btn_y, rect_corners_locked_, rect_corners_locked_ ? col_teal : col_text_muted);
+
+            // Right column (TR / BR)
+            draw_corner_input(rx + 76, y0 + 2, rx + 124, y0 + 17, L"⌝", str.str(), NumericFieldId::RectCornerRadiusTR);
+            draw_corner_input(rx + 76, y0 + 19, rx + 124, y0 + 34, L"⌟", sbr.str(), NumericFieldId::RectCornerRadiusBR);
+            rx += 128;
+
+            draw_rib_btn(rx, rx + 68, is_vi ? L"⇲ Tỷ lệ" : L"⇲ Scale",
+                         rect_corners_scale_relative_, rect_corners_scale_relative_ ? col_teal : col_text_white);
+            rx += 74;
+
+            SetTextColor(mem_dc, col_text_muted);
+            SelectObject(mem_dc, font_secondary);
+            RECT hint{rx, topbar_h + tabbar_h, w - inspect_w - 10, content_top};
+            DrawTextW(mem_dc,
+                is_vi ? L"Bo góc nhanh: tròn, lõm, vát · Khóa 4 góc đồng bộ · Shift tạo hình vuông · Ctrl vẽ từ tâm"
+                      : L"Quick corners: round, scallop, chamfer · Lock all 4 · Shift for square · Ctrl from center",
+                -1, &hint, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
         } else if (active_tool_ == 9 && selection.empty()) {
             SelectObject(mem_dc, font_be_vietnam_bold);
             SetTextColor(mem_dc, col_teal);
@@ -551,21 +670,87 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
                     }
                 } else if (selection.size() == 1) {
                     const int button_y = (topbar_h + tabbar_h + 4 + content_top - 4) / 2;
-                    int rx = 540;
-                    for (auto act : {ObjectContextAction::FlipHorizontal, ObjectContextAction::FlipVertical,
-                                     ObjectContextAction::Rotate90CW, ObjectContextAction::Rotate90CCW}) {
-                        draw_rib_btn(rx, rx + 28, L"", false, col_text_white);
-                        draw_object_context_icon(mem_dc, act, rx + 14, button_y, col_text_white);
-                        rx += 32;
+                    int rx = 535;
+
+                    document::ObjectId rect_id;
+                    vector::RectCornerSettings rect_s;
+                    const bool is_rect = is_selected_rectangle(&rect_id, &rect_s);
+                    if (is_rect) {
+                        draw_rib_btn(rx, rx + 28, L"", rect_corner_type_ == vector::RectCornerType::Round,
+                                     rect_corner_type_ == vector::RectCornerType::Round ? col_teal : col_text_white);
+                        draw_corner_round_icon(mem_dc, rx + 14, button_y,
+                                               rect_corner_type_ == vector::RectCornerType::Round ? col_teal : col_text_white);
+
+                        draw_rib_btn(rx + 32, rx + 60, L"", rect_corner_type_ == vector::RectCornerType::Scallop,
+                                     rect_corner_type_ == vector::RectCornerType::Scallop ? col_teal : col_text_white);
+                        draw_corner_scallop_icon(mem_dc, rx + 46, button_y,
+                                                 rect_corner_type_ == vector::RectCornerType::Scallop ? col_teal : col_text_white);
+
+                        draw_rib_btn(rx + 64, rx + 92, L"", rect_corner_type_ == vector::RectCornerType::Chamfer,
+                                     rect_corner_type_ == vector::RectCornerType::Chamfer ? col_teal : col_text_white);
+                        draw_corner_chamfer_icon(mem_dc, rx + 78, button_y,
+                                                 rect_corner_type_ == vector::RectCornerType::Chamfer ? col_teal : col_text_white);
+                        rx += 98;
+
+                        {
+                            HPEN separator = CreatePen(PS_SOLID, 1, col_border);
+                            const HGDIOBJ old_pen = SelectObject(mem_dc, separator);
+                            MoveToEx(mem_dc, rx - 3, topbar_h + tabbar_h + 8, nullptr);
+                            LineTo(mem_dc, rx - 3, content_top - 8);
+                            SelectObject(mem_dc, old_pen);
+                            DeleteObject(separator);
+                        }
+
+                        std::ostringstream stl, sbl, str, sbr;
+                        stl << std::fixed << std::setprecision(1) << rect_corner_tl_;
+                        sbl << std::fixed << std::setprecision(1) << rect_corner_bl_;
+                        str << std::fixed << std::setprecision(1) << rect_corner_tr_;
+                        sbr << std::fixed << std::setprecision(1) << rect_corner_br_;
+
+                        const int y0 = topbar_h + tabbar_h;
+                        // Left column (TL / BL)
+                        draw_corner_input(rx, y0 + 2, rx + 48, y0 + 17, L"⌜", stl.str(), NumericFieldId::RectCornerRadiusTL);
+                        draw_corner_input(rx, y0 + 19, rx + 48, y0 + 34, L"⌞", sbl.str(), NumericFieldId::RectCornerRadiusBL);
+
+                        // Center column (Lock toggle)
+                        draw_rib_btn(rx + 51, rx + 73, L"", rect_corners_locked_, rect_corners_locked_ ? col_teal : col_text_muted);
+                        draw_lock_icon(mem_dc, rx + 62, button_y, rect_corners_locked_, rect_corners_locked_ ? col_teal : col_text_muted);
+
+                        // Right column (TR / BR)
+                        draw_corner_input(rx + 76, y0 + 2, rx + 124, y0 + 17, L"⌝", str.str(), NumericFieldId::RectCornerRadiusTR);
+                        draw_corner_input(rx + 76, y0 + 19, rx + 124, y0 + 34, L"⌟", sbr.str(), NumericFieldId::RectCornerRadiusBR);
+                        rx += 128;
+
+                        draw_rib_btn(rx, rx + 68, is_vi ? L"⇲ Tỷ lệ" : L"⇲ Scale",
+                                     rect_corners_scale_relative_, rect_corners_scale_relative_ ? col_teal : col_text_white);
+                        rx += 74;
+
+                        {
+                            HPEN separator = CreatePen(PS_SOLID, 1, col_border);
+                            const HGDIOBJ old_pen = SelectObject(mem_dc, separator);
+                            MoveToEx(mem_dc, rx - 3, topbar_h + tabbar_h + 8, nullptr);
+                            LineTo(mem_dc, rx - 3, content_top - 8);
+                            SelectObject(mem_dc, old_pen);
+                            DeleteObject(separator);
+                        }
                     }
-                    rx += 4;
+
+                    if (rx + 128 <= w - inspect_w - 10) {
+                        for (auto act : {ObjectContextAction::FlipHorizontal, ObjectContextAction::FlipVertical,
+                                         ObjectContextAction::Rotate90CW, ObjectContextAction::Rotate90CCW}) {
+                            draw_rib_btn(rx, rx + 28, L"", false, col_text_white);
+                            draw_object_context_icon(mem_dc, act, rx + 14, button_y, col_text_white);
+                            rx += 32;
+                        }
+                        rx += 4;
+                    }
                     size_t sidx = 0;
                     document::DropShadowEffect sval;
-                    if (DropShadowRibbon::get_shadow(*this, sidx, sval)) {
+                    if (DropShadowRibbon::get_shadow(*this, sidx, sval) && rx + 72 <= w - inspect_w - 10) {
                         draw_rib_btn(rx, rx + 66, is_vi ? L"◐ Bóng" : L"◐ Shadow", false, col_teal);
                         rx += 72;
                     }
-                    if (workflow().is_group(selection.front())) {
+                    if (workflow().is_group(selection.front()) && rx + 144 <= w - inspect_w - 10) {
                         draw_rib_btn(rx, rx + 66, is_vi ? L"⛶ Rã" : L"⛶ Ungroup", false, col_teal);
                         rx += 72;
                         draw_rib_btn(rx, rx + 66, is_vi ? L"🔍 Chui vào" : L"🔍 Edit", true, col_teal);
@@ -586,7 +771,7 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
                 draw_rib_btn((std::max)(10, w - inspect_w - 280), w - inspect_w - 10, array_text.c_str(), true, col_teal);
             }
 
-            if (selection.size() == 1 && workflow().can_set_selected_object_opacity() &&
+            if (selection.size() == 1 && !is_selected_rectangle() && workflow().can_set_selected_object_opacity() &&
                 844 <= w - inspect_w) {
                 const auto appearance = selection_appearance(*snapshot, selection);
                 draw_num_input(720, 844, is_vi ? L"Độ mờ:" : L"Opacity:",

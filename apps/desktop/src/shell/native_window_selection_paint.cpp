@@ -1,4 +1,5 @@
 #include "native_window_selection_geometry.hpp"
+#include "../tools/node_tool_controller.hpp"
 #include <iomanip>
 #include <sstream>
 #include <array>
@@ -43,6 +44,10 @@ void NativeWindow::paint_selection_overlay(HDC dc) {
     const auto area = canvas_rect(width_, height_);
     const int saved_dc = SaveDC(dc);
     IntersectClipRect(dc, area.left, area.top, area.right, area.bottom);
+    if (active_tool_ == 11) {
+        RestoreDC(dc, saved_dc);
+        return;
+    }
     const auto rect_for = [&](const geometry::Rect2D &b) {
         return selection_ui::screen_bounds(camera, b, area);
     };
@@ -218,6 +223,14 @@ void NativeWindow::paint_selection_overlay(HDC dc) {
         SetTextColor(dc, color);
         SetBkMode(dc, TRANSPARENT);
         DrawTextW(dc, text, -1, &label, DT_SINGLELINE | DT_NOPREFIX);
+    }
+    document::ObjectId rect_id;
+    if ((active_tool_ == 0 || active_tool_ == 1) && node_tool_ && is_selected_rectangle(&rect_id)) {
+        if (node_tool_->target_object() != rect_id && !node_tool_->tool().is_rounding_corners()) {
+            node_tool_->activate(rect_id);
+        }
+        node_tool_->set_corner_type(rect_corner_type_);
+        paint_node_canvas_overlay(dc, width_, height_);
     }
     if (saved_dc)
         RestoreDC(dc, saved_dc);

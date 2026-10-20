@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "native_window_toolbox.hpp"
 #include "native_window_text_properties.hpp"
 #include "native_window_file_menu.hpp"
 #include "native_window_menus.hpp"
@@ -67,6 +68,21 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
 
     // 3b. Context Tool Ribbon clicks (y: 66 to 102)
     if (y >= 66 && y <= 102) {
+        if (active_tool_ == 11 && node_tool_ && node_tool_->active()) {
+            if (handle_node_property_click(x, y))
+                return true;
+            return true;
+        }
+        if (active_tool_ == 12 && contour_tool_ && contour_tool_->active()) {
+            if (handle_contour_property_click(x, y))
+                return true;
+            return true;
+        }
+        if (active_tool_ == 13 && gradient_tool_ && gradient_tool_->active()) {
+            if (handle_gradient_property_click(x, y))
+                return true;
+            return true;
+        }
         const auto& selection = root().vector_controller().selection().selected_ids();
         bool is_text_mode = (active_tool_ == 4 || is_inline_text_editing_ || is_text_object_selected());
 
@@ -113,6 +129,27 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                 }
                 return true;
             }
+            return true;
+        } else if (active_tool_ == 1 && selection.empty()) {
+            int rx = 78;
+            if (x >= rx && x < rx + 28) { set_rect_corner_type(vector::RectCornerType::Round); return true; }
+            if (x >= rx + 32 && x < rx + 60) { set_rect_corner_type(vector::RectCornerType::Scallop); return true; }
+            if (x >= rx + 64 && x < rx + 92) { set_rect_corner_type(vector::RectCornerType::Chamfer); return true; }
+            rx += 98;
+            if (x >= rx && x <= rx + 48) {
+                if (y < 84) start_numeric_input(NumericFieldId::RectCornerRadiusTL);
+                else start_numeric_input(NumericFieldId::RectCornerRadiusBL);
+                return true;
+            }
+            if (x >= rx + 51 && x <= rx + 73) { toggle_rect_corners_locked(); return true; }
+            if (x >= rx + 76 && x <= rx + 124) {
+                if (y < 84) start_numeric_input(NumericFieldId::RectCornerRadiusTR);
+                else start_numeric_input(NumericFieldId::RectCornerRadiusBR);
+                return true;
+            }
+            rx += 128;
+            if (x >= rx && x <= rx + 68) { toggle_rect_corners_scale_relative(); return true; }
+            commit_numeric_field();
             return true;
         } else if (active_tool_ == 9) {
             if (x >= 58 && x <= 164) {
@@ -190,7 +227,8 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
             if (x >= 280 && x <= 335) { commit_numeric_field(); toggle_aspect_ratio_lock(); InvalidateRect(hwnd_, nullptr, FALSE); return true; } // Lock toggle
             if (x >= 340 && x <= 425) { start_numeric_input(NumericFieldId::ObjectHeight); return true; } // H box
             if (x >= 435 && x <= 525) { start_numeric_input(NumericFieldId::ObjectRotation); return true; } // Rotation angle box
-            if (selection.size() == 1 && workflow().can_set_selected_object_opacity() &&
+            const bool is_rect_single = selection.size() == 1 && is_selected_rectangle();
+            if (!is_rect_single && selection.size() == 1 && workflow().can_set_selected_object_opacity() &&
                 x >= 720 && x <= 844 && x + 124 <= w - 280) {
                 start_numeric_input(NumericFieldId::ObjectOpacity);
                 return true;
@@ -239,25 +277,49 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                         return true;
                     }
                 } else if (selection.size() == 1) {
-                    int rx = 540;
-                    if (x >= rx && x < rx + 28) {
-                        execute_menu_action(static_cast<int>(MenuActionId::ObjectFlipHorizontal));
-                        return true;
+                    int rx = 535;
+                    document::ObjectId rect_id;
+                    vector::RectCornerSettings rect_s;
+                    if (is_selected_rectangle(&rect_id, &rect_s)) {
+                        if (x >= rx && x < rx + 28) { set_rect_corner_type(vector::RectCornerType::Round); return true; }
+                        if (x >= rx + 32 && x < rx + 60) { set_rect_corner_type(vector::RectCornerType::Scallop); return true; }
+                        if (x >= rx + 64 && x < rx + 92) { set_rect_corner_type(vector::RectCornerType::Chamfer); return true; }
+                        rx += 98;
+                        if (x >= rx && x <= rx + 48) {
+                            if (y < 84) start_numeric_input(NumericFieldId::RectCornerRadiusTL);
+                            else start_numeric_input(NumericFieldId::RectCornerRadiusBL);
+                            return true;
+                        }
+                        if (x >= rx + 51 && x <= rx + 73) { toggle_rect_corners_locked(); return true; }
+                        if (x >= rx + 76 && x <= rx + 124) {
+                            if (y < 84) start_numeric_input(NumericFieldId::RectCornerRadiusTR);
+                            else start_numeric_input(NumericFieldId::RectCornerRadiusBR);
+                            return true;
+                        }
+                        rx += 128;
+                        if (x >= rx && x <= rx + 68) { toggle_rect_corners_scale_relative(); return true; }
+                        rx += 74;
                     }
-                    if (x >= rx + 32 && x < rx + 60) {
-                        execute_menu_action(static_cast<int>(MenuActionId::ObjectFlipVertical));
-                        return true;
+                    if (rx + 128 <= w - 280 - 10) {
+                        if (x >= rx && x < rx + 28) {
+                            execute_menu_action(static_cast<int>(MenuActionId::ObjectFlipHorizontal));
+                            return true;
+                        }
+                        if (x >= rx + 32 && x < rx + 60) {
+                            execute_menu_action(static_cast<int>(MenuActionId::ObjectFlipVertical));
+                            return true;
+                        }
+                        if (x >= rx + 64 && x < rx + 92) {
+                            execute_menu_action(static_cast<int>(MenuActionId::ObjectRotate90CW));
+                            return true;
+                        }
+                        if (x >= rx + 96 && x < rx + 124) {
+                            execute_menu_action(static_cast<int>(MenuActionId::ObjectRotate90CCW));
+                            return true;
+                        }
+                        rx += 130;
                     }
-                    if (x >= rx + 64 && x < rx + 92) {
-                        execute_menu_action(static_cast<int>(MenuActionId::ObjectRotate90CW));
-                        return true;
-                    }
-                    if (x >= rx + 96 && x < rx + 124) {
-                        execute_menu_action(static_cast<int>(MenuActionId::ObjectRotate90CCW));
-                        return true;
-                    }
-                    rx += 130;
-                    if (has_shadow && x >= rx && x < rx + 66) {
+                    if (has_shadow && rx + 72 <= w - 280 - 10 && x >= rx && x < rx + 66) {
                         commit_numeric_field();
                         ribbon_drop_shadow_mode_ = true;
                         status_msg_ = language_ == UILanguage::Vietnamese
@@ -266,8 +328,8 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                         InvalidateRect(hwnd_, nullptr, FALSE);
                         return true;
                     }
-                    if (has_shadow) rx += 72;
-                    if (workflow().is_group(selection.front())) {
+                    if (has_shadow && rx + 72 <= w - 280 - 10) rx += 72;
+                    if (workflow().is_group(selection.front()) && rx + 144 <= w - 280 - 10) {
                         if (x >= rx && x < rx + 66) {
                             if (workflow().ungroup_selected()) {
                                 status_msg_ = (language_ == UILanguage::Vietnamese) ? "Đã rã nhóm (Ungroup)" : "Ungrouped";
@@ -312,12 +374,61 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
         return true;
     }
 
-    // 4. Grouped toolbox and individual tools.
-    const bool on_toolbox = x >= 6 && x <= 46 && y >= 112 && y < 532;
+    // 4. Quick Customize flyout handling
+    if (show_toolbox_customize_flyout_) {
+        const auto slots = visible_toolbox_slots();
+        const int plus_y = 112 + static_cast<int>(slots.size()) * 42;
+        const int flyout_left = 54;
+        const int flyout_top = std::max(112, std::min(plus_y - 200, h - 26 - 430));
+        const int flyout_w = 264;
+        const int flyout_h = 405;
+        const RECT flyout_rc = { flyout_left, flyout_top, flyout_left + flyout_w, flyout_top + flyout_h };
+
+        if (x >= flyout_rc.left && x <= flyout_rc.right && y >= flyout_rc.top && y <= flyout_rc.bottom) {
+            // Check close button 'X'
+            if (x >= flyout_rc.right - 26 && x <= flyout_rc.right - 4 && y >= flyout_top + 4 && y <= flyout_top + 26) {
+                close_toolbox_customize_flyout();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return true;
+            }
+            // Check 11 tool checklist rows
+            for (int i = 0; i < static_cast<int>(ToolboxSlotId::Count); ++i) {
+                const int item_top = flyout_top + 43 + i * 26;
+                if (y >= item_top && y < item_top + 25) {
+                    const auto slot = static_cast<ToolboxSlotId>(i);
+                    if (slot != ToolboxSlotId::Pick) {
+                        toggle_toolbox_slot_visible(slot);
+                    }
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return true;
+                }
+            }
+            // Check bottom buttons: Reset & Edit Mode
+            const int bottom_y = flyout_top + 338;
+            if (y >= bottom_y && y <= bottom_y + 26) {
+                if (x >= flyout_left + 10 && x <= flyout_left + 122) {
+                    reset_toolbox_slots_default();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return true;
+                } else if (x >= flyout_left + 128 && x <= flyout_rc.right - 10) {
+                    toggle_toolbox_edit_mode();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return true;
+                }
+            }
+            return true;
+        }
+        if (x < 6 || x > 46 || y < 112) {
+            close_toolbox_customize_flyout();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+    }
+
+    // Grouped toolbox flyouts (Quick Shapes, Path Drawing, Appearance)
     if (toolbox_open_group_ > 0) {
-        const int group_row = toolbox_open_group_ == 1 ? 1
-                            : toolbox_open_group_ == 2 ? 2 : 6;
-        const int flyout_top = 112 + group_row * 42;
+        const int group_row = toolbox_open_group_ == 1 ? get_visible_row_for_slot(ToolboxSlotId::QuickShapes)
+                            : toolbox_open_group_ == 2 ? get_visible_row_for_slot(ToolboxSlotId::PathDrawing) : 6;
+        const int flyout_top = 112 + (group_row >= 0 ? group_row : 1) * 42;
         const int flyout_height = toolbox_open_group_ == 3 ? 174
             : toolbox_open_group_ == 2 ? 145 : 116;
         const bool inside_flyout = x >= 54 && x <= 242 &&
@@ -341,64 +452,116 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                 return true;
             }
         }
-        if (!inside_flyout && !on_toolbox) {
+        if (!inside_flyout && (x < 6 || x > 46 || y < 112)) {
             toolbox_open_group_ = 0;
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
     }
+
+    const auto visible_slots = visible_toolbox_slots();
+    const int total_rows = static_cast<int>(visible_slots.size());
+    const int toolbox_max_y = 112 + (total_rows + 1) * 42;
+    const bool on_toolbox = x >= 6 && x <= 46 && y >= 112 && y < toolbox_max_y;
+
     if (on_toolbox) {
         toolbox_keyboard_focus_ = false;
         const int row = (y - 112) / 42;
-        if (row >= 0 && row < 10) {
-            if (row == 1 || row == 2) {
-                const int group = row;
+        if (row == total_rows) {
+            // Clicked Quick Customize [+] button
+            toolbox_open_group_ = 0;
+            toggle_toolbox_customize_flyout();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        } else if (row >= 0 && row < total_rows) {
+            const auto slot_id = visible_slots[row];
+            const int ty = 112 + row * 42;
+
+            // Delete badge click in edit mode
+            if (toolbox_edit_mode_ && slot_id != ToolboxSlotId::Pick && x >= 32 && y <= ty + 16) {
+                set_toolbox_slot_visible(slot_id, false);
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return true;
+            }
+
+            close_toolbox_customize_flyout();
+            switch (slot_id) {
+            case ToolboxSlotId::Pick:
+                toolbox_open_group_ = 0;
+                workflow().cancel_effect_draft();
+                set_active_tool(0);
+                break;
+            case ToolboxSlotId::Node:
+                toolbox_open_group_ = 0;
+                workflow().cancel_effect_draft();
+                set_active_tool(11);
+                break;
+            case ToolboxSlotId::QuickShapes: {
+                const int group = 1;
                 toolbox_focus_group_ = group;
                 if (x >= 37) {
-                    if (toolbox_open_group_ == group) {
-                        toolbox_open_group_ = 0;
-                    } else {
+                    if (toolbox_open_group_ == group) toolbox_open_group_ = 0;
+                    else {
                         toolbox_open_group_ = group;
-                        const int active = group == 1 ? quick_shapes_last_tool_ : path_drawing_last_tool_;
-                        toolbox_flyout_index_ = group == 1
-                            ? (active == 1 ? 0 : active == 2 ? 1 : 2)
-                            : (active == 6 ? 0 : active == 7 ? 1 : active == 8 ? 2 : 3);
+                        toolbox_flyout_index_ = quick_shapes_last_tool_ == 1 ? 0 : quick_shapes_last_tool_ == 2 ? 1 : 2;
                     }
                 } else {
                     toolbox_open_group_ = 0;
-                    const int active_in_group = group == 1
-                        ? ((active_tool_ == 1 || active_tool_ == 2 || active_tool_ == 9)
-                               ? active_tool_ : quick_shapes_last_tool_)
-                        : ((active_tool_ >= 6 && active_tool_ <= 8)
-                               || active_tool_ == 11
-                               ? active_tool_ : path_drawing_last_tool_);
-                    workflow().cancel_effect_draft(); set_active_tool(active_in_group);
+                    workflow().cancel_effect_draft();
+                    set_active_tool(quick_shapes_last_tool_);
                 }
-            } else if (row == 0) {
+                break;
+            }
+            case ToolboxSlotId::PathDrawing: {
+                const int group = 2;
+                toolbox_focus_group_ = group;
+                if (x >= 37) {
+                    if (toolbox_open_group_ == group) toolbox_open_group_ = 0;
+                    else {
+                        toolbox_open_group_ = group;
+                        toolbox_flyout_index_ = path_drawing_last_tool_ == 6 ? 0 : path_drawing_last_tool_ == 7 ? 1 : 2;
+                    }
+                } else {
+                    toolbox_open_group_ = 0;
+                    workflow().cancel_effect_draft();
+                    set_active_tool(path_drawing_last_tool_);
+                }
+                break;
+            }
+            case ToolboxSlotId::Pan:
                 toolbox_open_group_ = 0;
-                workflow().cancel_effect_draft(); set_active_tool(0);
-            } else if (row == 3) {
+                workflow().cancel_effect_draft();
+                set_active_tool(3);
+                break;
+            case ToolboxSlotId::Text:
                 toolbox_open_group_ = 0;
-                workflow().cancel_effect_draft(); set_active_tool(3);
-            } else if (row == 4) {
+                workflow().cancel_effect_draft();
+                set_active_tool(4);
+                break;
+            case ToolboxSlotId::Knife:
                 toolbox_open_group_ = 0;
-                workflow().cancel_effect_draft(); set_active_tool(4);
-            } else if (row == 5) {
-                toolbox_open_group_ = 0;
-                workflow().cancel_effect_draft(); set_active_tool(5);
-            } else if (row == 6) {
+                workflow().cancel_effect_draft();
+                set_active_tool(5);
+                break;
+            case ToolboxSlotId::Blur:
                 toolbox_open_group_ = 0;
                 activate_toolbox_effect_item(1);
-            } else if (row == 7) {
+                break;
+            case ToolboxSlotId::DropShadow:
                 toolbox_open_group_ = 0;
                 activate_toolbox_effect_item(2);
-            } else if (row == 8) {
+                break;
+            case ToolboxSlotId::Contour:
                 toolbox_open_group_ = 0;
                 workflow().cancel_effect_draft();
                 trigger_effects_contour();
-            } else if (row == 9) {
+                break;
+            case ToolboxSlotId::Gradient:
                 toolbox_open_group_ = 0;
                 workflow().cancel_effect_draft();
                 set_active_tool(13);
+                break;
+            default:
+                break;
             }
             InvalidateRect(hwnd_, nullptr, FALSE);
             return true;

@@ -8,6 +8,7 @@
 #include "pikdraw/document/storage/save_recovery.hpp"
 #include "pikdraw/desktop/tools/canvas_text_editor.hpp"
 #include "pikdraw/desktop/shell/native_window_layers_dock.hpp"
+#include "pikdraw/vector/tools/shape_tools.hpp"
 
 #include <string>
 #include <memory>
@@ -40,6 +41,7 @@ struct ExportJobSession;
 enum class MenuActionId;
 class NativeFontPicker;
 namespace tools { class DrawingToolController; class PenToolController; class NodeToolController; class ContourToolController; class GradientToolController; }
+enum class ToolboxSlotId : int;
 
 enum class UILanguage {
     Vietnamese,
@@ -104,6 +106,7 @@ public:
     void zoom_in() noexcept;
     void zoom_out() noexcept;
     void fit_page_to_canvas() noexcept;
+    bool fit_document_content_to_canvas(bool* content_outside_page = nullptr) noexcept;
     void trigger_export() noexcept;
     bool export_svg_to(const std::string& file_path, bool selected_objects = false,
                        bool allow_replace_existing = false,
@@ -179,6 +182,7 @@ public:
 
     [[nodiscard]] size_t tab_count() const noexcept { return tabs_.size(); }
     [[nodiscard]] size_t active_tab_index() const noexcept { return active_tab_index_; }
+    [[nodiscard]] uint64_t view_generation() const noexcept { return view_generation_; }
     [[nodiscard]] const std::vector<DocumentTab>& tabs() const noexcept { return tabs_; }
     [[nodiscard]] bool is_recovery_modal_open() const noexcept { return show_recovery_modal_; }
     [[nodiscard]] size_t recovery_candidate_count() const noexcept { return recovery_candidates_.size(); }
@@ -201,6 +205,22 @@ public:
     // Aspect ratio lock & object sizing
     [[nodiscard]] bool is_aspect_ratio_locked() const noexcept { return aspect_ratio_locked_; }
     void toggle_aspect_ratio_lock() noexcept { aspect_ratio_locked_ = !aspect_ratio_locked_; }
+
+    // Rectangle Quick Corner Rounding (CorelDRAW Style)
+    [[nodiscard]] vector::RectCornerType rect_corner_type() const noexcept { return rect_corner_type_; }
+    void set_rect_corner_type(vector::RectCornerType type) noexcept;
+    [[nodiscard]] double rect_corner_tl() const noexcept { return rect_corner_tl_; }
+    [[nodiscard]] double rect_corner_tr() const noexcept { return rect_corner_tr_; }
+    [[nodiscard]] double rect_corner_br() const noexcept { return rect_corner_br_; }
+    [[nodiscard]] double rect_corner_bl() const noexcept { return rect_corner_bl_; }
+    [[nodiscard]] bool rect_corners_locked() const noexcept { return rect_corners_locked_; }
+    void toggle_rect_corners_locked() noexcept;
+    [[nodiscard]] bool rect_corners_scale_relative() const noexcept { return rect_corners_scale_relative_; }
+    void toggle_rect_corners_scale_relative() noexcept;
+
+    [[nodiscard]] bool is_selected_rectangle(document::ObjectId* out_id = nullptr, vector::RectCornerSettings* out_settings = nullptr) const;
+    void apply_rect_corner_settings(const vector::RectCornerSettings& settings);
+    void sync_rect_corner_controls_from_selection();
 
     // Rotation Mode & Pivot Point (CorelDRAW / Illustrator standard behavior)
     [[nodiscard]] bool is_rotate_mode() const noexcept { return is_rotate_mode_; }
@@ -309,6 +329,10 @@ public:
     [[nodiscard]] int previous_drawing_tool() const noexcept { return previous_drawing_tool_; }
     void set_previous_drawing_tool(int tool) noexcept { previous_drawing_tool_ = tool; }
     void execute_menu_action(int action_id);
+#ifdef _WIN32
+    [[nodiscard]] HMENU build_context_menu(const std::vector<document::ObjectId>& selection, bool is_canvas_hit = true) const;
+    bool show_context_menu(int screen_x, int screen_y, int canvas_x, int canvas_y);
+#endif
     [[nodiscard]] WORD canvas_cursor_at(int x, int y) const;
 
     // Guideline System (CorelDRAW & Illustrator Style)
@@ -345,7 +369,8 @@ public:
         ObjectWidth, ObjectHeight, ObjectRotation, ObjectOpacity,
         FillOpacity, StrokeOpacity, EffectSigmaX, EffectSigmaY, TextFontSize,
         EffectOffsetX, EffectOffsetY, EffectOpacity, DistributeSpacing,
-        PenExpression, PenLength, PenAngle, ModalWidth, ModalHeight
+        PenExpression, PenLength, PenAngle, ModalWidth, ModalHeight,
+        RectCornerRadiusTL, RectCornerRadiusTR, RectCornerRadiusBR, RectCornerRadiusBL
     };
 
     [[nodiscard]] NumericFieldId active_numeric_field() const noexcept { return active_num_field_; }
@@ -389,6 +414,23 @@ public:
     bool handle_gradient_pointer_move(int x, int y, unsigned modifiers);
     bool handle_gradient_pointer_up(int x, int y, unsigned modifiers);
     void paint_gradient_canvas_overlay(HDC hdc, const RECT& canvas);
+
+    // Toolbox Customization & Dynamic Slots
+    [[nodiscard]] uint32_t toolbox_visible_mask() const noexcept { return toolbox_visible_mask_; }
+    void set_toolbox_visible_mask(uint32_t mask) noexcept { toolbox_visible_mask_ = (mask | 1u); }
+    [[nodiscard]] bool is_toolbox_slot_visible(ToolboxSlotId slot) const noexcept;
+    void set_toolbox_slot_visible(ToolboxSlotId slot, bool visible) noexcept;
+    void toggle_toolbox_slot_visible(ToolboxSlotId slot) noexcept;
+    void reset_toolbox_slots_default() noexcept;
+    [[nodiscard]] bool is_toolbox_edit_mode() const noexcept { return toolbox_edit_mode_; }
+    void set_toolbox_edit_mode(bool edit_mode) noexcept { toolbox_edit_mode_ = edit_mode; }
+    void toggle_toolbox_edit_mode() noexcept { toolbox_edit_mode_ = !toolbox_edit_mode_; }
+    [[nodiscard]] bool is_toolbox_customize_open() const noexcept { return show_toolbox_customize_flyout_; }
+    void open_toolbox_customize_flyout() noexcept { show_toolbox_customize_flyout_ = true; }
+    void close_toolbox_customize_flyout() noexcept { show_toolbox_customize_flyout_ = false; }
+    void toggle_toolbox_customize_flyout() noexcept { show_toolbox_customize_flyout_ = !show_toolbox_customize_flyout_; }
+    [[nodiscard]] std::vector<ToolboxSlotId> visible_toolbox_slots() const;
+    [[nodiscard]] int get_visible_row_for_slot(ToolboxSlotId slot) const;
 
 #ifdef _WIN32
     [[nodiscard]] HWND hwnd() const noexcept { return hwnd_; }
@@ -541,8 +583,18 @@ private:
     int toolbox_focus_group_{1};
     bool toolbox_keyboard_focus_{false};
     int toolbox_flyout_index_{0};
+    uint32_t toolbox_visible_mask_{0x7FF};
+    bool toolbox_edit_mode_{false};
+    bool show_toolbox_customize_flyout_{false};
     int polygon_sides_{6};
     double polygon_rotation_degrees_{-90.0};
+    vector::RectCornerType rect_corner_type_{vector::RectCornerType::Round};
+    double rect_corner_tl_{0.0};
+    double rect_corner_tr_{0.0};
+    double rect_corner_br_{0.0};
+    double rect_corner_bl_{0.0};
+    bool rect_corners_locked_{true};
+    bool rect_corners_scale_relative_{false};
     int active_workspace_{0}; // 0: Vector, 1: Print, 2: Production, 3: 3D
     int active_dock_tab_{0}; // 0: Inspector, 1: Layers, 2: History
     bool show_style_inspector_{false};
@@ -558,6 +610,7 @@ private:
     std::unique_ptr<NativeWindowAutomationRuntime> mcp_runtime_;
     std::string mcp_error_text_;
     size_t active_tab_index_{0};
+    uint64_t view_generation_{0};
     void initialize_default_tab();
     void register_drawing_actions(CompositionRoot& root);
     void bind_drawing_tool_to_active_document();
@@ -601,6 +654,10 @@ private:
     bool is_knife_cutting_{false};
     geometry::Point2D knife_start_world_{};
     geometry::Point2D knife_current_world_{};
+
+    // Interactive Contour Dragging State (CorelDRAW / Adobe Reference)
+    bool is_contour_dragging_{false};
+    geometry::Point2D contour_drag_start_world_{};
 
     // Inline Text Editing & Typography State (Corel / Word Reference)
     bool is_inline_text_editing_{false};
@@ -680,13 +737,19 @@ private:
     bool is_marquee_{false};
     bool pointer_preserve_aspect_{false};
     int resize_handle_{-1};
+    bool is_corner_dragging_in_pick_tool_{false};
     vector::SelectionMode pointer_selection_mode_{vector::SelectionMode::Replace};
     vector::GestureStamp pointer_stamp_;
     std::optional<document::ObjectId> hover_object_;
     EditorStyle default_style_;
     bool palette_stroke_{false};
+    std::optional<bool> palette_show_cmyk_;
     std::shared_ptr<const color::IccPreview> color_preview_;
     std::filesystem::path rgb_preview_profile_, cmyk_preview_profile_;
+    bool proof_colors_enabled_{false};
+    bool gamut_warning_enabled_{false};
+    bool overprint_preview_enabled_{false};
+    void update_color_preview_options() noexcept;
     std::unique_ptr<CanvasFrameCache> canvas_frame_;
     std::string document_path_;
     std::unique_ptr<tools::DrawingToolController> drawing_tool_;

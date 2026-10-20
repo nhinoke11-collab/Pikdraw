@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "native_window_toolbox.hpp"
 #include "pikdraw/desktop/shell/native_font_picker.hpp"
 #include "native_window_file_menu.hpp"
 #include "native_window_menus.hpp"
@@ -166,6 +167,30 @@ void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
             }
         }
     }
+    if ((active_tool_ == 0 || active_tool_ == 1) && node_tool_) {
+        document::ObjectId rect_id;
+        if (is_selected_rectangle(&rect_id)) {
+            if (node_tool_->target_object() != rect_id) {
+                node_tool_->activate(rect_id);
+            }
+            node_tool_->set_corner_type(rect_corner_type_);
+            const auto world_pt = canvas_to_world(x, y);
+            const double zoom = root().renderer().camera().zoom();
+            const double tol_mm = (zoom > 1e-4) ? (10.0 / zoom) : 5.0;
+            if (node_tool_->tool().hit_test_corner_widget(world_pt, tol_mm, zoom)) {
+                is_corner_dragging_in_pick_tool_ = true;
+                if (handle_node_pointer_down(x, y, modifiers)) {
+                    return;
+                }
+                is_corner_dragging_in_pick_tool_ = false;
+            }
+        }
+    }
+    if (active_tool_ == 11) {
+        if (handle_node_pointer_down(x, y, modifiers))
+            return;
+        return;
+    }
     handle_canvas_mouse_down(x, y, modifiers);
 }
 
@@ -180,9 +205,9 @@ void NativeWindow::handle_mouse_move(int x, int y, unsigned modifiers) {
     std::wstring prev_text = tooltip_.text;
 
     if (toolbox_open_group_ > 0) {
-        const int group_row = toolbox_open_group_ == 1 ? 1
-                            : toolbox_open_group_ == 2 ? 2 : 6;
-        const int flyout_top = 112 + group_row * 42;
+        const int group_row = toolbox_open_group_ == 1 ? get_visible_row_for_slot(ToolboxSlotId::QuickShapes)
+                            : toolbox_open_group_ == 2 ? get_visible_row_for_slot(ToolboxSlotId::PathDrawing) : 6;
+        const int flyout_top = 112 + (group_row >= 0 ? group_row : 1) * 42;
         const int flyout_height = toolbox_open_group_ == 3 ? 174
             : toolbox_open_group_ == 2 ? 145 : 116;
         const int max_items = toolbox_open_group_ == 3 ? 5
@@ -364,7 +389,7 @@ void NativeWindow::handle_mouse_move(int x, int y, unsigned modifiers) {
         handle_pen_pointer_move(x, y, modifiers))
         return;
 
-    if (active_tool_ == 11 && node_tool_ && node_tool_->active() && !is_panning_ &&
+    if ((active_tool_ == 11 || is_corner_dragging_in_pick_tool_) && node_tool_ && node_tool_->active() && !is_panning_ &&
         handle_node_pointer_move(x, y, modifiers))
         return;
 
@@ -490,8 +515,11 @@ void NativeWindow::handle_mouse_up(int x, int y, unsigned modifiers) {
     }
     if (handle_pen_pointer_up(x, y, modifiers))
         return;
-    if (handle_node_pointer_up(x, y, modifiers))
+    if (handle_node_pointer_up(x, y, modifiers)) {
+        is_corner_dragging_in_pick_tool_ = false;
         return;
+    }
+    is_corner_dragging_in_pick_tool_ = false;
     if (handle_gradient_pointer_up(x, y, modifiers))
         return;
     if (drawing_tool_ && drawing_tool_->active())
