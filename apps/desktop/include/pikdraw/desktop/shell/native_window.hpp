@@ -202,6 +202,7 @@ public:
     void open_new_doc_modal() noexcept;
     void close_new_doc_modal() noexcept;
     void confirm_new_document() noexcept;
+    void close_recovery_modal() noexcept;
 
     // Aspect ratio lock & object sizing
     [[nodiscard]] bool is_aspect_ratio_locked() const noexcept { return aspect_ratio_locked_; }
@@ -318,6 +319,8 @@ public:
     [[nodiscard]] const std::string& inline_text_buffer() const noexcept { return inline_text_buffer_; }
     [[nodiscard]] const std::string& status_message() const noexcept { return status_msg_; }
     void set_status_message(std::string message) { status_msg_ = std::move(message); }
+    bool import_file_to_tab(const std::wstring& path, bool is_open_action = false);
+    [[nodiscard]] bool import_job_active() const noexcept;
     [[nodiscard]] int shortcut_profile() const noexcept { return shortcut_profile_; }
     void set_shortcut_profile(int p) noexcept { shortcut_profile_ = std::clamp(p, 0, 2); }
 
@@ -492,7 +495,6 @@ private:
     void discard_ai_connections_choices() noexcept;
     [[nodiscard]] std::string recovery_root_path() const;
     void scan_recovery_checkpoints(bool show_when_found = true);
-    void close_recovery_modal() noexcept;
     void recover_selected_checkpoint();
     void discard_selected_checkpoint();
     [[nodiscard]] bool handle_recovery_key(WPARAM key);
@@ -503,11 +505,9 @@ private:
     static constexpr int kAppearanceEffectListTop = 794;
 #ifdef _WIN32
     static LRESULT CALLBACK window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
-    bool import_file_to_tab(const std::wstring& path, bool is_open_action = false);
     void request_cancel_import_job();
     void cancel_import_job();
     void handle_import_worker_message(WPARAM kind);
-    [[nodiscard]] bool import_job_active() const noexcept;
     void export_svg_dialog(bool selected_objects, bool all_pages);
     [[nodiscard]] bool start_svg_export(const std::string& file_path, bool selected_objects,
                                         bool allow_replace_existing, bool all_pages);

@@ -25,6 +25,47 @@ void DimensionToolController::deactivate() {
     snap_active_ = false;
     snap_type_ = DimensionSnapType::None;
     ortho_active_ = false;
+    has_last_placement_ = false;
+}
+
+static geometry::Point2D compute_continuous_placement(
+    geometry::Point2D p1,
+    geometry::Point2D p2,
+    geometry::Point2D last_placement,
+    geometry::LinearOrientation orientation) {
+    if (orientation == geometry::LinearOrientation::Horizontal) {
+        return { (p1.x + p2.x) * 0.5, last_placement.y };
+    }
+    if (orientation == geometry::LinearOrientation::Vertical) {
+        return { last_placement.x, (p1.y + p2.y) * 0.5 };
+    }
+    const geometry::Point2D mid = (p1 + p2) * 0.5;
+    const geometry::Point2D v = p2 - p1;
+    const double len = std::hypot(v.x, v.y);
+    if (len < 1e-6) return last_placement;
+    const geometry::Point2D n{-v.y / len, v.x / len};
+    const double dist = (last_placement.x - p1.x) * n.x + (last_placement.y - p1.y) * n.y;
+    return mid + n * dist;
+}
+
+void DimensionToolController::start_continue_from(
+    geometry::Point2D base_pt,
+    geometry::Point2D placement_pt,
+    document::DimensionKind kind,
+    geometry::LinearOrientation ori) {
+    activate(kind, false);
+    set_linear_orientation(ori);
+    continuous_mode_ = true;
+    first_point_ = base_pt;
+    last_placement_point_ = placement_pt;
+    has_last_placement_ = true;
+    references_.clear();
+    document::SourceReference ref;
+    ref.ref_kind = document::SourceRefKind::ExplicitPoint;
+    ref.explicit_point = base_pt;
+    references_.push_back(ref);
+    state_ = DimensionSessionState::PickSecond;
+    has_preview_ = false;
 }
 
 void DimensionToolController::set_linear_orientation(geometry::LinearOrientation orientation) noexcept {
@@ -167,6 +208,13 @@ bool DimensionToolController::handle_pointer_press(
         references_.push_back(ref);
         second_point_ = effective_pos;
 
+        if (continuous_mode_ && has_last_placement_) {
+            draft_dim_.placement_point = compute_continuous_placement(first_point_, second_point_, last_placement_point_, orientation_);
+            state_ = DimensionSessionState::Placement;
+            update_preview();
+            return commit();
+        }
+
         draft_dim_.placement_point = effective_pos;
         state_ = DimensionSessionState::Placement;
         update_preview();
@@ -185,7 +233,20 @@ bool DimensionToolController::handle_pointer_press(
 void DimensionToolController::handle_pointer_move(geometry::Point2D world_pos) {
     if (!active_) return;
 
-    if (state_ == DimensionSessionState::Placement) {
+    if (state_ == DimensionSessionState::PickSecond && continuous_mode_ && has_last_placement_) {
+        const geometry::Point2D cur_pt = snap_active_ ? snap_point_ : world_pos;
+        second_point_ = cur_pt;
+        draft_dim_.placement_point = compute_continuous_placement(first_point_, second_point_, last_placement_point_, orientation_);
+        if (references_.size() == 1) {
+            document::SourceReference ref;
+            ref.explicit_point = cur_pt;
+            references_.push_back(ref);
+            state_ = DimensionSessionState::Placement;
+            update_preview();
+            state_ = DimensionSessionState::PickSecond;
+            references_.pop_back();
+        }
+    } else if (state_ == DimensionSessionState::Placement) {
         geometry::Point2D place_pt = world_pos;
         if (ortho_active_) {
             const geometry::Point2D v = second_point_ - first_point_;
@@ -207,6 +268,14 @@ bool DimensionToolController::handle_pointer_release(geometry::Point2D /*world_p
 
 bool DimensionToolController::handle_escape() noexcept {
     if (!active_) return false;
+
+    if (continuous_mode_) {
+        state_ = DimensionSessionState::Idle;
+        references_.clear();
+        has_preview_ = false;
+        has_last_placement_ = false;
+        return true;
+    }
 
     if (state_ == DimensionSessionState::Placement) {
         state_ = DimensionSessionState::PickSecond;
@@ -238,9 +307,24 @@ bool DimensionToolController::commit() {
 
     const auto res = doc_.execute_command(std::make_unique<document::AddDimensionCommand>(draft_dim_, 0));
     if (res.success) {
-        state_ = DimensionSessionState::Idle;
-        references_.clear();
-        has_preview_ = false;
+        if (continuous_mode_) {
+            last_placement_point_ = draft_dim_.placement_point;
+            has_last_placement_ = true;
+            first_point_ = second_point_;
+            references_.clear();
+            document::SourceReference ref;
+            ref.source_object_id = snapped_object_id_;
+            ref.element_id = snapped_element_id_;
+            ref.ref_kind = snapped_element_id_.has_value() ? document::SourceRefKind::Node : document::SourceRefKind::ExplicitPoint;
+            ref.explicit_point = first_point_;
+            references_.push_back(ref);
+            state_ = DimensionSessionState::PickSecond;
+            has_preview_ = false;
+        } else {
+            state_ = DimensionSessionState::Idle;
+            references_.clear();
+            has_preview_ = false;
+        }
         return true;
     }
     return false;

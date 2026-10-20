@@ -1,4 +1,8 @@
 #include "desktop_shell_test_helpers.hpp"
+#include "../src/tools/dimension_tool_controller.hpp"
+#include "pikdraw/document/commands/dimension_commands.hpp"
+#include "pikdraw/document/annotations/dimension_object.hpp"
+#include "pikdraw/document/annotations/dimension_style.hpp"
 
 void test_group_ungroup_and_isolation_mode() {
     pikdraw::desktop::NativeWindow win(1440, 900);
@@ -850,5 +854,100 @@ void test_smart_context_menu_suite() {
 
     std::cout << "[PASS] test_smart_context_menu_suite\n";
 }
+
+void test_dimension_tool_and_visual_suite() {
+    pikdraw::desktop::NativeWindow win(1440, 900);
+    assert(win.initialize("PikDraw Dimension Verification"));
+    ShowWindow(win.hwnd(), SW_HIDE);
+
+    auto& workflow = win.workflow();
+    workflow.new_document(240.0, 180.0);
+
+    const std::string out_dir = "C:/Users/CK ART STAGE/.gemini/antigravity/brain/6da09c72-2bfd-4100-98fa-6371e38d3079";
+
+    // 1. Proof 1: Sharp Dimension Rendering & Aligned/Linear with arrowheads, extension lines, text gap
+    const auto rect1 = workflow.add_rectangle(35.0, 45.0, 90.0, 55.0, "#00f2c3", "#0f172a", 1.0);
+    assert(rect1 != pikdraw::document::kInvalidObjectId);
+
+    pikdraw::document::DimensionObject dim_h;
+    dim_h.id = pikdraw::document::generate_object_id();
+    dim_h.name = "Dim Width";
+    dim_h.kind = pikdraw::document::DimensionKind::Linear;
+    dim_h.linear_orientation = pikdraw::geometry::LinearOrientation::Horizontal;
+    dim_h.placement_point = {80.0, 25.0};
+    dim_h.style = pikdraw::document::DimensionStyle::make_default();
+    pikdraw::document::SourceReference ref1, ref2;
+    ref1.explicit_point = pikdraw::geometry::Point2D{35.0, 45.0};
+    ref2.explicit_point = pikdraw::geometry::Point2D{125.0, 45.0};
+    dim_h.references = {ref1, ref2};
+    win.root().document().execute_command(std::make_unique<pikdraw::document::AddDimensionCommand>(dim_h, 0));
+
+    pikdraw::document::DimensionObject dim_v;
+    dim_v.id = pikdraw::document::generate_object_id();
+    dim_v.name = "Dim Height";
+    dim_v.kind = pikdraw::document::DimensionKind::Linear;
+    dim_v.linear_orientation = pikdraw::geometry::LinearOrientation::Vertical;
+    dim_v.placement_point = {145.0, 72.5};
+    dim_v.style = pikdraw::document::DimensionStyle::make_default();
+    pikdraw::document::SourceReference ref3, ref4;
+    ref3.explicit_point = pikdraw::geometry::Point2D{125.0, 45.0};
+    ref4.explicit_point = pikdraw::geometry::Point2D{125.0, 100.0};
+    dim_v.references = {ref3, ref4};
+    win.root().document().execute_command(std::make_unique<pikdraw::document::AddDimensionCommand>(dim_v, 0));
+
+    win.set_active_tool(10);
+    win.capture_screenshot_bmp(out_dir + "/proof_1_dimension_rendering.bmp");
+
+    // 2. Proof 2: Ribbon Property Bar & Continuous (Chain) Dimensioning
+    workflow.new_document(260.0, 180.0);
+    const auto step1 = workflow.add_rectangle(30.0, 75.0, 40.0, 40.0, "#38bdf8", "#0f172a", 1.0);
+    const auto step2 = workflow.add_rectangle(70.0, 75.0, 50.0, 40.0, "#818cf8", "#0f172a", 1.0);
+    const auto step3 = workflow.add_rectangle(120.0, 75.0, 60.0, 40.0, "#c084fc", "#0f172a", 1.0);
+    (void)step1; (void)step2; (void)step3;
+
+    auto add_chain_dim = [&](double x1, double x2, double y, double place_y) {
+        pikdraw::document::DimensionObject dim;
+        dim.id = pikdraw::document::generate_object_id();
+        dim.kind = pikdraw::document::DimensionKind::Linear;
+        dim.linear_orientation = pikdraw::geometry::LinearOrientation::Horizontal;
+        dim.placement_point = {(x1 + x2) * 0.5, place_y};
+        dim.style = pikdraw::document::DimensionStyle::make_default();
+        pikdraw::document::SourceReference r1, r2;
+        r1.explicit_point = {x1, y};
+        r2.explicit_point = {x2, y};
+        dim.references = {r1, r2};
+        win.root().document().execute_command(std::make_unique<pikdraw::document::AddDimensionCommand>(dim, 0));
+    };
+    add_chain_dim(30.0, 70.0, 75.0, 50.0);
+    add_chain_dim(70.0, 120.0, 75.0, 50.0);
+    add_chain_dim(120.0, 180.0, 75.0, 50.0);
+
+    win.set_active_tool(10);
+    win.handle_dimension_property_bar_click(390, 40); // Toggle "🔗 Dim liên tục" to ON
+    win.capture_screenshot_bmp(out_dir + "/proof_2_property_bar_and_continuous.bmp");
+
+    // 3. Proof 3: Quick Dimension W×H & Perimeter Dimension
+    workflow.new_document(240.0, 180.0);
+    const auto target_obj = workflow.add_rectangle(50.0, 45.0, 100.0, 60.0, "#fbbf24", "#78350f", 1.0);
+    win.root().vector_controller().selection().select(target_obj);
+    win.execute_quick_dimension();
+    win.execute_perimeter_dimension();
+    win.set_active_tool(10);
+    win.capture_screenshot_bmp(out_dir + "/proof_3_quick_dim_and_perimeter.bmp");
+
+    // 4. Proof 4: Smart Snap (OSnap) & ORTHO lock indicators
+    workflow.new_document(240.0, 180.0);
+    const auto snap_rect = workflow.add_rectangle(55.0, 50.0, 90.0, 55.0, "#34d399", "#064e3b", 1.0);
+    (void)snap_rect;
+    win.set_active_tool(10);
+    if (win.dimension_tool()) {
+        win.dimension_tool()->activate(pikdraw::document::DimensionKind::Linear, false);
+        win.dimension_tool()->update_snap({55.4, 50.2}, 1.0, true);
+    }
+    win.capture_screenshot_bmp(out_dir + "/proof_4_smart_snap_and_ortho.bmp");
+
+    std::cout << "[PASS] test_dimension_tool_and_visual_suite\n";
+}
+
 
 

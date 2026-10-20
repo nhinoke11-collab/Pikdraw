@@ -128,6 +128,45 @@ int main() {
     controller.deactivate();
     assert(!controller.active());
 
+    // 7. Test Continuous Dimensioning (Chain / DIMCONTINUE)
+    const size_t initial_obj_count = doc.page().layers[0].object_ids.size();
+    controller.activate(document::DimensionKind::Linear);
+    controller.set_linear_orientation(geometry::LinearOrientation::Horizontal);
+    controller.set_continuous_mode(true);
+    assert(controller.continuous_mode());
+
+    // First segment: 0 to 40
+    controller.handle_pointer_press({0.0, 0.0});
+    assert(controller.state() == DimensionSessionState::PickSecond);
+    controller.handle_pointer_press({40.0, 0.0});
+    assert(controller.state() == DimensionSessionState::Placement);
+    controller.handle_pointer_press({20.0, -15.0});
+    // Immediately commits 1st segment AND transitions to PickSecond for next point!
+    assert(controller.state() == DimensionSessionState::PickSecond);
+    assert(std::abs(controller.first_point().x - 40.0) < 1e-4);
+    assert(doc.page().layers[0].object_ids.size() == initial_obj_count + 1);
+
+    // Second segment: just 1 click at (80, 0)
+    controller.handle_pointer_press({80.0, 0.0});
+    // Immediately commits 2nd segment and is ready for 3rd!
+    assert(controller.state() == DimensionSessionState::PickSecond);
+    assert(std::abs(controller.first_point().x - 80.0) < 1e-4);
+    assert(doc.page().layers[0].object_ids.size() == initial_obj_count + 2);
+
+    // Third segment: just 1 click at (120, 0)
+    controller.handle_pointer_press({120.0, 0.0});
+    assert(controller.state() == DimensionSessionState::PickSecond);
+    assert(std::abs(controller.first_point().x - 120.0) < 1e-4);
+    assert(doc.page().layers[0].object_ids.size() == initial_obj_count + 3);
+
+    // Escape ends continuous chain and returns to Idle
+    bool esc_cont = controller.handle_escape();
+    assert(esc_cont);
+    assert(controller.state() == DimensionSessionState::Idle);
+
+    controller.deactivate();
+    assert(!controller.active());
+
     std::cout << "All Desktop Dimension Tool Controller Tests passed successfully!" << std::endl;
     return 0;
 }

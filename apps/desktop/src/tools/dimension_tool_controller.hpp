@@ -50,6 +50,14 @@ public:
     void set_linear_orientation(geometry::LinearOrientation orientation) noexcept;
     [[nodiscard]] geometry::LinearOrientation linear_orientation() const noexcept { return orientation_; }
 
+    void set_continuous_mode(bool enable) noexcept { continuous_mode_ = enable; }
+    [[nodiscard]] bool continuous_mode() const noexcept { return continuous_mode_; }
+    void start_continue_from(
+        geometry::Point2D base_pt,
+        geometry::Point2D placement_pt,
+        document::DimensionKind kind,
+        geometry::LinearOrientation ori);
+
     void set_current_style(document::DimensionStyle style) noexcept;
     [[nodiscard]] const document::DimensionStyle& current_style() const noexcept { return style_; }
 
@@ -98,6 +106,9 @@ private:
     document::ObjectId snapped_object_id_{document::kInvalidObjectId};
     std::optional<uint64_t> snapped_element_id_{std::nullopt};
     bool ortho_active_{false};
+    bool continuous_mode_{false};
+    geometry::Point2D last_placement_point_{};
+    bool has_last_placement_{false};
 };
 
 inline bool DimensionToolController::snap_active() const noexcept { return snap_active_; }

@@ -95,9 +95,11 @@ void NativeWindow::paint_dimension_property_bar(HDC mem_dc, int w, int content_t
     draw_rib_btn(234, 286, is_vi ? L"R / Ø" : L"Radius", is_radius, is_radius ? col_teal : col_text_white);
     draw_rib_btn(290, 342, is_vi ? L"Góc" : L"Angle", is_angular, is_angular ? col_teal : col_text_white);
 
-    // 2. Quick Dimension Tools (⚡ Đo nhanh W×H, 🔄 Chu vi)
-    draw_rib_btn(348, 440, is_vi ? L"⚡ Đo nhanh W×H" : L"⚡ Quick W×H", false, col_teal);
-    draw_rib_btn(444, 532, is_vi ? L"🔄 Đo chu vi" : L"🔄 Perimeter", false, col_teal);
+    // 2. Continuous Dimension & Quick Dimension Tools
+    const bool is_cont = dimension_tool_ && dimension_tool_->continuous_mode();
+    draw_rib_btn(346, 438, is_vi ? L"🔗 Dim liên tục" : L"🔗 Continue", is_cont, is_cont ? col_teal : col_text_white);
+    draw_rib_btn(442, 534, is_vi ? L"⚡ Đo nhanh W×H" : L"⚡ Quick W×H", false, col_teal);
+    draw_rib_btn(538, 626, is_vi ? L"🔄 Đo chu vi" : L"🔄 Perimeter", false, col_teal);
 
     // 3. Decimal precision: 0, 0.0, 0.00, 0.000
     std::wstring dec_lbl = L"0.00";
@@ -105,33 +107,33 @@ void NativeWindow::paint_dimension_property_bar(HDC mem_dc, int w, int content_t
     else if (cur_style.decimals == 1) dec_lbl = L"0.0";
     else if (cur_style.decimals == 2) dec_lbl = L"0.00";
     else if (cur_style.decimals == 3) dec_lbl = L"0.000";
-    draw_rib_btn(538, 598, dec_lbl.c_str(), false, col_text_white);
+    draw_rib_btn(630, 686, dec_lbl.c_str(), false, col_text_white);
 
     // 4. Units: mm, cm, m, in
     std::wstring unit_lbl = L"mm ▾";
     if (cur_style.units == document::UnitType::Centimeter) unit_lbl = L"cm ▾";
     else if (cur_style.units == document::UnitType::Meter) unit_lbl = L"m ▾";
     else if (cur_style.units == document::UnitType::Inch) unit_lbl = L"in ▾";
-    draw_rib_btn(602, 660, unit_lbl.c_str(), false, col_text_white);
+    draw_rib_btn(690, 748, unit_lbl.c_str(), false, col_text_white);
 
     // 5. Arrowhead style: ◀-▶, /--/, ●--●
     std::wstring arr_lbl = L"◀-▶ ▾";
     if (cur_style.arrow_type == geometry::ArrowType::ArchitecturalTick) arr_lbl = L"/--/ ▾";
     else if (cur_style.arrow_type == geometry::ArrowType::Dot) arr_lbl = L"●--● ▾";
-    draw_rib_btn(664, 726, arr_lbl.c_str(), false, col_text_white);
+    draw_rib_btn(752, 812, arr_lbl.c_str(), false, col_text_white);
 
     // 6. Line Width: 0.15, 0.25, 0.5, 0.1
     std::wostringstream lw_ss;
     lw_ss << std::fixed << std::setprecision(2) << cur_style.line_width_mm << L" mm ▾";
-    draw_rib_btn(730, 804, lw_ss.str().c_str(), false, col_text_white);
+    draw_rib_btn(816, 886, lw_ss.str().c_str(), false, col_text_white);
 
     // 7. Text size: 2.5, 3.0, 3.5, 5.0
     std::wostringstream ts_ss;
     ts_ss << L"T: " << std::fixed << std::setprecision(1) << cur_style.text_size_mm << L" mm";
-    draw_rib_btn(808, 882, ts_ss.str().c_str(), false, col_text_white);
+    draw_rib_btn(890, 960, ts_ss.str().c_str(), false, col_text_white);
 
     // 8. Smart Snap status badge
-    draw_rib_btn(886, 970, is_vi ? L"⌖ Bắt điểm: BẬT" : L"⌖ Snap: ON", true, col_teal);
+    draw_rib_btn(964, 1056, is_vi ? L"⌖ Bắt điểm: BẬT" : L"⌖ Snap: ON", true, col_teal);
 }
 
 bool NativeWindow::handle_dimension_property_bar_click(int x, int y) {
@@ -178,50 +180,75 @@ bool NativeWindow::handle_dimension_property_bar_click(int x, int y) {
         return true;
     }
 
+    // Continuous Dimension (🔗 Dim liên tục)
+    if (x >= 346 && x <= 438) {
+        const auto& sel = root().vector_controller().selection().selected_ids();
+        if (sel.size() == 1) {
+            const auto sel_dim = document::get_dimension(root().document(), sel[0]);
+            if (sel_dim && sel_dim->references.size() >= 2) {
+                const auto base_pt = sel_dim->references[1].explicit_point;
+                dimension_tool_->start_continue_from(base_pt, sel_dim->placement_point, sel_dim->kind, sel_dim->linear_orientation);
+                active_tool_ = 10;
+                set_status_message(language_ == UILanguage::Vietnamese
+                    ? "🔗 Dim liên tục: Đã bắt điểm cuối, nhấp điểm tiếp theo để tạo chuỗi kích thước (Esc để dừng)"
+                    : "🔗 Continue Dimension: Started from end point, click next point to chain (Esc to stop)");
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return true;
+            }
+        }
+        const bool new_mode = !dimension_tool_->continuous_mode();
+        dimension_tool_->set_continuous_mode(new_mode);
+        set_status_message(new_mode
+            ? (language_ == UILanguage::Vietnamese ? "🔗 Chế độ Dim liên tục: BẬT (1-click nối tiếp các đoạn đo)" : "🔗 Continuous Dimension: ON")
+            : (language_ == UILanguage::Vietnamese ? "Chế độ Dim liên tục: TẮT" : "Continuous Dimension: OFF"));
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return true;
+    }
+
     // Quick Dimension W×H
-    if (x >= 348 && x <= 440) {
+    if (x >= 442 && x <= 534) {
         execute_quick_dimension();
         return true;
     }
 
     // Perimeter Dimension
-    if (x >= 444 && x <= 532) {
+    if (x >= 538 && x <= 626) {
         execute_perimeter_dimension();
         return true;
     }
 
     // Cycle Decimals
-    if (x >= 538 && x <= 598) {
+    if (x >= 630 && x <= 686) {
         cycle_dimension_decimals();
         return true;
     }
 
     // Cycle Units
-    if (x >= 602 && x <= 660) {
+    if (x >= 690 && x <= 748) {
         cycle_dimension_unit();
         return true;
     }
 
     // Cycle Arrow Type
-    if (x >= 664 && x <= 726) {
+    if (x >= 752 && x <= 812) {
         cycle_dimension_arrow_type();
         return true;
     }
 
     // Cycle Line Width
-    if (x >= 730 && x <= 804) {
+    if (x >= 816 && x <= 886) {
         cycle_dimension_line_width();
         return true;
     }
 
     // Cycle Text Size
-    if (x >= 808 && x <= 882) {
+    if (x >= 890 && x <= 960) {
         cycle_dimension_text_size();
         return true;
     }
 
     // Toggle snap indicator
-    if (x >= 886 && x <= 970) {
+    if (x >= 964 && x <= 1056) {
         set_status_message(language_ == UILanguage::Vietnamese ? "Bắt điểm thông minh (OSnap): Đang bật" : "Smart Snap (OSnap): Active");
         InvalidateRect(hwnd_, nullptr, FALSE);
         return true;

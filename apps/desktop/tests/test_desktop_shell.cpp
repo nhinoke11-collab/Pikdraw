@@ -24,6 +24,7 @@ void test_object_opacity_property_bar_and_appearance_panel();
 void test_layers_and_objects_dock_suite();
 void test_powerclip_and_clipping_mask_suite();
 void test_smart_context_menu_suite();
+void test_dimension_tool_and_visual_suite();
 
 void test_shell_geometry_resolutions_and_dpi() {
     // 1920x1080 @ 100% DPI
@@ -906,6 +907,7 @@ int main() {
     test_toolbox_customization_and_node_tool_slot();
     test_powerclip_and_clipping_mask_suite();
     test_smart_context_menu_suite();
+    test_dimension_tool_and_visual_suite();
     std::cout << "All Desktop Shell Tests PASSED.\n";
     return 0;
 }
