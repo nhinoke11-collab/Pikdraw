@@ -726,8 +726,8 @@ void test_powerclip_and_clipping_mask_suite() {
     assert(rend_ok);
     assert(met.rendered_objects >= 2);
     size_t center_idx = (200 * 400 + 200) * 4;
-    // Inside frame: child content (Orange RGB: 245, 158, 11) is rendered!
-    assert(px[center_idx + 2] == 245 && px[center_idx + 1] == 158 && px[center_idx] == 11);
+    // Inside frame: child content (#f59e0b => R=245, G=158, B=11) is rendered!
+    assert(px[center_idx] == 245 && px[center_idx + 1] == 158 && px[center_idx + 2] == 11);
     // Outside frame: background (White RGB: 255, 255, 255)
     size_t outside_idx = (50 * 400 + 50) * 4;
     assert(px[outside_idx + 2] == 255 && px[outside_idx + 1] == 255 && px[outside_idx] == 255);
