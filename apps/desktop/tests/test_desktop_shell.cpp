@@ -1,8 +1,11 @@
 #include "desktop_shell_test_helpers.hpp"
 #include "pikdraw/desktop/shell/native_style_color_model.hpp"
+#include "../src/shell/native_window_toolbox.hpp"
 
+void test_toolbox_customization_and_node_tool_slot();
 void test_compact_icons_and_hover_tooltips();
 void test_page_preset_dropdown_and_modal_row_clicks();
+void test_open_cdr_fits_artwork_without_changing_geometry();
 void test_double_click_rotate_and_flip_transform_suite();
 void test_group_ungroup_and_isolation_mode();
 void test_blend_and_effect_properties_panel();
@@ -19,6 +22,8 @@ void test_align_and_distribute_tools();
 void test_selection_directional_scale_rotate_and_pivot();
 void test_object_opacity_property_bar_and_appearance_panel();
 void test_layers_and_objects_dock_suite();
+void test_powerclip_and_clipping_mask_suite();
+void test_smart_context_menu_suite();
 
 void test_shell_geometry_resolutions_and_dpi() {
     // 1920x1080 @ 100% DPI
@@ -119,9 +124,11 @@ void test_multi_document_tabs() {
     assert(win.active_tab().title == "Document 1");
     assert(std::abs(win.active_tab().page_width_mm - 297.0) < 0.1);
     assert(std::abs(win.active_tab().page_height_mm - 210.0) < 0.1);
+    const auto initial_view_generation = win.view_generation();
 
     // Create a new tab
     win.create_new_tab("Pano Đèn 2x1m", 2000.0, 1000.0, "CMYK", 300);
+    assert(win.view_generation() == initial_view_generation + 1);
     assert(win.tabs().size() == 2);
     assert(win.active_tab_index() == 1);
     assert(win.active_tab().title == "Pano Đèn 2x1m");
@@ -135,15 +142,18 @@ void test_multi_document_tabs() {
 
     // Switch back to tab 0
     win.switch_to_tab(0);
+    assert(win.view_generation() == initial_view_generation + 2);
     assert(win.active_tab_index() == 0);
     assert(win.root().document().current_snapshot()->object_count() == 0); // Isolated document!
 
     // Switch to tab 1 again
     win.switch_to_tab(1);
+    assert(win.view_generation() == initial_view_generation + 3);
     assert(win.root().document().current_snapshot()->object_count() == 1);
 
     // Close tab 1
     win.close_tab(1);
+    assert(win.view_generation() == initial_view_generation + 4);
     assert(win.tabs().size() == 1);
     assert(win.active_tab_index() == 0);
 
@@ -166,6 +176,43 @@ void test_page_sizing_and_orientation() {
     assert(std::abs(win.root().document().current_snapshot()->page().height_mm - 297.0) < 0.1);
 
     std::cout << "[PASS] test_page_sizing_and_orientation\n";
+}
+
+void test_page_navigation_and_lifecycle_menu_actions() {
+    NativeWindow win(1440, 900);
+    auto& doc = win.root().document();
+    const auto first_page = doc.active_page_id();
+    assert(doc.pages().size() == 1);
+
+    win.execute_menu_action(static_cast<int>(MenuActionId::LayoutPageAdd));
+    assert(doc.pages().size() == 2);
+    const auto second_page = doc.active_page_id();
+    assert(second_page != first_page);
+    const auto content_revision = doc.revision();
+    const auto navigation_generation = doc.page_navigation_generation();
+
+    win.execute_menu_action(static_cast<int>(MenuActionId::LayoutPagePrevious));
+    assert(doc.active_page_id() == first_page);
+    assert(doc.revision() == content_revision); // Page navigation is view state.
+    assert(doc.page_navigation_generation() == navigation_generation + 1);
+    win.execute_menu_action(static_cast<int>(MenuActionId::LayoutPageNext));
+    assert(doc.active_page_id() == second_page);
+    assert(doc.page_navigation_generation() == navigation_generation + 2);
+
+    win.execute_menu_action(static_cast<int>(MenuActionId::LayoutPageDuplicate));
+    assert(doc.pages().size() == 3);
+    const auto duplicate_page = doc.active_page_id();
+    assert(duplicate_page != second_page);
+    assert(doc.pages()[2].id == duplicate_page);
+
+    win.execute_menu_action(static_cast<int>(MenuActionId::LayoutPageDelete));
+    assert(doc.pages().size() == 2);
+    assert(doc.active_page_id() == second_page);
+    assert(doc.undo());
+    assert(doc.pages().size() == 3);
+    assert(doc.active_page_id() == duplicate_page);
+
+    std::cout << "[PASS] test_page_navigation_and_lifecycle_menu_actions\n";
 }
 
 void test_object_sizing_and_aspect_lock() {
@@ -718,8 +765,8 @@ void test_source_color_models_and_object_overprint_patches() {
     assert(win.apply_style_patch(change_color));
     const auto after_gray = *win.root().document().current_snapshot()->objects().get(id);
     const auto& gray_path = std::get<document::PathObject>(after_gray);
-    const auto& normalized_gray = std::get<color::RGBColor>(gray_path.fill.payload());
-    assert(normalized_gray.approx_equal({.25, .25, .25, .8}, 0));
+    const auto& gray_val = std::get<color::GrayscaleColor>(gray_path.fill.payload());
+    assert(std::abs(gray_val.gray - 0.25) < 1e-4 && std::abs(gray_val.a - 0.8) < 1e-4);
     assert(gray_path.fill.overprint().fill && !gray_path.fill.overprint().stroke);
 
     vector::StylePatch stroke_overprint;
@@ -740,6 +787,80 @@ void test_source_color_models_and_object_overprint_patches() {
     std::cout << "[PASS] test_source_color_models_and_object_overprint_patches\n";
 }
 
+void test_toolbox_customization_and_node_tool_slot() {
+    NativeWindow win(1440, 900);
+    // 1. Initial defaults: 11 slots visible.
+    const auto initial_slots = win.visible_toolbox_slots();
+    assert(initial_slots.size() == 11);
+    assert(initial_slots[0] == ToolboxSlotId::Pick);
+    assert(initial_slots[1] == ToolboxSlotId::Node);
+    assert(initial_slots[2] == ToolboxSlotId::QuickShapes);
+    assert(initial_slots[3] == ToolboxSlotId::PathDrawing);
+    assert(initial_slots[4] == ToolboxSlotId::Pan);
+    assert(initial_slots[5] == ToolboxSlotId::Text);
+    assert(initial_slots[6] == ToolboxSlotId::Knife);
+    assert(initial_slots[7] == ToolboxSlotId::Blur);
+    assert(initial_slots[8] == ToolboxSlotId::DropShadow);
+    assert(initial_slots[9] == ToolboxSlotId::Contour);
+    assert(initial_slots[10] == ToolboxSlotId::Gradient);
+
+    // 2. Direct click on Row 1 activates Node tool (tool 11).
+    win.set_active_tool(0);
+    assert(win.active_tool() == 0);
+    win.handle_mouse_down(26, 172); // Row 1: Node tool (y=172)
+    assert(win.active_tool() == 11);
+
+    // Direct click on Row 0 activates Pick tool (tool 0).
+    win.handle_mouse_down(26, 130); // Row 0: Pick tool (y=130)
+    assert(win.active_tool() == 0);
+
+    // 3. Quick Customize [+] button at bottom of toolbox strip (row 11, y=594).
+    assert(!win.is_toolbox_customize_open());
+    win.handle_mouse_down(26, 594);
+    assert(win.is_toolbox_customize_open());
+
+    // Toggle slot visibility from Quick Customize flyout (e.g. toggle Knife, slot 6)
+    assert(win.is_toolbox_slot_visible(ToolboxSlotId::Knife));
+    win.toggle_toolbox_slot_visible(ToolboxSlotId::Knife);
+    assert(!win.is_toolbox_slot_visible(ToolboxSlotId::Knife));
+    assert(win.visible_toolbox_slots().size() == 10);
+
+    // Pick tool is mandatory and cannot be hidden
+    assert(win.is_toolbox_slot_visible(ToolboxSlotId::Pick));
+    win.toggle_toolbox_slot_visible(ToolboxSlotId::Pick);
+    assert(win.is_toolbox_slot_visible(ToolboxSlotId::Pick));
+
+    // 4. Quick Remove Mode (edit mode)
+    assert(!win.is_toolbox_edit_mode());
+    win.toggle_toolbox_edit_mode();
+    assert(win.is_toolbox_edit_mode());
+
+    // Clicking delete badge [-] on top right of a toolbox item (e.g. row 1 Node tool)
+    // Row 1 is Node: ty = 112 + 1*42 = 154. Delete badge is x >= 32, y <= ty + 16 (154..170).
+    assert(win.is_toolbox_slot_visible(ToolboxSlotId::Node));
+    win.handle_mouse_down(38, 160); // Click [-] badge on row 1
+    assert(!win.is_toolbox_slot_visible(ToolboxSlotId::Node));
+    assert(win.visible_toolbox_slots().size() == 9);
+
+    // Reset defaults restores all 11 slots and disables edit mode
+    win.reset_toolbox_slots_default();
+    assert(win.visible_toolbox_slots().size() == 11);
+    assert(win.is_toolbox_slot_visible(ToolboxSlotId::Node));
+    assert(win.is_toolbox_slot_visible(ToolboxSlotId::Knife));
+    assert(!win.is_toolbox_edit_mode());
+
+    // Close flyout
+    win.close_toolbox_customize_flyout();
+    assert(!win.is_toolbox_customize_open());
+
+    // Menu action dispatch for Customize Toolbox
+    win.execute_menu_action(static_cast<int>(MenuActionId::ToolCustomizeToolbox));
+    assert(win.is_toolbox_customize_open());
+    win.close_toolbox_customize_flyout();
+
+    std::cout << "[PASS] test_toolbox_customization_and_node_tool_slot\n";
+}
+
 int main() {
     std::cout << "=== Running Desktop Shell Tests ===\n";
     test_shell_geometry_resolutions_and_dpi();
@@ -749,6 +870,8 @@ int main() {
     test_ai_connections_settings_draft_state();
     test_multi_document_tabs();
     test_page_sizing_and_orientation();
+    test_open_cdr_fits_artwork_without_changing_geometry();
+    test_page_navigation_and_lifecycle_menu_actions();
     test_object_sizing_and_aspect_lock();
     test_delete_key_shortcut_and_undo_redo();
     test_group_ungroup_and_isolation_mode();
@@ -773,6 +896,9 @@ int main() {
     test_copy_cut_paste_ecosystem_and_array_sessions();
     test_source_color_models_and_object_overprint_patches();
     test_layers_and_objects_dock_suite();
+    test_toolbox_customization_and_node_tool_slot();
+    test_powerclip_and_clipping_mask_suite();
+    test_smart_context_menu_suite();
     std::cout << "All Desktop Shell Tests PASSED.\n";
     return 0;
 }

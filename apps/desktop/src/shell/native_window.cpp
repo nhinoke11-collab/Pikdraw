@@ -16,6 +16,7 @@
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/gradient_tool_controller.hpp"
 #include "pikdraw/vector/tools/shape_tools.hpp"
+#include "pikdraw/document/commands/path_commands.hpp"
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -74,11 +75,6 @@ void NativeWindow::initialize_default_tab() {
 }
 
 void NativeWindow::register_drawing_actions(CompositionRoot& document_root) {
-    document_root.document().add_snapshot_listener([this, document = &document_root.document()](auto snapshot) {
-        if (tabs_.empty() || &root().document() != document) return;
-        default_style_.fill = color::convert_color_to_mode(default_style_.fill, snapshot->color_mode());
-        default_style_.stroke = color::convert_color_to_mode(default_style_.stroke, snapshot->color_mode());
-    });
     auto& dispatcher = document_root.window().action_dispatcher();
     document_color_ui::register_actions(dispatcher, [this](color::DocumentColorMode mode) {
 #ifdef _WIN32
@@ -89,6 +85,10 @@ void NativeWindow::register_drawing_actions(CompositionRoot& document_root) {
         cancel_canvas_interaction();
 #endif
         const bool success = workflow().convert_document_color_mode(mode, color_preview_);
+        if (success) {
+            default_style_.fill = color::convert_color_to_mode(default_style_.fill, mode, color_preview_.get());
+            default_style_.stroke = color::convert_color_to_mode(default_style_.stroke, mode, color_preview_.get());
+        }
         const std::string mode_name = mode == color::DocumentColorMode::Cmyk ? "CMYK" : "RGB";
         const bool icc_active = color_preview_ && color_preview_->has_cmyk_transform();
         const std::string conversion_method = icc_active ? "ICC"
@@ -135,6 +135,13 @@ void NativeWindow::register_drawing_actions(CompositionRoot& document_root) {
             if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 #endif
         }, nullptr});
+    dispatcher.register_action({"action.toolbox.customize",
+        "Tùy biến Hộp công cụ...", "Customize Toolbox...", "", [this] {
+            toggle_toolbox_customize_flyout();
+#ifdef _WIN32
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+        }, nullptr});
 }
 
 void NativeWindow::bind_drawing_tool_to_active_document() {
@@ -156,9 +163,6 @@ void NativeWindow::bind_drawing_tool_to_active_document() {
     }
     if (tabs_.empty() || !active_tab().root)
         return;
-    const auto snapshot = root().document().current_snapshot();
-    default_style_.fill = color::convert_color_to_mode(default_style_.fill, snapshot->color_mode());
-    default_style_.stroke = color::convert_color_to_mode(default_style_.stroke, snapshot->color_mode());
     if (color_preview_)
         (void)root().renderer().backend().set_color_preview(color_preview_);
     const auto mode = active_tool_ == 1 ? vector::ToolMode::Rectangle
@@ -255,6 +259,7 @@ void NativeWindow::switch_to_tab(size_t index) noexcept {
         if (is_inline_text_editing_) commit_inline_text_editing();
         if (drawing_tool_) drawing_tool_->cancel();
         active_tab_index_ = index;
+        ++view_generation_;
         document_path_ = active_tab().file_path;
         bind_drawing_tool_to_active_document();
         fit_page_to_canvas();
@@ -280,6 +285,7 @@ void NativeWindow::close_tab(size_t index) noexcept {
         } else if (active_tab_index_ >= tabs_.size()) {
             active_tab_index_ = tabs_.size() - 1;
         }
+        if (closing_active) ++view_generation_;
         document_path_ = active_tab().file_path;
         if (closing_active) bind_drawing_tool_to_active_document();
         fit_page_to_canvas();
@@ -321,6 +327,7 @@ void NativeWindow::create_new_tab(const std::string& title, double w_mm, double 
     if (drawing_tool_) drawing_tool_->cancel();
     tabs_.push_back(std::move(tab));
     active_tab_index_ = tabs_.size() - 1;
+    ++view_generation_;
     document_path_ = active_tab().file_path;
     bind_drawing_tool_to_active_document();
     fit_page_to_canvas();
@@ -707,6 +714,186 @@ COLORREF NativeWindow::canvas_background_colorref() const noexcept {
 
 void NativeWindow::toggle_theme() noexcept {
     set_theme(theme_ == ThemeMode::CyberDark ? ThemeMode::Light : ThemeMode::CyberDark);
+}
+
+bool NativeWindow::is_selected_rectangle(document::ObjectId* out_id, vector::RectCornerSettings* out_settings) const {
+    const auto& sel = root().vector_controller().selection().selected_ids();
+    if (sel.size() != 1) return false;
+    const auto id = sel.front();
+    const auto snapshot = root().document().current_snapshot();
+    const auto obj = snapshot->objects().get(id);
+    if (!obj || !std::holds_alternative<document::PathObject>(*obj)) return false;
+    const auto& po = std::get<document::PathObject>(*obj);
+
+    vector::RectCornerSettings s;
+    s.type = rect_corner_type_;
+    s.tl = rect_corner_tl_;
+    s.tr = rect_corner_tr_;
+    s.br = rect_corner_br_;
+    s.bl = rect_corner_bl_;
+    s.locked = rect_corners_locked_;
+    s.scale_relative = rect_corners_scale_relative_;
+
+    bool is_rect = false;
+    if (po.contour_spec.starts_with("rect_corner:")) {
+        auto deser = vector::deserialize_rect_corner_spec(po.contour_spec);
+        if (deser) {
+            s = *deser;
+            is_rect = true;
+        }
+    } else if (po.name.starts_with("Rectangle") || po.name.starts_with("Square") ||
+               po.name.find("Rect") != std::string::npos) {
+        is_rect = true;
+    } else if (po.authoring_source && po.authoring_source->subpaths.size() == 1 &&
+               po.authoring_source->subpaths[0].closed) {
+        const auto& sub = po.authoring_source->subpaths[0];
+        const bool all_linear = std::all_of(sub.segments.begin(), sub.segments.end(),
+            [](const auto& seg) { return seg.kind == document::PathSegmentKind::Line; });
+        if (sub.nodes.size() == 4 && all_linear) {
+            const auto& n0 = sub.nodes[0].anchor;
+            const auto& n1 = sub.nodes[1].anchor;
+            const auto& n2 = sub.nodes[2].anchor;
+            const auto& n3 = sub.nodes[3].anchor;
+            const double min_x = std::min({n0.x, n1.x, n2.x, n3.x});
+            const double max_x = std::max({n0.x, n1.x, n2.x, n3.x});
+            const double min_y = std::min({n0.y, n1.y, n2.y, n3.y});
+            const double max_y = std::max({n0.y, n1.y, n2.y, n3.y});
+            if (max_x > min_x && max_y > min_y) {
+                is_rect = true;
+            }
+        }
+    }
+
+    if (is_rect) {
+        if (out_id) *out_id = id;
+        if (out_settings) *out_settings = s;
+        return true;
+    }
+    return false;
+}
+
+void NativeWindow::sync_rect_corner_controls_from_selection() {
+    vector::RectCornerSettings s;
+    if (is_selected_rectangle(nullptr, &s)) {
+        rect_corner_type_ = s.type;
+        rect_corner_tl_ = s.tl;
+        rect_corner_tr_ = s.tr;
+        rect_corner_br_ = s.br;
+        rect_corner_bl_ = s.bl;
+        rect_corners_locked_ = s.locked;
+        rect_corners_scale_relative_ = s.scale_relative;
+    }
+}
+
+void NativeWindow::set_rect_corner_type(vector::RectCornerType type) noexcept {
+    rect_corner_type_ = type;
+    vector::RectCornerSettings s;
+    s.type = rect_corner_type_;
+    s.tl = rect_corner_tl_;
+    s.tr = rect_corner_tr_;
+    s.br = rect_corner_br_;
+    s.bl = rect_corner_bl_;
+    s.locked = rect_corners_locked_;
+    s.scale_relative = rect_corners_scale_relative_;
+    apply_rect_corner_settings(s);
+}
+
+void NativeWindow::toggle_rect_corners_locked() noexcept {
+    rect_corners_locked_ = !rect_corners_locked_;
+    if (rect_corners_locked_) {
+        rect_corner_tr_ = rect_corner_tl_;
+        rect_corner_br_ = rect_corner_tl_;
+        rect_corner_bl_ = rect_corner_tl_;
+    }
+    vector::RectCornerSettings s;
+    s.type = rect_corner_type_;
+    s.tl = rect_corner_tl_;
+    s.tr = rect_corner_tr_;
+    s.br = rect_corner_br_;
+    s.bl = rect_corner_bl_;
+    s.locked = rect_corners_locked_;
+    s.scale_relative = rect_corners_scale_relative_;
+    apply_rect_corner_settings(s);
+}
+
+void NativeWindow::toggle_rect_corners_scale_relative() noexcept {
+    rect_corners_scale_relative_ = !rect_corners_scale_relative_;
+    vector::RectCornerSettings s;
+    s.type = rect_corner_type_;
+    s.tl = rect_corner_tl_;
+    s.tr = rect_corner_tr_;
+    s.br = rect_corner_br_;
+    s.bl = rect_corner_bl_;
+    s.locked = rect_corners_locked_;
+    s.scale_relative = rect_corners_scale_relative_;
+    apply_rect_corner_settings(s);
+}
+
+void NativeWindow::apply_rect_corner_settings(const vector::RectCornerSettings& settings) {
+    rect_corner_type_ = settings.type;
+    rect_corner_tl_ = settings.tl;
+    rect_corner_tr_ = settings.tr;
+    rect_corner_br_ = settings.br;
+    rect_corner_bl_ = settings.bl;
+    rect_corners_locked_ = settings.locked;
+    rect_corners_scale_relative_ = settings.scale_relative;
+
+    document::ObjectId id;
+    if (!is_selected_rectangle(&id)) {
+#ifdef _WIN32
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+        return;
+    }
+
+    const auto snapshot = root().document().current_snapshot();
+    const auto obj = snapshot->objects().get(id);
+    if (!obj || !std::holds_alternative<document::PathObject>(*obj)) return;
+    const auto& po = std::get<document::PathObject>(*obj);
+
+    const auto local_bounds = po.path.bounds();
+    if (!local_bounds.is_finite() || local_bounds.width <= 0.0 || local_bounds.height <= 0.0) return;
+
+    try {
+        const auto T = po.transform;
+        const double sx = std::hypot(T.a, T.b);
+        const double sy = std::hypot(T.c, T.d);
+
+        geometry::Rect2D target_bounds = local_bounds;
+        std::optional<geometry::Transform2D> new_transform = std::nullopt;
+
+        if (sx > 1e-6 && sy > 1e-6 && (std::abs(sx - 1.0) > 1e-4 || std::abs(sy - 1.0) > 1e-4)) {
+            // Anisotropic scale detected: normalize scaling directly into path coordinates
+            // so corner rounding in millimeters remains 100% circular and isotropic!
+            target_bounds = geometry::Rect2D{
+                local_bounds.x * sx,
+                local_bounds.y * sy,
+                local_bounds.width * sx,
+                local_bounds.height * sy
+            };
+            new_transform = geometry::Transform2D{
+                T.a / sx, T.b / sx,
+                T.c / sy, T.d / sy,
+                T.tx, T.ty
+            };
+        }
+
+        const auto new_path = vector::ShapeFactory::generate_rectangle_path(target_bounds, settings);
+        auto ep = document::editable_path_from_path2d(new_path, nullptr);
+        if (!ep) return;
+        std::string new_spec = vector::serialize_rect_corner_spec(settings);
+        root().document().execute_command(
+            std::make_unique<document::SetAuthoringSourceCommand>(
+                id, std::move(*ep), std::move(new_spec), new_transform));
+
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đã cập nhật bo góc hình chữ nhật · Ctrl+Z hoàn tác"
+            : "Updated rectangle corners · Ctrl+Z undoes";
+    } catch (...) {}
+
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
 }
 
 

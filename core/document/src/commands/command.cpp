@@ -504,4 +504,61 @@ CommandResult TransformObjectCommand::undo(Document& doc) {
     return CommandResult::ok();
 }
 
+// --- SetAuthoringSourceCommand ---
+
+SetAuthoringSourceCommand::SetAuthoringSourceCommand(
+    ObjectId object_id, EditablePath source, std::optional<std::string> new_contour_spec,
+    std::optional<geometry::Transform2D> new_transform) noexcept
+    : object_id_(object_id), source_(std::move(source)), new_contour_spec_(std::move(new_contour_spec)),
+      new_transform_(new_transform) {}
+
+CommandResult SetAuthoringSourceCommand::execute(Document& doc) {
+    auto opt = doc.objects().get(object_id_);
+    if (!opt || !std::holds_alternative<PathObject>(*opt))
+        return CommandResult::fail("Editable path object was not found");
+    auto path_obj = std::get<PathObject>(*opt);
+    if (path_obj.locked || !path_obj.visible)
+        return CommandResult::fail("Cannot edit a locked or hidden path");
+    before_source_ = path_obj.authoring_source;
+    before_path_ = path_obj.path;
+    before_contour_spec_ = path_obj.contour_spec;
+    before_transform_ = path_obj.transform;
+    try {
+        path_obj.set_authoring_source(source_);
+        if (new_contour_spec_.has_value()) {
+            path_obj.contour_spec = *new_contour_spec_;
+        }
+        if (new_transform_.has_value()) {
+            path_obj.transform = *new_transform_;
+        }
+    } catch (const std::exception& e) {
+        return CommandResult::fail(e.what());
+    }
+    auto map = doc.objects().set(object_id_, ObjectVariant{std::move(path_obj)});
+    doc.apply_mutation(doc.page(), std::move(map));
+    executed_ = true;
+    return CommandResult::ok();
+}
+
+CommandResult SetAuthoringSourceCommand::undo(Document& doc) {
+    if (!executed_)
+        return CommandResult::fail("Cannot undo unexecuted command");
+    auto opt = doc.objects().get(object_id_);
+    if (!opt || !std::holds_alternative<PathObject>(*opt))
+        return CommandResult::fail("Editable path object was not found while undoing");
+    auto path_obj = std::get<PathObject>(*opt);
+    path_obj.authoring_source = before_source_;
+    path_obj.path = before_path_;
+    if (new_contour_spec_.has_value()) {
+        path_obj.contour_spec = before_contour_spec_;
+    }
+    if (new_transform_.has_value()) {
+        path_obj.transform = before_transform_;
+    }
+    auto map = doc.objects().set(object_id_, ObjectVariant{std::move(path_obj)});
+    doc.apply_mutation(doc.page(), std::move(map));
+    executed_ = false;
+    return CommandResult::ok();
+}
+
 } // namespace pikdraw::document

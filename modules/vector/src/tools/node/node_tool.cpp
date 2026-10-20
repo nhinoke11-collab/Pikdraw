@@ -143,10 +143,7 @@ std::optional<document::EditablePath> NodeTool::preview_rounded_path() const {
             target_ids.push_back(nid);
         }
     }
-    const double det = std::abs(target_transform().determinant());
-    const double scale = det > 1e-6 ? std::sqrt(det) : 1.0;
-    const double local_radius = current_corner_radius_ / scale;
-    return create_rounded_corners_path(*baseline_path_, target_ids, local_radius);
+    return create_rounded_corners_path(*baseline_path_, target_ids, current_corner_radius_, target_transform());
 }
 
 std::pair<geometry::Point2D, geometry::Point2D> NodeTool::current_segment_bend_handles() const {
@@ -433,10 +430,7 @@ bool NodeTool::pointer_up(geometry::Point2D world_pos) {
                     target_ids.push_back(nid);
                 }
             }
-            const double det = std::abs(target_transform().determinant());
-            const double scale = det > 1e-6 ? std::sqrt(det) : 1.0;
-            const double local_radius = current_corner_radius_ / scale;
-            auto rounded = create_rounded_corners_path(*baseline_path_, target_ids, local_radius);
+            auto rounded = create_rounded_corners_path(*baseline_path_, target_ids, current_corner_radius_, target_transform());
             auto cmd = std::make_unique<document::SetAuthoringSourceCommand>(
                 target_object_id_, std::move(rounded));
             (void)document_.execute_command(std::move(cmd));

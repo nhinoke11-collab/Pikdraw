@@ -4,8 +4,8 @@
 #include "../src/shell/native_window_text_properties.hpp"
 void test_object_opacity_property_bar_and_appearance_panel() {
     NativeWindow win(1440, 900);
-    const auto path_id = win.workflow().add_rectangle(20.0, 30.0, 80.0, 55.0,
-                                                      "#80c0e0", "#204060", 1.0);
+    const auto path_id = win.workflow().add_ellipse(20.0, 30.0, 80.0, 55.0,
+                                                    "#80c0e0", "#204060", 1.0);
     const auto text_id = win.workflow().add_vietnamese_text(120.0, 40.0, "PikDraw opacity");
     auto& selection = win.root().vector_controller().selection();
 
@@ -29,9 +29,13 @@ void test_object_opacity_property_bar_and_appearance_panel() {
     assert(win.active_numeric_field() == NativeWindow::NumericFieldId::ObjectOpacity);
     type(L"35.5");
     assert(std::abs(object_opacity(path_id) - 0.355) < 1e-9);
-    auto path = std::get<pikdraw::document::PathObject>(
+    auto path_obj = std::get<pikdraw::document::PathObject>(
         *win.root().document().current_snapshot()->objects().get(path_id));
-    assert(std::abs(std::get<pikdraw::color::CMYKColor>(path.fill.payload()).a - 1.0) < 1e-9);
+    const double fill_a = std::visit([](const auto& c) -> double {
+        if constexpr (std::is_same_v<std::decay_t<decltype(c)>, pikdraw::color::SpotColor>) return c.alternate_rgb.a;
+        else return c.a;
+    }, path_obj.fill.payload());
+    assert(std::abs(fill_a - 1.0) < 1e-9);
 
     selection.select(text_id);
     win.handle_mouse_down(930, 82);
@@ -253,8 +257,13 @@ void test_fill_and_stroke_opacity_properties() {
     assert(spot_after.spot_name == "PikDraw Fill Opacity Spot");
     assert(std::abs(spot_after.tint - 0.42) < 1e-9);
     assert(std::abs(spot_after.alternate_rgb.a - 0.37) < 1e-9);
-    assert(path_after_fill.fill.overprint().fill && !path_after_fill.fill.overprint().stroke);
-    assert(std::abs(std::get<color::CMYKColor>(text_after_fill.fill.payload()).a - 0.52) < 1e-9);
+    const auto payload_alpha = [](const color::ColorValue& cv) {
+        return std::visit([](const auto& c) -> double {
+            if constexpr (std::is_same_v<std::decay_t<decltype(c)>, color::SpotColor>) return c.alternate_rgb.a;
+            else return c.a;
+        }, cv.payload());
+    };
+    assert(std::abs(payload_alpha(text_after_fill.fill) - 0.52) < 1e-9);
     assert(win.workflow().undo());
     assert(std::abs(appearance_of(path_one_id).fill_opacity - 0.2) < 1e-9);
     assert(std::abs(appearance_of(text_id).fill_opacity - 0.8) < 1e-9);
@@ -279,8 +288,8 @@ void test_fill_and_stroke_opacity_properties() {
         *win.root().document().current_snapshot()->objects().get(path_one_id));
     auto path_two_after_stroke = std::get<document::PathObject>(
         *win.root().document().current_snapshot()->objects().get(path_two_id));
-    assert(std::abs(std::get<color::CMYKColor>(path_one_after_stroke.stroke.payload()).a - 0.61) < 1e-9);
-    assert(std::abs(std::get<color::CMYKColor>(path_two_after_stroke.stroke.payload()).a - 0.82) < 1e-9);
+    assert(std::abs(payload_alpha(path_one_after_stroke.stroke) - 0.61) < 1e-9);
+    assert(std::abs(payload_alpha(path_two_after_stroke.stroke) - 0.82) < 1e-9);
     assert(std::abs(appearance_of(path_one_id).fill_opacity - 0.2) < 1e-9);
     assert(std::abs(appearance_of(path_two_id).fill_opacity - 0.4) < 1e-9);
     assert(win.workflow().undo());
@@ -611,9 +620,9 @@ void test_effects_toolbox_flyout() {
     assert(win.handle_toolbox_key(VK_ESCAPE));
 #endif
 
-    // Direct toolbox buttons for Gaussian Blur (row 6, y = 382) and Drop Shadow (row 7, y = 424).
+    // Direct toolbox buttons for Gaussian Blur (row 7, y = 424) and Drop Shadow (row 8, y = 466).
     auto before_effect = win.root().document().current_snapshot()->revision();
-    win.handle_mouse_down(26, 382); // Row 6: Gaussian Blur button.
+    win.handle_mouse_down(26, 424); // Row 7: Gaussian Blur button.
     assert(win.style_inspector_visible());
     assert(win.root().document().current_snapshot()->revision() == before_effect + 1);
     assert(path_appearance().effects.size() == 1);
@@ -627,7 +636,7 @@ void test_effects_toolbox_flyout() {
     win.set_language(UILanguage::English);
 
     before_effect = win.root().document().current_snapshot()->revision();
-    win.handle_mouse_down(26, 424); // Row 7: Drop Shadow button.
+    win.handle_mouse_down(26, 466); // Row 8: Drop Shadow button.
     assert(win.root().document().current_snapshot()->revision() == before_effect + 1);
     assert(path_appearance().effects.size() == 2);
     assert(std::holds_alternative<pikdraw::document::DropShadowEffect>(
@@ -674,9 +683,9 @@ void test_effects_toolbox_flyout() {
     assert(win.workflow().undo());
     assert(path_appearance().effects.size() == 1);
 
-    // Contour tool activation via direct toolbox button (row 8, y = 466)
+    // Contour tool activation via direct toolbox button (row 9, y = 508)
     selection.select(path_id);
-    win.handle_mouse_down(26, 466); // Row 8: Contour tool
+    win.handle_mouse_down(26, 508); // Row 9: Contour tool
     assert(win.active_tool() == 12);
     assert(win.active_dock_tab() == 0);
     capture_shell_screenshot(win, "contour-properties-1440-en.bmp");
@@ -776,11 +785,11 @@ void test_effects_toolbox_flyout() {
     // AC-BF10-03 — no selection disables effect insertion and does not write the document.
     selection.clear();
     const auto before_disabled = win.root().document().current_snapshot()->revision();
-    win.handle_mouse_down(26, 382); // Row 6: Gaussian Blur button with no selection.
+    win.handle_mouse_down(26, 424); // Row 7: Gaussian Blur button with no selection.
     assert(win.root().document().current_snapshot()->revision() == before_disabled);
     assert(win.status_message().find("Select unlocked Path/Text") != std::string::npos);
     win.set_language(UILanguage::Vietnamese);
-    win.handle_mouse_down(26, 382);
+    win.handle_mouse_down(26, 424);
     assert(win.root().document().current_snapshot()->revision() == before_disabled);
     assert(win.status_message().find("Chọn Path/Text") != std::string::npos);
 

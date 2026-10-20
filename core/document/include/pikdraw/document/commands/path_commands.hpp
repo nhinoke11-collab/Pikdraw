@@ -163,4 +163,26 @@ private:
     std::vector<PathSegmentKind> segment_kinds_;
 };
 
+class SetAuthoringSourceCommand final : public DocumentCommand {
+public:
+    SetAuthoringSourceCommand(ObjectId object_id, EditablePath source,
+                             std::optional<std::string> new_contour_spec = std::nullopt,
+                             std::optional<geometry::Transform2D> new_transform = std::nullopt) noexcept;
+    [[nodiscard]] std::string_view name() const noexcept override { return "Set Path Authoring Source"; }
+
+    CommandResult execute(Document& doc) override;
+    CommandResult undo(Document& doc) override;
+
+private:
+    ObjectId object_id_{kInvalidObjectId};
+    EditablePath source_;
+    std::optional<std::string> new_contour_spec_;
+    std::optional<geometry::Transform2D> new_transform_;
+    std::shared_ptr<const EditablePath> before_source_;
+    geometry::Path2D before_path_;
+    std::string before_contour_spec_;
+    geometry::Transform2D before_transform_{geometry::Transform2D::identity()};
+    bool executed_{false};
+};
+
 } // namespace pikdraw::document

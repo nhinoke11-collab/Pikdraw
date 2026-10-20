@@ -389,6 +389,68 @@ void test_bend_segment_and_node_to_curve_batch() {
     assert(sub2.segments[2].kind == PathSegmentKind::CubicBezier);
 }
 
+void test_anisotropic_corner_rounding_uniformity() {
+    Document doc("doc-anisotropic-corner-test");
+    auto obj = make_test_quad();
+    // Scale object 2:1 horizontally (anisotropic scale sx=2.0, sy=1.0)
+    obj.transform = geometry::Transform2D::scale(2.0, 1.0);
+    const auto obj_id = obj.id;
+    doc.execute_command(std::make_unique<AddObjectCommand>(obj));
+
+    NodeTool tool(doc);
+    tool.set_target_object(obj_id);
+
+    const auto widgets = tool.corner_widgets(1.0);
+    assert(widgets.size() == 4);
+    const auto w0 = widgets[0];
+
+    // Click on corner widget 0
+    assert(tool.pointer_down(w0.widget_position, false, 2.0));
+    assert(tool.is_rounding_corners());
+
+    // Drag inward along bisector by 10.0 mm
+    const auto drag_pt = w0.widget_position + w0.bisector * 10.0;
+    assert(tool.pointer_move(drag_pt));
+    const double radius = tool.current_corner_radius();
+    assert(radius > 9.0);
+
+    // Preview path check
+    const auto preview = tool.preview_rounded_path();
+    assert(preview.has_value());
+    const auto& prev_sub = preview->subpaths[0];
+
+    const auto tr = obj.transform;
+    const auto p0_w = tr.map_point(prev_sub.nodes[0].anchor);
+    const auto p1_w = tr.map_point(prev_sub.nodes[1].anchor);
+
+    // The distances from corner in world space MUST be equal (isotropic circle!)
+    const double d0 = std::hypot(p0_w.x - 0.0, p0_w.y - 0.0);
+    const double d1 = std::hypot(p1_w.x - 0.0, p1_w.y - 0.0);
+    assert(std::abs(d0 - d1) < 1e-4);
+    assert(std::abs(d0 - radius) < 1e-4);
+
+    // Release mouse to commit
+    tool.pointer_up(drag_pt);
+    assert(!tool.is_rounding_corners());
+
+    // Verify committed path in document has equal world-space extent
+    auto snap = doc.current_snapshot();
+    auto cur_obj = std::get<PathObject>(*snap->get_object(obj_id));
+    const auto& com_sub = cur_obj.authoring_source->subpaths[0];
+    const auto com_p0_w = tr.map_point(com_sub.nodes[0].anchor);
+    const auto com_p1_w = tr.map_point(com_sub.nodes[1].anchor);
+    const double cd0 = std::hypot(com_p0_w.x - 0.0, com_p0_w.y - 0.0);
+    const double cd1 = std::hypot(com_p1_w.x - 0.0, com_p1_w.y - 0.0);
+    assert(std::abs(cd0 - cd1) < 1e-4);
+    assert(std::abs(cd0 - radius) < 1e-4);
+
+    // Exactly ONE undo restores original sharp quad
+    assert(doc.undo());
+    snap = doc.current_snapshot();
+    cur_obj = std::get<PathObject>(*snap->get_object(obj_id));
+    assert(cur_obj.authoring_source->subpaths[0].nodes.size() == 4);
+}
+
 int main() {
     std::cout << "[test_node_tool] Running NodeTool vector tests...\n";
     test_node_tool_selection_and_drag();
@@ -399,6 +461,7 @@ int main() {
     test_live_corner_rounding_and_single_step_undo();
     test_transformed_object_nodes_and_live_mirroring();
     test_bend_segment_and_node_to_curve_batch();
+    test_anisotropic_corner_rounding_uniformity();
     std::cout << "[test_node_tool] All tests passed!\n";
     return 0;
 }

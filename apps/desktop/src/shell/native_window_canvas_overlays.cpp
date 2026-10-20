@@ -475,7 +475,8 @@ void NativeWindow::paint_node_canvas_overlay(HDC dc, int width, int height) {
         // Floating radius badge near active corner widget
         const auto active_cw = node_tool_->tool().active_corner_widget();
         if (active_cw) {
-            const POINT wp = screen(active_cw->widget_position);
+            const auto active_pos_w = active_cw->widget_position + active_cw->bisector * node_tool_->tool().current_corner_radius();
+            const POINT wp = screen(active_pos_w);
             std::wostringstream ss;
             ss << L"R: " << std::fixed << std::setprecision(1) << node_tool_->tool().current_corner_radius() << L" mm";
             const auto str = ss.str();
@@ -605,10 +606,13 @@ void NativeWindow::paint_node_canvas_overlay(HDC dc, int width, int height) {
     // 5. Draw Illustrator-style Live Corner Rounding widgets (transformed to world space)
     const auto corner_widgets = node_tool_->tool().corner_widgets(camera.zoom());
     for (const auto& cw : corner_widgets) {
-        const POINT cp = screen(cw.widget_position);
         const bool is_active_corner = (node_tool_->tool().is_rounding_corners() &&
             node_tool_->tool().active_corner_widget() &&
             node_tool_->tool().active_corner_widget()->node_id == cw.node_id);
+        const auto pos_w = is_active_corner
+            ? (cw.widget_position + cw.bisector * node_tool_->tool().current_corner_radius())
+            : cw.widget_position;
+        const POINT cp = screen(pos_w);
 
         COLORREF border_color = RGB(14, 165, 233); // Sky-500 cyan
         COLORREF fill_color = is_active_corner ? RGB(14, 165, 233) : RGB(255, 255, 255);
