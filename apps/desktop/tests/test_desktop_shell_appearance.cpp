@@ -782,6 +782,85 @@ void test_effects_toolbox_flyout() {
     win.handle_mouse_down(400, 20);
     win.handle_mouse_down(400, 145); // Break Contour Apart row
 
+    // Test Contour Ribbon Property Bar Clicks and Controls:
+    win.root().vector_controller().selection().select(path_id);
+    win.set_active_tool(12);
+    assert(win.contour_tool() && win.contour_tool()->active());
+
+    // 1. Direction buttons on ribbon (y in [66, 102], say y = 80)
+    win.handle_mouse_down(100, 80); // To Center: x in [75, 135]
+    assert(win.contour_tool()->direction() == pikdraw::geometry::ContourDirection::ToCenter);
+    win.handle_mouse_down(160, 80); // Inside: x in [138, 198]
+    assert(win.contour_tool()->direction() == pikdraw::geometry::ContourDirection::Inside);
+    win.handle_mouse_down(230, 80); // Outside: x in [201, 261]
+    assert(win.contour_tool()->direction() == pikdraw::geometry::ContourDirection::Outside);
+
+    // 2. Steps input box: x in [270, 330]
+    win.handle_mouse_down(300, 80);
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::PolygonSides);
+    win.commit_numeric_field();
+
+    // 3. Steps spinner: x in [332, 352]
+    const int initial_steps = win.contour_tool()->steps();
+    win.handle_mouse_down(342, 75); // Top half (▲)
+    assert(win.contour_tool()->steps() == initial_steps + 1);
+    win.handle_mouse_down(342, 90); // Bottom half (▼)
+    assert(win.contour_tool()->steps() == initial_steps);
+
+    // 4. Spacing input box: x in [360, 440]
+    win.handle_mouse_down(400, 80);
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::DistributeSpacing);
+    win.commit_numeric_field();
+
+    // 5. Spacing spinner: x in [442, 462]
+    const double initial_spacing = win.contour_tool()->spacing_mm();
+    win.handle_mouse_down(452, 75); // Top half (▲)
+    assert(std::abs(win.contour_tool()->spacing_mm() - (initial_spacing + 0.5)) < 1e-6);
+    win.handle_mouse_down(452, 90); // Bottom half (▼)
+    assert(std::abs(win.contour_tool()->spacing_mm() - initial_spacing) < 1e-6);
+
+    // 6. Corners buttons: Miter [470..530], Round [533..593], Bevel [596..656]
+    win.handle_mouse_down(560, 80); // Round
+    assert(win.contour_tool()->join_type() == pikdraw::geometry::JoinType::Round);
+    win.handle_mouse_down(620, 80); // Bevel
+    assert(win.contour_tool()->join_type() == pikdraw::geometry::JoinType::Bevel);
+    win.handle_mouse_down(500, 80); // Miter
+    assert(win.contour_tool()->join_type() == pikdraw::geometry::JoinType::Miter);
+
+    // 7. Interactive Canvas Dragging:
+    const auto canvas_area = win.canvas_rect(win.width(), win.height());
+    auto& camera = win.root().renderer().camera();
+    camera.set_viewport_size(canvas_area.right - canvas_area.left, canvas_area.bottom - canvas_area.top);
+    const auto center_screen = camera.world_to_screen({66.0f, 58.0f});
+    const int cx = canvas_area.left + static_cast<int>(std::lround(center_screen.x));
+    const int cy = canvas_area.top + static_cast<int>(std::lround(center_screen.y));
+
+    // Drag from center outward
+    win.handle_mouse_down(cx, cy);
+    win.handle_mouse_move(cx + 80, cy);
+    assert(win.contour_tool()->direction() == pikdraw::geometry::ContourDirection::Outside);
+    win.handle_mouse_up(cx + 80, cy);
+
+    // Drag from outer point inward
+    win.handle_mouse_down(cx + 80, cy);
+    win.handle_mouse_move(cx + 10, cy);
+    assert(win.contour_tool()->direction() == pikdraw::geometry::ContourDirection::Inside);
+    win.handle_mouse_up(cx + 10, cy);
+
+    // 7b. Outline and Fill buttons:
+    win.handle_mouse_down(680, 80); // Toggle outline
+    assert(!win.contour_tool()->has_outline());
+    win.handle_mouse_down(680, 80); // Toggle outline back on
+    assert(win.contour_tool()->has_outline());
+
+    // 8. Apply button: x in [775..850]
+    win.handle_mouse_down(800, 80); // Apply
+    assert(pikdraw::document::get_object_contour(win.root().document(), path_id));
+
+    // 9. Remove button: x in [990..1055]
+    win.handle_mouse_down(1010, 80); // Remove
+    assert(!pikdraw::document::get_object_contour(win.root().document(), path_id));
+
     // AC-BF10-03 — no selection disables effect insertion and does not write the document.
     selection.clear();
     const auto before_disabled = win.root().document().current_snapshot()->revision();

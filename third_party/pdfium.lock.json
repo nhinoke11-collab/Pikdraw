@@ -1,0 +1,12 @@
+{
+  "name": "PDFium",
+  "version": "157.0.8100.0",
+  "upstreamRevision": "chromium/8100",
+  "binaryPublisher": "bblanchon/pdfium-binaries",
+  "binaryUrl": "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/8100/pdfium-win-x64.tgz",
+  "binarySha256": "51621bcc1d9be9ea448f4b84b0516862b928e3968d3fca899af1a6d6e2848d6d",
+  "runtimeDllSha256": "ae913f407e8d3f5cdbf08a9869564d647b13e132e01eb376c0a5a33b7a227a45",
+  "architecture": "Windows x64",
+  "license": "BSD-3-Clause (PDFium); MIT (binary package); bundled third-party notices",
+  "licenseNotices": "third_party/licenses/pdfium-157.0.8100.0/"
+}

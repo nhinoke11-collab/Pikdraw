@@ -36,6 +36,21 @@ public:
     void set_miter_limit(double limit);
     [[nodiscard]] double miter_limit() const noexcept;
 
+    void set_outline_color(color::ColorValue col) noexcept { tool_->set_outline_color(std::move(col)); }
+    [[nodiscard]] const color::ColorValue& outline_color() const noexcept { return tool_->outline_color(); }
+
+    void set_fill_color(color::ColorValue col) noexcept { tool_->set_fill_color(std::move(col)); }
+    [[nodiscard]] const color::ColorValue& fill_color() const noexcept { return tool_->fill_color(); }
+
+    void set_has_outline(bool has) noexcept { tool_->set_has_outline(has); }
+    [[nodiscard]] bool has_outline() const noexcept { return tool_->has_outline(); }
+
+    void set_has_fill(bool has) noexcept { tool_->set_has_fill(has); }
+    [[nodiscard]] bool has_fill() const noexcept { return tool_->has_fill(); }
+
+    void set_stroke_width_mm(double width) noexcept { tool_->set_stroke_width_mm(width); }
+    [[nodiscard]] double stroke_width_mm() const noexcept { return tool_->stroke_width_mm(); }
+
     bool apply();
     bool break_apart();
     bool remove();

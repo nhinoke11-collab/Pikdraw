@@ -12,6 +12,7 @@
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/gradient_tool_controller.hpp"
+#include "../tools/dimension_tool_controller.hpp"
 #include "pikdraw/vector/tools/shape_tools.hpp"
 #include <iostream>
 #include <fstream>
@@ -201,16 +202,18 @@ void NativeWindow::set_settings_unit_choice(int unit) noexcept {
 }
 
 void NativeWindow::set_active_tool(int tool_index) noexcept {
-    if (tool_index < 0 || (tool_index > 9 && tool_index != 11 && tool_index != 12 && tool_index != 13))
+    if (tool_index < 0 || (tool_index > 9 && tool_index != 10 && tool_index != 11 && tool_index != 12 && tool_index != 13))
         return;
     const bool path_tool = tool_index == 6 || tool_index == 7;
     const bool pen_tool = tool_index == 8;
+    const bool dimension_tool = tool_index == 10;
     const bool node_tool = tool_index == 11;
     const bool contour_tool = tool_index == 12;
     const bool gradient_tool = tool_index == 13;
     if (tool_index == active_tool_ &&
         ((!path_tool || (drawing_tool_ && drawing_tool_->active())) &&
          (!pen_tool || (pen_tool_ && pen_tool_->active())) &&
+         (!dimension_tool || (dimension_tool_ && dimension_tool_->active())) &&
          (!node_tool || (node_tool_ && node_tool_->active())) &&
          (!contour_tool || (contour_tool_ && contour_tool_->active())) &&
          (!gradient_tool || (gradient_tool_ && gradient_tool_->active()))))
@@ -235,6 +238,7 @@ void NativeWindow::set_active_tool(int tool_index) noexcept {
     }
     if (drawing_tool_) drawing_tool_->cancel();
     if (pen_tool_) pen_tool_->cancel();
+    if (dimension_tool_ && tool_index != 10) dimension_tool_->deactivate();
     if (node_tool_) node_tool_->deactivate();
     if (contour_tool_) contour_tool_->deactivate();
     if (gradient_tool_ && tool_index != 13) {
@@ -255,6 +259,11 @@ void NativeWindow::set_active_tool(int tool_index) noexcept {
         quick_shapes_last_tool_ = tool_index;
     if (tool_index == 6 || tool_index == 7 || tool_index == 8 || tool_index == 11)
         path_drawing_last_tool_ = tool_index;
+    if (dimension_tool) {
+        active_dock_tab_ = 0;
+        show_style_inspector_ = false;
+        show_align_panel_ = false;
+    }
     if (node_tool) {
         active_dock_tab_ = 0;
         show_style_inspector_ = false;
@@ -349,7 +358,14 @@ void NativeWindow::set_active_tool(int tool_index) noexcept {
             }
         }
         const auto& sel = root().vector_controller().selection().selected_ids();
-        const auto target = sel.empty() ? document::kInvalidObjectId : sel.front();
+        document::ObjectId target = sel.empty() ? document::kInvalidObjectId : sel.front();
+        if (target != document::kInvalidObjectId) {
+            const auto snap = root().document().current_snapshot();
+            const auto obj = snap ? snap->objects().get(target) : std::nullopt;
+            if (obj && std::holds_alternative<document::TextObject>(*obj)) {
+                (void)workflow().convert_text_to_curves(target);
+            }
+        }
         (void)contour_tool_->activate(target);
     }
     if (gradient_tool) {
@@ -367,7 +383,25 @@ void NativeWindow::set_active_tool(int tool_index) noexcept {
         const auto& sel = root().vector_controller().selection().selected_ids();
         (void)gradient_tool_->activate(sel);
     }
-    if (tool_index == 11) {
+    if (dimension_tool) {
+        if (!dimension_tool_) {
+            try {
+                dimension_tool_ = std::make_unique<tools::DimensionToolController>(root().document());
+            } catch (...) {
+                active_tool_ = 0;
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Không đủ bộ nhớ để bắt đầu công cụ Dimension"
+                    : "Not enough memory to start the Dimension tool";
+                return;
+            }
+        }
+        dimension_tool_->activate(document::DimensionKind::Aligned, false);
+    }
+    if (tool_index == 10) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Kích thước (CAD) · Nhấp chọn 2 điểm cần đo rồi kéo đặt đường gióng · D"
+            : "Dimension (CAD) · Click 2 points to measure, then place dimension line · D";
+    } else if (tool_index == 11) {
         const auto snapshot = root().document().current_snapshot();
         const auto* target_value = snapshot && node_tool_
             ? snapshot->objects().lookup_ref(node_tool_->target_object()) : nullptr;

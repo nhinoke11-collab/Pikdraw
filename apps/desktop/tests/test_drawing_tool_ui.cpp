@@ -283,12 +283,17 @@ int main(int argc, char** argv) {
         window.execute_menu_action(static_cast<int>(desktop::MenuActionId::ToolNode));
         REQUIRE(window.active_tool() == 11 && window.node_tool()->active());
 
-        // The Path Drawing flyout exposes Node to mouse and keyboard users.
+        // Direct click on Row 1 (Node tool on primary toolbox strip directly next to Pick tool).
+        window.set_active_tool(0);
+        window.handle_mouse_down(26, 172);
+        REQUIRE(window.active_tool() == 11 && window.node_tool()->active());
+
+        // The Path Drawing flyout also continues to expose Node to mouse and keyboard users.
         window.set_active_tool(6);
-        window.handle_mouse_down(42, 214);
+        window.handle_mouse_down(42, 256);
         REQUIRE(window.toolbox_open_group() == 2);
         if (!fixture.evidence.empty()) fixture.capture(L"node-tool-flyout.bmp");
-        window.handle_mouse_down(120, 323);
+        window.handle_mouse_down(120, 365);
         REQUIRE(window.active_tool() == 11 && window.node_tool()->active());
         window.set_active_tool(6);
         REQUIRE(window.handle_toolbox_key(VK_TAB));

@@ -121,7 +121,7 @@ IpcV2Frame MakeFrame(std::vector<uint8_t> packet) {
 void TestSvgHierarchyHostSemantics(const SourceSnapshot& source) {
     auto expected = BeginFor(source);
     expected.format_id = "SVG";
-    expected.profile_id = "svg-hierarchy-v2";
+    expected.profile_id = "svg-hierarchy-v3";
     auto legacy_profile = expected;
     legacy_profile.profile_id = "svg-flat-v1";
     V2ProposalStreamValidator legacy_validator(legacy_profile, 64 * 1024, 128, 4);
@@ -145,7 +145,7 @@ void TestSvgHierarchyHostSemantics(const SourceSnapshot& source) {
         path.name = "Path";
         path.elements.push_back({ImportPathVerb::Move, 0, {}});
         ImportFidelityReportRecord report;
-        report.coverage_profile = "svg-hierarchy-v2";
+        report.coverage_profile = "svg-hierarchy-v3";
         report.issue_count = 0;
 
         std::vector<ImportRecordValue> values;
@@ -189,7 +189,7 @@ void TestSvgHierarchyHostSemantics(const SourceSnapshot& source) {
         path.name = "Path";
         path.elements.push_back({ImportPathVerb::Move, 0, {}});
         ImportFidelityReportRecord report;
-        report.coverage_profile = "svg-hierarchy-v2";
+        report.coverage_profile = "svg-hierarchy-v3";
 
         std::vector<ImportRecordValue> values{page, layer, group, path, report};
         V2ProposalChunk chunk;
@@ -221,6 +221,32 @@ void TestSvgHierarchyHostSemantics(const SourceSnapshot& source) {
     Require(!run(true, false, false), "host accepted duplicate group/layer ownership");
     Require(!run(false, true, false), "host accepted a missing group child reference");
     Require(!run(false, false, true), "host accepted a layer after object records began");
+
+    ImportPageRecord page{100, 50};
+    ImportLayerRecord layer{1, "layer", "Layer", true, false, {1}};
+    ImportGroupRecord group{1, "group", "Group", {2}, 2};
+    ImportTextRecord text;
+    text.local_id = 2;
+    text.source_id = "text-mask";
+    text.name = "Text mask";
+    text.font_family = "Arial";
+    ImportFidelityReportRecord report;
+    report.coverage_profile = "svg-hierarchy-v3";
+    const std::vector<ImportRecordValue> invalid_clip_values{page, layer, group, text, report};
+    V2ProposalChunk invalid_clip_chunk;
+    invalid_clip_chunk.job = expected.job;
+    for (const auto& value : invalid_clip_values) {
+        const auto record = SerializeImportRecord(value);
+        Require(record && AppendV2ProposalRecord(invalid_clip_chunk.canonical_record_bytes,
+            static_cast<uint16_t>(record->type), record->payload),
+            "could not encode invalid clip-mask semantic records");
+        ++invalid_clip_chunk.record_count;
+    }
+    invalid_clip_chunk.checksum_crc32 = V2ProposalRecordsCrc32(invalid_clip_chunk.canonical_record_bytes);
+    V2ProposalStreamValidator invalid_clip_validator(expected, 64 * 1024, 128, 4);
+    Require(invalid_clip_validator.IsReady(), "clip-mask validator did not initialize");
+    Require(!invalid_clip_validator.Accept(MakeFrame(SerializeV2ProposalChunk(invalid_clip_chunk, 1))),
+            "host accepted a non-path clip mask");
 }
 
 void TestDxfProfileHostSemantics(const SourceSnapshot& source) {
@@ -271,7 +297,7 @@ void TestDxfProfileHostSemantics(const SourceSnapshot& source) {
 
     auto wrong_report = values;
     std::get<ImportFidelityReportRecord>(wrong_report.back()).coverage_profile =
-        "svg-hierarchy-v2";
+        "svg-hierarchy-v3";
     V2ProposalChunk wrong_chunk;
     wrong_chunk.job = expected.job;
     for (const auto& value : wrong_report) {
@@ -286,6 +312,85 @@ void TestDxfProfileHostSemantics(const SourceSnapshot& source) {
     Require(wrong_profile.IsReady(), "DXF validator did not initialize for wrong-report test");
     Require(!wrong_profile.Accept(MakeFrame(SerializeV2ProposalChunk(wrong_chunk, 1))),
             "host accepted a DXF stream carrying the SVG coverage profile");
+}
+
+void TestPdfPageSetHostSemantics(const SourceSnapshot& source) {
+    auto expected = BeginFor(source);
+    expected.format_id = "PDF";
+    expected.profile_id = "pdf-page-set-v3";
+    V2ProposalStreamValidator validator(expected, 64 * 1024, 128, 4);
+    Require(validator.IsReady(), "PDF page-set profile was not registered");
+
+    ImportPageRecord first_page{100, 50};
+    first_page.local_id = 1;
+    first_page.source_page_index = 0;
+    first_page.name = "Page 1";
+    first_page.has_manifest_metadata = true;
+    ImportPageRecord blank_page{70, 120};
+    blank_page.local_id = 2;
+    blank_page.source_page_index = 1;
+    blank_page.name = "Page 2";
+    blank_page.blank = true;
+    blank_page.has_manifest_metadata = true;
+
+    ImportLayerRecord artwork_layer{1, "page-1-layer", "Artwork", true, false, {1}};
+    artwork_layer.page_local_id = 1;
+    artwork_layer.has_page_association = true;
+    ImportLayerRecord blank_layer{2, "page-2-layer", "Layer 1", true, false, {}};
+    blank_layer.page_local_id = 2;
+    blank_layer.has_page_association = true;
+    ImportPathRecord path;
+    path.local_id = 1;
+    path.source_id = "page-1-path";
+    path.name = "Path";
+    path.elements.push_back({ImportPathVerb::Move, 0, {}});
+    ImportFidelityReportRecord report;
+    report.coverage_profile = expected.profile_id;
+    std::vector<ImportRecordValue> values{
+        first_page, blank_page, artwork_layer, blank_layer, path, report};
+
+    V2ProposalChunk chunk;
+    chunk.job = expected.job;
+    for (const auto& value : values) {
+        const auto record = SerializeImportRecord(value);
+        Require(record && AppendV2ProposalRecord(chunk.canonical_record_bytes,
+            static_cast<uint16_t>(record->type), record->payload),
+            "could not encode PDF page-set records");
+        ++chunk.record_count;
+    }
+    chunk.checksum_crc32 = V2ProposalRecordsCrc32(chunk.canonical_record_bytes);
+    Require(validator.Accept(MakeFrame(SerializeV2ProposalChunk(chunk, 1))),
+            "host rejected multipage PDF records or a blank source page");
+    V2ImportEnd end;
+    end.job = expected.job;
+    end.chunk_count = 1;
+    end.record_count = chunk.record_count;
+    end.canonical_bytes = chunk.canonical_record_bytes.size();
+    end.fidelity_report_complete = true;
+    Require(Digest(chunk.canonical_record_bytes, end.canonical_sha256),
+            "could not hash PDF page-set records");
+    Require(validator.Accept(MakeFrame(SerializeV2ImportEnd(end, 2))) &&
+                validator.IsComplete(),
+            "host did not complete a multipage PDF proposal");
+
+    auto invalid_values = values;
+    std::get<ImportLayerRecord>(invalid_values[3]).page_local_id = 1;
+    std::get<ImportLayerRecord>(invalid_values[3]).has_page_association = false;
+    V2ProposalChunk invalid_chunk;
+    invalid_chunk.job = expected.job;
+    for (const auto& value : invalid_values) {
+        const auto record = SerializeImportRecord(value);
+        Require(record && AppendV2ProposalRecord(invalid_chunk.canonical_record_bytes,
+            static_cast<uint16_t>(record->type), record->payload),
+            "could not encode invalid PDF page-set records");
+        ++invalid_chunk.record_count;
+    }
+    invalid_chunk.checksum_crc32 = V2ProposalRecordsCrc32(invalid_chunk.canonical_record_bytes);
+    V2ProposalStreamValidator invalid_page_binding(expected, 64 * 1024, 128, 4);
+    Require(invalid_page_binding.IsReady(), "PDF page-set validator did not initialize");
+    Require(!invalid_page_binding.Accept(MakeFrame(
+                SerializeV2ProposalChunk(invalid_chunk, 1))),
+            "host accepted a page-set layer without explicit page ownership");
 }
 
 void TestRasterChunkHostSemantics(const SourceSnapshot& source) {
@@ -435,6 +540,23 @@ void TestRequestSnapshotBinding(const SourceSnapshot& source) {
             "snapshot mismatch was not reported");
 }
 
+void TestPdfSourcePageSelectionRoundTrip(const SourceSnapshot& source) {
+    auto begin = BeginFor(source);
+    begin.format_id = "PDF";
+    begin.profile_id = "pdf-page-vector-v2";
+    begin.source_page_index = 2;
+    const auto packet = SerializeV2ImportBegin(begin, 1);
+    Require(!packet.empty(), "PDF page selection request did not serialize");
+    const auto decoded = DeserializeV2ImportBegin(packet);
+    Require(decoded && decoded->source_page_index == std::optional<uint32_t>{2},
+            "PDF source page selection was not preserved by the v2 request codec");
+    auto legacy_begin = BeginFor(source);
+    const auto legacy_packet = SerializeV2ImportBegin(legacy_begin, 1);
+    const auto legacy_decoded = DeserializeV2ImportBegin(legacy_packet);
+    Require(legacy_decoded && !legacy_decoded->source_page_index,
+            "v2 requests without a page selector lost their default behavior");
+}
+
 void TestNoAdapterExplicitError(const SourceSnapshot& source) {
     WorkerProcessHost host;
     Require(StartNegotiated(host, source, L""), "production worker v2 negotiation failed");
@@ -460,6 +582,7 @@ int main() {
         TestPositiveStream(*source);
         TestSvgHierarchyHostSemantics(*source);
         TestDxfProfileHostSemantics(*source);
+        TestPdfPageSetHostSemantics(*source);
         TestRasterChunkHostSemantics(*source);
         for (const auto* mode : {
                  L"--test-v2-stream-gap", L"--test-v2-stream-oversize", L"--test-v2-stream-quota",
@@ -472,6 +595,7 @@ int main() {
         TestRejectedStream(*source, L"--test-v2-stream-good", "v2 frame consumer rejected proposal", true);
         TestNegotiationFailures(*source);
         TestRequestSnapshotBinding(*source);
+        TestPdfSourcePageSelectionRoundTrip(*source);
         TestNoAdapterExplicitError(*source);
         std::cout << "V2 integrity semantic suite passed\n";
         return 0;

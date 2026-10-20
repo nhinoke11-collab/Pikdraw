@@ -6,6 +6,9 @@
 #include "native_window_document_color.hpp"
 #include "native_window_text_properties.hpp"
 #include "native_window_page_presets.hpp"
+#include "pikdraw/document/commands/page_commands.hpp"
+#include "pikdraw/document/commands/layer_commands.hpp"
+#include "pikdraw/desktop/shell/native_window_shortcuts_settings.hpp"
 #include "../tools/drawing_tool_controller.hpp"
 #include "../tools/pen_tool_controller.hpp"
 #include "../tools/node_tool_controller.hpp"
@@ -34,6 +37,15 @@ bool NativeWindow::is_menu_action_enabled(MenuActionId action) const {
         return workflow().can_group_selected();
     case MenuActionId::ObjectUngroup:
         return selected.size() == 1 && workflow().is_group(selected.front());
+    case MenuActionId::ObjectPowerClipMake:
+        return workflow().can_make_clipping_mask_selected();
+    case MenuActionId::ObjectPowerClipRelease:
+    case MenuActionId::ObjectPowerClipFitCenter:
+    case MenuActionId::ObjectPowerClipFitProp:
+    case MenuActionId::ObjectPowerClipFillProp:
+        return selected.size() == 1 && workflow().is_clipping_container(selected.front());
+    case MenuActionId::ObjectPowerClipPlaceInside:
+        return !selected.empty();
     case MenuActionId::ObjectAlignLeft:
         return workflow().can_align_selected(geometry::AlignMode::Left);
     case MenuActionId::ObjectAlignCenter:
@@ -87,7 +99,22 @@ bool NativeWindow::is_menu_action_enabled(MenuActionId action) const {
     case MenuActionId::ObjectRotate90CCW:
     case MenuActionId::ObjectRotate180:
     case MenuActionId::ObjectFillGradient:
-        return !root().vector_controller().selection().selected_ids().empty();
+    case MenuActionId::ObjectOrderToFront:
+    case MenuActionId::ObjectOrderToBack:
+    case MenuActionId::ObjectOrderForwardOne:
+    case MenuActionId::ObjectOrderBackwardOne:
+    case MenuActionId::ObjectLock:
+    case MenuActionId::ObjectUnlock:
+    case MenuActionId::ObjectHide:
+        return !selected.empty();
+    case MenuActionId::ObjectOrderReverse:
+        return selected.size() >= 2;
+    case MenuActionId::ObjectPowerClipToggleLock:
+        return selected.size() == 1 && workflow().is_clipping_container(selected.front());
+    case MenuActionId::ObjectIsolationEnter:
+        return selected.size() == 1 && (workflow().is_group(selected.front()) || workflow().is_clipping_container(selected.front()));
+    case MenuActionId::ObjectIsolationExit:
+        return is_in_isolation_mode();
     case MenuActionId::EffectsGaussianBlur:
         return workflow().can_activate_selected_effect(document::GaussianBlurEffect{1.0, 1.0});
     case MenuActionId::EffectsContour:
@@ -98,6 +125,21 @@ bool NativeWindow::is_menu_action_enabled(MenuActionId action) const {
         return workflow().can_activate_selected_effect(document::DropShadowEffect{});
     case MenuActionId::EffectsClear:
         return workflow().can_clear_selected_effects();
+    case MenuActionId::LayoutPagePrevious:
+    case MenuActionId::LayoutPageNext:
+    case MenuActionId::LayoutPageDelete: {
+        const auto snapshot = root().document().current_snapshot();
+        if (!snapshot) return false;
+        const auto& pages = snapshot->pages();
+        const auto found = std::find_if(pages.begin(), pages.end(), [&](const auto& page) {
+            return page.id == snapshot->active_page_id();
+        });
+        if (found == pages.end()) return false;
+        const auto index = static_cast<size_t>(std::distance(pages.begin(), found));
+        if (action == MenuActionId::LayoutPagePrevious) return index > 0;
+        if (action == MenuActionId::LayoutPageNext) return index + 1 < pages.size();
+        return pages.size() > 1;
+    }
     case MenuActionId::None:
     case MenuActionId::Separator:
         return false;
@@ -118,6 +160,9 @@ bool NativeWindow::is_menu_action_checked(MenuActionId action) const noexcept {
     case MenuActionId::TextAlignCenter: return font_alignment_ == typography::TextAlignment::Center;
     case MenuActionId::TextAlignRight: return font_alignment_ == typography::TextAlignment::Right;
     case MenuActionId::TextNonPrinting: return show_non_printing_characters_;
+    case MenuActionId::ViewProofColors: return proof_colors_enabled_;
+    case MenuActionId::ViewGamutWarning: return gamut_warning_enabled_;
+    case MenuActionId::ViewOverprintPreview: return overprint_preview_enabled_;
     default: return false;
     }
 }
@@ -133,6 +178,7 @@ void NativeWindow::execute_menu_action(int action_id) {
     }
     const auto action = static_cast<MenuActionId>(action_id);
     if (!is_menu_action_enabled(action)) return;
+    const auto& selected_items = root().vector_controller().selection().selected_ids();
     const auto activate_effect = [this](document::EffectParameters parameters,
                                         const char* name_en, const char* name_vi) {
         size_t effect_index = 0;
@@ -159,6 +205,28 @@ void NativeWindow::execute_menu_action(int action_id) {
                          : std::string("Editing existing ") + name_en +
                                " · no new effect node") ;
         }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    };
+    const auto finish_page_action = [this](std::string action_name) {
+        const auto snapshot = root().document().current_snapshot();
+        if (!snapshot) return;
+        const auto* page = snapshot->find_page(snapshot->active_page_id());
+        if (!page) return;
+        active_tab().page_width_mm = page->layout.width_mm;
+        active_tab().page_height_mm = page->layout.height_mm;
+        root().vector_controller().selection().clear();
+        fit_page_to_canvas();
+        const auto page_it = std::find_if(snapshot->pages().begin(), snapshot->pages().end(),
+            [&](const auto& candidate) { return candidate.id == page->id; });
+        const size_t page_number = static_cast<size_t>(std::distance(snapshot->pages().begin(), page_it)) + 1;
+        std::ostringstream hint;
+        if (language_ == UILanguage::Vietnamese)
+            hint << action_name << " · Trang " << page_number << '/' << snapshot->page_count()
+                 << " · " << page->layout.width_mm << " × " << page->layout.height_mm << " mm";
+        else
+            hint << action_name << " · Page " << page_number << '/' << snapshot->page_count()
+                 << " · " << page->layout.width_mm << " × " << page->layout.height_mm << " mm";
+        status_msg_ = hint.str();
         InvalidateRect(hwnd_, nullptr, FALSE);
     };
     switch (action) {
@@ -285,6 +353,78 @@ void NativeWindow::execute_menu_action(int action_id) {
         root().vector_controller().selection().clear();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
+    case MenuActionId::EditSelectSameFillColor:
+        if (workflow().select_same(SelectSameCriterion::FillColor)) {
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã chọn các đối tượng cùng màu tô" : "Selected objects with same fill color";
+        }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    case MenuActionId::EditSelectSameStrokeColor:
+        if (workflow().select_same(SelectSameCriterion::StrokeColor)) {
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã chọn các đối tượng cùng màu viền" : "Selected objects with same stroke color";
+        }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    case MenuActionId::EditSelectSameFillAndStroke:
+        if (workflow().select_same(SelectSameCriterion::FillAndStroke)) {
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã chọn các đối tượng cùng màu tô & viền" : "Selected objects with same fill & stroke";
+        }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    case MenuActionId::EditSelectSameColorSpace:
+        if (workflow().select_same(SelectSameCriterion::ColorSpace)) {
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã chọn các đối tượng cùng hệ màu" : "Selected objects with same color space";
+        }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    case MenuActionId::EditSelectAllCmyk:
+        if (workflow().select_same(SelectSameCriterion::CmykOnly)) {
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã chọn tất cả đối tượng CMYK trên trang" : "Selected all CMYK objects on page";
+        }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    case MenuActionId::EditSelectAllRgb:
+        if (workflow().select_same(SelectSameCriterion::RgbOnly)) {
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã chọn tất cả đối tượng RGB trên trang" : "Selected all RGB objects on page";
+        }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    case MenuActionId::ColorConvertSelectionToCmyk:
+        if (workflow().convert_selected_objects_color_mode(color::DocumentColorMode::Cmyk)) {
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã chuyển các đối tượng chọn sang CMYK" : "Converted selected objects to CMYK";
+        }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    case MenuActionId::ColorConvertSelectionToRgb:
+        if (workflow().convert_selected_objects_color_mode(color::DocumentColorMode::Rgb)) {
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã chuyển các đối tượng chọn sang RGB" : "Converted selected objects to RGB";
+        }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    case MenuActionId::ColorConvertActivePageToCmyk:
+        if (workflow().convert_active_page_color_mode(color::DocumentColorMode::Cmyk)) {
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã chuyển trang hiện tại sang CMYK" : "Converted active page to CMYK";
+        }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    case MenuActionId::ColorConvertActivePageToRgb:
+        if (workflow().convert_active_page_color_mode(color::DocumentColorMode::Rgb)) {
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã chuyển trang hiện tại sang RGB" : "Converted active page to RGB";
+        }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    case MenuActionId::ColorConvertDocumentToCmyk:
+        if (workflow().convert_document_color_mode(color::DocumentColorMode::Cmyk)) {
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã chuyển toàn bộ tài liệu sang CMYK" : "Converted document to CMYK";
+        }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    case MenuActionId::ColorConvertDocumentToRgb:
+        if (workflow().convert_document_color_mode(color::DocumentColorMode::Rgb)) {
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã chuyển toàn bộ tài liệu sang RGB" : "Converted document to RGB";
+        }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
     case MenuActionId::ViewZoomIn: zoom_in(); return;
     case MenuActionId::ViewZoomOut: zoom_out(); return;
     case MenuActionId::ViewZoom100: {
@@ -299,12 +439,80 @@ void NativeWindow::execute_menu_action(int action_id) {
     case MenuActionId::ViewFitPage: fit_page_to_canvas(); return;
     case MenuActionId::ViewToggleGuidelines: toggle_guidelines(); return;
     case MenuActionId::ViewClearGuidelines: clear_guidelines(); return;
+    case MenuActionId::ViewProofColors:
+        proof_colors_enabled_ = !proof_colors_enabled_;
+        update_color_preview_options();
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? (proof_colors_enabled_ ? "Mô phỏng màu in (Proof Colors): BẬT" : "Mô phỏng màu in: TẮT")
+            : (proof_colors_enabled_ ? "Proof Colors: ON" : "Proof Colors: OFF");
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    case MenuActionId::ViewGamutWarning:
+        gamut_warning_enabled_ = !gamut_warning_enabled_;
+        update_color_preview_options();
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? (gamut_warning_enabled_ ? "Cảnh báo vượt dải màu (Gamut Warning): BẬT" : "Cảnh báo dải màu: TẮT")
+            : (gamut_warning_enabled_ ? "Gamut Warning: ON" : "Gamut Warning: OFF");
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    case MenuActionId::ViewOverprintPreview:
+        overprint_preview_enabled_ = !overprint_preview_enabled_;
+        update_color_preview_options();
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? (overprint_preview_enabled_ ? "Xem trước in đè (Overprint Preview): BẬT" : "Xem trước in đè: TẮT")
+            : (overprint_preview_enabled_ ? "Overprint Preview: ON" : "Overprint Preview: OFF");
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
     case MenuActionId::LayoutOrientationLandscape:
         if (active_tab().page_width_mm < active_tab().page_height_mm) toggle_page_orientation();
         return;
     case MenuActionId::LayoutOrientationPortrait:
         if (active_tab().page_width_mm > active_tab().page_height_mm) toggle_page_orientation();
         return;
+    case MenuActionId::LayoutPagePrevious:
+    case MenuActionId::LayoutPageNext: {
+        const auto snapshot = root().document().current_snapshot();
+        if (!snapshot) return;
+        const auto& pages = snapshot->pages();
+        const auto found = std::find_if(pages.begin(), pages.end(), [&](const auto& page) {
+            return page.id == snapshot->active_page_id();
+        });
+        if (found == pages.end()) return;
+        const auto index = static_cast<size_t>(std::distance(pages.begin(), found));
+        if (action == MenuActionId::LayoutPagePrevious && index > 0)
+            (void)root().document().set_active_page(pages[index - 1].id);
+        else if (action == MenuActionId::LayoutPageNext && index + 1 < pages.size())
+            (void)root().document().set_active_page(pages[index + 1].id);
+        else return;
+        finish_page_action(language_ == UILanguage::Vietnamese ? "Đã chuyển trang" : "Page changed");
+        return;
+    }
+    case MenuActionId::LayoutPageAdd: {
+        auto& doc = root().document();
+        const auto name = "Page " + std::to_string(doc.pages().size() + 1);
+        const auto result = doc.execute_command(std::make_unique<document::AddPageCommand>(
+            document::make_document_page(name, document::Page::make_default())));
+        if (!result.success) status_msg_ = result.error_message;
+        else finish_page_action(language_ == UILanguage::Vietnamese ? "Đã thêm trang" : "Page added");
+        return;
+    }
+    case MenuActionId::LayoutPageDuplicate: {
+        auto& doc = root().document();
+        const auto result = doc.execute_command(std::make_unique<document::DuplicatePageCommand>(
+            doc.active_page_id()));
+        if (!result.success) status_msg_ = result.error_message;
+        else finish_page_action(language_ == UILanguage::Vietnamese ? "Đã nhân đôi trang" : "Page duplicated");
+        return;
+    }
+    case MenuActionId::LayoutPageDelete: {
+        auto& doc = root().document();
+        const auto result = doc.execute_command(std::make_unique<document::RemovePageCommand>(
+            doc.active_page_id()));
+        if (!result.success) status_msg_ = result.error_message;
+        else finish_page_action(language_ == UILanguage::Vietnamese ? "Đã xóa trang · Ctrl+Z để hoàn tác"
+                                                                    : "Page deleted · Ctrl+Z to undo");
+        return;
+    }
     case MenuActionId::LayoutPageA4: select_page_preset(0); return;
     case MenuActionId::LayoutPageA3: select_page_preset(1); return;
     case MenuActionId::LayoutPageBanner: select_page_preset(6); return;
@@ -318,6 +526,47 @@ void NativeWindow::execute_menu_action(int action_id) {
         if (!workflow().ungroup_selected())
             status_msg_ = language_ == UILanguage::Vietnamese ? "Chọn một nhóm để rã nhóm"
                                                                : "Select a group to ungroup";
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    case MenuActionId::ObjectPowerClipPlaceInside:
+    case MenuActionId::ObjectPowerClipMake: {
+        auto gid = workflow().make_clipping_mask_selected(true);
+        if (gid != document::kInvalidObjectId) {
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã tạo PowerClip / Mặt nạ cắt (Ctrl+7)"
+                                                              : "Created PowerClip / Clipping Mask (Ctrl+7)";
+        } else {
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Chọn ít nhất 2 đối tượng để tạo PowerClip"
+                                                              : "Select at least 2 objects to make Clipping Mask";
+        }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    case MenuActionId::ObjectPowerClipRelease: {
+        if (workflow().release_clipping_mask_selected()) {
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã hủy mặt nạ cắt (Release)"
+                                                              : "Released Clipping Mask";
+        }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    case MenuActionId::ObjectPowerClipFitCenter:
+        if (selected_items.size() == 1) workflow().fit_powerclip_contents(selected_items.front(), document::ClipContentFitMode::CenterContents);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    case MenuActionId::ObjectPowerClipFitProp:
+        if (selected_items.size() == 1) workflow().fit_powerclip_contents(selected_items.front(), document::ClipContentFitMode::FitProportionally);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    case MenuActionId::ObjectPowerClipFillProp:
+        if (selected_items.size() == 1) workflow().fit_powerclip_contents(selected_items.front(), document::ClipContentFitMode::FillProportionally);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    case MenuActionId::ObjectPowerClipStretch:
+        if (selected_items.size() == 1) workflow().fit_powerclip_contents(selected_items.front(), document::ClipContentFitMode::StretchToFill);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    case MenuActionId::ObjectPowerClipSelectContents:
+        if (selected_items.size() == 1) enter_group_isolation(selected_items.front());
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     case MenuActionId::ObjectConvertToCurves: convert_selected_text_to_curves(); return;
@@ -398,6 +647,96 @@ void NativeWindow::execute_menu_action(int action_id) {
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
         return;
+    case MenuActionId::ObjectOrderToFront:
+        reorder_selected_objects(*this, document::ReorderObjectInLayerCommand::Step::BringToFront);
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Đã chuyển lên trên cùng trang (To Front)" : "Brought to Front";
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    case MenuActionId::ObjectOrderToBack:
+        reorder_selected_objects(*this, document::ReorderObjectInLayerCommand::Step::SendToBack);
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Đã chuyển xuống dưới cùng trang (To Back)" : "Sent to Back";
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    case MenuActionId::ObjectOrderForwardOne:
+        reorder_selected_objects(*this, document::ReorderObjectInLayerCommand::Step::BringForward);
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Đã chuyển lên một lớp (Forward One)" : "Brought Forward";
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    case MenuActionId::ObjectOrderBackwardOne:
+        reorder_selected_objects(*this, document::ReorderObjectInLayerCommand::Step::SendBackward);
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Đã chuyển xuống một lớp (Backward One)" : "Sent Backward";
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    case MenuActionId::ObjectOrderReverse: {
+        const auto sel = root().vector_controller().selection().selected_ids();
+        if (sel.size() >= 2) {
+            auto reversed_sel = sel;
+            std::reverse(reversed_sel.begin(), reversed_sel.end());
+            for (auto id : reversed_sel) {
+                root().document().execute_command(std::make_unique<document::ReorderObjectInLayerCommand>(
+                    id, document::ReorderObjectInLayerCommand::Step::BringToFront));
+            }
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã đảo ngược thứ tự các đối tượng" : "Reversed object order";
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        return;
+    }
+    case MenuActionId::ObjectLock: {
+        const auto sel = root().vector_controller().selection().selected_ids();
+        for (auto id : sel) {
+            root().document().execute_command(std::make_unique<document::SetObjectLockedCommand>(id, true));
+        }
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Đã khóa đối tượng" : "Locked object(s)";
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    case MenuActionId::ObjectUnlock: {
+        const auto sel = root().vector_controller().selection().selected_ids();
+        for (auto id : sel) {
+            root().document().execute_command(std::make_unique<document::SetObjectLockedCommand>(id, false));
+        }
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Đã mở khóa đối tượng" : "Unlocked object(s)";
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    case MenuActionId::ObjectHide: {
+        const auto sel = root().vector_controller().selection().selected_ids();
+        for (auto id : sel) {
+            root().document().execute_command(std::make_unique<document::SetObjectVisibilityCommand>(id, false));
+        }
+        root().vector_controller().selection().clear();
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Đã ẩn đối tượng" : "Hidden object(s)";
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    case MenuActionId::ObjectIsolationEnter: {
+        const auto sel = root().vector_controller().selection().selected_ids();
+        if (sel.size() == 1) {
+            enter_group_isolation(sel.front());
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        return;
+    }
+    case MenuActionId::ObjectIsolationExit: {
+        exit_group_isolation();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    case MenuActionId::ObjectPowerClipToggleLock: {
+        const auto sel = root().vector_controller().selection().selected_ids();
+        if (sel.size() == 1) {
+            const auto snap = root().document().current_snapshot();
+            if (auto obj = snap->objects().get(sel.front())) {
+                if (const auto* grp = std::get_if<document::GroupObject>(&(*obj))) {
+                    if (grp->clip.has_value()) {
+                        workflow().set_powerclip_lock_contents(sel.front(), !grp->clip->lock_contents_to_frame);
+                        InvalidateRect(hwnd_, nullptr, FALSE);
+                    }
+                }
+            }
+        }
+        return;
+    }
     case MenuActionId::EffectsGaussianBlur: {
         activate_effect(document::GaussianBlurEffect{1.0, 1.0}, "Gaussian Blur", "Gaussian Blur");
         return;
@@ -463,6 +802,7 @@ void NativeWindow::execute_menu_action(int action_id) {
     case MenuActionId::ToolPolyline: workflow().cancel_effect_draft(); set_active_tool(7); return;
     case MenuActionId::ToolPen: workflow().cancel_effect_draft(); set_active_tool(8); return;
     case MenuActionId::ToolGradient: workflow().cancel_effect_draft(); set_active_tool(13); return;
+    case MenuActionId::ToolCustomizeToolbox: toggle_toolbox_customize_flyout(); return;
     case MenuActionId::ObjectFillGradient: workflow().cancel_effect_draft(); set_active_tool(13); open_inspector_properties_panel(); return;
     case MenuActionId::WindowProperties: open_inspector_properties_panel(); return;
     case MenuActionId::WindowAlignDistributePanel: open_align_distribute_panel(); return;

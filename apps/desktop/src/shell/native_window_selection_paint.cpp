@@ -206,6 +206,92 @@ void NativeWindow::paint_selection_overlay(HDC dc) {
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, quick_dimension_active_ ? RGB(0, 242, 195) : (theme_ == ThemeMode::CyberDark ? RGB(0, 242, 195) : RGB(0, 112, 88)));
         DrawTextW(dc, text.str().c_str(), -1, &label, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        // PowerClip On-Canvas Overlay (matching CorelDRAW Image 2):
+        // 1. Center crossmark 'x' on contents
+        // 2. Floating mini-toolbar above container with [Edit] [Select] [Extract] [Lock] [Fit]
+        if (selection.count() == 1 && const_cast<NativeWindow*>(this)->workflow().is_clipping_container(selection.selected_ids().front())) {
+            const auto clip_id = selection.selected_ids().front();
+            const auto* grp_obj = snapshot->objects().lookup_ref(clip_id);
+            if (grp_obj && std::holds_alternative<document::GroupObject>(*grp_obj)) {
+                const auto& grp = std::get<document::GroupObject>(*grp_obj);
+                std::optional<geometry::Rect2D> content_bounds;
+                for (auto cid : grp.children_ids) {
+                    if (cid == grp.clip->mask_object_id) continue;
+                    auto cb = const_cast<NativeWindow*>(this)->workflow().get_object_bounds(cid);
+                    if (cb) content_bounds = content_bounds ? content_bounds->united(*cb) : *cb;
+                }
+                if (content_bounds) {
+                    const auto center_world = content_bounds->center();
+                    const auto center_screen = camera.world_to_screen(center_world);
+                    const int cx_c = area.left + static_cast<int>(std::lround(center_screen.x));
+                    const int cy_c = area.top + static_cast<int>(std::lround(center_screen.y));
+
+                    // Draw center cross 'x'
+                    const auto x_pen = CreatePen(PS_SOLID, 1, RGB(100, 116, 139));
+                    const auto old_x_pen = SelectObject(dc, x_pen);
+                    MoveToEx(dc, cx_c - 5, cy_c - 5, nullptr);
+                    LineTo(dc, cx_c + 6, cy_c + 6);
+                    MoveToEx(dc, cx_c - 5, cy_c + 5, nullptr);
+                    LineTo(dc, cx_c + 6, cy_c - 6);
+                    SelectObject(dc, old_x_pen);
+                    DeleteObject(x_pen);
+                }
+
+                // Draw floating mini-toolbar matching Image 2
+                int bar_w = 264;
+                int bar_h = 28;
+                int bar_x = rect.left;
+                if (bar_x + bar_w > area.right - 10) bar_x = area.right - bar_w - 10;
+                if (bar_x < area.left + 10) bar_x = area.left + 10;
+                int bar_y = rect.top - bar_h - 8;
+                if (bar_y < area.top + 8) bar_y = rect.top + 8;
+
+                RECT bar_rc{bar_x, bar_y, bar_x + bar_w, bar_y + bar_h};
+                fill_rect(dc, bar_rc, theme_ == ThemeMode::CyberDark ? RGB(18, 28, 42) : RGB(255, 255, 255));
+                outline(dc, bar_rc, theme_ == ThemeMode::CyberDark ? RGB(45, 60, 80) : RGB(203, 213, 225));
+
+                const bool is_vi = (language_ == UILanguage::Vietnamese);
+                const bool locked = grp.clip ? grp.clip->lock_contents_to_frame : true;
+
+                SetBkMode(dc, TRANSPARENT);
+                // 1. [ Edit ]
+                RECT r_edit{bar_x + 4, bar_y + 3, bar_x + 52, bar_y + bar_h - 3};
+                fill_rect(dc, r_edit, theme_ == ThemeMode::CyberDark ? RGB(26, 40, 60) : RGB(241, 245, 249));
+                outline(dc, r_edit, theme_ == ThemeMode::CyberDark ? RGB(0, 242, 195) : RGB(0, 135, 106));
+                SetTextColor(dc, theme_ == ThemeMode::CyberDark ? RGB(0, 242, 195) : RGB(0, 135, 106));
+                DrawTextW(dc, is_vi ? L"✎ Sửa" : L"✎ Edit", -1, &r_edit, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+                // 2. [ ⛶ ] (Select)
+                RECT r_sel{bar_x + 56, bar_y + 3, bar_x + 84, bar_y + bar_h - 3};
+                fill_rect(dc, r_sel, theme_ == ThemeMode::CyberDark ? RGB(26, 40, 60) : RGB(241, 245, 249));
+                outline(dc, r_sel, theme_ == ThemeMode::CyberDark ? RGB(45, 60, 80) : RGB(203, 213, 225));
+                SetTextColor(dc, theme_ == ThemeMode::CyberDark ? RGB(241, 245, 249) : RGB(15, 23, 42));
+                DrawTextW(dc, L"⛶", -1, &r_sel, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+                // 3. [ ⇱ ] (Extract)
+                RECT r_ext{bar_x + 88, bar_y + 3, bar_x + 116, bar_y + bar_h - 3};
+                fill_rect(dc, r_ext, theme_ == ThemeMode::CyberDark ? RGB(26, 40, 60) : RGB(241, 245, 249));
+                outline(dc, r_ext, theme_ == ThemeMode::CyberDark ? RGB(45, 60, 80) : RGB(203, 213, 225));
+                SetTextColor(dc, theme_ == ThemeMode::CyberDark ? RGB(241, 245, 249) : RGB(15, 23, 42));
+                DrawTextW(dc, L"⇱", -1, &r_ext, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+                // 4. [ 🔒 / 🔓 ] (Lock)
+                RECT r_lock{bar_x + 120, bar_y + 3, bar_x + 148, bar_y + bar_h - 3};
+                fill_rect(dc, r_lock, locked ? (theme_ == ThemeMode::CyberDark ? RGB(0, 60, 50) : RGB(220, 252, 231))
+                                             : (theme_ == ThemeMode::CyberDark ? RGB(26, 40, 60) : RGB(241, 245, 249)));
+                outline(dc, r_lock, locked ? RGB(0, 242, 195) : (theme_ == ThemeMode::CyberDark ? RGB(45, 60, 80) : RGB(203, 213, 225)));
+                SetTextColor(dc, locked ? RGB(0, 242, 195) : (theme_ == ThemeMode::CyberDark ? RGB(148, 163, 184) : RGB(100, 116, 139)));
+                DrawTextW(dc, locked ? L"🔒" : L"🔓", -1, &r_lock, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+                // 5. [ Fit Contents ▾ ]
+                RECT r_fit{bar_x + 152, bar_y + 3, bar_x + bar_w - 4, bar_y + bar_h - 3};
+                fill_rect(dc, r_fit, theme_ == ThemeMode::CyberDark ? RGB(26, 40, 60) : RGB(241, 245, 249));
+                outline(dc, r_fit, theme_ == ThemeMode::CyberDark ? RGB(45, 60, 80) : RGB(203, 213, 225));
+                SetTextColor(dc, theme_ == ThemeMode::CyberDark ? RGB(241, 245, 249) : RGB(15, 23, 42));
+                DrawTextW(dc, is_vi ? L"Căn chỉnh ▾" : L"Fit Contents ▾", -1, &r_fit, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            }
+        }
     }
     if (is_marquee_) {
         auto rect = rect_for(selection_ui::between(pointer_down_world_, pointer_current_world_));

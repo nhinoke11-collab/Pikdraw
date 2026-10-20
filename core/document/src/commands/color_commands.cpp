@@ -131,4 +131,97 @@ CommandResult SetDocumentRasterDpiCommand::undo(Document& doc) {
     doc.apply_page_collection(before_->pages(), before_->active_page_id());
     return CommandResult::ok();
 }
+
+SetPageColorModeCommand::SetPageColorModeCommand(PageId page_id, color::DocumentColorMode mode,
+    std::string profile, std::shared_ptr<const color::IccPreview> icc)
+    : page_id_(page_id), mode_(mode),
+      profile_(profile.empty() ? color::default_document_profile(mode) : std::move(profile)),
+      icc_(std::move(icc)) {}
+
+CommandResult SetPageColorModeCommand::execute(Document& doc) {
+    if (!color::valid_document_color_mode(mode_) || profile_.empty() || profile_.size() > 256)
+        return CommandResult::fail("Invalid page color mode or profile");
+    const auto snapshot = doc.current_snapshot();
+    const auto* target_page = snapshot->find_page(page_id_);
+    if (!target_page) return CommandResult::fail("Page not found");
+    if (target_page->layout.color_mode_explicit && target_page->layout.color_mode == mode_ &&
+        target_page->layout.color_profile_name == profile_)
+        return CommandResult::no_change();
+    auto pages = doc.pages();
+    auto it = std::find_if(pages.begin(), pages.end(), [this](const auto& p) { return p.id == page_id_; });
+    if (it == pages.end()) return CommandResult::fail("Page not found in document");
+    it->objects = normalize_process_colors(it->objects, mode_, icc_.get());
+    it->layout.color_mode = mode_;
+    it->layout.color_profile_name = profile_;
+    it->layout.color_mode_explicit = true;
+    before_ = snapshot;
+    doc.apply_page_collection(std::move(pages), doc.active_page_id());
+    return CommandResult::ok();
+}
+
+CommandResult SetPageColorModeCommand::undo(Document& doc) {
+    if (!before_) return CommandResult::fail("No page color change to undo");
+    doc.apply_page_collection(before_->pages(), before_->active_page_id());
+    return CommandResult::ok();
+}
+
+CommandResult SetPageRasterDpiCommand::execute(Document& doc) {
+    if (dpi_ != 72 && dpi_ != 150 && dpi_ != 300)
+        return CommandResult::fail("Raster effects DPI must be 72, 150 or 300");
+    const auto snapshot = doc.current_snapshot();
+    const auto* target_page = snapshot->find_page(page_id_);
+    if (!target_page) return CommandResult::fail("Page not found");
+    if (target_page->layout.raster_dpi == dpi_ && (target_page->layout.color_mode_explicit || target_page->layout.raster_dpi_explicit))
+        return CommandResult::no_change();
+    auto pages = doc.pages();
+    auto it = std::find_if(pages.begin(), pages.end(), [this](const auto& p) { return p.id == page_id_; });
+    if (it == pages.end()) return CommandResult::fail("Page not found in document");
+    it->layout.raster_dpi = dpi_;
+    it->layout.raster_dpi_explicit = true;
+    before_ = snapshot;
+    doc.apply_page_collection(std::move(pages), doc.active_page_id());
+    return CommandResult::ok();
+}
+
+CommandResult SetPageRasterDpiCommand::undo(Document& doc) {
+    if (!before_) return CommandResult::fail("No page raster DPI change to undo");
+    doc.apply_page_collection(before_->pages(), before_->active_page_id());
+    return CommandResult::ok();
+}
+
+ConvertObjectsColorModeCommand::ConvertObjectsColorModeCommand(std::vector<ObjectId> object_ids,
+    color::DocumentColorMode mode, std::string profile, std::shared_ptr<const color::IccPreview> icc)
+    : object_ids_(std::move(object_ids)), mode_(mode),
+      profile_(profile.empty() ? color::default_document_profile(mode) : std::move(profile)),
+      icc_(std::move(icc)) {}
+
+CommandResult ConvertObjectsColorModeCommand::execute(Document& doc) {
+    if (!color::valid_document_color_mode(mode_))
+        return CommandResult::fail("Invalid target color mode");
+    if (object_ids_.empty())
+        return CommandResult::no_change();
+
+    auto objects = doc.objects();
+    bool any_changed = false;
+    for (const auto id : object_ids_) {
+        const auto* existing = objects.lookup_ref(id);
+        if (!existing) continue;
+        if (object_colors_match_mode(*existing, mode_)) continue;
+        auto converted = *existing;
+        if (normalize_object_colors(converted, mode_, icc_.get())) {
+            objects = objects.set(id, std::move(converted));
+            any_changed = true;
+        }
+    }
+    if (!any_changed) return CommandResult::no_change();
+    before_ = doc.current_snapshot();
+    doc.apply_mutation(doc.page(), std::move(objects));
+    return CommandResult::ok();
+}
+
+CommandResult ConvertObjectsColorModeCommand::undo(Document& doc) {
+    if (!before_) return CommandResult::fail("No object color conversion to undo");
+    doc.apply_mutation(before_->page(), before_->objects());
+    return CommandResult::ok();
+}
 } // namespace pikdraw::document

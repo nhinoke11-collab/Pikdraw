@@ -100,6 +100,40 @@ private:
     bool executed_{false};
 };
 
+class SetGroupClipCommand final : public document::DocumentCommand {
+public:
+    SetGroupClipCommand(document::ObjectId group_id, std::optional<document::ClipProperties> clip)
+        : group_id_(group_id), new_clip_(std::move(clip)) {}
+
+    std::string_view name() const noexcept override { return "Set PowerClip Properties"; }
+
+    document::CommandResult execute(document::Document& doc) override {
+        const auto obj = doc.objects().get(group_id_);
+        if (!obj || !std::holds_alternative<document::GroupObject>(*obj))
+            return document::CommandResult::fail("Group not found");
+        auto grp = std::get<document::GroupObject>(*obj);
+        old_clip_ = grp.clip;
+        grp.clip = new_clip_;
+        doc.apply_mutation(doc.page(), doc.objects().set(group_id_, grp));
+        return document::CommandResult::ok();
+    }
+
+    document::CommandResult undo(document::Document& doc) override {
+        const auto obj = doc.objects().get(group_id_);
+        if (!obj || !std::holds_alternative<document::GroupObject>(*obj))
+            return document::CommandResult::fail("Group not found");
+        auto grp = std::get<document::GroupObject>(*obj);
+        grp.clip = old_clip_;
+        doc.apply_mutation(doc.page(), doc.objects().set(group_id_, grp));
+        return document::CommandResult::ok();
+    }
+
+private:
+    document::ObjectId group_id_;
+    std::optional<document::ClipProperties> new_clip_;
+    std::optional<document::ClipProperties> old_clip_;
+};
+
 } // namespace
 
 bool DocumentWorkflow::can_group_selected() const {
@@ -226,6 +260,10 @@ std::optional<geometry::Rect2D> DocumentWorkflow::get_object_bounds(document::Ob
         return img_obj->bounds();
     }
     if (const auto* grp = std::get_if<document::GroupObject>(&*obj_opt)) {
+        if (grp->is_clipping_container()) {
+            auto mb = get_object_bounds(grp->clip->mask_object_id);
+            if (mb) return grp->transform.map_rect(*mb);
+        }
         std::optional<geometry::Rect2D> union_bounds;
         for (const auto cid : grp->children_ids) {
             auto cb = get_object_bounds(cid);
@@ -397,5 +435,192 @@ bool DocumentWorkflow::rotate_selected_180(std::optional<geometry::Point2D> pivo
     return rotate_selected_degrees(180.0, pivot);
 }
 
+bool DocumentWorkflow::can_make_clipping_mask_selected() const {
+    const auto& selected = root_.vector_controller().selection().selected_ids();
+    if (selected.size() < 2) return false;
+    return can_group_selected();
+}
+
+bool DocumentWorkflow::is_clipping_container(document::ObjectId id) const {
+    const auto snapshot = root_.document().current_snapshot();
+    const auto obj = snapshot->objects().get(id);
+    if (!obj || !std::holds_alternative<document::GroupObject>(*obj)) return false;
+    return std::get<document::GroupObject>(*obj).is_clipping_container();
+}
+
+document::ObjectId DocumentWorkflow::make_clipping_mask_selected(bool preserve_appearance) {
+    auto& controller = root_.vector_controller();
+    const auto selected = controller.selection().selected_ids();
+    if (selected.size() < 2 || !can_group_selected())
+        return document::kInvalidObjectId;
+
+    const auto snapshot = root_.document().current_snapshot();
+    const auto& page = snapshot->page();
+
+    size_t owner_layer = page.layers.size();
+    size_t max_idx = 0;
+    document::ObjectId topmost_id = document::kInvalidObjectId;
+    for (size_t layer_idx = 0; layer_idx < page.layers.size(); ++layer_idx) {
+        const auto& layer = page.layers[layer_idx];
+        for (size_t idx = 0; idx < layer.object_ids.size(); ++idx) {
+            auto oid = layer.object_ids[idx];
+            if (std::find(selected.begin(), selected.end(), oid) != selected.end()) {
+                owner_layer = layer_idx;
+                if (topmost_id == document::kInvalidObjectId || idx >= max_idx) {
+                    max_idx = idx;
+                    topmost_id = oid;
+                }
+            }
+        }
+    }
+    if (topmost_id == document::kInvalidObjectId || owner_layer >= page.layers.size())
+        return document::kInvalidObjectId;
+
+    document::ObjectId container_id = topmost_id;
+
+    std::vector<document::ObjectId> ordered_children;
+    ordered_children.push_back(container_id);
+    for (auto oid : selected) {
+        if (oid != container_id) {
+            ordered_children.push_back(oid);
+        }
+    }
+
+    const auto group_id = document::generate_object_id();
+    document::GroupObject grp;
+    grp.id = group_id;
+    grp.name = "PowerClip (" + std::to_string(group_id) + ")";
+    grp.children_ids = ordered_children;
+    grp.transform = geometry::Transform2D::identity();
+    grp.visible = true;
+    grp.locked = false;
+
+    document::ClipProperties clip;
+    clip.mask_object_id = container_id;
+    clip.lock_contents_to_frame = true;
+    clip.preserve_frame_appearance = preserve_appearance;
+    clip.fit_mode = document::ClipContentFitMode::CenterContents;
+    clip.is_empty_frame = false;
+    grp.clip = clip;
+
+    auto cmd = std::make_unique<GroupObjectsCommand>(std::move(grp), selected);
+    const auto res = root_.document().execute_command(std::move(cmd));
+    if (res.success) {
+        controller.selection().select(group_id, vector::SelectionMode::Replace);
+        // CorelDRAW standard: auto-center contents into the frame container
+        // so that contents never disappear or remain outside!
+        fit_powerclip_contents(group_id, document::ClipContentFitMode::CenterContents);
+        sync_status_bar();
+        return group_id;
+    }
+    return document::kInvalidObjectId;
+}
+
+bool DocumentWorkflow::release_clipping_mask_selected() {
+    auto& controller = root_.vector_controller();
+    const auto selected = controller.selection().selected_ids();
+    if (selected.empty())
+        return false;
+
+    const auto snapshot = root_.document().current_snapshot();
+    std::vector<document::ObjectId> clips_to_release;
+    for (auto id : selected) {
+        if (is_clipping_container(id)) {
+            clips_to_release.push_back(id);
+        }
+    }
+    if (clips_to_release.empty())
+        return false;
+
+    return ungroup_selected();
+}
+
+document::ObjectId DocumentWorkflow::place_inside_powerclip(
+    document::ObjectId content_id,
+    document::ObjectId frame_id,
+    document::ClipContentFitMode fit_mode) {
+    if (content_id == document::kInvalidObjectId || frame_id == document::kInvalidObjectId || content_id == frame_id)
+        return document::kInvalidObjectId;
+
+    auto& controller = root_.vector_controller();
+    controller.selection().clear();
+    controller.selection().select(content_id, vector::SelectionMode::Add);
+    controller.selection().select(frame_id, vector::SelectionMode::Add);
+
+    auto res_id = make_clipping_mask_selected(true);
+    if (res_id != document::kInvalidObjectId && fit_mode != document::ClipContentFitMode::CurrentPosition) {
+        fit_powerclip_contents(res_id, fit_mode);
+    }
+    return res_id;
+}
+
+bool DocumentWorkflow::fit_powerclip_contents(document::ObjectId group_id, document::ClipContentFitMode mode) {
+    const auto snapshot = root_.document().current_snapshot();
+    const auto obj = snapshot->objects().get(group_id);
+    if (!obj || !std::holds_alternative<document::GroupObject>(*obj)) return false;
+    const auto& grp = std::get<document::GroupObject>(*obj);
+    if (!grp.is_clipping_container()) return false;
+
+    const auto mask_bounds = get_object_bounds(grp.clip->mask_object_id);
+    if (!mask_bounds || mask_bounds->width <= 0 || mask_bounds->height <= 0) return false;
+
+    std::optional<geometry::Rect2D> contents_bounds;
+    for (auto cid : grp.children_ids) {
+        if (cid == grp.clip->mask_object_id) continue;
+        auto cb = get_object_bounds(cid);
+        if (cb) contents_bounds = contents_bounds ? contents_bounds->united(*cb) : *cb;
+    }
+    if (!contents_bounds || contents_bounds->width <= 0 || contents_bounds->height <= 0) return false;
+
+    geometry::Transform2D fit_tx = geometry::Transform2D::identity();
+    const auto mc = mask_bounds->center();
+    const auto cc = contents_bounds->center();
+
+    if (mode == document::ClipContentFitMode::CenterContents) {
+        fit_tx = geometry::Transform2D::translation(mc.x - cc.x, mc.y - cc.y);
+    } else if (mode == document::ClipContentFitMode::FitProportionally) {
+        double s = std::min(mask_bounds->width / contents_bounds->width, mask_bounds->height / contents_bounds->height);
+        fit_tx = geometry::Transform2D::translation(mc.x, mc.y) *
+                 geometry::Transform2D::scale(s, s) *
+                 geometry::Transform2D::translation(-cc.x, -cc.y);
+    } else if (mode == document::ClipContentFitMode::FillProportionally) {
+        double s = std::max(mask_bounds->width / contents_bounds->width, mask_bounds->height / contents_bounds->height);
+        fit_tx = geometry::Transform2D::translation(mc.x, mc.y) *
+                 geometry::Transform2D::scale(s, s) *
+                 geometry::Transform2D::translation(-cc.x, -cc.y);
+    } else if (mode == document::ClipContentFitMode::StretchToFill) {
+        double sx = mask_bounds->width / contents_bounds->width;
+        double sy = mask_bounds->height / contents_bounds->height;
+        fit_tx = geometry::Transform2D::translation(mc.x, mc.y) *
+                 geometry::Transform2D::scale(sx, sy) *
+                 geometry::Transform2D::translation(-cc.x, -cc.y);
+    }
+
+    auto composite = std::make_unique<document::CompositeCommand>("Fit PowerClip Contents");
+    for (auto cid : grp.children_ids) {
+        if (cid == grp.clip->mask_object_id) continue;
+        composite->add_command(std::make_unique<document::TransformObjectCommand>(cid, fit_tx));
+    }
+    auto updated_clip = *grp.clip;
+    updated_clip.fit_mode = mode;
+    composite->add_command(std::make_unique<SetGroupClipCommand>(group_id, updated_clip));
+    const auto res = root_.document().execute_command(std::move(composite));
+    sync_status_bar();
+    return res.success;
+}
+
+bool DocumentWorkflow::set_powerclip_lock_contents(document::ObjectId group_id, bool locked) {
+    const auto snapshot = root_.document().current_snapshot();
+    const auto obj = snapshot->objects().get(group_id);
+    if (!obj || !std::holds_alternative<document::GroupObject>(*obj)) return false;
+    auto grp = std::get<document::GroupObject>(*obj);
+    if (!grp.is_clipping_container()) return false;
+    auto clip = grp.clip;
+    clip->lock_contents_to_frame = locked;
+    auto cmd = std::make_unique<SetGroupClipCommand>(group_id, clip);
+    const auto res = root_.document().execute_command(std::move(cmd));
+    sync_status_bar();
+    return res.success;
+}
 
 } // namespace pikdraw::desktop

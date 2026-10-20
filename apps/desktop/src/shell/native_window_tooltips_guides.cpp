@@ -438,6 +438,9 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
             } else if (slot == ToolboxSlotId::Gradient) {
                 tip_text = is_vi ? L"Công cụ chuyển sắc tương tác (Gradient Tool) · Phím G"
                                  : L"Interactive Gradient Tool · Shortcut: G";
+            } else if (slot == ToolboxSlotId::Dimension) {
+                tip_text = is_vi ? L"Công cụ đo kích thước (CAD Dimension Tool) · Phím D"
+                                 : L"CAD Dimension Tool · Shortcut: D";
             }
         }
     }

@@ -59,6 +59,18 @@ enum class MenuActionId {
     EditStepAndRepeat,
     EditSelectAll,
     EditDeselect,
+    EditSelectSameFillColor,
+    EditSelectSameStrokeColor,
+    EditSelectSameFillAndStroke,
+    EditSelectSameColorSpace,
+    EditSelectAllCmyk,
+    EditSelectAllRgb,
+    ColorConvertSelectionToCmyk,
+    ColorConvertSelectionToRgb,
+    ColorConvertActivePageToCmyk,
+    ColorConvertActivePageToRgb,
+    ColorConvertDocumentToCmyk,
+    ColorConvertDocumentToRgb,
     // View
     ViewZoomIn,
     ViewZoomOut,
@@ -68,8 +80,16 @@ enum class MenuActionId {
     ViewClearGuidelines,
     ViewSnapGrid,
     ViewSnapObjects,
+    ViewProofColors,
+    ViewGamutWarning,
+    ViewOverprintPreview,
     // Layout
     LayoutPageSetup,
+    LayoutPagePrevious,
+    LayoutPageNext,
+    LayoutPageAdd,
+    LayoutPageDuplicate,
+    LayoutPageDelete,
     LayoutOrientationLandscape,
     LayoutOrientationPortrait,
     LayoutPageA4,
@@ -78,6 +98,14 @@ enum class MenuActionId {
     // Object
     ObjectGroup,
     ObjectUngroup,
+    ObjectPowerClipMake,
+    ObjectPowerClipRelease,
+    ObjectPowerClipPlaceInside,
+    ObjectPowerClipFitCenter,
+    ObjectPowerClipFitProp,
+    ObjectPowerClipFillProp,
+    ObjectPowerClipStretch,
+    ObjectPowerClipSelectContents,
     ObjectProperties,
     ObjectConvertToCurves,
     ObjectAlignLeft,
@@ -108,6 +136,17 @@ enum class MenuActionId {
     ObjectRotate90CCW,
     ObjectRotate180,
     ObjectFillGradient,
+    ObjectPowerClipToggleLock,
+    ObjectOrderToFront,
+    ObjectOrderToBack,
+    ObjectOrderForwardOne,
+    ObjectOrderBackwardOne,
+    ObjectOrderReverse,
+    ObjectLock,
+    ObjectUnlock,
+    ObjectHide,
+    ObjectIsolationEnter,
+    ObjectIsolationExit,
     // Effects
     EffectsGaussianBlur,
     EffectsContour,
@@ -149,6 +188,7 @@ enum class MenuActionId {
     ToolPen,
     ToolPolygon,
     ToolGradient,
+    ToolCustomizeToolbox,
     // Window
     WindowProperties,
     WindowAlignDistributePanel,
@@ -364,7 +404,7 @@ inline constexpr std::array<MenuItem, 10> kFileMenuItems{{
 }};
 
 // 2. Edit Menu
-inline constexpr std::array<MenuItem, 20> kEditMenuItems{{
+inline constexpr std::array<MenuItem, 34> kEditMenuItems{{
     {MenuActionId::EditUndo, L"Undo", L"Hoàn tác", L"Ctrl+Z"},
     {MenuActionId::EditRedo, L"Redo", L"Làm lại", L"Ctrl+Y"},
     {MenuActionId::Separator, L"", L"", L"", true},
@@ -383,12 +423,26 @@ inline constexpr std::array<MenuItem, 20> kEditMenuItems{{
     {MenuActionId::EditSelectAll, L"Select All", L"Chọn tất cả", L"Ctrl+A"},
     {MenuActionId::EditDeselect, L"Deselect", L"Bỏ chọn", L"Esc"},
     {MenuActionId::Separator, L"", L"", L"", true},
+    {MenuActionId::EditSelectSameFillColor, L"Select Same Fill Color", L"Chọn cùng màu tô", L""},
+    {MenuActionId::EditSelectSameStrokeColor, L"Select Same Stroke Color", L"Chọn cùng màu viền", L""},
+    {MenuActionId::EditSelectSameFillAndStroke, L"Select Same Fill & Stroke", L"Chọn cùng màu tô & viền", L""},
+    {MenuActionId::EditSelectSameColorSpace, L"Select Same Color Space", L"Chọn cùng hệ màu", L""},
+    {MenuActionId::EditSelectAllCmyk, L"Select All CMYK Objects", L"Chọn tất cả đối tượng CMYK", L""},
+    {MenuActionId::EditSelectAllRgb, L"Select All RGB Objects", L"Chọn tất cả đối tượng RGB", L""},
+    {MenuActionId::Separator, L"", L"", L"", true},
+    {MenuActionId::ColorConvertSelectionToCmyk, L"Convert Selection to CMYK", L"Chuyển đối tượng chọn sang CMYK", L""},
+    {MenuActionId::ColorConvertSelectionToRgb, L"Convert Selection to RGB", L"Chuyển đối tượng chọn sang RGB", L""},
+    {MenuActionId::ColorConvertActivePageToCmyk, L"Convert Active Page to CMYK", L"Chuyển trang hiện tại sang CMYK", L""},
+    {MenuActionId::ColorConvertActivePageToRgb, L"Convert Active Page to RGB", L"Chuyển trang hiện tại sang RGB", L""},
+    {MenuActionId::ColorConvertDocumentToCmyk, L"Convert Document to CMYK", L"Chuyển toàn bộ file sang CMYK", L""},
+    {MenuActionId::ColorConvertDocumentToRgb, L"Convert Document to RGB", L"Chuyển toàn bộ file sang RGB", L""},
+    {MenuActionId::Separator, L"", L"", L"", true},
     {static_cast<MenuActionId>(document_color_ui::kModeMenu), L"Document Color Mode", L"Hệ màu tài liệu", L"▸"},
     {static_cast<MenuActionId>(document_color_ui::kDpiMenu), L"Raster Effects DPI", L"DPI hiệu ứng raster", L"▸"}
 }};
 
 // 3. View Menu
-inline constexpr std::array<MenuItem, 10> kViewMenuItems{{
+inline constexpr std::array<MenuItem, 14> kViewMenuItems{{
     {MenuActionId::ViewZoomIn, L"Zoom In", L"Phóng to", L""},
     {MenuActionId::ViewZoomOut, L"Zoom Out", L"Thu nhỏ", L""},
     {MenuActionId::ViewZoom100, L"Zoom 100%", L"Tỷ lệ 100%", L"1"},
@@ -398,12 +452,22 @@ inline constexpr std::array<MenuItem, 10> kViewMenuItems{{
     {MenuActionId::ViewClearGuidelines, L"Clear All Guidelines", L"Xóa hết đường gióng", L"Ctrl+Alt+;"},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::ViewSnapGrid, L"Snap to Grid", L"Hít vào lưới", L"", false, true},
-    {MenuActionId::ViewSnapObjects, L"Snap to Objects", L"Hít vào đối tượng", L"", false, true}
+    {MenuActionId::ViewSnapObjects, L"Snap to Objects", L"Hít vào đối tượng", L"", false, true},
+    {MenuActionId::Separator, L"", L"", L"", true},
+    {MenuActionId::ViewProofColors, L"Proof Colors", L"Mô phỏng màu in", L"Ctrl+Alt+Y", false, false, false, true},
+    {MenuActionId::ViewGamutWarning, L"Gamut Warning", L"Cảnh báo vượt dải màu", L"Ctrl+Shift+Y", false, false, false, true},
+    {MenuActionId::ViewOverprintPreview, L"Overprint Preview", L"Xem trước in đè (Overprint)", L"Alt+Shift+Ctrl+Y", false, false, false, true}
 }};
 
 // 4. Layout Menu
-inline constexpr std::array<MenuItem, 8> kLayoutMenuItems{{
+inline constexpr std::array<MenuItem, 14> kLayoutMenuItems{{
     {MenuActionId::LayoutPageSetup, L"Page Setup…", L"Thiết lập trang…", L"", false, true},
+    {MenuActionId::Separator, L"", L"", L"", true},
+    {MenuActionId::LayoutPagePrevious, L"Previous Page", L"Trang trước", L"Alt+PageUp"},
+    {MenuActionId::LayoutPageNext, L"Next Page", L"Trang sau", L"Alt+PageDown"},
+    {MenuActionId::LayoutPageAdd, L"Add Page", L"Thêm trang", L""},
+    {MenuActionId::LayoutPageDuplicate, L"Duplicate Page", L"Nhân đôi trang", L""},
+    {MenuActionId::LayoutPageDelete, L"Delete Page", L"Xóa trang", L""},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::LayoutOrientationLandscape, L"Landscape Orientation", L"Khổ ngang", L""},
     {MenuActionId::LayoutOrientationPortrait, L"Portrait Orientation", L"Khổ dọc", L""},
@@ -414,9 +478,18 @@ inline constexpr std::array<MenuItem, 8> kLayoutMenuItems{{
 }};
 
 // 5. Object Menu
-inline constexpr std::array<MenuItem, 40> kObjectMenuItems{{
+inline constexpr std::array<MenuItem, 49> kObjectMenuItems{{
     {MenuActionId::ObjectGroup, L"Group Objects", L"Nhóm đối tượng", L"Ctrl+G"},
     {MenuActionId::ObjectUngroup, L"Ungroup", L"Rã nhóm", L"Ctrl+Shift+G"},
+    {MenuActionId::Separator, L"", L"", L"", true},
+    {MenuActionId::None, L"POWERCLIP / CLIPPING MASK", L"LỒNG KHUNG / MẶT NẠ CẮT", L"", false, true, true},
+    {MenuActionId::ObjectPowerClipMake, L"Make Clipping Mask", L"Tạo mặt nạ cắt", L"Ctrl+7"},
+    {MenuActionId::ObjectPowerClipRelease, L"Release Clipping Mask", L"Hủy mặt nạ cắt", L"Ctrl+Alt+7"},
+    {MenuActionId::ObjectPowerClipPlaceInside, L"Place Inside Frame…", L"Đặt vào trong khung…", L""},
+    {MenuActionId::ObjectPowerClipFitCenter, L"Fit: Center Contents", L"Căn giữa nội dung", L""},
+    {MenuActionId::ObjectPowerClipFitProp, L"Fit: Fit Proportionally", L"Vừa khít giữ tỉ lệ", L""},
+    {MenuActionId::ObjectPowerClipFillProp, L"Fit: Fill Proportionally", L"Phủ đầy khung", L""},
+    {MenuActionId::ObjectPowerClipStretch, L"Fit: Stretch to Fill", L"Kéo giãn vừa khung", L""},
     {MenuActionId::ObjectProperties, L"Properties…", L"Thuộc tính…", L""},
     {MenuActionId::ObjectFillGradient, L"Gradient Fill…", L"Tô chuyển sắc…", L"G"},
     {MenuActionId::Separator, L"", L"", L"", true},

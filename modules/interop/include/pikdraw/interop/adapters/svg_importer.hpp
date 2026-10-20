@@ -4,6 +4,7 @@
 #include "pikdraw/document/model/object.hpp"
 #include <string>
 #include <vector>
+#include <limits>
 
 namespace pikdraw::interop {
 
@@ -20,7 +21,7 @@ struct SvgImportResult {
 /// Bounded SVG 1.1 static subset. Unsupported constructs reject the whole document.
 class SvgImporter {
 public:
-    static constexpr size_t kMaxSourceBytes = 16 * 1024 * 1024;
+    static constexpr size_t kMaxSourceBytes = std::numeric_limits<size_t>::max();
     static constexpr size_t kMaxObjects = 10000;
     static constexpr size_t kMaxPathElements = 6000;
     static constexpr double kMaxPageMillimeters = 1000000.0;

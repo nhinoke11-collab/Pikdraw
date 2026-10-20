@@ -366,7 +366,6 @@ inline pikdraw::automation::JsonValue::Array build_billboard_5x2m_operations() {
 inline void run_billboard_5x2m_design(pikdraw::desktop::NativeWindow& window,
                                       std::string_view endpoint,
                                       std::string_view access_key,
-                                      const std::filesystem::path& screenshot_bmp_path,
                                       std::string_view save_file_name) {
     using namespace pikdraw::automation;
     std::cout << "\n============================================================\n";
@@ -453,8 +452,8 @@ inline void run_billboard_5x2m_design(pikdraw::desktop::NativeWindow& window,
 
     // 8. Lưu tài liệu native .pikdraw
     const auto save_path = granted_file_path(save_file_name);
-    std::error_code ec;
-    std::filesystem::remove(save_path, ec);
+    require(!std::filesystem::exists(save_path),
+        "unique E2E output path must not overwrite an existing native document");
     const auto save_res = call_tool(window, endpoint, access_key, call_id++, "pikdraw.file.save",
         {{"session_handle", design_handle}, {"file_name", std::string(save_file_name)}});
     require_ok(save_res, "pikdraw.file.save");
@@ -469,13 +468,7 @@ inline void run_billboard_5x2m_design(pikdraw::desktop::NativeWindow& window,
         "Reopened native document must match object count");
     std::cout << " -> pikdraw.file.verify_reopen: Xác minh toàn vẹn file mở lại thành công.\n";
 
-    // 10. Fit trang in vào viewport và chụp ảnh màn hình
-    window.fit_page_to_canvas();
-    std::filesystem::create_directories(screenshot_bmp_path.parent_path());
-    window.capture_screenshot_bmp(screenshot_bmp_path.string());
-    require(std::filesystem::exists(screenshot_bmp_path), "Screenshot file must exist");
-    std::cout << " -> Chụp ảnh màn hình: Đã lưu tại " << screenshot_bmp_path.string()
-              << " (" << std::filesystem::file_size(screenshot_bmp_path) << " bytes)\n";
+    // 10. Document evidence is semantic: geometry validation, dimensions, objects and reopen checks.
 
     // 11. Đóng kết nối
     call_tool(window, endpoint, access_key, call_id++, "pikdraw.disconnect", {{"session_handle", session_handle}});
@@ -490,6 +483,5 @@ inline void run_billboard_5x2m_design(pikdraw::desktop::NativeWindow& window,
               << std::fixed << std::setprecision(2) << (elapsed_ms / 1000.0) << " giây)\n";
     std::cout << " - Số lượng đối tượng vector: " << op_count << "\n";
     std::cout << " - File lưu: " << save_file_name << ".pikdraw\n";
-    std::cout << " - File ảnh chụp: " << screenshot_bmp_path.string() << "\n";
     std::cout << "============================================================\n\n";
 }

@@ -4,6 +4,7 @@
 #include "../tools/pen_tool_controller.hpp"
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
+#include "../tools/dimension_tool_controller.hpp"
 
 namespace pikdraw::desktop {
 #ifdef _WIN32
@@ -314,6 +315,12 @@ bool NativeWindow::handle_key_down(WPARAM key) {
         if (key == 'A') {
             if (shift) {
                 open_align_distribute_panel();
+            } else if (active_tool_ == 11 && node_tool_ && node_tool_->active()) {
+                node_tool_->tool().select_all();
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Đã chọn toàn bộ " + std::to_string(node_tool_->selected_node_count()) + " node (Ctrl+A)"
+                    : "Selected all " + std::to_string(node_tool_->selected_node_count()) + " nodes (Ctrl+A)";
+                InvalidateRect(hwnd_, nullptr, FALSE);
             } else {
                 const auto snapshot = root().document().current_snapshot();
                 std::vector<document::ObjectId> ids;
@@ -324,14 +331,33 @@ bool NativeWindow::handle_key_down(WPARAM key) {
             }
             return true;
         }
-        if (key == 'Z' || (key == 'Y' && shift)) {
+        if (key == 'Z' && !shift) {
             workflow().undo();
             root().vector_controller().selection().clear();
             status_msg_ = language_ == UILanguage::Vietnamese ? "Đã hoàn tác" : "Undo complete";
             InvalidateRect(hwnd_, nullptr, FALSE);
             return true;
         }
+        if (key == 'Z' && shift) {
+            workflow().redo();
+            root().vector_controller().selection().clear();
+            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã làm lại" : "Redo complete";
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
         if (key == 'Y') {
+            if (alt && shift) {
+                execute_menu_action(static_cast<int>(MenuActionId::ViewOverprintPreview));
+                return true;
+            }
+            if (shift) {
+                execute_menu_action(static_cast<int>(MenuActionId::ViewGamutWarning));
+                return true;
+            }
+            if (alt) {
+                execute_menu_action(static_cast<int>(MenuActionId::ViewProofColors));
+                return true;
+            }
             workflow().redo();
             root().vector_controller().selection().clear();
             status_msg_ = language_ == UILanguage::Vietnamese ? "Đã làm lại" : "Redo complete";
@@ -351,6 +377,22 @@ bool NativeWindow::handle_key_down(WPARAM key) {
             }
             InvalidateRect(hwnd_, nullptr, FALSE);
             return true;
+        }
+        if (key == '7') {
+            if (alt) {
+                if (workflow().release_clipping_mask_selected()) {
+                    status_msg_ = (language_ == UILanguage::Vietnamese) ? "Đã hủy mặt nạ cắt (Release)" : "Released Clipping Mask";
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return true;
+                }
+            } else {
+                auto gid = workflow().make_clipping_mask_selected(true);
+                if (gid != document::kInvalidObjectId) {
+                    status_msg_ = (language_ == UILanguage::Vietnamese) ? "Đã tạo mặt nạ cắt / PowerClip (Ctrl+7)" : "Created PowerClip / Clipping Mask (Ctrl+7)";
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return true;
+                }
+            }
         }
         if (key == 'Q') {
             convert_selected_text_to_curves();
@@ -452,6 +494,12 @@ bool NativeWindow::handle_key_down(WPARAM key) {
         }
     }
     if (key == VK_ESCAPE) {
+        if (active_tool_ == 10 && dimension_tool_ && dimension_tool_->active()) {
+            if (dimension_tool_->handle_escape()) {
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return true;
+            }
+        }
         if (workflow().is_array_session_active()) {
             workflow().end_array_session();
             array_input_buffer_.clear();
@@ -609,6 +657,7 @@ bool NativeWindow::handle_key_down(WPARAM key) {
     if (key == 'E') { set_active_tool(2); return true; }
     if (key == 'K' || key == 'C') { set_active_tool(5); return true; }
     if (key == 'A' || key == 'T') { set_active_tool(4); return true; }
+    if (key == 'D') { set_active_tool(10); InvalidateRect(hwnd_, nullptr, FALSE); return true; }
     return false;
 }
 

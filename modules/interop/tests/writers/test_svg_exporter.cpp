@@ -181,6 +181,64 @@ void test_svg_stream_export_respects_resolved_object_scope() {
     assert(rejected_output.str().empty());
 }
 
+void test_svg_export_clipping_mask_roundtrip() {
+    PathObject mask;
+    mask.id = generate_object_id();
+    mask.name = "Frame";
+    mask.path = geometry::Path2D::make_rect(20, 20, 60, 60);
+    mask.fill = color::RGBColor{0.2, 0.4, 0.8, 1.0};
+    mask.stroke = color::RGBColor{0.0, 0.0, 0.0, 1.0};
+    mask.stroke_width_mm = 1.0;
+
+    PathObject content;
+    content.id = generate_object_id();
+    content.name = "Content";
+    content.path = geometry::Path2D::make_rect(10, 10, 80, 80);
+    content.fill = color::RGBColor{1.0, 0.0, 0.0, 1.0};
+
+    GroupObject group;
+    group.id = generate_object_id();
+    group.name = "PowerClip Group";
+    group.children_ids = {mask.id, content.id};
+    ClipProperties clip{};
+    clip.mask_object_id = mask.id;
+    clip.lock_contents_to_frame = true;
+    clip.preserve_frame_appearance = true;
+    clip.fit_mode = ClipContentFitMode::CurrentPosition;
+    group.clip = clip;
+
+    Page page = Page::make_default();
+    page.width_mm = 100.0;
+    page.height_mm = 100.0;
+    page.layers.front().object_ids = {group.id};
+
+    PersistentObjectMap objects;
+    objects = objects.set(mask.id, mask);
+    objects = objects.set(content.id, content);
+    objects = objects.set(group.id, group);
+
+    DocumentSnapshot snapshot{1, 0, std::move(page), std::move(objects)};
+
+    auto result = SvgExporter::export_with_report(snapshot);
+    assert(result.success && result.report.is_clean());
+    assert(result.svg.find("<clipPath id=\"clip_") != std::string::npos);
+    assert(result.svg.find("<g clip-path=\"url(#clip_") != std::string::npos);
+
+    auto imported = SvgImporter::import_from_string(result.svg);
+    assert(imported.success);
+    bool found_clipping = false;
+    for (const auto& obj : imported.objects) {
+        if (const auto* grp = std::get_if<GroupObject>(&obj)) {
+            if (grp->is_clipping_container()) {
+                found_clipping = true;
+                assert(grp->clip.has_value());
+                assert(grp->clip->mask_object_id != kInvalidObjectId);
+            }
+        }
+    }
+    assert(found_clipping);
+}
+
 int main() {
     std::cout << "[test_svg_exporter] Running SVG exporter tests...\n";
     test_svg_export_and_roundtrip();
@@ -188,6 +246,7 @@ int main() {
     test_svg_path_and_text_opacity_mapping();
     test_svg_unsupported_appearance_is_rejected_before_output();
     test_svg_stream_export_respects_resolved_object_scope();
+    test_svg_export_clipping_mask_roundtrip();
     std::cout << "[test_svg_exporter] All tests passed!\n";
     return 0;
 }

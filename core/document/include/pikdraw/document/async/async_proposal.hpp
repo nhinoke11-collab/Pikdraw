@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pikdraw/document/commands/command.hpp"
+#include "pikdraw/document/model/document_page.hpp"
 #include <string>
 #include <vector>
 #include <memory>
@@ -16,6 +17,8 @@ struct AsyncProposalMetadata {
     uint64_t job_id{0};
     uint64_t job_generation{0};
     std::vector<ObjectId> target_object_ids;
+    PageId target_page_id{kInvalidPageId};
+    uint64_t page_navigation_generation{0};
 };
 
 /// Result code for asynchronous proposal validation and commitment
@@ -24,7 +27,8 @@ enum class ProposalStatus {
     StaleRevision,      // Document revision advanced while worker was computing
     EpochMismatch,      // Document was closed, re-opened, or reset
     JobCancelled,       // Job was superseded or cancelled
-    ExecutionFailed     // Command failed to apply during atomic commit
+    ExecutionFailed,    // Command failed to apply during atomic commit
+    ReadOnlyDocument    // Document content is locked to a source representation
 };
 
 /// Asynchronous proposal containing proposed mutations from background workers

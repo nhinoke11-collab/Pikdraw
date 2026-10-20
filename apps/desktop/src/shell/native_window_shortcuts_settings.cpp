@@ -1,3 +1,4 @@
+#include "native_window_menus.hpp"
 #include "pikdraw/desktop/shell/native_window_shortcuts_settings.hpp"
 #include "pikdraw/desktop/shell/native_window.hpp"
 #include <algorithm>
@@ -180,7 +181,14 @@ void ensure_shortcuts_initialized(NativeWindow& win) {
         { ActionId::kViewFitAll, "Căn vừa trang (Fit Page)", "Fit to Page", "F", ShortcutCategory::Tools,
           [&win] { win.fit_page_to_canvas(); InvalidateRect(win.hwnd(), nullptr, FALSE); } },
         { ActionId::kViewZoom100, "Thu phóng 100%", "Zoom 100%", "1", ShortcutCategory::Tools,
-          [&win] { win.zoom_in(); InvalidateRect(win.hwnd(), nullptr, FALSE); } }
+          [&win] { win.zoom_in(); InvalidateRect(win.hwnd(), nullptr, FALSE); } },
+        // View / Color Proofing
+        { ActionId::kViewProofColors, "Mô phỏng màu in (Proof Colors)", "Proof Colors", "Ctrl+Alt+Y", ShortcutCategory::View,
+          [&win] { win.execute_menu_action(static_cast<int>(MenuActionId::ViewProofColors)); } },
+        { ActionId::kViewGamutWarning, "Cảnh báo vượt dải màu (Gamut Warning)", "Gamut Warning", "Ctrl+Shift+Y", ShortcutCategory::View,
+          [&win] { win.execute_menu_action(static_cast<int>(MenuActionId::ViewGamutWarning)); } },
+        { ActionId::kViewOverprintPreview, "Xem trước in đè (Overprint Preview)", "Overprint Preview", "Alt+Shift+Ctrl+Y", ShortcutCategory::View,
+          [&win] { win.execute_menu_action(static_cast<int>(MenuActionId::ViewOverprintPreview)); } }
     };
 
     state.items.clear();
@@ -251,12 +259,12 @@ void paint_shortcuts_settings_tab(
     }
 
     // 2. Category filter pills
-    const wchar_t* cats_vi[] = { L"Tất cả", L"Sắp xếp Z-order", L"Di chuyển (Nudge)", L"Chỉnh sửa", L"Công cụ" };
-    const wchar_t* cats_en[] = { L"All", L"Z-Order", L"Nudge Movement", L"Editing", L"Tools" };
+    const wchar_t* cats_vi[] = { L"Tất cả", L"Sắp xếp", L"Di chuyển", L"Chỉnh sửa", L"Công cụ", L"Xem & Màu" };
+    const wchar_t* cats_en[] = { L"All", L"Z-Order", L"Nudge", L"Editing", L"Tools", L"View & Color" };
     const int cat_y = cy + 52;
-    for (int c = 0; c < 5; ++c) {
-        int cx_btn = cx + c * 97;
-        RECT rc_c = { cx_btn, cat_y, cx_btn + 92, cat_y + 22 };
+    for (int c = 0; c < 6; ++c) {
+        int cx_btn = cx + c * 80;
+        RECT rc_c = { cx_btn, cat_y, cx_btn + 76, cat_y + 22 };
         bool is_c_act = (static_cast<uint8_t>(state.active_category) == c);
         HBRUSH br_c = CreateSolidBrush(is_c_act ? m_teal : (is_dark ? RGB(14, 22, 33) : RGB(241, 245, 249)));
         FillRect(mem_dc, &rc_c, br_c); DeleteObject(br_c);
@@ -411,9 +419,9 @@ bool handle_shortcuts_settings_click(NativeWindow& win, int x, int y) {
     // 2. Category filter pills
     const int cat_y = cy + 52;
     if (y >= cat_y && y <= cat_y + 22) {
-        for (int c = 0; c < 5; ++c) {
-            int cx_btn = cx + c * 97;
-            if (x >= cx_btn && x <= cx_btn + 92) {
+        for (int c = 0; c < 6; ++c) {
+            int cx_btn = cx + c * 80;
+            if (x >= cx_btn && x <= cx_btn + 76) {
                 state.active_category = static_cast<ShortcutCategory>(c);
                 state.selected_row = 0;
                 state.scroll_offset_y = 0;

@@ -1,9 +1,12 @@
 #include "pikdraw/interop/adapters/svg_worker_adapter.hpp"
 #include "pikdraw/workers/process_launcher.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <cwctype>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
@@ -25,10 +28,10 @@ struct TemporarySource final {
         if (!path.empty()) fs::remove(path, ignored);
     }
 
-    bool Write(std::string_view contents) {
+    bool Write(std::string_view contents, std::string_view extension = ".svg") {
         path = fs::temp_directory_path() /
-            ("pikdraw-svg-worker-" + std::to_string(GetCurrentProcessId()) + "-" +
-             std::to_string(GetTickCount64()) + ".svg");
+            ("pikdraw-vector-worker-" + std::to_string(GetCurrentProcessId()) + "-" +
+             std::to_string(GetTickCount64()) + std::string(extension));
         std::ofstream file(path, std::ios::binary | std::ios::trunc);
         file.write(contents.data(), static_cast<std::streamsize>(contents.size()));
         return static_cast<bool>(file);
@@ -111,7 +114,7 @@ WorkerLaunchConfig ConfigFor(const SourceSnapshot& source) {
     return config;
 }
 
-V2ImportBegin BeginFor(const SourceSnapshot& source, std::string format = "SVG", std::string profile = "svg-hierarchy-v2") {
+V2ImportBegin BeginFor(const SourceSnapshot& source, std::string format = "SVG", std::string profile = "svg-hierarchy-v3") {
     V2ImportBegin begin;
     begin.job.document_id = "svg-worker-import-test-document";
     begin.job.epoch = 3;
@@ -135,14 +138,18 @@ struct RunResult final {
     ImportCapture capture;
 };
 
-RunResult RunImport(const SourceSnapshot& source, std::string format = "SVG", std::string profile = "svg-hierarchy-v2") {
+RunResult RunImport(const SourceSnapshot& source, std::string format = "SVG",
+                    std::string profile = "svg-hierarchy-v3",
+                    std::optional<uint32_t> source_page_index = std::nullopt) {
     WorkerProcessHost host;
     const auto config = ConfigFor(source);
     Require(fs::exists(config.worker_executable_path), "spike_worker executable was not found beside this test");
     Require(host.Launch(config), "could not launch isolated SVG test worker");
     Require(host.NegotiateV2(IPC_V2_SUPPORTED_FEATURES, std::chrono::seconds(3)),
             "SVG test worker did not negotiate C6 v2");
-    const auto request = SerializeV2ImportBegin(BeginFor(source, std::move(format), std::move(profile)), 1);
+    auto begin = BeginFor(source, std::move(format), std::move(profile));
+    begin.source_page_index = source_page_index;
+    const auto request = SerializeV2ImportBegin(begin, 1);
     RunResult result;
     result.complete = host.TransactV2ProposalStream(
         request, std::chrono::seconds(5), Limits(), [&](const IpcV2Frame& frame) {
@@ -152,8 +159,154 @@ RunResult RunImport(const SourceSnapshot& source, std::string format = "SVG", st
     return result;
 }
 
+void TestCdrWorkerImportFromEnvironment() {
+#ifdef _WIN32
+    const wchar_t* fixture = _wgetenv(L"PIKDRAW_CDR_WORKER_FIXTURE");
+    if (!fixture || !*fixture) return;
+    const auto source = SourceSnapshot::Create(fixture, 64ull * 1024 * 1024);
+    Require(source && source->IsValid(), "could not snapshot the CDR worker fixture");
+
+    auto config = ConfigFor(*source);
+    config.job_limits.max_memory_bytes = 0; // Shared system-wide 90% RAM guard is the only memory limit.
+    WorkerProcessHost host;
+    Require(host.Launch(config), "could not launch the repository-owned CDR worker");
+    Require(host.NegotiateV2(IPC_V2_SUPPORTED_FEATURES, std::chrono::seconds(3)),
+            "CDR worker did not negotiate protocol v2");
+
+    V2ImportBegin begin;
+    begin.job.document_id = "cdr-worker-import-test-document";
+    begin.job.epoch = 3;
+    begin.job.base_revision = 7;
+    begin.job.generation = 19;
+    begin.job.source_token = source->Token();
+    begin.source_bytes = source->SizeBytes();
+    begin.source_sha256 = source->Sha256();
+    begin.format_id = "CorelDRAW";
+    begin.profile_id = "cdr-libcdr-svg-v2";
+    const auto request = SerializeV2ImportBegin(begin, 1);
+
+    size_t page_count = 0;
+    size_t layer_count = 0;
+    size_t object_count = 0;
+    size_t image_count = 0;
+    size_t clipped_group_count = 0;
+    size_t image_chunk_count = 0;
+    uint32_t max_image_width = 0;
+    uint32_t max_image_height = 0;
+    uint64_t max_image_pixel_count = 0;
+    size_t fidelity_reports = 0;
+    size_t frames_received = 0;
+    bool records_valid = true;
+    const V2ProposalStreamLimits limits{
+        164ull * 1024 * 1024, 160ull * 1024 * 1024, 40002, 192, 193};
+    const bool complete = host.TransactV2ProposalStream(request, std::chrono::seconds(60), limits,
+        [&](const IpcV2Frame& frame) {
+            ++frames_received;
+            const auto type = static_cast<MessageType>(frame.header.message_type);
+            if (type == MessageType::V2ImportEnd) return true;
+            const auto packet = SerializeV2Frame(type, frame.header.sequence_id, frame.payload);
+            const auto chunk = DeserializeV2ProposalChunk(packet);
+            if (!chunk) return records_valid = false;
+            const auto bytes = std::span<const uint8_t>(chunk->canonical_record_bytes);
+            size_t offset = 0;
+            for (uint32_t index = 0; index < chunk->record_count; ++index) {
+                if (bytes.size() - offset < 8) return records_valid = false;
+                const uint16_t raw_type = ReadU16(bytes, offset);
+                const uint16_t flags = ReadU16(bytes, offset + 2);
+                const uint32_t payload_bytes = ReadU32(bytes, offset + 4);
+                offset += 8;
+                if (flags != 0 || payload_bytes > bytes.size() - offset ||
+                    raw_type < static_cast<uint16_t>(ImportRecordType::Page) ||
+                    raw_type > static_cast<uint16_t>(ImportRecordType::RasterSourceChunk))
+                    return records_valid = false;
+                const auto record = DeserializeImportRecord(
+                    static_cast<ImportRecordType>(raw_type), bytes.subspan(offset, payload_bytes));
+                if (!record) return records_valid = false;
+                if (std::holds_alternative<ImportPageRecord>(*record)) ++page_count;
+                else if (std::holds_alternative<ImportLayerRecord>(*record)) ++layer_count;
+                else if (std::holds_alternative<ImportRasterImageChunkRecord>(*record)) ++image_chunk_count;
+                else if (std::holds_alternative<ImportFidelityReportRecord>(*record)) ++fidelity_reports;
+                else if (const auto* group = std::get_if<ImportGroupRecord>(&*record)) {
+                    ++object_count;
+                    if (group->clip_mask_local_id != 0) ++clipped_group_count;
+                }
+                else if (std::holds_alternative<ImportPathRecord>(*record) ||
+                         std::holds_alternative<ImportTextRecord>(*record) ||
+                         std::holds_alternative<ImportRasterImageRecord>(*record)) {
+                    ++object_count;
+                    if (const auto* image = std::get_if<ImportRasterImageRecord>(&*record)) {
+                        ++image_count;
+                        const uint64_t pixels = static_cast<uint64_t>(image->width_px) * image->height_px;
+                        if (pixels > max_image_pixel_count) {
+                            max_image_pixel_count = pixels;
+                            max_image_width = image->width_px;
+                            max_image_height = image->height_px;
+                        }
+                    }
+                }
+                offset += payload_bytes;
+            }
+            return offset == bytes.size();
+        });
+    if (!complete) {
+        throw std::runtime_error("CDR worker stream failed: " +
+            std::string(host.LastTransportFailure()) + ", exit=0x" +
+            std::to_string(host.LastWorkerExitCode()) + ", frames=" +
+            std::to_string(frames_received));
+    }
+    if (!records_valid || page_count != 1 || layer_count == 0 || object_count == 0 ||
+        fidelity_reports != 1 ||
+        (image_count != 0 && image_chunk_count == 0)) {
+        std::cerr << "CDR proposal counts: records_valid=" << records_valid
+                  << ", pages=" << page_count << ", layers=" << layer_count
+                  << ", objects=" << object_count << ", clips=" << clipped_group_count
+                  << ", reports=" << fidelity_reports << ", images=" << image_count
+                  << ", pixel_chunks=" << image_chunk_count << ", largest_image="
+                  << max_image_width << 'x' << max_image_height << '\n';
+        throw std::runtime_error("CDR worker returned an incomplete editable proposal");
+    }
+    if (std::filesystem::path(fixture).filename().wstring() ==
+        L"Bóc tách sân khấu Minh Châu Event (1).cdr") {
+        Require(max_image_width == 1672 && max_image_height == 941,
+                "CDR image import changed the largest embedded source raster dimensions");
+    }
+    std::cout << "CDR worker imported " << object_count << " editable objects, "
+              << layer_count << " layers, " << clipped_group_count << " clipping groups, and "
+              << image_count << " embedded images (largest " << max_image_width << 'x'
+              << max_image_height << " pixels).\n";
+#endif
+}
+
+std::optional<SourceSnapshot> SnapshotFor(const fs::path& path);
+
+void TestPdfWorkerPageSelectionFromEnvironment() {
+#ifdef _WIN32
+    const wchar_t* fixture = _wgetenv(L"PIKDRAW_PDF_WORKER_FIXTURE");
+    if (!fixture || !*fixture) return;
+    const auto source = SnapshotFor(fs::path(fixture));
+    Require(source && source->IsValid(), "could not snapshot the PDF worker fixture");
+    const auto result = RunImport(*source, "PDF", "pdf-page-vector-v2", 1);
+    if (!result.complete) {
+        throw std::runtime_error("PDF selected-page worker stream failed: " + result.failure);
+    }
+    Require(result.capture.semantic_records_valid && result.capture.saw_end,
+            "PDF selected-page worker returned an invalid proposal stream");
+    bool saw_page = false;
+    bool saw_selected_layer = false;
+    for (const auto& record : result.capture.records) {
+        if (const auto* layer = std::get_if<ImportLayerRecord>(&record))
+            saw_selected_layer |= layer->source_id.rfind("pdf-page-2", 0) == 0;
+        if (std::holds_alternative<ImportPageRecord>(record)) saw_page = true;
+    }
+    Require(saw_page && saw_selected_layer,
+            "PDF worker proposal did not reflect the selected source page");
+    std::cout << "PDF worker materialized selected source page 2 with "
+              << result.capture.records.size() << " validated records.\n";
+#endif
+}
+
 std::optional<SourceSnapshot> SnapshotFor(const fs::path& path) {
-    return SourceSnapshot::Create(path.wstring(), SvgImporter::kMaxSourceBytes);
+    return SourceSnapshot::Create(path.wstring(), 64ULL * 1024ULL * 1024ULL);
 }
 
 void TestWorkerImportAndTypedProposal() {
@@ -197,7 +350,7 @@ void TestWorkerImportAndTypedProposal() {
             "editable path geometry or source identity was lost");
     Require(text.source_id == "label" && text.local_id == 3 && text.utf8_text == "Tiếng Việt & vectors" && text.font_family == "Noto Sans",
             "editable Unicode text or font metadata was lost");
-    Require(report.coverage_profile == "svg-hierarchy-v2" && report.issue_count == 1 &&
+    Require(report.coverage_profile == "svg-hierarchy-v3" && report.issue_count == 1 &&
             report.production == ImportProduction::NotAssessed,
             "proposal did not report its bounded coverage and production status");
 }
@@ -206,7 +359,7 @@ void TestWorkerRejectsUnsupportedMarkupAndFormats() {
     for (const auto source_text : {
              std::string_view(R"(<!DOCTYPE svg [<!ENTITY x SYSTEM "file:///private">]><svg width="10mm" height="10mm"/>)"),
              std::string_view(R"(<svg width="10mm" height="10mm"><filter id="f"/><rect width="2" height="2"/></svg>)"),
-             std::string_view(R"svg(<svg width="10mm" height="10mm"><g transform="translate(1 2)"><rect width="2" height="2"/></g></svg>)svg")}) {
+             std::string_view(R"svg(<svg width="10mm" height="10mm"><circle cx="2" cy="2" r="1"/></svg>)svg")}) {
         TemporarySource file;
         Require(file.Write(source_text), "could not write hostile SVG test source");
         auto snapshot = SnapshotFor(file.path);
@@ -224,7 +377,60 @@ void TestWorkerRejectsUnsupportedMarkupAndFormats() {
     const auto result = RunImport(*snapshot, "PDF", "pdf-static-v1");
     Require(!result.complete && result.capture.callback_count == 0,
             "worker accepted a format without a registered parser");
-    Require(result.failure == "worker returned v2 error response", "unsupported format lacked structured worker error");
+    Require(result.failure == "worker returned v2 error response" ||
+            result.failure == "unsupported format import profile",
+            "unsupported format/profile lacked a structured rejection");
+}
+
+void TestWorkerImportsEpsAsEditablePathsAndRejectsExecutableOperators() {
+    constexpr std::string_view source =
+        "%!PS-Adobe-3.0 EPSF-3.0\n"
+        "%%BoundingBox: 10 20 110 70\n"
+        "%%EndComments\n"
+        "/m {moveto} bind def /l {lineto} bind def /f {fill} bind def\n"
+        "0 1 1 0 setcmykcolor 10 20 m 110 20 l 60 70 l closepath f showpage\n";
+    TemporarySource file;
+    Require(file.Write(source, ".eps"), "could not write EPS vector source");
+    const auto snapshot = SnapshotFor(file.path);
+    Require(snapshot && snapshot->IsValid(), "could not create EPS source snapshot");
+    const auto result = RunImport(*snapshot, "EPS", "eps-path-v1");
+    Require(result.complete && result.capture.saw_end && result.capture.semantic_records_valid,
+            "EPS worker did not return a complete typed proposal");
+    Require(result.capture.records.size() == 6 &&
+            std::holds_alternative<ImportPageRecord>(result.capture.records[0]) &&
+            std::holds_alternative<ImportLayerRecord>(result.capture.records[1]) &&
+            std::holds_alternative<ImportPathRecord>(result.capture.records[2]) &&
+            std::holds_alternative<ImportFidelityIssueRecord>(result.capture.records[3]) &&
+            std::holds_alternative<ImportFidelityIssueRecord>(result.capture.records[4]) &&
+            std::holds_alternative<ImportFidelityReportRecord>(result.capture.records[5]),
+            "EPS worker changed the editable path proposal record order");
+    const auto& path = std::get<ImportPathRecord>(result.capture.records[2]);
+    Require(path.has_fill && !path.has_stroke && path.fill.model == ImportColorModel::Cmyk &&
+            path.elements.size() == 4,
+            "EPS vector path or source CMYK color was not mapped to native editable geometry");
+    const auto& layer = std::get<ImportLayerRecord>(result.capture.records[1]);
+    Require(layer.name == "EPS Artwork" && layer.object_local_ids == std::vector<uint32_t>{1},
+            "EPS native layer proposal is invalid");
+    bool saw_report = false;
+    for (const auto& value : result.capture.records) {
+        if (const auto* report = std::get_if<ImportFidelityReportRecord>(&value)) {
+            saw_report = report->coverage_profile == "eps-path-v1" &&
+                report->issue_count == 2 && report->production == ImportProduction::NotAssessed;
+        }
+    }
+    Require(saw_report, "EPS worker omitted its partial coverage/fidelity report");
+
+    constexpr std::string_view hostile =
+        "%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 10 10\n%%EndComments\n"
+        "deletefile\n";
+    TemporarySource hostile_file;
+    Require(hostile_file.Write(hostile, ".eps"), "could not write hostile EPS source");
+    const auto hostile_snapshot = SnapshotFor(hostile_file.path);
+    Require(hostile_snapshot && hostile_snapshot->IsValid(), "could not snapshot hostile EPS source");
+    const auto rejected = RunImport(*hostile_snapshot, "EPS", "eps-path-v1");
+    Require(!rejected.complete && rejected.capture.callback_count == 0 &&
+            rejected.failure == "worker returned v2 error response",
+            "EPS worker executed or partially accepted an unsupported PostScript operator");
 }
 
 struct CorpusResult final {
@@ -245,7 +451,7 @@ void WriteCorpusReport(const fs::path& path, const std::vector<CorpusResult>& ro
         if (row.accepted) ++accepted;
         if (row.parser_executed) ++executed;
     }
-    report << "{\"schema_version\":1,\"profile\":\"svg-hierarchy-v2\",\"parser_executed\":true,"
+    report << "{\"schema_version\":1,\"profile\":\"svg-hierarchy-v3\",\"parser_executed\":true,"
            << "\"svg_files\":" << rows.size() << ",\"parser_runs\":" << executed
            << ",\"accepted\":" << accepted << ",\"results\":[";
     for (size_t index = 0; index < rows.size(); ++index) {
@@ -331,8 +537,11 @@ int main(int argc, char** argv) {
         if (argc == 3 && std::string_view(argv[1]) == "--probe-corpus") return ProbeCorpus(fs::path(argv[2]));
         Require(argc == 1, "usage: test_pikdraw_worker_svg_import [--probe-corpus <cdr-folder>]");
         TestWorkerImportAndTypedProposal();
+        TestWorkerImportsEpsAsEditablePathsAndRejectsExecutableOperators();
         TestWorkerRejectsUnsupportedMarkupAndFormats();
-        std::cout << "SVG isolated worker import tests passed\n";
+        TestCdrWorkerImportFromEnvironment();
+        TestPdfWorkerPageSelectionFromEnvironment();
+        std::cout << "SVG/EPS isolated vector worker import tests passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "SVG worker import tests failed: " << error.what() << '\n';

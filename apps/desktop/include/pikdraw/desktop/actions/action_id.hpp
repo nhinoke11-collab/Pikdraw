@@ -51,6 +51,9 @@ struct ActionId {
     static constexpr std::string_view kViewZoom100 = "action.view.zoom_100";
     static constexpr std::string_view kViewFitAll = "action.view.fit_all";
     static constexpr std::string_view kViewReloadUi = "action.view.reload_ui";
+    static constexpr std::string_view kViewProofColors = "action.view.proof_colors";
+    static constexpr std::string_view kViewGamutWarning = "action.view.gamut_warning";
+    static constexpr std::string_view kViewOverprintPreview = "action.view.overprint_preview";
     // Tool domain
     static constexpr std::string_view kToolSelect = "action.tool.select";
     static constexpr std::string_view kToolNodeEdit = "action.tool.node_edit";
@@ -70,6 +73,16 @@ struct ActionId {
     static constexpr std::string_view kObjectProperties = "action.object.properties.focus";
     static constexpr std::string_view kObjectGroup = "action.object.group";
     static constexpr std::string_view kObjectUngroup = "action.object.ungroup";
+    static constexpr std::string_view kObjectPowerClipPlaceInside = "action.object.powerclip.place_inside";
+    static constexpr std::string_view kObjectPowerClipMake = "action.object.powerclip.make";
+    static constexpr std::string_view kObjectPowerClipRelease = "action.object.powerclip.release";
+    static constexpr std::string_view kObjectPowerClipEdit = "action.object.powerclip.edit";
+    static constexpr std::string_view kObjectPowerClipFinish = "action.object.powerclip.finish";
+    static constexpr std::string_view kObjectPowerClipLock = "action.object.powerclip.lock";
+    static constexpr std::string_view kObjectPowerClipFitCenter = "action.object.powerclip.fit_center";
+    static constexpr std::string_view kObjectPowerClipFitProp = "action.object.powerclip.fit_prop";
+    static constexpr std::string_view kObjectPowerClipFillProp = "action.object.powerclip.fill_prop";
+    static constexpr std::string_view kObjectPowerClipStretch = "action.object.powerclip.stretch";
     static constexpr std::string_view kObjectToCurves = "action.object.to_curves";
     static constexpr std::string_view kObjectAlignLeft = "action.object.align_left";
     static constexpr std::string_view kObjectAlignCenterHorizontal = "action.object.align_center_horizontal";

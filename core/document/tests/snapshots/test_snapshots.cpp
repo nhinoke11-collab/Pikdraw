@@ -4,6 +4,7 @@
 #include <cassert>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -274,6 +275,107 @@ void test_stable_object_ids_are_unique_across_pages() {
     assert(rejected);
 }
 
+void test_page_commands_rename_reorder_and_duplicate_roots() {
+    Document doc("doc-page-command-test");
+    const auto first_id = doc.active_page_id();
+    PathObject source;
+    source.id = generate_object_id();
+    source.name = "Gradient path";
+    source.path.move_to({1.0, 2.0});
+    source.path.line_to({12.0, 2.0});
+    source.appearance.effects.push_back(EffectNode{generate_effect_instance_id()});
+    auto gradient = std::make_shared<GradientPaint>();
+    gradient->id = generate_object_id();
+    gradient->stops = {
+        GradientStop{generate_object_id(), 0.0, color::RGBColor{1, 0, 0, 1}, 1.0, 0.5},
+        GradientStop{generate_object_id(), 1.0, color::RGBColor{0, 0, 1, 1}, 1.0, 0.5}};
+    source.fill_gradient = gradient;
+    assert(doc.execute_command(std::make_unique<AddObjectCommand>(source)).success);
+
+    const auto second = make_document_page("Page 2");
+    assert(doc.execute_command(std::make_unique<AddPageCommand>(second, false)).success);
+    assert(doc.execute_command(std::make_unique<RenamePageCommand>(second.id, "Artwork two")).success);
+    assert(doc.current_snapshot()->find_page(second.id)->name == "Artwork two");
+    assert(doc.undo());
+    assert(doc.current_snapshot()->find_page(second.id)->name == "Page 2");
+
+    assert(doc.execute_command(std::make_unique<ReorderPageCommand>(second.id, 0)).success);
+    assert(doc.current_snapshot()->pages().front().id == second.id);
+    assert(doc.undo());
+    assert(doc.current_snapshot()->pages().front().id == first_id);
+
+    assert(doc.execute_command(std::make_unique<DuplicatePageCommand>(first_id)).success);
+    const auto snapshot = doc.current_snapshot();
+    assert(snapshot->page_count() == 3);
+    assert(snapshot->active_page_id() != first_id);
+    const auto* duplicate = snapshot->find_page(snapshot->active_page_id());
+    assert(duplicate && duplicate->name == "Page 1 copy");
+    const auto duplicate_id = duplicate->layout.layers.front().object_ids.front();
+    assert(duplicate_id != source.id);
+    const auto original_object = snapshot->find_page(first_id)->objects.get(source.id);
+    const auto duplicate_object = duplicate->objects.get(duplicate_id);
+    assert(original_object && duplicate_object);
+    const auto& original_path = std::get<PathObject>(*original_object);
+    const auto& duplicate_path = std::get<PathObject>(*duplicate_object);
+    assert(duplicate_path.appearance.effects.front().id != original_path.appearance.effects.front().id);
+    assert(duplicate_path.fill_gradient->id != original_path.fill_gradient->id);
+    assert(duplicate_path.fill_gradient->stops.front().id != original_path.fill_gradient->stops.front().id);
+    assert(doc.undo());
+    assert(doc.current_snapshot()->page_count() == 2);
+}
+
+void test_resize_page_preserves_artwork_and_rejects_invalid_dimensions() {
+    Document doc("doc-page-resize-test");
+    const auto page_id = doc.active_page_id();
+    const auto original = doc.current_snapshot()->find_page(page_id)->layout;
+    PathObject object;
+    object.id = generate_object_id();
+    object.path.move_to({10.0, 20.0});
+    object.path.line_to({40.0, 20.0});
+    object.transform.tx = 7.5;
+    object.transform.ty = -3.25;
+    assert(doc.execute_command(std::make_unique<AddObjectCommand>(object)).success);
+
+    const auto before = doc.current_snapshot();
+    const auto original_revision = doc.revision();
+    assert(doc.execute_command(
+        std::make_unique<ResizePageCommand>(page_id, 420.0, 297.0)).success);
+    const auto resized = doc.current_snapshot();
+    const auto* resized_page = resized->find_page(page_id);
+    assert(resized_page && resized_page->layout.width_mm == 420.0 &&
+           resized_page->layout.height_mm == 297.0);
+    assert(resized->active_page_id() == page_id);
+    const auto resized_object = resized_page->objects.get(object.id);
+    assert(resized_object && std::holds_alternative<PathObject>(*resized_object));
+    const auto& resized_path = std::get<PathObject>(*resized_object);
+    assert(resized_path.transform.tx == 7.5 && resized_path.transform.ty == -3.25);
+    assert(doc.revision() == original_revision + 1);
+
+    const auto no_change_revision = doc.revision();
+    const auto no_change = doc.execute_command(
+        std::make_unique<ResizePageCommand>(page_id, 420.0, 297.0));
+    assert(no_change.success && no_change.is_no_change);
+    assert(doc.revision() == no_change_revision);
+
+    assert(doc.undo());
+    const auto* undone = doc.current_snapshot()->find_page(page_id);
+    assert(undone && undone->layout.width_mm == original.width_mm &&
+           undone->layout.height_mm == original.height_mm);
+    assert(undone->objects.get(object.id).has_value());
+    assert(doc.redo());
+    assert(doc.current_snapshot()->find_page(page_id)->layout.width_mm == 420.0);
+
+    const auto stable_snapshot = doc.current_snapshot();
+    const auto stable_revision = doc.revision();
+    const auto invalid = doc.execute_command(std::make_unique<ResizePageCommand>(
+        page_id, std::numeric_limits<double>::quiet_NaN(), 300.0));
+    assert(!invalid.success);
+    assert(doc.revision() == stable_revision);
+    assert(doc.current_snapshot() == stable_snapshot);
+    assert(doc.current_snapshot()->find_page(page_id)->layout.width_mm == 420.0);
+    assert(before->find_page(page_id)->layout.width_mm == original.width_mm);
+}
+
 int main() {
     std::cout << "[test_snapshots] Running snapshot tests...\n";
     test_snapshot_immutability();
@@ -282,6 +384,8 @@ int main() {
     test_document_effect_node_limit();
     test_page_roots_are_isolated_and_undoable();
     test_stable_object_ids_are_unique_across_pages();
+    test_page_commands_rename_reorder_and_duplicate_roots();
+    test_resize_page_preserves_artwork_and_rejects_invalid_dimensions();
     std::cout << "[test_snapshots] All tests passed!\n";
     return 0;
 }

@@ -125,6 +125,9 @@ void test_typography_inline_editing_ribbon_and_table() {
 
     // 4d. Convert Text to Curves (CorelDRAW Ctrl+Q)
     const auto text_curves_id = workflow.add_vietnamese_text(35.0, 130.0, "PIKDRAW CURVES CNC 2026", "Segoe UI", 32.0, "#f59e0b");
+    const auto source_text_value = win.root().document().current_snapshot()->objects().get(text_curves_id);
+    assert(source_text_value && std::holds_alternative<pikdraw::document::TextObject>(*source_text_value));
+    const auto source_fill = std::get<pikdraw::document::TextObject>(*source_text_value).fill;
     sel.clear();
     sel.select(text_curves_id);
     bool conv_ok = workflow.convert_text_to_curves(text_curves_id);
@@ -133,6 +136,28 @@ void test_typography_inline_editing_ribbon_and_table() {
     auto curve_obj = win.root().document().current_snapshot()->objects().get(new_curve_id);
     assert(curve_obj.has_value());
     assert(std::holds_alternative<pikdraw::document::PathObject>(*curve_obj));
+    const auto& outlined_path = std::get<pikdraw::document::PathObject>(*curve_obj);
+    assert(outlined_path.has_fill);
+    assert(!outlined_path.has_stroke);
+    assert(outlined_path.stroke_width_mm == 0.0);
+    assert(outlined_path.visible);
+    assert(outlined_path.fill.color_space() == source_fill.color_space());
+    if (const auto* source_rgb = std::get_if<pikdraw::color::RGBColor>(&source_fill.payload())) {
+        const auto* curve_rgb = std::get_if<pikdraw::color::RGBColor>(&outlined_path.fill.payload());
+        assert(curve_rgb && curve_rgb->approx_equal(*source_rgb));
+    } else if (const auto* source_cmyk = std::get_if<pikdraw::color::CMYKColor>(&source_fill.payload())) {
+        const auto* curve_cmyk = std::get_if<pikdraw::color::CMYKColor>(&outlined_path.fill.payload());
+        assert(curve_cmyk && curve_cmyk->approx_equal(*source_cmyk));
+    }
+
+    const auto empty_text_id = workflow.add_vietnamese_text(35.0, 170.0, "", "Segoe UI", 32.0);
+    const auto before_empty_conversion = win.root().document().current_snapshot();
+    const auto before_empty_revision = before_empty_conversion->revision();
+    assert(!workflow.convert_text_to_curves(empty_text_id));
+    const auto after_empty_conversion = win.root().document().current_snapshot();
+    assert(after_empty_conversion->revision() == before_empty_revision);
+    assert(std::holds_alternative<pikdraw::document::TextObject>(
+        *after_empty_conversion->objects().get(empty_text_id)));
     capture_shell_screenshot(win, "m1_pikdraw_text_curves.bmp");
 
     // Canvas authoring changes only its preview snapshot until the user commits.

@@ -6,11 +6,19 @@
 namespace pikdraw::workers {
 
 struct JobLimitsConfig {
-    size_t max_memory_bytes{256 * 1024 * 1024}; // 256 MiB
+    // Zero disables the per-process memory cap; import paths then use the
+    // system-wide 90% RAM pressure monitor instead.
+    size_t max_memory_bytes{256 * 1024 * 1024};
     uint32_t active_process_limit{1};
     bool kill_on_job_close{true};
     bool prevent_child_processes{true};
 };
+
+// Import workers may use available system RAM up to the shared 90% pressure
+// threshold. A zero headroom result means the system is already at that limit
+// or Windows could not provide a reliable memory snapshot.
+[[nodiscard]] size_t SystemMemoryHeadroomBeforePressureLimit() noexcept;
+[[nodiscard]] bool IsSystemMemoryPressureLimitReached() noexcept;
 
 class JobObjectGuard {
 public:

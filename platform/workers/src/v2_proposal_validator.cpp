@@ -1,6 +1,7 @@
 #include "v2_proposal_validator.hpp"
 #include "v2_proposal_semantics.hpp"
 #include "pikdraw/interop/capabilities/format_capabilities.hpp"
+#include "pikdraw/workers/job_object.hpp"
 
 #include <bcrypt.h>
 #include <algorithm>
@@ -73,7 +74,8 @@ bool TransferV2(
     while (count > 0) {
         const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
             deadline - std::chrono::steady_clock::now());
-        if (remaining.count() <= 0 || cancellation.stop_requested()) return false;
+        if (remaining.count() <= 0 || cancellation.stop_requested() ||
+            IsSystemMemoryPressureLimitReached()) return false;
         ResetEvent(event.Get());
         OVERLAPPED operation{};
         operation.hEvent = event.Get();
@@ -87,6 +89,11 @@ bool TransferV2(
             const HANDLE waits[] = {event.Get(), process};
             for (;;) {
                 if (cancellation.stop_requested()) {
+                    CancelIoEx(pipe, &operation);
+                    GetOverlappedResult(pipe, &operation, &transferred, TRUE);
+                    return false;
+                }
+                if (IsSystemMemoryPressureLimitReached()) {
                     CancelIoEx(pipe, &operation);
                     GetOverlappedResult(pipe, &operation, &transferred, TRUE);
                     return false;
@@ -178,6 +185,10 @@ V2ProposalStreamValidator::V2ProposalStreamValidator(
     digest_.reset(new (std::nothrow) DigestState());
     const bool is_svg = expected_.format_id == "SVG";
     const bool is_dxf = expected_.format_id == "DXF";
+    const bool is_pdf = expected_.format_id == "PDF";
+    const bool is_ai = expected_.format_id == "AI";
+    const bool is_eps = expected_.format_id == "EPS";
+    const bool is_cdr = expected_.format_id == "CorelDRAW";
     const bool is_png = expected_.format_id == "PNG";
     const bool is_jpeg = expected_.format_id == "JPEG";
     const bool is_tiff = expected_.format_id == "TIFF";
@@ -187,14 +198,27 @@ V2ProposalStreamValidator::V2ProposalStreamValidator(
     const bool supported_dxf_profile = is_dxf &&
         FormatCapabilities::is_worker_import_profile_supported(
             FormatType::Dxf, expected_.profile_id);
+    const bool supported_vector_pdf_profile = (is_pdf || is_ai) &&
+        FormatCapabilities::is_worker_import_profile_supported(
+            is_pdf ? FormatType::Pdf : FormatType::Ai, expected_.profile_id);
+    const bool supported_eps_profile = is_eps && FormatCapabilities::is_worker_import_profile_supported(
+        FormatType::Eps, expected_.profile_id);
+    const bool supported_cdr_profile = is_cdr && FormatCapabilities::is_worker_import_profile_supported(
+        FormatType::Cdr, expected_.profile_id);
     const bool supported_raster_profile = (is_png || is_jpeg || is_tiff) &&
         FormatCapabilities::is_worker_import_profile_supported(
             is_png ? FormatType::Png : is_jpeg ? FormatType::Jpeg : FormatType::Tiff,
             expected_.profile_id);
-    const bool supported_profile =
-        (!is_svg && !is_dxf && !is_png && !is_jpeg && !is_tiff) ||
-        supported_svg_profile || supported_dxf_profile || supported_raster_profile;
-    const bool requires_semantics = is_svg || is_dxf || is_png || is_jpeg || is_tiff;
+#ifdef PIKDRAW_WORKER_TEST_HOOKS
+    const bool supported_test_profile = expected_.format_id == "TEST" &&
+                                        expected_.profile_id == "test-subset-v1";
+#else
+    constexpr bool supported_test_profile = false;
+#endif
+    const bool supported_profile = supported_svg_profile || supported_dxf_profile ||
+                                   supported_vector_pdf_profile || supported_eps_profile || supported_cdr_profile || supported_raster_profile ||
+                                   supported_test_profile;
+    const bool requires_semantics = is_svg || is_dxf || is_pdf || is_ai || is_eps || is_cdr || is_png || is_jpeg || is_tiff;
     if (requires_semantics && supported_profile) {
         semantic_.reset(new (std::nothrow) SemanticState());
         if (semantic_) semantic_->expected_coverage_profile = expected_.profile_id;
@@ -336,7 +360,7 @@ bool TransactV2ProposalStreamProcess(
     using namespace pikdraw::interop;
     failure = "none";
     if (stdin_pipe == INVALID_HANDLE_VALUE || stdout_pipe == INVALID_HANDLE_VALUE ||
-        process == INVALID_HANDLE_VALUE || timeout.count() <= 0 || timeout > std::chrono::minutes(1) ||
+        process == INVALID_HANDLE_VALUE || timeout.count() <= 0 || timeout > kMaxV2ProposalStreamTimeout ||
         limits.max_total_response_bytes == 0 || limits.max_canonical_bytes == 0 ||
         limits.max_canonical_bytes > limits.max_total_response_bytes || limits.max_records == 0 ||
         limits.max_records > IPC_MAX_OBJECTS || limits.max_chunks == 0 ||
@@ -365,7 +389,10 @@ bool TransactV2ProposalStreamProcess(
 
         const auto deadline = std::chrono::steady_clock::now() + timeout;
         if (!TransferV2(stdin_pipe, process, const_cast<uint8_t*>(request_bytes.data()), request_bytes.size(), true, deadline, cancellation)) {
-            failure = cancellation.stop_requested() ? "v2 import cancelled" : "v2 import begin write failed/timeout";
+            failure = cancellation.stop_requested() ? "v2 import cancelled" :
+                IsSystemMemoryPressureLimitReached()
+                    ? "system RAM reached the 90% import pressure limit"
+                    : "v2 import begin write failed/timeout";
             return false;
         }
         V2ProposalStreamValidator validator(
@@ -384,7 +411,10 @@ bool TransactV2ProposalStreamProcess(
             }
             IpcHeader header{};
             if (!TransferV2(stdout_pipe, process, reinterpret_cast<uint8_t*>(&header), sizeof(header), false, deadline, cancellation)) {
-                failure = cancellation.stop_requested() ? "v2 import cancelled" : "v2 response header failed/timeout";
+                failure = cancellation.stop_requested() ? "v2 import cancelled" :
+                    IsSystemMemoryPressureLimitReached()
+                        ? "system RAM reached the 90% import pressure limit"
+                        : "v2 response header failed/timeout";
                 return false;
             }
             const auto type = static_cast<MessageType>(header.message_type);
@@ -406,20 +436,18 @@ bool TransactV2ProposalStreamProcess(
                     type == MessageType::V2ErrorResponse ? nullptr : &expected_identity,
                     payload, failure, cancellation)) {
                 if (cancellation.stop_requested()) failure = "v2 import cancelled";
+                else if (IsSystemMemoryPressureLimitReached())
+                    failure = "system RAM reached the 90% import pressure limit";
                 return false;
             }
             received_bytes += frame_bytes;
 
             if (type == MessageType::V2ErrorResponse) {
-                if (payload.size() >= 46) {
-                    const uint16_t diag_len = static_cast<uint16_t>(payload[44] | (static_cast<uint16_t>(payload[45]) << 8));
-                    if (payload.size() >= 46 + diag_len) {
-                        char buf[512]{};
-                        const size_t copy_len = (std::min)(static_cast<size_t>(diag_len), sizeof(buf) - 1);
-                        std::memcpy(buf, payload.data() + 46, copy_len);
-                        std::fprintf(stderr, "\n>>> WORKER ERROR DIAGNOSTIC: %s <<<\n\n", buf);
-                    }
-                }
+                const auto error_packet = SerializeV2Frame(type, header.sequence_id, payload);
+                const auto worker_error = DeserializeV2ErrorResponse(error_packet);
+                if (worker_error)
+                    std::fprintf(stderr, "\n>>> WORKER ERROR DIAGNOSTIC: %s <<<\n\n",
+                                 worker_error->diagnostic.c_str());
                 failure = "worker returned v2 error response";
                 return false;
             }
@@ -429,7 +457,9 @@ bool TransactV2ProposalStreamProcess(
                 return false;
             }
             if (consumer && !consumer(frame)) {
-                failure = "v2 frame consumer rejected proposal";
+                failure = IsSystemMemoryPressureLimitReached()
+                    ? "system RAM reached the 90% import pressure limit"
+                    : "v2 frame consumer rejected proposal";
                 return false;
             }
             if (type == MessageType::V2ImportEnd) return validator.IsComplete();

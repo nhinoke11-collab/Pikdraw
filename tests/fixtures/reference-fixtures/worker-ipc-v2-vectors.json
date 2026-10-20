@@ -50,7 +50,7 @@
     {
       "name": "svg_hierarchy_layers_groups_and_single_ownership",
       "format_id": "SVG",
-      "profile_id": "svg-hierarchy-v2",
+      "profile_id": "svg-hierarchy-v3",
       "records": ["Page", "Layer", "Group", "Path", "Text", "FidelityIssue", "FidelityReport"],
       "all_references_resolve": true,
       "each_object_has_one_owner": true,

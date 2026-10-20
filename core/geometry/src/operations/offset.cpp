@@ -87,6 +87,12 @@ bool point_in_polygon(const Point2D& pt, const std::vector<Point2D>& poly) {
 
 bool segments_cross_strictly(const Point2D& a, const Point2D& b,
                             const Point2D& c, const Point2D& d) {
+    if (std::hypot(a.x - c.x, a.y - c.y) < 1e-5 ||
+        std::hypot(a.x - d.x, a.y - d.y) < 1e-5 ||
+        std::hypot(b.x - c.x, b.y - c.y) < 1e-5 ||
+        std::hypot(b.x - d.x, b.y - d.y) < 1e-5)
+        return false;
+
     auto cross = [](const Point2D& p, const Point2D& q, const Point2D& r) {
         return (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
     };
@@ -107,6 +113,9 @@ bool loop_has_self_intersection(const std::vector<Point2D>& pts) {
     const size_t n = pts.size();
     if (n < 4) return false;
 
+    size_t checks = 0;
+    constexpr size_t kMaxChecks = 15000;
+
     for (size_t i = 0; i < n; ++i) {
         const size_t i_next = (i + 1 == n) ? 0 : i + 1;
         const Point2D& p1 = pts[i];
@@ -119,6 +128,17 @@ bool loop_has_self_intersection(const std::vector<Point2D>& pts) {
 
             const Point2D& p3 = pts[j];
             const Point2D& p4 = pts[j_next];
+
+            if (std::max(p1.x, p2.x) < std::min(p3.x, p4.x) - 1e-7 ||
+                std::max(p3.x, p4.x) < std::min(p1.x, p2.x) - 1e-7 ||
+                std::max(p1.y, p2.y) < std::min(p3.y, p4.y) - 1e-7 ||
+                std::max(p3.y, p4.y) < std::min(p1.y, p2.y) - 1e-7)
+                continue;
+
+            if (++checks > kMaxChecks) {
+                // Safeguard against unbounded UI freeze on very dense polygons
+                return false;
+            }
 
             if (segments_cross_strictly(p1, p2, p3, p4))
                 return true;
@@ -313,7 +333,7 @@ ContourResult compute_contour(const ContourRequest& request) {
         if (elem.verb == PathVerb::MoveTo) {
             if (has_subpath && !subpath_closed) {
                 // Previous subpath was not closed
-                if (std::hypot(current.x - subpath_start.x, current.y - subpath_start.y) > 1e-6) {
+                if (std::hypot(current.x - subpath_start.x, current.y - subpath_start.y) > 0.05) {
                     result.status = OffsetStatus::InvalidInput;
                     result.error_message = "Contour offset requires closed source paths";
                     return result;
@@ -331,7 +351,7 @@ ContourResult compute_contour(const ContourRequest& request) {
         }
     }
     if (has_subpath && !subpath_closed) {
-        if (std::hypot(current.x - subpath_start.x, current.y - subpath_start.y) > 1e-6) {
+        if (std::hypot(current.x - subpath_start.x, current.y - subpath_start.y) > 0.05) {
             result.status = OffsetStatus::InvalidInput;
             result.error_message = "Contour offset requires closed source paths";
             return result;
@@ -384,7 +404,8 @@ ContourResult compute_contour(const ContourRequest& request) {
     }
 
     // General polygon / path offset
-    const auto flat_res = flatten_path_checked(request.path, {request.arc_tolerance_mm, 16});
+    const double tol = std::clamp(request.arc_tolerance_mm, 0.02, 1.0);
+    const auto flat_res = flatten_path_checked(request.path, {tol, 16});
     if (flat_res.status != FlatteningStatus::Success) {
         result.status = OffsetStatus::InvalidInput;
         result.error_message = "Flattening input path failed";

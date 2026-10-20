@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "native_window_selection_geometry.hpp"
 #include "native_window_toolbox.hpp"
 #include "pikdraw/desktop/shell/native_font_picker.hpp"
 #include "native_window_file_menu.hpp"
@@ -123,6 +124,67 @@ void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
 
     if (handle_workspace_chrome_mouse_down(x, y, modifiers))
         return;
+
+    const auto& current_sel = root().vector_controller().selection().selected_ids();
+    if (current_sel.size() == 1 && workflow().is_clipping_container(current_sel.front())) {
+        const auto clip_id = current_sel.front();
+        const auto snap = root().document().current_snapshot();
+        if (auto b = root().vector_controller().selection().bounds(*snap)) {
+            const auto area = canvas_rect(w, h);
+            const auto rect = selection_ui::screen_bounds(root().renderer().camera(), *b, area);
+            int bar_w = 264, bar_h = 28;
+            int bar_x = rect.left;
+            if (bar_x + bar_w > area.right - 10) bar_x = area.right - bar_w - 10;
+            if (bar_x < area.left + 10) bar_x = area.left + 10;
+            int bar_y = rect.top - bar_h - 8;
+            if (bar_y < area.top + 8) bar_y = rect.top + 8;
+
+            if (x >= bar_x && x <= bar_x + bar_w && y >= bar_y && y <= bar_y + bar_h) {
+                if (x >= bar_x + 4 && x < bar_x + 52) { // 1. Edit
+                    enter_group_isolation(clip_id);
+                    return;
+                }
+                if (x >= bar_x + 56 && x < bar_x + 84) { // 2. Select Contents
+                    enter_group_isolation(clip_id);
+                    return;
+                }
+                if (x >= bar_x + 88 && x < bar_x + 116) { // 3. Extract Contents
+                    if (workflow().release_clipping_mask_selected()) {
+                        status_msg_ = (language_ == UILanguage::Vietnamese) ? "Đã trích xuất nội dung PowerClip" : "Extracted PowerClip Contents";
+                        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+                    }
+                    return;
+                }
+                if (x >= bar_x + 120 && x < bar_x + 148) { // 4. Toggle Lock
+                    const auto* grp = std::get_if<document::GroupObject>(snap->objects().lookup_ref(clip_id));
+                    const bool locked = grp && grp->clip ? grp->clip->lock_contents_to_frame : true;
+                    workflow().set_powerclip_lock_contents(clip_id, !locked);
+                    status_msg_ = (language_ == UILanguage::Vietnamese)
+                        ? (!locked ? "Đã khóa vị trí nội dung vào khung PowerClip" : "Đã mở khóa nội dung khỏi khung PowerClip")
+                        : (!locked ? "Locked contents to PowerClip frame" : "Unlocked contents from PowerClip frame");
+                    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+                    return;
+                }
+                if (x >= bar_x + 152 && x <= bar_x + bar_w - 4) { // 5. Fit Contents Dropdown
+                    POINT pt{bar_x + 152, bar_y + bar_h};
+                    ClientToScreen(hwnd_, &pt);
+                    HMENU hFit = CreatePopupMenu();
+                    AppendMenuW(hFit, MF_STRING, static_cast<UINT_PTR>(MenuActionId::ObjectPowerClipFitCenter),
+                                language_ == UILanguage::Vietnamese ? L"Căn giữa (Center Contents)" : L"Center Contents");
+                    AppendMenuW(hFit, MF_STRING, static_cast<UINT_PTR>(MenuActionId::ObjectPowerClipFitProp),
+                                language_ == UILanguage::Vietnamese ? L"Vừa khít giữ tỷ lệ (Fit Proportionally)" : L"Fit Proportionally");
+                    AppendMenuW(hFit, MF_STRING, static_cast<UINT_PTR>(MenuActionId::ObjectPowerClipFillProp),
+                                language_ == UILanguage::Vietnamese ? L"Phủ đầy khung (Fill Proportionally)" : L"Fill Proportionally");
+                    AppendMenuW(hFit, MF_STRING, static_cast<UINT_PTR>(MenuActionId::ObjectPowerClipStretch),
+                                language_ == UILanguage::Vietnamese ? L"Kéo giãn vừa khung (Stretch to Fill)" : L"Stretch to Fill");
+                    TrackPopupMenuEx(hFit, TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, hwnd_, nullptr);
+                    DestroyMenu(hFit);
+                    return;
+                }
+                return;
+            }
+        }
+    }
 
 
     // Direct-manipulation handle for the currently focused Drop Shadow. The workflow

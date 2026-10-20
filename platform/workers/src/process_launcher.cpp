@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
+#include <thread>
 #include "pikdraw/interop/payload_validator.hpp"
 
 namespace pikdraw::workers {
@@ -93,10 +94,14 @@ bool WorkerProcessHost::Launch(const WorkerLaunchConfig& config) {
         (config.use_appcontainer && config.appcontainer_profile_name.empty()) ||
         (config.use_appcontainer &&
          (!config.job_limits.kill_on_job_close || !config.job_limits.prevent_child_processes ||
-          config.job_limits.active_process_limit != 1 || config.job_limits.max_memory_bytes == 0 ||
-          config.job_limits.max_memory_bytes > 512ull * 1024 * 1024)) ||
+          config.job_limits.active_process_limit != 1)) ||
         (config.source_snapshot != nullptr && !config.source_snapshot->IsValid()) ||
         (config.source_snapshot != nullptr && !config.use_appcontainer && !config.trusted_test_worker)) return false;
+    if (!config.temporary_directory.empty() &&
+        !std::filesystem::path(config.temporary_directory).is_absolute()) return false;
+    for (const auto& directory : config.writable_directories) {
+        if (!valid_text(directory) || !std::filesystem::path(directory).is_absolute()) return false;
+    }
 
     // Parent endpoints use overlapped I/O; both reads and writes have a deadline.
     ScopedHandle auto_stdin_read, auto_stdout_write;
@@ -120,10 +125,16 @@ bool WorkerProcessHost::Launch(const WorkerLaunchConfig& config) {
         sec_caps.Capabilities = nullptr;
         sec_caps.CapabilityCount = 0;
         sec_caps.Reserved = 0;
-        const auto bin_dir = std::filesystem::path(config.worker_executable_path).parent_path().wstring();
-        if (!AppContainerProfileGuard::GrantDirectoryAccess(bin_dir, app_container_.GetSid()) ||
-            !AppContainerProfileGuard::GrantDirectoryAccess(config.worker_executable_path, app_container_.GetSid())) {
-            return false;
+        if (config.grant_worker_directory_access) {
+            const auto bin_dir = std::filesystem::path(config.worker_executable_path).parent_path().wstring();
+            if (!AppContainerProfileGuard::GrantDirectoryAccess(bin_dir, app_container_.GetSid()) ||
+                !AppContainerProfileGuard::GrantDirectoryAccess(config.worker_executable_path, app_container_.GetSid())) {
+                return false;
+            }
+        }
+        for (const auto& directory : config.writable_directories) {
+            if (!AppContainerProfileGuard::GrantDirectoryModifyAccess(
+                    directory, app_container_.GetSid())) return false;
         }
     }
 
@@ -230,8 +241,15 @@ bool WorkerProcessHost::Launch(const WorkerLaunchConfig& config) {
     append_environment_value(L"SystemDrive");
     environment += L"SystemRoot=" + windows;
     environment.push_back(L'\0');
-    append_environment_value(L"TEMP");
-    append_environment_value(L"TMP");
+    if (config.temporary_directory.empty()) {
+        append_environment_value(L"TEMP");
+        append_environment_value(L"TMP");
+    } else {
+        environment += L"TEMP=" + config.temporary_directory;
+        environment.push_back(L'\0');
+        environment += L"TMP=" + config.temporary_directory;
+        environment.push_back(L'\0');
+    }
     append_environment_value(L"USERPROFILE");
     environment += L"WINDIR=" + windows;
     environment.push_back(L'\0');
@@ -316,6 +334,144 @@ bool WorkerProcessHost::WaitForExit(std::chrono::milliseconds timeout) noexcept 
     const auto bounded = static_cast<DWORD>(std::min<int64_t>(timeout.count(), MAXDWORD - 1));
     if (WaitForSingleObject(process_handle_.Get(), bounded) != WAIT_OBJECT_0) return false;
     return GetExitCodeProcess(process_handle_.Get(), &last_worker_exit_code_) != FALSE;
+}
+
+bool WorkerProcessHost::TransactRawProcessBytes(
+    std::span<const uint8_t> input, uint64_t max_output_bytes,
+    std::chrono::milliseconds timeout, std::vector<uint8_t>& output) {
+    output.clear();
+    last_transport_failure_ = "none";
+    last_worker_exit_code_ = STILL_ACTIVE;
+    if (!IsAlive() || !app_container_.IsValid() || v2_negotiated_ ||
+        has_source_capability_ || input.empty() ||
+        max_output_bytes == 0 ||
+        timeout.count() <= 0 || !stdin_write_handle_.IsValid() || !stdout_read_handle_.IsValid()) {
+        last_transport_failure_ = "raw process stream requires a bounded unsourced AppContainer process";
+        return false;
+    }
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    std::atomic<bool> input_ok{false};
+    std::thread input_writer([&] {
+        input_ok.store(Transfer(stdin_write_handle_.Get(), process_handle_.Get(),
+            const_cast<uint8_t*>(input.data()), input.size(), true, deadline),
+            std::memory_order_relaxed);
+        stdin_write_handle_.Close();
+    });
+
+    bool output_ok = true;
+    bool eof = false;
+    std::array<uint8_t, 64 * 1024> buffer{};
+    while (!eof && output_ok) {
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+            deadline - std::chrono::steady_clock::now());
+        if (remaining.count() <= 0) {
+            output_ok = false;
+            last_transport_failure_ = "raw process stream timed out";
+            break;
+        }
+        if (IsSystemMemoryPressureLimitReached()) {
+            output_ok = false;
+            last_transport_failure_ = "system RAM reached the 90% import pressure limit";
+            break;
+        }
+        ScopedHandle event(CreateEventW(nullptr, TRUE, FALSE, nullptr));
+        if (!event.IsValid()) {
+            output_ok = false;
+            last_transport_failure_ = "raw process stream could not create a read event";
+            break;
+        }
+        OVERLAPPED operation{};
+        operation.hEvent = event.Get();
+        DWORD received = 0;
+        BOOL read_ok = ReadFile(stdout_read_handle_.Get(), buffer.data(),
+                                static_cast<DWORD>(buffer.size()), &received, &operation);
+        if (!read_ok) {
+            const DWORD error = GetLastError();
+            if (error == ERROR_BROKEN_PIPE || error == ERROR_NO_DATA) {
+                eof = true;
+                break;
+            }
+            if (error != ERROR_IO_PENDING) {
+                output_ok = false;
+                last_transport_failure_ = "raw process stream read failed";
+                break;
+            }
+            const HANDLE waits[]{event.Get(), process_handle_.Get()};
+            const DWORD bounded_wait = static_cast<DWORD>((std::min<int64_t>)(
+                (std::min<int64_t>)(remaining.count(), 100), MAXDWORD - 1));
+            const DWORD waited = WaitForMultipleObjects(2, waits, FALSE, bounded_wait);
+            if (waited == WAIT_TIMEOUT) {
+                if (!IsSystemMemoryPressureLimitReached()) continue;
+                CancelIoEx(stdout_read_handle_.Get(), &operation);
+                DWORD ignored = 0;
+                GetOverlappedResult(stdout_read_handle_.Get(), &operation, &ignored, TRUE);
+                output_ok = false;
+                last_transport_failure_ = "system RAM reached the 90% import pressure limit";
+                break;
+            }
+            if (waited == WAIT_OBJECT_0 + 1) {
+                if (!GetOverlappedResult(stdout_read_handle_.Get(), &operation, &received, TRUE)) {
+                    const DWORD read_error = GetLastError();
+                    if (read_error == ERROR_BROKEN_PIPE || read_error == ERROR_NO_DATA) {
+                        eof = true;
+                        break;
+                    }
+                    output_ok = false;
+                    last_transport_failure_ = "raw process stream did not close cleanly";
+                    break;
+                }
+            } else if (waited != WAIT_OBJECT_0) {
+                output_ok = false;
+                last_transport_failure_ = "raw process stream completion failed";
+                break;
+            } else if (!GetOverlappedResult(stdout_read_handle_.Get(), &operation,
+                                           &received, FALSE)) {
+                const DWORD read_error = GetLastError();
+                if (read_error == ERROR_BROKEN_PIPE || read_error == ERROR_NO_DATA ||
+                    (read_error == ERROR_OPERATION_ABORTED &&
+                     WaitForSingleObject(process_handle_.Get(), 0) == WAIT_OBJECT_0)) {
+                    eof = true;
+                    break;
+                }
+                output_ok = false;
+                last_transport_failure_ = "raw process stream completion failed";
+                break;
+            }
+        }
+        if (received == 0) {
+            eof = true;
+            break;
+        }
+        if (output.size() > max_output_bytes ||
+            received > max_output_bytes - output.size()) {
+            TerminateProcess(process_handle_.Get(), ERROR_FILE_TOO_LARGE);
+            output_ok = false;
+            last_transport_failure_ = "raw process output exceeded its bounded byte limit";
+            break;
+        }
+        try {
+            output.insert(output.end(), buffer.begin(), buffer.begin() + received);
+        } catch (...) {
+            output_ok = false;
+            last_transport_failure_ = "raw process output could not be retained within host memory";
+            break;
+        }
+    }
+
+    if (!output_ok && process_handle_.IsValid())
+        TerminateProcess(process_handle_.Get(), ERROR_PROCESS_ABORTED);
+    input_writer.join();
+    const auto wait_remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline - std::chrono::steady_clock::now());
+    if (output_ok && eof && wait_remaining.count() > 0 && WaitForExit(wait_remaining)) {
+        if (last_worker_exit_code_ == 0 && input_ok.load(std::memory_order_relaxed)) return true;
+        last_transport_failure_ = "raw process exited unsuccessfully or did not consume all input";
+    } else if (output_ok) {
+        last_transport_failure_ = "raw process did not complete within its bounded time";
+    }
+    output.clear();
+    Terminate();
+    return false;
 }
 
 bool WorkerProcessHost::IsAlive() const noexcept {

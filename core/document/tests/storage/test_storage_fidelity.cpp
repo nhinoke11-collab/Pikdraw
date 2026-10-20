@@ -1,13 +1,16 @@
 #include "pikdraw/document/document.hpp"
+#include "pikdraw/document/commands/path_commands.hpp"
 #include "pikdraw/document/storage/native_format.hpp"
 #include "pikdraw/document/storage/save_recovery.hpp"
 #include "../../src/storage/byte_codec.hpp"
+#include <algorithm>
 #include <filesystem>
 #include <array>
 #include <bit>
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <stdexcept>
 
 using namespace pikdraw;
@@ -243,9 +246,12 @@ void image_source_roundtrip() {
   image.transform = geometry::Transform2D::translation(11.5, -7.25);
   image.width_px = 2;
   image.height_px = 2;
-  image.pixels_rgba = {0x10203040, 0x50607080, 0x90a0b0c0, 0xd0e0f001};
+  image.shared_pixels_rgba = std::make_shared<const std::vector<uint32_t>>(
+      std::vector<uint32_t>{0x10203040, 0x50607080, 0x90a0b0c0, 0xd0e0f001});
   image.source.media_type = "image/png";
-  image.source.original_bytes = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+  image.source.shared_original_bytes =
+      std::make_shared<const std::vector<uint8_t>>(
+          std::vector<uint8_t>{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A});
   image.source.dpi_x = 300.0;
   image.source.dpi_y = 150.0;
   image.source.dpi_from_source = true;
@@ -273,9 +279,10 @@ void image_source_roundtrip() {
             restored.transform.ty == image.transform.ty &&
             restored.width_px == image.width_px &&
             restored.height_px == image.height_px &&
-            restored.pixels_rgba == image.pixels_rgba &&
+            std::equal(restored.rgba_pixels().begin(), restored.rgba_pixels().end(),
+                       image.rgba_pixels().begin(), image.rgba_pixels().end()) &&
             restored.source.media_type == image.source.media_type &&
-            restored.source.original_bytes == image.source.original_bytes &&
+            restored.source.original_data() == image.source.original_data() &&
             restored.source.dpi_x == image.source.dpi_x &&
             restored.source.dpi_y == image.source.dpi_y &&
             restored.source.dpi_from_source &&
@@ -309,6 +316,51 @@ void image_source_roundtrip() {
   check(!oversized_doc.execute_command(
             std::make_unique<AddObjectCommand>(oversized_icc)).success,
         "oversized embedded raster ICC profile was accepted");
+}
+
+void locked_pdf_source_roundtrip() {
+  auto asset = std::make_shared<PdfSourceAsset>();
+  asset->sha256_hex = std::string(64, 'b');
+  asset->page_count = 2;
+  const std::vector<uint8_t> source_bytes{'%', 'P', 'D', 'F', '-', '1', '.', '7', '\n'};
+  asset->bytes = std::make_shared<const std::vector<uint8_t>>(source_bytes);
+
+  Page first_layout = Page::make_default();
+  first_layout.width_mm = 215.9;
+  first_layout.height_mm = 279.4;
+  Page second_layout = first_layout;
+  second_layout.width_mm = 279.4;
+  second_layout.height_mm = 215.9;
+  auto first = make_document_page("PDF Page 1", first_layout);
+  auto second = make_document_page("PDF Page 2", second_layout);
+  first.pdf_source = PdfSourcePageReference{asset, 0, 0};
+  second.pdf_source = PdfSourcePageReference{asset, 1, 3};
+  DocumentSnapshot snapshot{9, 12, {first, second}, second.id,
+                            "locked-pdf-roundtrip", DocumentContentMode::PdfPrintLocked};
+
+  const auto bytes = NativeFormat::serialize(snapshot);
+  check(bytes.size() > 36 && bytes[4] == 11,
+        "locked PDF source did not use native format v11");
+  std::string error;
+  const auto restored = NativeFormat::deserialize(bytes.data(), bytes.size(), &error);
+  check(restored && error.empty(), "locked PDF source did not reopen");
+  check(restored->is_content_locked() && restored->page_count() == 2 &&
+            restored->active_page_id() == second.id,
+        "locked PDF document mode or active page changed on reopen");
+  const auto& restored_first = restored->pages()[0].pdf_source;
+  const auto& restored_second = restored->pages()[1].pdf_source;
+  check(restored_first && restored_second &&
+            restored_first->asset == restored_second->asset &&
+            restored_first->asset->sha256_hex == asset->sha256_hex &&
+            *restored_first->asset->bytes == source_bytes &&
+            restored_first->source_page_index == 0 &&
+            restored_second->source_page_index == 1 &&
+            restored_second->rotation_quarters_clockwise == 3,
+        "PDF source bytes or per-page locator changed on reopen");
+  Document reopened(*restored);
+  check(reopened.is_content_locked() && !reopened.execute_command(
+            std::make_unique<AddObjectCommand>(PathObject{})).success,
+        "native reopen made a locked PDF editable");
 }
 
 void save_faults_and_paths() {
@@ -397,6 +449,7 @@ int main() {
     versioned_recovery_draft_isolated_from_documents();
     document_path_ids_are_globally_unique();
     image_source_roundtrip();
+    locked_pdf_source_roundtrip();
     save_faults_and_paths();
     std::cout << "PASS source fidelity, malformed file quotas, checksum, save "
                  "faults, UTF8 paths and reopen\n";

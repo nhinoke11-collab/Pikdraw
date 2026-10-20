@@ -4,6 +4,7 @@
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/gradient_tool_controller.hpp"
+#include "../tools/dimension_tool_controller.hpp"
 #include "native_gdiplus_api.hpp"
 
 #include <algorithm>
@@ -662,9 +663,16 @@ void NativeWindow::paint_contour_canvas_overlay(HDC dc, const RECT& area) {
     const auto& res = contour_tool_->preview_result();
     if (res.steps.empty()) return;
 
+    const auto target_id = contour_tool_->target_object();
+    const auto snapshot = root().document().current_snapshot();
+    const auto* object = snapshot ? snapshot->objects().lookup_ref(target_id) : nullptr;
+    const auto* path_obj = object ? std::get_if<document::PathObject>(object) : nullptr;
+    const auto obj_transform = path_obj ? path_obj->transform : geometry::Transform2D::identity();
+
     const auto& camera = root().renderer().camera();
     const auto screen = [&](geometry::Point2D pt) {
-        const auto local = camera.world_to_screen(pt);
+        const auto world_pt = obj_transform.map_point(pt);
+        const auto local = camera.world_to_screen(world_pt);
         return POINT{area.left + static_cast<LONG>(std::lround(local.x)),
                      area.top + static_cast<LONG>(std::lround(local.y))};
     };
@@ -695,6 +703,127 @@ void NativeWindow::paint_contour_canvas_overlay(HDC dc, const RECT& area) {
 
     SelectObject(dc, old_pen);
     DeleteObject(preview_pen);
+    RestoreDC(dc, saved);
+}
+
+void NativeWindow::paint_dimension_canvas_overlay(HDC dc, const RECT& area) {
+    if (!dimension_tool_ || !dimension_tool_->active())
+        return;
+
+    const auto& camera = root().renderer().camera();
+    const auto screen = [&](geometry::Point2D pt) {
+        const auto local = camera.world_to_screen(pt);
+        return POINT{area.left + static_cast<LONG>(std::lround(local.x)),
+                     area.top + static_cast<LONG>(std::lround(local.y))};
+    };
+
+    const int saved = SaveDC(dc);
+    SetBkMode(dc, TRANSPARENT);
+
+    const COLORREF col_cyan = RGB(0, 242, 195);
+    const COLORREF col_text = theme_ == ThemeMode::CyberDark ? RGB(0, 242, 195) : RGB(0, 135, 106);
+    const COLORREF col_bg = theme_ == ThemeMode::CyberDark ? RGB(15, 23, 42) : RGB(255, 255, 255);
+
+    // If picking second point, show start marker and dashed rubberband
+    if (dimension_tool_->state() == tools::DimensionSessionState::PickSecond) {
+        const auto p1 = screen(dimension_tool_->first_point());
+        const auto p2 = screen(pointer_current_world_);
+
+        HPEN dash_pen = CreatePen(PS_DOT, 1, col_cyan);
+        HGDIOBJ old_pen = SelectObject(dc, dash_pen);
+        MoveToEx(dc, p1.x, p1.y, nullptr);
+        LineTo(dc, p2.x, p2.y);
+        SelectObject(dc, old_pen);
+        DeleteObject(dash_pen);
+
+        HBRUSH mark_brush = CreateSolidBrush(col_cyan);
+        HGDIOBJ old_brush = SelectObject(dc, mark_brush);
+        HPEN mark_pen = CreatePen(PS_SOLID, 1, col_cyan);
+        old_pen = SelectObject(dc, mark_pen);
+        Ellipse(dc, p1.x - 4, p1.y - 4, p1.x + 5, p1.y + 5);
+        SelectObject(dc, old_brush);
+        SelectObject(dc, old_pen);
+        DeleteObject(mark_brush);
+        DeleteObject(mark_pen);
+    }
+
+    // If preview layout is valid, render lines, arrows, and measurement text
+    if (dimension_tool_->has_preview()) {
+        const auto& layout = dimension_tool_->preview_layout();
+        if (layout.valid) {
+            HPEN line_pen = CreatePen(PS_SOLID, 1, col_cyan);
+            HGDIOBJ old_pen = SelectObject(dc, line_pen);
+
+            for (const auto& line : layout.lines) {
+                POINT start_pt{0, 0};
+                for (const auto& el : line.elements()) {
+                    if (el.verb == geometry::PathVerb::MoveTo) {
+                        start_pt = screen(el.pt);
+                        MoveToEx(dc, start_pt.x, start_pt.y, nullptr);
+                    } else if (el.verb == geometry::PathVerb::LineTo) {
+                        const POINT p = screen(el.pt);
+                        LineTo(dc, p.x, p.y);
+                    } else if (el.verb == geometry::PathVerb::Close) {
+                        LineTo(dc, start_pt.x, start_pt.y);
+                    }
+                }
+            }
+
+            HBRUSH arr_brush = CreateSolidBrush(col_cyan);
+            HGDIOBJ old_brush = SelectObject(dc, arr_brush);
+            for (const auto& arr : layout.arrows) {
+                std::vector<POINT> pts;
+                pts.reserve(arr.elements().size());
+                for (const auto& el : arr.elements()) {
+                    if (el.verb == geometry::PathVerb::MoveTo || el.verb == geometry::PathVerb::LineTo) {
+                        pts.push_back(screen(el.pt));
+                    }
+                }
+                if (pts.size() >= 3) {
+                    Polygon(dc, pts.data(), static_cast<int>(pts.size()));
+                } else if (pts.size() == 2) {
+                    MoveToEx(dc, pts[0].x, pts[0].y, nullptr);
+                    LineTo(dc, pts[1].x, pts[1].y);
+                }
+            }
+            SelectObject(dc, old_brush);
+            DeleteObject(arr_brush);
+
+            SelectObject(dc, old_pen);
+            DeleteObject(line_pen);
+
+            if (!layout.formatted_text.empty()) {
+                const POINT tp = screen(layout.text_position);
+                std::wstring wtext(layout.formatted_text.begin(), layout.formatted_text.end());
+
+                ensure_ui_fonts();
+                SelectObject(dc, font_secondary_);
+
+                SIZE text_size{0, 0};
+                GetTextExtentPoint32W(dc, wtext.c_str(), static_cast<int>(wtext.size()), &text_size);
+                const int pad_x = 6;
+                const int pad_y = 3;
+                RECT badge_rc{tp.x - text_size.cx / 2 - pad_x,
+                              tp.y - text_size.cy / 2 - pad_y,
+                              tp.x + text_size.cx / 2 + pad_x,
+                              tp.y + text_size.cy / 2 + pad_y};
+
+                HBRUSH bg_brush = CreateSolidBrush(col_bg);
+                HPEN border_pen = CreatePen(PS_SOLID, 1, col_cyan);
+                old_brush = SelectObject(dc, bg_brush);
+                old_pen = SelectObject(dc, border_pen);
+                RoundRect(dc, badge_rc.left, badge_rc.top, badge_rc.right, badge_rc.bottom, 4, 4);
+                SelectObject(dc, old_brush);
+                SelectObject(dc, old_pen);
+                DeleteObject(bg_brush);
+                DeleteObject(border_pen);
+
+                SetTextColor(dc, col_text);
+                DrawTextW(dc, wtext.c_str(), -1, &badge_rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            }
+        }
+    }
+
     RestoreDC(dc, saved);
 }
 

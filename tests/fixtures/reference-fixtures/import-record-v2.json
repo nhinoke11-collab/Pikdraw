@@ -13,7 +13,7 @@
     "6": "Layer",
     "7": "Group"
   },
-  "compatibility": "Page, Path, Text, FidelityReport and FidelityIssue payloads retain import-record-v1 layouts. Layer and Group are additive record types in schema v2.",
+  "compatibility": "Page, Path, the base Text payload, FidelityReport and FidelityIssue retain import-record-v1 layouts. Layer and Group are additive record types in schema v2. PDF/AI profile v2 may append font_postscript_name:string16 to Text after Color; omitted means the reader exposed no PostScript name.",
   "payload_layouts": {
     "Page": ["width_mm:f64", "height_mm:f64"],
     "Layer": [
@@ -31,10 +31,15 @@
       "source_id:string16",
       "name:string16",
       "child_count:u32",
-      "child_object_local_ids:u32[child_count]"
+      "child_object_local_ids:u32[child_count]",
+      "optional clip_mask_local_id:u32 (present only for clipped groups; must identify a Path child; omitted for legacy payloads)"
     ],
     "Path": "same payload layout as import-record-v1.json",
-    "Text": "same payload layout as import-record-v1.json",
+    "Text": {
+      "base_layout": "same payload layout as import-record-v1.json",
+      "optional_profile_v2_extension": ["font_postscript_name:string16 after Color"],
+      "extension_profiles": ["pdf-page-vector-v2", "ai-pdf-compatible-vector-v2"]
+    },
     "FidelityReport": "same payload layout as import-record-v1.json",
     "FidelityIssue": "same payload layout as import-record-v1.json"
   },
@@ -49,12 +54,12 @@
   },
   "svg_profile": {
     "format_id": "SVG",
-    "profile_id": "svg-hierarchy-v2",
+    "profile_id": "svg-hierarchy-v3",
     "supported_elements": ["g", "rect", "path", "text"],
     "group_support": "nested SVG g elements retain Group records; root-level Inkscape layers retain Layer records",
     "inkscape_layer_namespace": "http://www.inkscape.org/namespaces/inkscape",
     "supported_path_commands": ["M", "L", "H", "V", "C", "S", "Q", "T", "Z"],
-    "unsupported": ["transforms", "CSS/style", "filters/effects", "masks", "images/links", "scripts", "DTD/entities", "nested Inkscape layers", "arc path commands"],
+    "unsupported": ["malformed/singular transforms", "CSS/style", "filters/effects", "general masks", "images/links", "scripts", "DTD/entities", "nested Inkscape layers", "arc path commands"],
     "limits": {
       "source_bytes": 16777216,
       "elements_including_groups": 10000,
@@ -120,6 +125,14 @@
       "units": "explicit_insunits_to_mm",
       "object_owner_count": "exactly_one_per_object",
       "expected_valid": true
+    },
+    {
+      "name": "pdf_text_preserves_reader_font_family_and_postscript_identity",
+      "format_id": "PDF",
+      "profile_id": "pdf-page-vector-v2",
+      "text_extension": "font_postscript_name:string16 after Color",
+      "missing_identity_policy": "reject_text_instead_of_silent_font_substitution",
+      "expected_valid": true
     }
   ],
   "negative_vectors": [
@@ -139,8 +152,8 @@
       "expected_error": "record_order_invalid"
     },
     {
-      "name": "unsupported_svg_transform",
-      "profile_id": "svg-hierarchy-v2",
+      "name": "malformed_svg_transform",
+      "profile_id": "svg-hierarchy-v3",
       "expected_error": "source_rejected_no_partial_proposal"
     },
     {
@@ -152,7 +165,7 @@
       "name": "dxf_report_profile_mismatch",
       "format_id": "DXF",
       "profile_id": "dxf-entities-v1",
-      "coverage_profile": "svg-hierarchy-v2",
+      "coverage_profile": "svg-hierarchy-v3",
       "expected_valid": false
     },
     {

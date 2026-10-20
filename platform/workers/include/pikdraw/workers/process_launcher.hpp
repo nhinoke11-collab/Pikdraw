@@ -10,6 +10,7 @@
 #include <optional>
 #include <span>
 #include <stop_token>
+#include <vector>
 
 namespace pikdraw::workers {
 
@@ -17,6 +18,12 @@ struct WorkerLaunchConfig {
     std::wstring worker_executable_path;
     std::wstring working_directory;
     bool use_appcontainer{true};
+    // External system tools may already be readable by AppContainer through their
+    // installation ACL. When false, the launcher never edits that directory ACL.
+    bool grant_worker_directory_access{true};
+    // Per-job scratch space explicitly granted to the AppContainer, then removed by its owner.
+    std::vector<std::wstring> writable_directories;
+    std::wstring temporary_directory;
     // Only repository-owned smoke-test binaries may use this opt-in.
     // Production parsers/plugins must never receive this launch configuration.
     bool trusted_test_worker{false};
@@ -61,6 +68,11 @@ public:
 
     [[nodiscard]] bool IsAlive() const noexcept;
     [[nodiscard]] bool WaitForExit(std::chrono::milliseconds timeout) noexcept;
+    [[nodiscard]] bool TransactRawProcessBytes(
+        std::span<const uint8_t> input,
+        uint64_t max_output_bytes,
+        std::chrono::milliseconds timeout,
+        std::vector<uint8_t>& output);
     [[nodiscard]] const char* LastTransportFailure() const noexcept { return last_transport_failure_; }
     [[nodiscard]] DWORD LastWorkerExitCode() const noexcept { return last_worker_exit_code_; }
     [[nodiscard]] const AppContainerProfileGuard& GetAppContainer() const noexcept { return app_container_; }

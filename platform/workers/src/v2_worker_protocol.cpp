@@ -1,9 +1,10 @@
 #include "v2_worker_protocol.hpp"
 
-#include "pikdraw/interop/adapters/cdr_extractor.hpp"
-#include "pikdraw/interop/adapters/pdf_ai_extractor.hpp"
 #include "pikdraw/interop/adapters/dxf_importer.hpp"
 #include "pikdraw/interop/adapters/dxf_worker_adapter.hpp"
+#include "pikdraw/interop/adapters/cdr_worker_adapter.hpp"
+#include "pikdraw/interop/adapters/eps_worker_adapter.hpp"
+#include "pikdraw/interop/adapters/pdf_worker_adapter.hpp"
 #include "pikdraw/interop/adapters/raster_worker_adapter.hpp"
 #include "pikdraw/interop/adapters/svg_worker_adapter.hpp"
 #include "pikdraw/workers/source_snapshot.hpp"
@@ -13,6 +14,7 @@
 #include <array>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <vector>
 
 namespace pikdraw::workers {
@@ -78,49 +80,68 @@ bool WritePacket(HANDLE output, const std::vector<uint8_t>& packet) {
     return packet.size() <= MAXDWORD && WriteExact(output, packet.data(), static_cast<DWORD>(packet.size()));
 }
 
-bool HashBytes(std::span<const uint8_t> bytes, IpcV2Digest& digest) {
-    BCRYPT_ALG_HANDLE algorithm = nullptr;
-    BCRYPT_HASH_HANDLE hash = nullptr;
-    std::vector<uint8_t> object;
-    const auto close = [&] {
-        if (hash) BCryptDestroyHash(hash);
-        if (algorithm) BCryptCloseAlgorithmProvider(algorithm, 0);
-    };
-    if (!BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0))) return false;
-    DWORD object_bytes = 0;
-    DWORD written = 0;
-    if (!BCRYPT_SUCCESS(BCryptGetProperty(
-            algorithm, BCRYPT_OBJECT_LENGTH, reinterpret_cast<PUCHAR>(&object_bytes), sizeof(object_bytes),
-            &written, 0)) || object_bytes == 0 || written != sizeof(object_bytes)) {
-        close();
-        return false;
-    }
-    try {
-        object.resize(object_bytes);
-    } catch (...) {
-        close();
-        return false;
-    }
-    if (!BCRYPT_SUCCESS(BCryptCreateHash(
-            algorithm, &hash, object.data(), static_cast<ULONG>(object.size()), nullptr, 0, 0))) {
-        close();
-        return false;
-    }
-    size_t offset = 0;
-    while (offset < bytes.size()) {
-        const ULONG count = static_cast<ULONG>(std::min<size_t>(
-            bytes.size() - offset, std::numeric_limits<ULONG>::max()));
-        if (!BCRYPT_SUCCESS(BCryptHashData(
-                hash, const_cast<PUCHAR>(bytes.data() + offset), count, 0))) {
-            close();
+class Sha256Accumulator final {
+public:
+    Sha256Accumulator() = default;
+    Sha256Accumulator(const Sha256Accumulator&) = delete;
+    Sha256Accumulator& operator=(const Sha256Accumulator&) = delete;
+    ~Sha256Accumulator() { Close(); }
+
+    bool Initialize() {
+        if (!BCRYPT_SUCCESS(BCryptOpenAlgorithmProvider(&algorithm_, BCRYPT_SHA256_ALGORITHM, nullptr, 0)))
+            return false;
+        DWORD object_bytes = 0;
+        DWORD written = 0;
+        if (!BCRYPT_SUCCESS(BCryptGetProperty(
+                algorithm_, BCRYPT_OBJECT_LENGTH, reinterpret_cast<PUCHAR>(&object_bytes), sizeof(object_bytes),
+                &written, 0)) || object_bytes == 0 || written != sizeof(object_bytes)) {
             return false;
         }
-        offset += count;
+        try {
+            object_.resize(object_bytes);
+        } catch (...) {
+            return false;
+        }
+        return BCRYPT_SUCCESS(BCryptCreateHash(
+            algorithm_, &hash_, object_.data(), static_cast<ULONG>(object_.size()), nullptr, 0, 0));
     }
-    const bool ok = BCRYPT_SUCCESS(BCryptFinishHash(
-        hash, digest.data(), static_cast<ULONG>(digest.size()), 0));
-    close();
-    return ok;
+
+    bool Update(std::span<const uint8_t> bytes) {
+        if (!hash_) return false;
+        size_t offset = 0;
+        while (offset < bytes.size()) {
+            const ULONG count = static_cast<ULONG>(std::min<size_t>(
+                bytes.size() - offset, std::numeric_limits<ULONG>::max()));
+            if (!BCRYPT_SUCCESS(BCryptHashData(
+                    hash_, const_cast<PUCHAR>(bytes.data() + offset), count, 0))) return false;
+            offset += count;
+        }
+        return true;
+    }
+
+    bool Finish(IpcV2Digest& digest) {
+        if (!hash_) return false;
+        const bool ok = BCRYPT_SUCCESS(BCryptFinishHash(
+            hash_, digest.data(), static_cast<ULONG>(digest.size()), 0));
+        Close();
+        return ok;
+    }
+
+private:
+    void Close() noexcept {
+        if (hash_) { BCryptDestroyHash(hash_); hash_ = nullptr; }
+        if (algorithm_) { BCryptCloseAlgorithmProvider(algorithm_, 0); algorithm_ = nullptr; }
+        object_.clear();
+    }
+
+    BCRYPT_ALG_HANDLE algorithm_{nullptr};
+    BCRYPT_HASH_HANDLE hash_{nullptr};
+    std::vector<uint8_t> object_;
+};
+
+bool HashBytes(std::span<const uint8_t> bytes, IpcV2Digest& digest) {
+    Sha256Accumulator accumulator;
+    return accumulator.Initialize() && accumulator.Update(bytes) && accumulator.Finish(digest);
 }
 
 bool VerifySource(HANDLE source, const V2ImportBegin& request) {
@@ -135,7 +156,6 @@ bool VerifySource(HANDLE source, const V2ImportBegin& request) {
 
 bool ReadVerifiedSource(HANDLE source, uint64_t expected_bytes, std::vector<uint8_t>& bytes) {
     if (source == INVALID_HANDLE_VALUE || expected_bytes == 0 ||
-        expected_bytes > 64ULL * 1024ULL * 1024ULL ||
         expected_bytes > SIZE_MAX) return false;
     LARGE_INTEGER beginning{};
     if (!SetFilePointerEx(source, beginning, nullptr, FILE_BEGIN)) return false;
@@ -161,7 +181,7 @@ bool SendError(HANDLE output, uint32_t sequence, uint32_t code, const char* diag
 
 template <typename Builder>
 bool SendImportProposal(HANDLE output, const V2ImportBegin& request,
-                        std::span<const uint8_t> source,
+                        std::vector<uint8_t>& source,
                         uint32_t request_sequence, std::string_view format,
                         size_t max_records, Builder&& build_records) {
     const uint32_t first_response_sequence = request_sequence;
@@ -177,31 +197,52 @@ bool SendImportProposal(HANDLE output, const V2ImportBegin& request,
     if (records.empty() || records.size() > max_records) {
         return SendError(output, request_sequence, 4, "import proposal record count exceeds profile");
     }
+    // Adapter records own all decoded values now; release the source snapshot before
+    // framing and transmitting the proposal to avoid holding both full representations.
+    std::vector<uint8_t>().swap(source);
 
-    std::vector<uint8_t> canonical_stream;
-    std::vector<V2ProposalChunk> chunks;
+    constexpr size_t chunk_target_bytes = IPC_V2_MAX_FRAME_BYTES - 256;
+    uint64_t stream_bytes = 0;
+    uint64_t planned_chunks = 1;
+    size_t planned_chunk_bytes = 0;
+    for (const auto& record : records) {
+        if (record.payload.size() > IPC_V2_MAX_RECORD_BYTES ||
+            record.payload.size() > chunk_target_bytes - 8)
+            return SendError(output, request_sequence, 4,
+                             "import proposal exceeds the structural record size limit");
+        const uint64_t framed_bytes = 8ULL + record.payload.size();
+        if (framed_bytes > std::numeric_limits<uint64_t>::max() - stream_bytes)
+            return SendError(output, request_sequence, 4,
+                             "import proposal byte count overflow");
+        stream_bytes += framed_bytes;
+        if (planned_chunk_bytes > 0 && planned_chunk_bytes + static_cast<size_t>(framed_bytes) > chunk_target_bytes) {
+            ++planned_chunks;
+            planned_chunk_bytes = 0;
+        }
+        planned_chunk_bytes += static_cast<size_t>(framed_bytes);
+    }
+    if (planned_chunks > IPC_MAX_OBJECTS || planned_chunks > UINT32_MAX)
+        return SendError(output, request_sequence, 4, "import proposal exceeds the structural chunk count limit");
+
     V2ProposalChunk chunk;
     chunk.job = request.job;
+    Sha256Accumulator digest_accumulator;
+    if (!digest_accumulator.Initialize()) return false;
     uint32_t next_record_ordinal = 0;
-    const size_t max_stream_bytes = (format == "RASTER" || format == "CorelDRAW" || format == "AI" || format == "PDF")
-        ? 36 * 1024 * 1024 : 16 * 1024 * 1024;
-    constexpr size_t chunk_target_bytes = IPC_V2_MAX_FRAME_BYTES - 256;
+    uint32_t chunks_sent = 0;
     try {
-        canonical_stream.reserve(1024 * 1024);
         chunk.canonical_record_bytes.reserve(256 * 1024);
-        for (const auto& record : records) {
+        for (auto& record : records) {
             const size_t framed_bytes = 8 + record.payload.size();
-            if (record.payload.size() > IPC_V2_MAX_RECORD_BYTES || framed_bytes > chunk_target_bytes ||
-                framed_bytes > max_stream_bytes - canonical_stream.size()) {
-                return SendError(output, request_sequence, 4, "import proposal exceeds bounded record or byte profile");
-            }
             if (chunk.record_count > 0 && chunk.canonical_record_bytes.size() + framed_bytes > chunk_target_bytes) {
                 chunk.checksum_crc32 = V2ProposalRecordsCrc32(chunk.canonical_record_bytes);
-                chunks.push_back(std::move(chunk));
-                if (chunks.size() >= 64) return SendError(output, request_sequence, 4, "import proposal has too many chunks");
+                const auto packet = SerializeV2ProposalChunk(
+                    chunk, first_response_sequence + chunks_sent);
+                if (packet.empty() || !WritePacket(output, packet)) return false;
+                ++chunks_sent;
                 chunk = {};
                 chunk.job = request.job;
-                chunk.chunk_ordinal = static_cast<uint32_t>(chunks.size());
+                chunk.chunk_ordinal = chunks_sent;
                 chunk.first_record_ordinal = next_record_ordinal;
                 chunk.canonical_record_bytes.reserve(256 * 1024);
             }
@@ -209,35 +250,32 @@ bool SendImportProposal(HANDLE output, const V2ImportBegin& request,
             if (!AppendV2ProposalRecord(chunk.canonical_record_bytes, static_cast<uint16_t>(record.type), record.payload)) {
                 return SendError(output, request_sequence, 4, "import proposal record could not be framed");
             }
-            // The aggregate digest input spans multiple frames. The framing helper
-            // deliberately accepts only one frame and must not cap this stream.
-            canonical_stream.insert(canonical_stream.end(),
-                chunk.canonical_record_bytes.begin() + record_start,
-                chunk.canonical_record_bytes.end());
+            if (!digest_accumulator.Update(std::span<const uint8_t>(
+                    chunk.canonical_record_bytes.data() + record_start, framed_bytes))) return false;
+            // The chunk now owns the serialized bytes, so discard this adapter payload
+            // before the receiver grows its canonical proposal buffer.
+            std::vector<uint8_t>().swap(record.payload);
             ++chunk.record_count;
             ++next_record_ordinal;
         }
         chunk.checksum_crc32 = V2ProposalRecordsCrc32(chunk.canonical_record_bytes);
-        chunks.push_back(std::move(chunk));
+        const auto packet = SerializeV2ProposalChunk(
+            chunk, first_response_sequence + chunks_sent);
+        if (packet.empty() || !WritePacket(output, packet)) return false;
+        ++chunks_sent;
     } catch (...) {
-        return SendError(output, request_sequence, 4, "import proposal allocation failed");
+        return false;
     }
     IpcV2Digest digest{};
-    if (chunks.empty() || !HashBytes(canonical_stream, digest)) return SendError(output, request_sequence, 4, "import proposal digest failed");
-    for (size_t index = 0; index < chunks.size(); ++index) {
-        chunks[index].chunk_ordinal = static_cast<uint32_t>(index);
-        chunks[index].checksum_crc32 = V2ProposalRecordsCrc32(chunks[index].canonical_record_bytes);
-        const auto packet = SerializeV2ProposalChunk(chunks[index], first_response_sequence + static_cast<uint32_t>(index));
-        if (packet.empty() || !WritePacket(output, packet)) return false;
-    }
+    if (chunks_sent != planned_chunks || !digest_accumulator.Finish(digest)) return false;
     V2ImportEnd end;
     end.job = request.job;
-    end.chunk_count = static_cast<uint32_t>(chunks.size());
+    end.chunk_count = chunks_sent;
     end.record_count = records.size();
-    end.canonical_bytes = canonical_stream.size();
+    end.canonical_bytes = stream_bytes;
     end.canonical_sha256 = digest;
     end.fidelity_report_complete = true;
-    const auto packet = SerializeV2ImportEnd(end, first_response_sequence + static_cast<uint32_t>(chunks.size()));
+    const auto packet = SerializeV2ImportEnd(end, first_response_sequence + chunks_sent);
     return !packet.empty() && WritePacket(output, packet);
 }
 
@@ -278,6 +316,23 @@ bool HandleImportBegin(
     const bool is_dxf = request->format_id == "DXF" &&
         FormatCapabilities::is_worker_import_profile_supported(
             FormatType::Dxf, request->profile_id);
+    const bool is_pdf = request->format_id == "PDF" &&
+        FormatCapabilities::is_worker_import_profile_supported(FormatType::Pdf, request->profile_id);
+    const bool is_ai = request->format_id == "AI" &&
+        FormatCapabilities::is_worker_import_profile_supported(FormatType::Ai, request->profile_id);
+    const bool is_eps = request->format_id == "EPS" &&
+        FormatCapabilities::is_worker_import_profile_supported(FormatType::Eps, request->profile_id);
+    const bool is_cdr = request->format_id == "CorelDRAW" &&
+        FormatCapabilities::is_worker_import_profile_supported(FormatType::Cdr, request->profile_id);
+    if (is_cdr && (accepted_features & IPC_V2_FEATURE_RASTER_SOURCE_ASSETS) == 0) {
+        return SendError(output, header.sequence_id, 1,
+            "CDR image preservation requires raster source asset support");
+    }
+    if (request->source_page_index &&
+        ((accepted_features & IPC_V2_FEATURE_SOURCE_PAGE_SELECTION) == 0 || (!is_pdf && !is_ai))) {
+        return SendError(output, header.sequence_id, 1,
+            "source page selection is supported only by the PDF page import profile");
+    }
     const bool is_png = request->format_id == "PNG";
     const bool is_jpeg = request->format_id == "JPEG";
     const bool is_tiff = request->format_id == "TIFF";
@@ -285,130 +340,18 @@ bool HandleImportBegin(
         FormatCapabilities::is_worker_import_profile_supported(
             is_png ? FormatType::Png : is_jpeg ? FormatType::Jpeg : FormatType::Tiff,
             request->profile_id);
-    const bool is_cdr = (request->format_id == "CDR" || request->format_id == "CorelDRAW") &&
-        FormatCapabilities::is_worker_import_profile_supported(
-            FormatType::Cdr, request->profile_id);
-    const bool is_ai = (request->format_id == "AI" || request->format_id == "Adobe Illustrator") &&
-        FormatCapabilities::is_worker_import_profile_supported(
-            FormatType::Ai, request->profile_id);
-    const bool is_pdf = request->format_id == "PDF" &&
-        FormatCapabilities::is_worker_import_profile_supported(
-            FormatType::Pdf, request->profile_id);
-    if (!is_svg && !is_dxf && !is_raster && !is_cdr && !is_ai && !is_pdf) {
-        return SendError(output, header.sequence_id, 1, "unsupported format or profile");
+    if (!is_svg && !is_dxf && !is_pdf && !is_ai && !is_eps && !is_cdr && !is_raster) {
+        return SendError(output, header.sequence_id, 1,
+            "no native editable import adapter is registered for this format/profile");
     }
-    const uint64_t source_limit = (is_raster || is_cdr || is_ai || is_pdf) ? 64ULL * 1024ULL * 1024ULL
-        : is_dxf ? DxfImporter::kMaxSourceBytes : SvgImporter::kMaxSourceBytes;
+    const uint64_t source_limit = is_dxf ? DxfImporter::kMaxSourceBytes :
+        static_cast<uint64_t>(SIZE_MAX);
     if (request->source_bytes > source_limit) {
-        return SendError(output, header.sequence_id, 4, "source exceeds import profile byte limit");
+        return SendError(output, header.sequence_id, 4, "source exceeds the addressable size for this worker build");
     }
     std::vector<uint8_t> source_bytes;
     if (!ReadVerifiedSource(source, request->source_bytes, source_bytes)) {
         return SendError(output, header.sequence_id, 2, "source capability read failed");
-    }
-    if (is_cdr) {
-        const auto build_cdr = [](std::span<const uint8_t> source,
-                                  std::vector<CanonicalImportRecord>& records,
-                                  std::string& diagnostic) -> bool {
-            auto extracted = CdrExtractor::extract_preview(source);
-            if (!extracted.success || extracted.thumbnail_png.empty()) {
-                diagnostic = extracted.error_message.empty()
-                    ? "Failed to extract preview from CorelDRAW container"
-                    : extracted.error_message;
-                return false;
-            }
-            if (!BuildRasterImportRecords(extracted.thumbnail_png, records, diagnostic)) {
-                return false;
-            }
-            for (auto& record : records) {
-                if (record.type != ImportRecordType::RasterImage) continue;
-                auto value = DeserializeImportRecord(record.type, record.payload);
-                if (!value) return false;
-                auto& image = std::get<ImportRasterImageRecord>(*value);
-                image.dpi_x = image.width_px * 25.4 / extracted.page_width_mm;
-                image.dpi_y = image.height_px * 25.4 / extracted.page_height_mm;
-                image.dpi_from_source = false;
-                auto encoded = SerializeImportRecord(image);
-                if (!encoded) return false;
-                record = std::move(*encoded);
-            }
-            if (extracted.page_width_mm > 0.0 && extracted.page_height_mm > 0.0 && !records.empty()) {
-                ImportPageRecord page_record{extracted.page_width_mm, extracted.page_height_mm};
-                auto encoded = SerializeImportRecord(page_record);
-                if (encoded) {
-                    records.front() = std::move(*encoded);
-                }
-            }
-            if (!records.empty()) {
-                ImportFidelityReportRecord report;
-                report.coverage_profile = "cdr-preview-v1";
-                report.parse_outcome = ImportParseOutcome::CompleteWithDiagnostics;
-                report.coverage = ImportCoverage::Partial;
-                report.appearance = ImportAppearance::Partial;
-                report.editability = ImportEditability::ExplicitConversion;
-                report.production = ImportProduction::NotAssessed;
-                report.issue_count = 1;
-                auto encoded = SerializeImportRecord(report);
-                if (encoded) {
-                    records.back() = std::move(*encoded);
-                }
-            }
-            return true;
-        };
-        return SendImportProposal(output, *request, source_bytes, header.sequence_id,
-            "CorelDRAW", 144, build_cdr);
-    }
-    if (is_ai || is_pdf) {
-        const auto build_pdf_ai = [](std::span<const uint8_t> source,
-                                     std::vector<CanonicalImportRecord>& records,
-                                     std::string& diagnostic) -> bool {
-            auto extracted = PdfAiExtractor::extract_preview(source);
-            if (!extracted.success || extracted.thumbnail_png.empty()) {
-                diagnostic = extracted.error_message.empty()
-                    ? "Failed to extract preview from PDF/AI document"
-                    : extracted.error_message;
-                return false;
-            }
-            if (!BuildRasterImportRecords(extracted.thumbnail_png, records, diagnostic)) {
-                return false;
-            }
-            for (auto& record : records) {
-                if (record.type != ImportRecordType::RasterImage) continue;
-                auto value = DeserializeImportRecord(record.type, record.payload);
-                if (!value) return false;
-                auto& image = std::get<ImportRasterImageRecord>(*value);
-                image.dpi_x = image.width_px * 25.4 / extracted.page_width_mm;
-                image.dpi_y = image.height_px * 25.4 / extracted.page_height_mm;
-                image.dpi_from_source = false;
-                auto encoded = SerializeImportRecord(image);
-                if (!encoded) return false;
-                record = std::move(*encoded);
-            }
-            if (extracted.page_width_mm > 0.0 && extracted.page_height_mm > 0.0 && !records.empty()) {
-                ImportPageRecord page_record{extracted.page_width_mm, extracted.page_height_mm};
-                auto encoded = SerializeImportRecord(page_record);
-                if (encoded) {
-                    records.front() = std::move(*encoded);
-                }
-            }
-            if (!records.empty()) {
-                ImportFidelityReportRecord report;
-                report.coverage_profile = "pdf-ai-preview-v1";
-                report.parse_outcome = ImportParseOutcome::CompleteWithDiagnostics;
-                report.coverage = ImportCoverage::Partial;
-                report.appearance = ImportAppearance::Partial;
-                report.editability = ImportEditability::ExplicitConversion;
-                report.production = ImportProduction::NotAssessed;
-                report.issue_count = 1;
-                auto encoded = SerializeImportRecord(report);
-                if (encoded) {
-                    records.back() = std::move(*encoded);
-                }
-            }
-            return true;
-        };
-        return SendImportProposal(output, *request, source_bytes, header.sequence_id,
-            is_ai ? "AI" : "PDF", 144, build_pdf_ai);
     }
     if (is_dxf) {
         return SendImportProposal(output, *request, source_bytes, header.sequence_id,
@@ -417,6 +360,32 @@ bool HandleImportBegin(
     if (is_raster) {
         return SendImportProposal(output, *request, source_bytes, header.sequence_id,
             "RASTER", 144, BuildRasterImportRecords);
+    }
+    if (is_pdf || is_ai) {
+        const bool ai_representation = is_ai;
+        const std::string_view profile = request->profile_id;
+        const bool page_set_profile = profile == "pdf-page-set-v3" ||
+            profile == "ai-pdf-compatible-page-set-v3";
+        const std::optional<uint32_t> source_page_index = request->source_page_index;
+        return SendImportProposal(output, *request, source_bytes, header.sequence_id,
+            is_ai ? "AI" : "PDF", IPC_MAX_OBJECTS,
+            [ai_representation, page_set_profile, source_page_index](std::span<const uint8_t> bytes,
+                                std::vector<CanonicalImportRecord>& records,
+                                std::string& diagnostic) {
+                if (page_set_profile)
+                    return BuildPdfPageSetImportRecords(bytes, ai_representation, records,
+                                                        diagnostic, source_page_index);
+                return BuildPdfImportRecords(bytes, ai_representation, records, diagnostic,
+                    source_page_index.value_or(0));
+            });
+    }
+    if (is_eps) {
+        return SendImportProposal(output, *request, source_bytes, header.sequence_id,
+            "EPS", IPC_MAX_OBJECTS, BuildEpsImportRecords);
+    }
+    if (is_cdr) {
+        return SendImportProposal(output, *request, source_bytes, header.sequence_id,
+            "CorelDRAW", IPC_MAX_OBJECTS, BuildCdrImportRecords);
     }
     return SendImportProposal(output, *request, source_bytes, header.sequence_id,
         "SVG", SvgImporter::kMaxObjects * 2 + 2, BuildSvgImportRecords);

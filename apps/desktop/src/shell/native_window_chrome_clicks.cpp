@@ -237,7 +237,7 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
 
             // Group / Ungroup / Enter Group / Exit Group / Align Ribbon Buttons
             if (is_in_isolation_mode()) {
-                if (x >= 580 && x <= 670) { exit_group_isolation(); return true; }
+                if (x >= 580 && x <= 770) { exit_group_isolation(); return true; }
             } else {
                 if (selection.size() >= 2) {
                     const auto buttons = get_multi_object_context_buttons(workflow(), workflow().can_group_selected(), w - 280);
@@ -329,7 +329,62 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                         return true;
                     }
                     if (has_shadow && rx + 72 <= w - 280 - 10) rx += 72;
-                    if (workflow().is_group(selection.front()) && rx + 144 <= w - 280 - 10) {
+                    if (workflow().is_clipping_container(selection.front())) {
+                        const auto clip_id = selection.front();
+                        if (x >= rx && x < rx + 72) {
+                            enter_group_isolation(clip_id);
+                            return true;
+                        }
+                        rx += 76;
+                        if (x >= rx && x < rx + 78) {
+                            enter_group_isolation(clip_id);
+                            return true;
+                        }
+                        rx += 82;
+                        if (x >= rx && x < rx + 88) {
+                            if (workflow().release_clipping_mask_selected()) {
+                                status_msg_ = (language_ == UILanguage::Vietnamese) ? "Đã trích xuất nội dung PowerClip" : "Extracted PowerClip Contents";
+                                InvalidateRect(hwnd_, nullptr, FALSE);
+                            }
+                            return true;
+                        }
+                        rx += 92;
+                        if (x >= rx && x < rx + 76) {
+                            const auto snap = root().document().current_snapshot();
+                            const auto* grp = std::get_if<document::GroupObject>(snap->objects().lookup_ref(clip_id));
+                            const bool locked = grp && grp->clip ? grp->clip->lock_contents_to_frame : true;
+                            workflow().set_powerclip_lock_contents(clip_id, !locked);
+                            status_msg_ = (language_ == UILanguage::Vietnamese)
+                                ? (!locked ? "Đã khóa vị trí nội dung vào khung PowerClip" : "Đã mở khóa nội dung khỏi khung PowerClip")
+                                : (!locked ? "Locked contents to PowerClip frame" : "Unlocked contents from PowerClip frame");
+                            InvalidateRect(hwnd_, nullptr, FALSE);
+                            return true;
+                        }
+                        rx += 80;
+                        if (x >= rx && x < rx + 82) {
+                            workflow().fit_powerclip_contents(clip_id, document::ClipContentFitMode::CenterContents);
+                            status_msg_ = (language_ == UILanguage::Vietnamese) ? "Đã căn giữa nội dung PowerClip" : "Centered PowerClip Contents";
+                            InvalidateRect(hwnd_, nullptr, FALSE);
+                            return true;
+                        }
+                        rx += 86;
+                        if (x >= rx && x < rx + 78) {
+                            POINT pt{rx, 74};
+                            ClientToScreen(hwnd_, &pt);
+                            HMENU hFit = CreatePopupMenu();
+                            AppendMenuW(hFit, MF_STRING, static_cast<UINT_PTR>(MenuActionId::ObjectPowerClipFitCenter),
+                                        language_ == UILanguage::Vietnamese ? L"Căn giữa (Center Contents)" : L"Center Contents");
+                            AppendMenuW(hFit, MF_STRING, static_cast<UINT_PTR>(MenuActionId::ObjectPowerClipFitProp),
+                                        language_ == UILanguage::Vietnamese ? L"Vừa khít giữ tỷ lệ (Fit Proportionally)" : L"Fit Proportionally");
+                            AppendMenuW(hFit, MF_STRING, static_cast<UINT_PTR>(MenuActionId::ObjectPowerClipFillProp),
+                                        language_ == UILanguage::Vietnamese ? L"Phủ đầy khung (Fill Proportionally)" : L"Fill Proportionally");
+                            AppendMenuW(hFit, MF_STRING, static_cast<UINT_PTR>(MenuActionId::ObjectPowerClipStretch),
+                                        language_ == UILanguage::Vietnamese ? L"Kéo giãn vừa khung (Stretch to Fill)" : L"Stretch to Fill");
+                            TrackPopupMenuEx(hFit, TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, hwnd_, nullptr);
+                            DestroyMenu(hFit);
+                            return true;
+                        }
+                    } else if (workflow().is_group(selection.front()) && rx + 144 <= w - 280 - 10) {
                         if (x >= rx && x < rx + 66) {
                             if (workflow().ungroup_selected()) {
                                 status_msg_ = (language_ == UILanguage::Vietnamese) ? "Đã rã nhóm (Ungroup)" : "Ungrouped";
@@ -559,6 +614,11 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                 toolbox_open_group_ = 0;
                 workflow().cancel_effect_draft();
                 set_active_tool(13);
+                break;
+            case ToolboxSlotId::Dimension:
+                toolbox_open_group_ = 0;
+                workflow().cancel_effect_draft();
+                set_active_tool(10);
                 break;
             default:
                 break;

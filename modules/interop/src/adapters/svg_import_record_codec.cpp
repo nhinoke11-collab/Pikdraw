@@ -8,9 +8,20 @@
 
 namespace pikdraw::interop {
 namespace {
-constexpr uint32_t kMaxRasterPixelBytes = 32u * 1024u * 1024u;
+constexpr uint32_t kMaxRasterPixelBytes = UINT32_MAX;
 constexpr uint32_t kMaxRasterChunkBytes = 256u * 1024u;
 constexpr uint32_t kMaxRasterIccBytes = 256u * 1024u;
+
+bool ValidRasterPlacementTransform(bool enabled, const std::array<double, 6>& matrix) {
+    if (!enabled) return true;
+    if (!std::all_of(matrix.begin(), matrix.end(), [](double value) {
+            return std::isfinite(value);
+        })) return false;
+    return std::abs(matrix[0]) <= 1.0e6 && std::abs(matrix[1]) <= 1.0e6 &&
+           std::abs(matrix[2]) <= 1.0e6 && std::abs(matrix[3]) <= 1.0e6 &&
+           std::abs(matrix[4]) <= 1.0e7 && std::abs(matrix[5]) <= 1.0e7 &&
+           std::abs(matrix[0] * matrix[3] - matrix[1] * matrix[2]) > 1.0e-12;
+}
 
 bool IsValidRecordUtf8(std::string_view input) {
     size_t index = 0;
@@ -192,13 +203,16 @@ bool ReadPathElement(RecordReader& reader, ImportPathElementRecord& element) {
 
 
 bool ValidRecord(const ImportPageRecord& record) {
-    return std::isfinite(record.width_mm) && std::isfinite(record.height_mm) && record.width_mm > 0 &&
+    return record.local_id != 0 && std::isfinite(record.width_mm) && std::isfinite(record.height_mm) && record.width_mm > 0 &&
            record.height_mm > 0 && record.width_mm <= SvgImporter::kMaxPageMillimeters &&
-           record.height_mm <= SvgImporter::kMaxPageMillimeters;
+           record.height_mm <= SvgImporter::kMaxPageMillimeters &&
+           (!record.has_manifest_metadata ||
+            (!record.name.empty() && record.name.size() <= 256 &&
+             record.rotation_degrees < 360 && record.rotation_degrees % 90 == 0));
 }
 
 bool ValidLocalReferences(std::span<const uint32_t> references, uint32_t owner_id) {
-    if (references.size() > SvgImporter::kMaxObjects) return false;
+    if (references.size() > IPC_MAX_OBJECTS) return false;
     std::unordered_set<uint32_t> unique;
     unique.reserve(references.size());
     for (const uint32_t reference : references) {
@@ -216,7 +230,7 @@ bool WriteLocalReferences(RecordWriter& writer, std::span<const uint32_t> refere
 
 bool ReadLocalReferences(RecordReader& reader, std::vector<uint32_t>& references, uint32_t owner_id) {
     uint32_t count = 0;
-    if (!reader.U32(count) || count > SvgImporter::kMaxObjects) return false;
+    if (!reader.U32(count) || count > IPC_MAX_OBJECTS) return false;
     references.resize(count);
     for (uint32_t& reference : references) if (!reader.U32(reference)) return false;
     return ValidLocalReferences(references, owner_id);
@@ -243,36 +257,63 @@ std::optional<CanonicalImportRecord> SerializeImportRecord(const ImportRecordVal
         using T = std::decay_t<decltype(record)>;
         if constexpr (std::is_same_v<T, ImportPageRecord>) {
             type = ImportRecordType::Page;
-            return ValidRecord(record) && writer.Double(record.width_mm) && writer.Double(record.height_mm);
+            const bool has_manifest = record.has_manifest_metadata || record.local_id != 1 ||
+                record.source_page_index != 0 || !record.name.empty() ||
+                record.rotation_degrees != 0 || record.blank;
+            return ValidRecord(record) && writer.Double(record.width_mm) && writer.Double(record.height_mm) &&
+                   (!has_manifest ||
+                    (writer.U32(record.local_id) && writer.U32(record.source_page_index) &&
+                     writer.U8(record.blank ? 1 : 0) && writer.U8(0) &&
+                     writer.String16(record.name, 256) &&
+                     (record.rotation_degrees == 0 || writer.U16(record.rotation_degrees))));
         } else if constexpr (std::is_same_v<T, ImportLayerRecord>) {
             type = ImportRecordType::Layer;
-            return record.local_id != 0 && writer.U32(record.local_id) &&
+            return record.local_id != 0 && record.page_local_id != 0 && writer.U32(record.local_id) &&
                    writer.String16(record.source_id, 128) && writer.String16(record.name, 128) &&
                    writer.U8(record.visible ? 1 : 0) && writer.U8(record.locked ? 1 : 0) && writer.U16(0) &&
-                   WriteLocalReferences(writer, record.object_local_ids, 0);
+                   WriteLocalReferences(writer, record.object_local_ids, 0) &&
+                   (!(record.has_page_association || record.page_local_id != 1) ||
+                    writer.U32(record.page_local_id));
         } else if constexpr (std::is_same_v<T, ImportGroupRecord>) {
             type = ImportRecordType::Group;
+            const bool clip_is_child = record.clip_mask_local_id == 0 ||
+                std::find(record.child_local_ids.begin(), record.child_local_ids.end(),
+                          record.clip_mask_local_id) != record.child_local_ids.end();
             return record.local_id != 0 && writer.U32(record.local_id) &&
                    writer.String16(record.source_id, 128) && writer.String16(record.name, 128) &&
-                   WriteLocalReferences(writer, record.child_local_ids, record.local_id);
+                   WriteLocalReferences(writer, record.child_local_ids, record.local_id) &&
+                   clip_is_child && (record.clip_mask_local_id == 0 ||
+                                     writer.U32(record.clip_mask_local_id));
         } else if constexpr (std::is_same_v<T, ImportRasterImageRecord>) {
             type = ImportRecordType::RasterImage;
             const uint64_t expected_pixel_bytes =
                 static_cast<uint64_t>(record.width_px) * record.height_px * 4;
             const bool supported_media_type = record.media_type == "image/png" ||
-                record.media_type == "image/jpeg" || record.media_type == "image/tiff";
+                record.media_type == "image/jpeg" || record.media_type == "image/tiff" ||
+                record.media_type == "image/bmp" ||
+                record.media_type == "application/x-pikdraw-rgba8";
             if (record.local_id == 0 || !supported_media_type ||
                 record.width_px == 0 || record.height_px == 0 ||
                 expected_pixel_bytes == 0 || expected_pixel_bytes > kMaxRasterPixelBytes ||
                 record.decoded_pixel_bytes != expected_pixel_bytes ||
-                record.source_bits_per_pixel == 0 || record.source_bits_per_pixel > 32 ||
+                record.source_bits_per_pixel == 0 || record.source_bits_per_pixel > 128 ||
+                ((record.source_data_local_id == 0) != (record.source_bytes_size == 0)) ||
                 record.frame_count == 0 || record.frame_count > 256 ||
                 record.frame_index >= record.frame_count ||
                 record.exif_orientation == 0 || record.exif_orientation > 8 ||
                 !std::isfinite(record.dpi_x) || !std::isfinite(record.dpi_y) ||
                 record.dpi_x <= 0 || record.dpi_y <= 0 ||
                 record.dpi_x > 1000000 || record.dpi_y > 1000000 ||
-                record.icc_profile.size() > kMaxRasterIccBytes)
+                record.icc_profile.size() > kMaxRasterIccBytes ||
+                !std::isfinite(record.x_mm) || !std::isfinite(record.y_mm) ||
+                !std::isfinite(record.width_mm) || !std::isfinite(record.height_mm) ||
+                !ValidRasterPlacementTransform(record.has_placement_transform,
+                                               record.placement_transform) ||
+                !((record.x_mm == 0.0 && record.y_mm == 0.0 &&
+                   record.width_mm == 0.0 && record.height_mm == 0.0) ||
+                  (std::abs(record.x_mm) <= 1.0e7 && std::abs(record.y_mm) <= 1.0e7 &&
+                   record.width_mm > 0.0 && record.height_mm > 0.0 &&
+                   record.width_mm <= 1.0e6 && record.height_mm <= 1.0e6)))
                 return false;
             return writer.U32(record.local_id) &&
                    writer.String16(record.source_id, 128) &&
@@ -287,11 +328,39 @@ std::optional<CanonicalImportRecord> SerializeImportRecord(const ImportRecordVal
                    writer.U8(record.dpi_from_source ? 1 : 0) &&
                    writer.Double(record.dpi_x) && writer.Double(record.dpi_y) &&
                    writer.U32(static_cast<uint32_t>(record.icc_profile.size())) &&
-                   writer.Bytes(record.icc_profile);
+                   writer.Bytes(record.icc_profile) &&
+                   writer.Double(record.x_mm) && writer.Double(record.y_mm) &&
+                   writer.Double(record.width_mm) && writer.Double(record.height_mm) &&
+                   writer.U32(record.pixel_data_local_id) &&
+                   (!(record.has_placement_transform || record.source_bytes_size != 0) ||
+                    (writer.U8(record.has_placement_transform ? 1 : 0) &&
+                     writer.U8(0) && writer.U16(0) &&
+                     (!record.has_placement_transform ||
+                      (writer.Double(record.placement_transform[0]) &&
+                       writer.Double(record.placement_transform[1]) &&
+                       writer.Double(record.placement_transform[2]) &&
+                       writer.Double(record.placement_transform[3]) &&
+                       writer.Double(record.placement_transform[4]) &&
+                       writer.Double(record.placement_transform[5]))) &&
+                     (record.source_bytes_size == 0 ||
+                      (record.source_data_local_id != 0 &&
+                       writer.U32(record.source_data_local_id) &&
+                       writer.U32(record.source_bytes_size)))));
         } else if constexpr (std::is_same_v<T, ImportRasterImageChunkRecord>) {
             type = ImportRecordType::RasterImageChunk;
             if (record.local_id == 0 || record.total_bytes == 0 ||
                 record.total_bytes > kMaxRasterPixelBytes || record.bytes.empty() ||
+                record.bytes.size() > kMaxRasterChunkBytes ||
+                record.byte_offset > record.total_bytes ||
+                record.bytes.size() > record.total_bytes - record.byte_offset)
+                return false;
+            return writer.U32(record.local_id) && writer.U32(record.byte_offset) &&
+                   writer.U32(record.total_bytes) &&
+                   writer.U32(static_cast<uint32_t>(record.bytes.size())) &&
+                   writer.Bytes(record.bytes);
+        } else if constexpr (std::is_same_v<T, ImportRasterSourceChunkRecord>) {
+            type = ImportRecordType::RasterSourceChunk;
+            if (record.local_id == 0 || record.total_bytes == 0 || record.bytes.empty() ||
                 record.bytes.size() > kMaxRasterChunkBytes ||
                 record.byte_offset > record.total_bytes ||
                 record.bytes.size() > record.total_bytes - record.byte_offset)
@@ -317,14 +386,20 @@ std::optional<CanonicalImportRecord> SerializeImportRecord(const ImportRecordVal
         } else if constexpr (std::is_same_v<T, ImportTextRecord>) {
             type = ImportRecordType::Text;
             return record.local_id != 0 && record.font_weight >= 100 && record.font_weight <= 900 &&
-                   record.font_weight % 100 == 0 && std::isfinite(record.font_size_pt) && record.font_size_pt > 0 &&
+                   record.font_weight % 100 == 0 &&
+                   (record.rotation_degrees == 0 ||
+                    (record.rotation_degrees <= 270 && record.rotation_degrees % 90 == 0)) &&
+                   std::isfinite(record.font_size_pt) && record.font_size_pt > 0 &&
                    record.font_size_pt <= 100000 && std::isfinite(record.x_mm) && std::abs(record.x_mm) <= 1.0e7 &&
                    std::isfinite(record.y_mm) && std::abs(record.y_mm) <= 1.0e7 && ValidColor(record.fill) &&
                    writer.U32(record.local_id) && writer.String16(record.source_id, 128) &&
                    writer.String16(record.name, 128) && writer.String16(record.utf8_text, 256 * 1024, true) &&
                    writer.String16(record.font_family, 256) && writer.U16(record.font_weight) &&
                    writer.U8(record.italic ? 1 : 0) && writer.U8(0) && writer.Double(record.font_size_pt) &&
-                   writer.Double(record.x_mm) && writer.Double(record.y_mm) && WriteColor(writer, record.fill);
+                   writer.Double(record.x_mm) && writer.Double(record.y_mm) && WriteColor(writer, record.fill) &&
+                   ((record.font_postscript_name.empty() && record.rotation_degrees == 0) ||
+                    writer.String16(record.font_postscript_name, 256)) &&
+                   (record.rotation_degrees == 0 || writer.U16(record.rotation_degrees));
         } else if constexpr (std::is_same_v<T, ImportFidelityReportRecord>) {
             type = ImportRecordType::FidelityReport;
             return !record.coverage_profile.empty() && record.issue_count <= SvgImporter::kMaxObjects &&
@@ -362,7 +437,18 @@ std::optional<ImportRecordValue> DeserializeImportRecord(
     RecordReader reader(payload);
     if (type == ImportRecordType::Page) {
         ImportPageRecord record;
-        if (!reader.Double(record.width_mm) || !reader.Double(record.height_mm) || !reader.Done() || !ValidRecord(record)) return std::nullopt;
+        if (!reader.Double(record.width_mm) || !reader.Double(record.height_mm)) return std::nullopt;
+        if (!reader.Done()) {
+            uint8_t blank = 0, reserved = 0;
+            if (!reader.U32(record.local_id) || !reader.U32(record.source_page_index) ||
+                !reader.U8(blank) || blank > 1 || !reader.U8(reserved) || reserved != 0 ||
+                !reader.String16(record.name, 256) ||
+                (!reader.Done() && !reader.U16(record.rotation_degrees)) || !reader.Done())
+                return std::nullopt;
+            record.blank = blank != 0;
+            record.has_manifest_metadata = true;
+        }
+        if (!ValidRecord(record)) return std::nullopt;
         return record;
     }
     if (type == ImportRecordType::Layer) {
@@ -373,7 +459,12 @@ std::optional<ImportRecordValue> DeserializeImportRecord(
             !reader.String16(record.source_id, 128) || !reader.String16(record.name, 128) ||
             !reader.U8(visible) || visible > 1 || !reader.U8(locked) || locked > 1 ||
             !reader.U16(reserved) || reserved != 0 ||
-            !ReadLocalReferences(reader, record.object_local_ids, 0) || !reader.Done()) return std::nullopt;
+            !ReadLocalReferences(reader, record.object_local_ids, 0)) return std::nullopt;
+        if (!reader.Done()) {
+            if (!reader.U32(record.page_local_id) || record.page_local_id == 0 || !reader.Done())
+                return std::nullopt;
+            record.has_page_association = true;
+        }
         record.visible = visible != 0;
         record.locked = locked != 0;
         return record;
@@ -382,7 +473,14 @@ std::optional<ImportRecordValue> DeserializeImportRecord(
         ImportGroupRecord record;
         if (!reader.U32(record.local_id) || record.local_id == 0 ||
             !reader.String16(record.source_id, 128) || !reader.String16(record.name, 128) ||
-            !ReadLocalReferences(reader, record.child_local_ids, record.local_id) || !reader.Done()) return std::nullopt;
+            !ReadLocalReferences(reader, record.child_local_ids, record.local_id)) return std::nullopt;
+        // Older C6 group records ended after the child list.
+        if (!reader.Done() && !reader.U32(record.clip_mask_local_id)) return std::nullopt;
+        if (!reader.Done() ||
+            (record.clip_mask_local_id != 0 &&
+             std::find(record.child_local_ids.begin(), record.child_local_ids.end(),
+                       record.clip_mask_local_id) == record.child_local_ids.end()))
+            return std::nullopt;
         return record;
     }
     if (type == ImportRecordType::RasterImage) {
@@ -402,24 +500,55 @@ std::optional<ImportRecordValue> DeserializeImportRecord(
             !reader.U8(dpi_from_source) || dpi_from_source > 1 ||
             !reader.Double(record.dpi_x) || !reader.Double(record.dpi_y) ||
             !reader.U32(icc_bytes) || icc_bytes > kMaxRasterIccBytes ||
-            !reader.RawBytes(record.icc_profile, icc_bytes, kMaxRasterIccBytes) ||
-            !reader.Done())
+            !reader.RawBytes(record.icc_profile, icc_bytes, kMaxRasterIccBytes))
             return std::nullopt;
+        if (!reader.Done() &&
+            (!reader.Double(record.x_mm) || !reader.Double(record.y_mm) ||
+             !reader.Double(record.width_mm) || !reader.Double(record.height_mm)))
+            return std::nullopt;
+        if (!reader.Done() && !reader.U32(record.pixel_data_local_id))
+            return std::nullopt;
+        if (!reader.Done()) {
+            uint8_t has_transform = 0, reserved = 0;
+            uint16_t reserved16 = 0;
+            if (!reader.U8(has_transform) || has_transform > 1 ||
+                !reader.U8(reserved) || reserved != 0 ||
+                !reader.U16(reserved16) || reserved16 != 0)
+                return std::nullopt;
+            record.has_placement_transform = has_transform != 0;
+            if (record.has_placement_transform &&
+                (!reader.Double(record.placement_transform[0]) ||
+                 !reader.Double(record.placement_transform[1]) ||
+                 !reader.Double(record.placement_transform[2]) ||
+                 !reader.Double(record.placement_transform[3]) ||
+                 !reader.Double(record.placement_transform[4]) ||
+                 !reader.Double(record.placement_transform[5])))
+                return std::nullopt;
+        }
+        if (!reader.Done() &&
+            (!reader.U32(record.source_data_local_id) ||
+             !reader.U32(record.source_bytes_size)))
+            return std::nullopt;
+        if (!reader.Done()) return std::nullopt;
         record.orientation_applied = orientation_applied != 0;
         record.dpi_from_source = dpi_from_source != 0;
         const uint64_t expected_pixel_bytes =
             static_cast<uint64_t>(record.width_px) * record.height_px * 4;
         if ((record.media_type != "image/png" && record.media_type != "image/jpeg" &&
-             record.media_type != "image/tiff") ||
+             record.media_type != "image/tiff" && record.media_type != "image/bmp" &&
+             record.media_type != "application/x-pikdraw-rgba8") ||
             record.width_px == 0 || record.height_px == 0 ||
             expected_pixel_bytes == 0 || expected_pixel_bytes > kMaxRasterPixelBytes ||
             record.decoded_pixel_bytes != expected_pixel_bytes ||
-            record.source_bits_per_pixel == 0 || record.source_bits_per_pixel > 32 ||
+            record.source_bits_per_pixel == 0 || record.source_bits_per_pixel > 128 ||
+            ((record.source_data_local_id == 0) != (record.source_bytes_size == 0)) ||
             record.frame_count == 0 || record.frame_count > 256 ||
             record.frame_index >= record.frame_count ||
             record.exif_orientation == 0 || record.exif_orientation > 8 ||
             record.dpi_x <= 0 || record.dpi_y <= 0 ||
-            record.dpi_x > 1000000 || record.dpi_y > 1000000)
+            record.dpi_x > 1000000 || record.dpi_y > 1000000 ||
+            !ValidRasterPlacementTransform(record.has_placement_transform,
+                                           record.placement_transform))
             return std::nullopt;
         return record;
     }
@@ -433,6 +562,20 @@ std::optional<ImportRecordValue> DeserializeImportRecord(
             !reader.RawBytes(record.bytes, chunk_bytes, kMaxRasterChunkBytes) ||
             !reader.Done() || record.total_bytes == 0 ||
             record.total_bytes > kMaxRasterPixelBytes ||
+            record.byte_offset > record.total_bytes ||
+            chunk_bytes > record.total_bytes - record.byte_offset)
+            return std::nullopt;
+        return record;
+    }
+    if (type == ImportRecordType::RasterSourceChunk) {
+        ImportRasterSourceChunkRecord record;
+        uint32_t chunk_bytes = 0;
+        if (!reader.U32(record.local_id) || record.local_id == 0 ||
+            !reader.U32(record.byte_offset) || !reader.U32(record.total_bytes) ||
+            !reader.U32(chunk_bytes) || chunk_bytes == 0 ||
+            chunk_bytes > kMaxRasterChunkBytes ||
+            !reader.RawBytes(record.bytes, chunk_bytes, kMaxRasterChunkBytes) ||
+            !reader.Done() || record.total_bytes == 0 ||
             record.byte_offset > record.total_bytes ||
             chunk_bytes > record.total_bytes - record.byte_offset)
             return std::nullopt;
@@ -467,7 +610,11 @@ std::optional<ImportRecordValue> DeserializeImportRecord(
             !reader.Double(record.font_size_pt) || record.font_size_pt <= 0 || record.font_size_pt > 100000 ||
             !reader.Double(record.x_mm) || std::abs(record.x_mm) > 1.0e7 ||
             !reader.Double(record.y_mm) || std::abs(record.y_mm) > 1.0e7 || !ReadColor(reader, record.fill) ||
-            !reader.Done()) return std::nullopt;
+            (!reader.Done() && !reader.String16(record.font_postscript_name, 256)) ||
+            (!reader.Done() && !reader.U16(record.rotation_degrees)) || !reader.Done() ||
+            (record.rotation_degrees != 0 &&
+             (record.rotation_degrees > 270 || record.rotation_degrees % 90 != 0)))
+            return std::nullopt;
         record.italic = italic != 0;
         return record;
     }

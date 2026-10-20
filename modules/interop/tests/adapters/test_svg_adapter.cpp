@@ -72,7 +72,7 @@ void test_viewbox_units_and_path_commands() {
     assert(path.path.winding_rule() == WindingRule::EvenOdd);
     assert(path.path.size() == 6);
     assert(std::abs(path.path.elements()[0].pt.x - 5.0) < 1e-9);
-    assert(std::abs(path.path.elements()[0].pt.y - 35.0) < 1e-9);
+    assert(std::abs(path.path.elements()[0].pt.y - 65.0) < 1e-9);
     assert(std::abs(path.path.elements()[1].ctrl2.x - 5.0) < 1e-9);
 }
 
@@ -85,9 +85,31 @@ void test_relative_horizontal_vertical_path_commands() {
     const auto& elements = path.path.elements();
     assert(std::abs(elements[0].pt.x - 10.0 * 25.4 / 96.0) < 1e-9);
     assert(std::abs(elements[1].pt.x - 15.0 * 25.4 / 96.0) < 1e-9);
-    assert(std::abs(elements[2].pt.y - 15.0 * 25.4 / 96.0) < 1e-9);
+    assert(std::abs(elements[0].pt.y - (100.0 - 10.0 * 25.4 / 96.0)) < 1e-9);
+    assert(std::abs(elements[2].pt.y - (100.0 - 15.0 * 25.4 / 96.0)) < 1e-9);
+    assert(std::abs(elements[3].pt.y - (100.0 - 14.0 * 25.4 / 96.0)) < 1e-9);
     assert(std::abs(elements[3].pt.x - 13.0 * 25.4 / 96.0) < 1e-9);
     assert(elements[4].verb == PathVerb::Close);
+}
+
+void test_group_and_object_transforms_are_applied_to_page_coordinates() {
+    const std::string svg = R"svg(<svg width="100mm" height="100mm">
+        <g transform="translate(5 7)"><rect id="moved" x="1" y="2" width="3" height="4"
+            transform="scale(2)"/></g>
+        <path id="rotated" transform="rotate(90)" d="M10 0L20 0"/>
+        <path id="combined" transform="translate(5 7) scale(2)" d="M1 2L2 2"/>
+    </svg>)svg";
+    const auto result = SvgImporter::import_from_string(svg);
+    assert(result.success && result.objects.size() == 4);
+    const auto& moved = std::get<PathObject>(result.objects[0]).path.elements();
+    assert(std::abs(moved[0].pt.x - 7.0 * 25.4 / 96.0) < 1e-9);
+    assert(std::abs(moved[0].pt.y - (100.0 - 11.0 * 25.4 / 96.0)) < 1e-9);
+    const auto& rotated = std::get<PathObject>(result.objects[2]).path.elements();
+    assert(std::abs(rotated[0].pt.x) < 1e-9);
+    assert(std::abs(rotated[0].pt.y - (100.0 - 10.0 * 25.4 / 96.0)) < 1e-9);
+    const auto& combined = std::get<PathObject>(result.objects[3]).path.elements();
+    assert(std::abs(combined[0].pt.x - 7.0 * 25.4 / 96.0) < 1e-9);
+    assert(std::abs(combined[0].pt.y - (100.0 - 11.0 * 25.4 / 96.0)) < 1e-9);
 }
 
 void test_arc_path_command_is_preserved() {
@@ -98,7 +120,11 @@ void test_arc_path_command_is_preserved() {
     assert(path.size() == 2);
     const auto& arc = path.elements()[1];
     assert(arc.verb == PathVerb::ArcTo);
-    assert(!arc.large_arc && arc.sweep);
+    // The SVG-to-document viewport reflects the Y axis. Transform the whole
+    // arc so its direction and ellipse parameters follow the mapped geometry.
+    assert(!arc.large_arc && !arc.sweep);
+    assert(std::abs(arc.pt.x - 4.0 * 25.4 / 96.0) < 1e-9);
+    assert(std::abs(arc.pt.y - (100.0 - 4.0 * 25.4 / 96.0)) < 1e-9);
 }
 
 void test_nested_groups_and_inkscape_layers_are_preserved() {
@@ -143,7 +169,6 @@ void test_rejects_active_external_and_malformed_content() {
         R"(<svg width="10mm" height="10mm"><script>alert(1)</script></svg>)",
         R"(<!DOCTYPE svg [<!ENTITY x SYSTEM "file:///secret">]><svg width="10mm" height="10mm"/>)",
         R"(<svg width="10mm" height="10mm"><image href="https://example.invalid/x.png"/></svg>)",
-        R"svg(<svg width="10mm" height="10mm"><g transform="translate(1 2)"><rect width="2" height="2"/></g></svg>)svg",
         R"(<svg width="10mm" height="10mm"><g style="opacity:0.5"><rect width="2" height="2"/></g></svg>)",
         R"(<svg width="10mm" height="10mm"><path style="fill:red" d="M0 0L1 1"/></svg>)",
         R"(<svg width="10mm" height="10mm"><path d="M0 0L1"/></svg>)",
@@ -247,18 +272,51 @@ void test_lossless_curve_path_adapter() {
     assert(!issue.empty());
 }
 
+void test_svg_clip_path_import() {
+    const std::string svg = R"svg(<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm">
+        <defs>
+            <clipPath id="my-clip">
+                <rect x="10" y="10" width="80" height="80" />
+            </clipPath>
+        </defs>
+        <g clip-path="url(#my-clip)">
+            <rect id="content-rect" x="0" y="0" width="100" height="100" fill="#ff0000" />
+        </g>
+    </svg>)svg";
+
+    const auto result = SvgImporter::import_from_string(svg);
+    assert(result.success);
+    assert(result.objects.size() >= 2);
+
+    bool found_clipping_group = false;
+    for (const auto& var : result.objects) {
+        if (const auto* grp = std::get_if<GroupObject>(&var)) {
+            if (grp->is_clipping_container()) {
+                found_clipping_group = true;
+                assert(grp->clip.has_value());
+                assert(grp->clip->mask_object_id != kInvalidObjectId);
+                assert(!grp->children_ids.empty());
+                assert(grp->children_ids.front() == grp->clip->mask_object_id);
+            }
+        }
+    }
+    assert(found_clipping_group);
+}
+
 int main() {
     std::cout << "[test_svg_adapter] Running SVG importer tests...\n";
     test_svg_import_basic();
     test_svg_unsupported_filter_reported();
     test_viewbox_units_and_path_commands();
     test_relative_horizontal_vertical_path_commands();
+    test_group_and_object_transforms_are_applied_to_page_coordinates();
     test_arc_path_command_is_preserved();
     test_nested_groups_and_inkscape_layers_are_preserved();
     test_rejects_active_external_and_malformed_content();
     test_rejects_source_limits_and_bad_utf8();
     test_unsupported_opacity_attributes_are_rejected_before_import();
     test_lossless_curve_path_adapter();
+    test_svg_clip_path_import();
     std::cout << "[test_svg_adapter] All tests passed!\n";
     return 0;
 }

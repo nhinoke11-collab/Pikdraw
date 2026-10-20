@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <iostream>
+#include <memory>
 #include <vector>
 
 using namespace pikdraw;
@@ -254,7 +255,8 @@ void test_d2d_renders_images() {
   image.id = generate_object_id();
   image.width_px = 1;
   image.height_px = 2;
-  image.pixels_rgba = {0xff0000ff, 0x0000ffff};
+  image.shared_pixels_rgba = std::make_shared<const std::vector<uint32_t>>(
+      std::vector<uint32_t>{0xff0000ff, 0x0000ffff});
   image.bounds_rect = {30, 30, 40, 40};
   image.transform = geometry::Transform2D::translation(10, 0);
   assert(doc.execute_command(std::make_unique<AddObjectCommand>(image)).success);
@@ -685,6 +687,36 @@ void test_bgra_targets_and_image_upload_cache() {
   assert(changed.Get() != first.Get());
   cache.clear();
   assert(cache.get(device.context(), image, 2).Get() != changed.Get());
+
+  auto shared_pixels = std::make_shared<const std::vector<uint32_t>>(
+      std::vector<uint32_t>{0x102030ff});
+  ImageObject shared_a; shared_a.id = generate_object_id();
+  shared_a.width_px = shared_a.height_px = 1;
+  shared_a.shared_pixels_rgba = shared_pixels;
+  ImageObject shared_b = shared_a; shared_b.id = generate_object_id();
+  cache.clear();
+  auto shared_bitmap = cache.get(device.context(), shared_a, 3); assert(shared_bitmap);
+  assert(cache.get(device.context(), shared_b, 3).Get() == shared_bitmap.Get());
+  assert(cache.cached_image_count() == 1);
+
+  std::vector<ImageObject> many_images;
+  many_images.reserve(68);
+  for (uint32_t index = 0; index < 68; ++index) {
+    ImageObject many;
+    many.id = generate_object_id();
+    many.width_px = many.height_px = 1;
+    many.pixels_rgba = {0x000000ffu | (index << 24)};
+    many_images.push_back(std::move(many));
+  }
+  cache.clear();
+  auto first_many_bitmap = cache.get(device.context(), many_images.front(), 4);
+  assert(first_many_bitmap);
+  for (size_t index = 1; index < many_images.size(); ++index)
+    assert(cache.get(device.context(), many_images[index], 4));
+  assert(cache.cached_image_count() == many_images.size());
+  assert(cache.get(device.context(), many_images.front(), 4).Get() ==
+         first_many_bitmap.Get());
+
   // The CPU viewport guard must allow a 4K/16:10 frame above the former 8 MP cap.
   std::vector<uint32_t> large(4096 * 2160);
   PixelBufferTarget target{nullptr, 4096, 2160, 4096 * 4}; target.bgra_pixels = large.data();

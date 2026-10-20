@@ -259,6 +259,7 @@ void TestFormatMatrixAndFixtures() {
     bool has_svg = false;
     bool has_dxf = false;
     bool has_cdr = false;
+    bool has_eps = false;
     bool has_pdf = false;
     bool has_ai = false;
     bool has_png = false;
@@ -273,26 +274,31 @@ void TestFormatMatrixAndFixtures() {
         } else if (entry.extension == ".cdr") {
             has_cdr = entry.import_status == FormatCapabilityStatus::UnsupportedReject &&
                 entry.export_status == FormatCapabilityStatus::UnsupportedReject;
+        } else if (entry.extension == ".eps") {
+            has_eps = entry.import_status == FormatCapabilityStatus::SupportedPrototype &&
+                entry.export_status == FormatCapabilityStatus::UnsupportedReject;
         } else if (entry.extension == ".pdf") {
-            has_pdf = entry.import_status == FormatCapabilityStatus::UnsupportedReject &&
+            has_pdf = entry.import_status == FormatCapabilityStatus::SupportedPrototype &&
                 entry.export_status == FormatCapabilityStatus::UnsupportedReject;
         } else if (entry.extension == ".ai") {
-            has_ai = entry.import_status == FormatCapabilityStatus::UnsupportedReject &&
+            has_ai = entry.import_status == FormatCapabilityStatus::SupportedPrototype &&
                 entry.export_status == FormatCapabilityStatus::UnsupportedReject;
         } else if (entry.extension == ".png") {
-            has_png = entry.import_status == FormatCapabilityStatus::UnsupportedReject &&
+            has_png = entry.import_status == FormatCapabilityStatus::SupportedPrototype &&
                 entry.export_status == FormatCapabilityStatus::UnsupportedReject;
         } else if (entry.extension == ".jpg") {
-            has_jpeg = entry.import_status == FormatCapabilityStatus::UnsupportedReject &&
+            has_jpeg = entry.import_status == FormatCapabilityStatus::SupportedPrototype &&
                 entry.export_status == FormatCapabilityStatus::UnsupportedReject;
         }
     }
-    TEST_ASSERT(has_svg && has_dxf && has_cdr && has_pdf && has_ai && has_png && has_jpeg,
+    TEST_ASSERT(has_svg && has_dxf && has_cdr && has_eps && has_pdf && has_ai && has_png && has_jpeg,
         "Capability matrix does not match the declared import/export subsets");
 
     TEST_ASSERT(FixtureManifest::Count() == 0, "Unprovisioned corpus cannot contain invented evidence");
     TEST_ASSERT(FormatCapabilityRegistry::IsFormatSupported("SVG"), "SVG subset must be listed as supported");
     TEST_ASSERT(FormatCapabilityRegistry::IsFormatSupported(".dxf"), "DXF 2D subset must be listed as supported");
+    TEST_ASSERT(FormatCapabilityRegistry::IsFormatSupported(".eps"), "EPS path subset must be listed as supported");
+    TEST_ASSERT(FormatCapabilityRegistry::IsFormatSupported(".cdr"), "CDR editable vector subset must be registered");
     TEST_ASSERT(!FormatCapabilityRegistry::IsFormatSupported("PIKDRAW_JSON"), "IPC is not a source format");
 
     g_tests_passed++;

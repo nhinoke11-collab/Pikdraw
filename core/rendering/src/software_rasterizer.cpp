@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <exception>
 #include <limits>
+#include <span>
 #include <unordered_set>
 
 namespace pikdraw::rendering {
@@ -66,12 +67,57 @@ bool point_in_contours(const std::vector<raster::Contour> &contours,
                                                  : winding != 0;
 }
 
+std::array<uint8_t, 4> sample_image_linear(
+    std::span<const uint32_t> pixels, int32_t width, int32_t height,
+    double u, double v) {
+  const double source_x = std::clamp(u * width - 0.5, 0.0,
+                                     static_cast<double>(width - 1));
+  const double source_y = std::clamp(v * height - 0.5, 0.0,
+                                     static_cast<double>(height - 1));
+  const int32_t x0 = static_cast<int32_t>(std::floor(source_x));
+  const int32_t y0 = static_cast<int32_t>(std::floor(source_y));
+  const int32_t x1 = std::min(x0 + 1, width - 1);
+  const int32_t y1 = std::min(y0 + 1, height - 1);
+  const double tx = source_x - x0;
+  const double ty = source_y - y0;
+  const std::array<double, 4> weights{
+      (1.0 - tx) * (1.0 - ty), tx * (1.0 - ty),
+      (1.0 - tx) * ty, tx * ty};
+  const std::array<uint32_t, 4> samples{
+      pixels[static_cast<size_t>(y0) * width + x0],
+      pixels[static_cast<size_t>(y0) * width + x1],
+      pixels[static_cast<size_t>(y1) * width + x0],
+      pixels[static_cast<size_t>(y1) * width + x1]};
+  constexpr std::array<unsigned, 3> shifts{24, 16, 8};
+  double alpha = 0.0;
+  std::array<double, 3> premultiplied{};
+  for (size_t sample = 0; sample < samples.size(); ++sample) {
+    const double sample_alpha = static_cast<double>(samples[sample] & 0xffu) / 255.0;
+    const double weight = weights[sample];
+    alpha += weight * sample_alpha;
+    for (size_t channel = 0; channel < premultiplied.size(); ++channel) {
+      const double value = static_cast<double>(
+          (samples[sample] >> shifts[channel]) & 0xffu) / 255.0;
+      premultiplied[channel] += weight * value * sample_alpha;
+    }
+  }
+  const auto to_byte = [](double value) {
+    return static_cast<uint8_t>(std::clamp(std::lround(value * 255.0), 0l, 255l));
+  };
+  std::array<uint8_t, 4> result{};
+  result[3] = to_byte(alpha);
+  for (size_t channel = 0; channel < premultiplied.size(); ++channel)
+    result[channel] = alpha > 0.0 ? to_byte(premultiplied[channel] / alpha) : 0;
+  return result;
+}
+
 bool render_image(const document::ImageObject &image,
                   const Camera2D &camera, PixelBufferTarget &target) {
+  const auto pixels = image.rgba_pixels();
   if (image.width_px <= 0 || image.height_px <= 0 ||
       static_cast<uint64_t>(image.width_px) *
               static_cast<uint64_t>(image.height_px) !=
-          image.pixels_rgba.size() ||
+          pixels.size() ||
       image.bounds_rect.width <= 0.0 || image.bounds_rect.height <= 0.0)
     return false;
   const auto inverse = image.transform.inverted();
@@ -137,17 +183,9 @@ bool render_image(const document::ImageObject &image,
                        image.bounds_rect.width;
       const double v = (image.bounds_rect.bottom() - local.y) /
                        image.bounds_rect.height;
-      const int source_x = std::clamp(
-          static_cast<int>(u * image.width_px), 0, image.width_px - 1);
-      const int source_y = std::clamp(
-          static_cast<int>(v * image.height_px), 0, image.height_px - 1);
-      const uint32_t packed = image.pixels_rgba[
-          static_cast<size_t>(source_y) * image.width_px + source_x];
-      const auto channel = [packed](unsigned shift) {
-        return static_cast<uint8_t>((packed >> shift) & 0xffu);
-      };
-      target.blend_pixel(x, y, channel(24), channel(16), channel(8),
-                         channel(0));
+      const auto sample = sample_image_linear(
+          pixels, image.width_px, image.height_px, u, v);
+      target.blend_pixel(x, y, sample[0], sample[1], sample[2], sample[3]);
     }
   }
   return true;
@@ -240,6 +278,90 @@ bool render_object(const document::DocumentSnapshot &snapshot,
           return true;
         } else {
           const auto child_transform = parent_transform * object.transform;
+          if (object.is_clipping_container()) {
+            const auto *mask_child = snapshot.objects().lookup_ref(object.clip->mask_object_id);
+            if (mask_child && std::holds_alternative<document::PathObject>(*mask_child)) {
+              const auto &mask_obj = std::get<document::PathObject>(*mask_child);
+              const auto mask_effective_transform = child_transform * mask_obj.transform;
+
+              if (object.clip->preserve_frame_appearance && mask_obj.has_fill) {
+                auto transformed_mask = mask_obj;
+                transformed_mask.transform = mask_effective_transform;
+                transformed_mask.has_stroke = false;
+                size_t g_bytes = 0, s_bytes = 0;
+                [[maybe_unused]] const bool rendered_fill = effects::render_path_with_appearance(
+                    transformed_mask, transformed_mask.appearance, camera, target, preview,
+                    &g_bytes, &s_bytes,
+                    (snapshot.page().color_mode_explicit || snapshot.page().raster_dpi_explicit)
+                        ? snapshot.raster_dpi()
+                        : 0);
+                metric.peak_gaussian_blur_scratch_capacity_bytes = std::max(
+                    metric.peak_gaussian_blur_scratch_capacity_bytes, g_bytes);
+                metric.peak_drop_shadow_scratch_capacity_bytes = std::max(
+                    metric.peak_drop_shadow_scratch_capacity_bytes, s_bytes);
+              }
+
+              document::PathObject clip_path_obj;
+              clip_path_obj.id = mask_obj.id;
+              clip_path_obj.path = mask_obj.path;
+              clip_path_obj.transform = mask_effective_transform;
+              std::vector<raster::Contour> clip_contours;
+              const bool has_contours = raster::flatten(clip_path_obj, camera, clip_contours);
+
+              std::vector<uint32_t> intermediate(static_cast<size_t>(target.width) * target.height, 0);
+              PixelBufferTarget intermediate_target;
+              intermediate_target.bgra_pixels = intermediate.data();
+              intermediate_target.width = target.width;
+              intermediate_target.height = target.height;
+              intermediate_target.stride_bytes = target.width * static_cast<int32_t>(sizeof(uint32_t));
+
+              for (const auto child_id : object.children_ids) {
+                if (child_id == object.clip->mask_object_id) continue;
+                const auto *child = snapshot.objects().lookup_ref(child_id);
+                if (!child || !render_object(snapshot, *child, child_transform,
+                                             camera, intermediate_target, metric, preview,
+                                             rendered_objects, depth + 1))
+                  return false;
+              }
+
+              for (int32_t y = 0; y < target.height; ++y) {
+                for (int32_t x = 0; x < target.width; ++x) {
+                  const uint32_t px = intermediate[static_cast<size_t>(y) * target.width + x];
+                  const uint8_t a = static_cast<uint8_t>((px >> 24) & 0xFF);
+                  if (a > 0) {
+                    const geometry::Point2D screen_point{x + 0.5, y + 0.5};
+                    if (!has_contours || point_in_contours(clip_contours, mask_obj.path.winding_rule(), screen_point)) {
+                      const uint8_t r = static_cast<uint8_t>((px >> 16) & 0xFF);
+                      const uint8_t g = static_cast<uint8_t>((px >> 8) & 0xFF);
+                      const uint8_t b = static_cast<uint8_t>(px & 0xFF);
+                      target.blend_pixel(x, y, r, g, b, a);
+                    }
+                  }
+                }
+              }
+
+              if (object.clip->preserve_frame_appearance && mask_obj.has_stroke && mask_obj.stroke_width_mm > 0.0) {
+                auto transformed_mask = mask_obj;
+                transformed_mask.transform = mask_effective_transform;
+                transformed_mask.has_fill = false;
+                size_t g_bytes = 0, s_bytes = 0;
+                [[maybe_unused]] const bool rendered_stroke = effects::render_path_with_appearance(
+                    transformed_mask, transformed_mask.appearance, camera, target, preview,
+                    &g_bytes, &s_bytes,
+                    (snapshot.page().color_mode_explicit || snapshot.page().raster_dpi_explicit)
+                        ? snapshot.raster_dpi()
+                        : 0);
+                metric.peak_gaussian_blur_scratch_capacity_bytes = std::max(
+                    metric.peak_gaussian_blur_scratch_capacity_bytes, g_bytes);
+                metric.peak_drop_shadow_scratch_capacity_bytes = std::max(
+                    metric.peak_drop_shadow_scratch_capacity_bytes, s_bytes);
+              }
+
+              ++rendered_objects;
+              return true;
+            }
+          }
+
           for (const auto child_id : object.children_ids) {
             const auto *child = snapshot.objects().lookup_ref(child_id);
             if (!child || !render_object(snapshot, *child, child_transform,

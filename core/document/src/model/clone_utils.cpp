@@ -41,10 +41,21 @@ ObjectVariant clone_object(const ObjectVariant& source, const geometry::Transfor
         clone.transform = shift * clone.transform;
 
         if constexpr (std::is_same_v<T, PathObject>) {
+            for (auto& effect : clone.appearance.effects)
+                effect.id = generate_effect_instance_id();
+            if (clone.fill_gradient) {
+                auto gradient = std::make_shared<GradientPaint>(*clone.fill_gradient);
+                gradient->id = generate_object_id();
+                for (auto& stop : gradient->stops) stop.id = generate_object_id();
+                clone.fill_gradient = std::move(gradient);
+            }
             if (clone.authoring_source) {
                 auto new_authoring = clone_editable_path(*clone.authoring_source);
                 clone.set_authoring_source(std::move(new_authoring));
             }
+        } else if constexpr (std::is_same_v<T, TextObject>) {
+            for (auto& effect : clone.appearance.effects)
+                effect.id = generate_effect_instance_id();
         }
 
         return clone;
@@ -93,6 +104,12 @@ void clone_group_recursive(
                 cloned_group.children_ids.push_back(new_child_id);
                 result.cloned_objects.push_back(std::move(cloned_child));
             }
+        }
+    }
+    if (cloned_group.clip.has_value()) {
+        const auto it = result.id_map.find(cloned_group.clip->mask_object_id);
+        if (it != result.id_map.end()) {
+            cloned_group.clip->mask_object_id = it->second;
         }
     }
 

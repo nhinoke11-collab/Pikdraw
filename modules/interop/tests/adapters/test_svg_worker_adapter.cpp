@@ -1,5 +1,6 @@
 #include "pikdraw/interop/adapters/svg_worker_adapter.hpp"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <iostream>
@@ -57,8 +58,82 @@ void TestTypedRecordRoundTrip() {
     const auto& issue = std::get<ImportFidelityIssueRecord>(decoded[5]);
     assert(issue.source_locator == "label" && issue.feature_code == "font_resolution");
     const auto& report = std::get<ImportFidelityReportRecord>(decoded[6]);
-    assert(report.coverage_profile == "svg-hierarchy-v2" && report.issue_count == 1);
+    assert(report.coverage_profile == "svg-hierarchy-v3" && report.issue_count == 1);
     assert(report.coverage == ImportCoverage::Partial && report.appearance == ImportAppearance::Partial);
+}
+
+void TestClipMaskSurvivesCanonicalRecords() {
+    const std::string source = R"svg(<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm">
+        <defs><clipPath id="frame"><rect x="10" y="10" width="80" height="80"/></clipPath></defs>
+        <g id="clipped-content" clip-path="url(#frame)">
+            <rect id="oversized-image-frame" x="0" y="0" width="100" height="100" fill="#123456"/>
+        </g>
+    </svg>)svg";
+    std::vector<CanonicalImportRecord> records;
+    std::string diagnostic;
+    assert(BuildSvgImportRecords(
+        std::span(reinterpret_cast<const uint8_t*>(source.data()), source.size()), records, diagnostic));
+    assert(diagnostic.empty());
+
+    bool found_clipping_group = false;
+    bool found_mask_path = false;
+    for (const auto& record : records) {
+        const auto decoded = DeserializeImportRecord(record.type, record.payload);
+        assert(decoded.has_value());
+        if (const auto* group = std::get_if<ImportGroupRecord>(&*decoded)) {
+            if (group->source_id != "clipped-content") continue;
+            found_clipping_group = true;
+            assert(group->clip_mask_local_id != 0);
+            assert(!group->child_local_ids.empty());
+            assert(group->child_local_ids.front() == group->clip_mask_local_id);
+        } else if (const auto* path = std::get_if<ImportPathRecord>(&*decoded)) {
+            found_mask_path |= path->source_id == "frame";
+        }
+    }
+    assert(found_clipping_group && found_mask_path);
+
+    ImportGroupRecord legacy_group{1, "legacy", "Legacy", {2}, 0};
+    const auto legacy_encoded = SerializeImportRecord(legacy_group);
+    assert(legacy_encoded.has_value());
+    const auto legacy_decoded = DeserializeImportRecord(legacy_encoded->type, legacy_encoded->payload);
+    assert(legacy_decoded.has_value());
+    assert(std::get<ImportGroupRecord>(*legacy_decoded).clip_mask_local_id == 0);
+}
+
+void TestAffineTransformCoordinatesRemainStable() {
+    const std::string source = R"svg(<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100">
+        <g id="rotated" transform="translate(20 0) rotate(90)">
+            <rect id="rotated-rect" x="0" y="0" width="10" height="20" fill="#123456"/>
+        </g>
+    </svg>)svg";
+    std::vector<CanonicalImportRecord> records;
+    std::string diagnostic;
+    assert(BuildSvgImportRecords(
+        std::span(reinterpret_cast<const uint8_t*>(source.data()), source.size()), records, diagnostic));
+    std::optional<ImportPathRecord> path;
+    for (const auto& record : records) {
+        if (record.type != ImportRecordType::Path) continue;
+        const auto decoded = DeserializeImportRecord(record.type, record.payload);
+        assert(decoded.has_value());
+        const auto* decoded_path = std::get_if<ImportPathRecord>(&*decoded);
+        assert(decoded_path && decoded_path->source_id == "rotated-rect");
+        path = *decoded_path;
+        break;
+    }
+    assert(path && path->elements.size() == 5);
+    double min_x = std::numeric_limits<double>::infinity();
+    double min_y = std::numeric_limits<double>::infinity();
+    double max_x = -std::numeric_limits<double>::infinity();
+    double max_y = -std::numeric_limits<double>::infinity();
+    for (const auto& element : path->elements) {
+        if (element.verb == ImportPathVerb::Close) continue;
+        min_x = std::min(min_x, element.values[0]);
+        min_y = std::min(min_y, element.values[1]);
+        max_x = std::max(max_x, element.values[0]);
+        max_y = std::max(max_y, element.values[1]);
+    }
+    assert(std::abs(min_x - 0.0) < 1e-9 && std::abs(max_x - 20.0) < 1e-9);
+    assert(std::abs(min_y - 90.0) < 1e-9 && std::abs(max_y - 100.0) < 1e-9);
 }
 
 void TestSemanticDecoderRejectsInvalidRecords() {
@@ -89,6 +164,13 @@ void TestSemanticDecoderRejectsInvalidRecords() {
     assert(!SerializeImportRecord(path)); // Unused command fields must be zero.
 
     text.font_size_pt = 12;
+    text.font_postscript_name = "NotoSans-Regular";
+    const auto text_record = SerializeImportRecord(text);
+    assert(text_record);
+    const auto restored_text = DeserializeImportRecord(text_record->type, text_record->payload);
+    assert(restored_text && std::get<ImportTextRecord>(*restored_text).font_postscript_name ==
+           "NotoSans-Regular");
+    text.font_postscript_name.clear();
     text.fill.alternate_rgb = {1, 0, 0, 1};
     assert(!SerializeImportRecord(text)); // Alternate RGB is only valid for a Spot color.
     const std::array<uint8_t, 1> invalid_payload{0};
@@ -124,6 +206,8 @@ void TestUnsupportedSvgProducesNoProposalRecords() {
 
 int main() {
     TestTypedRecordRoundTrip();
+    TestClipMaskSurvivesCanonicalRecords();
+    TestAffineTransformCoordinatesRemainStable();
     TestSemanticDecoderRejectsInvalidRecords();
     TestUnsupportedSvgProducesNoProposalRecords();
     std::cout << "SVG worker proposal record tests passed\n";

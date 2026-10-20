@@ -655,7 +655,12 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
             draw_num_input(435, 525, L"∡:", srot.str() + "°", NumericFieldId::ObjectRotation);
 
             if (is_in_isolation_mode()) {
-                draw_rib_btn(580, 670, is_vi ? L"⬅ Thoát (Esc)" : L"⬅ Exit (Esc)", true, col_teal);
+                const auto iso_id = current_isolated_group_id();
+                const bool is_clip_iso = iso_id && workflow().is_clipping_container(*iso_id);
+                draw_rib_btn(580, is_clip_iso ? 760 : 670,
+                             is_clip_iso ? (is_vi ? L"✓ Dừng sửa PowerClip (Esc)" : L"✓ Finish PowerClip (Esc)")
+                                         : (is_vi ? L"⬅ Thoát (Esc)" : L"⬅ Exit (Esc)"),
+                             true, col_teal);
             } else {
                 if (selection.size() >= 2) {
                     const auto buttons = get_multi_object_context_buttons(workflow(), workflow().can_group_selected(), w - inspect_w);
@@ -755,7 +760,40 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
                         draw_rib_btn(rx, rx + 66, is_vi ? L"◐ Bóng" : L"◐ Shadow", false, col_teal);
                         rx += 72;
                     }
-                    if (workflow().is_group(selection.front()) && rx + 144 <= w - inspect_w - 10) {
+                    if (workflow().is_clipping_container(selection.front())) {
+                        const auto clip_id = selection.front();
+                        const auto* grp_obj = snapshot->objects().lookup_ref(clip_id);
+                        bool is_locked = true;
+                        if (grp_obj && std::holds_alternative<document::GroupObject>(*grp_obj)) {
+                            const auto& grp = std::get<document::GroupObject>(*grp_obj);
+                            if (grp.clip) is_locked = grp.clip->lock_contents_to_frame;
+                        }
+                        if (rx + 76 <= w - inspect_w - 10) {
+                            draw_rib_btn(rx, rx + 72, is_vi ? L"✎ Sửa" : L"✎ Edit", true, col_teal);
+                            rx += 76;
+                        }
+                        if (rx + 82 <= w - inspect_w - 10) {
+                            draw_rib_btn(rx, rx + 78, is_vi ? L"⛶ Chọn" : L"⛶ Select", false, col_text_white);
+                            rx += 82;
+                        }
+                        if (rx + 92 <= w - inspect_w - 10) {
+                            draw_rib_btn(rx, rx + 88, is_vi ? L"⇱ Trích xuất" : L"⇱ Extract", false, col_text_white);
+                            rx += 92;
+                        }
+                        if (rx + 80 <= w - inspect_w - 10) {
+                            draw_rib_btn(rx, rx + 76, is_locked ? (is_vi ? L"🔒 Khóa" : L"🔒 Lock") : (is_vi ? L"🔓 Mở" : L"🔓 Free"),
+                                         is_locked, is_locked ? col_teal : col_text_muted);
+                            rx += 80;
+                        }
+                        if (rx + 86 <= w - inspect_w - 10) {
+                            draw_rib_btn(rx, rx + 82, is_vi ? L"⇲ Giữa" : L"⇲ Center", false, col_text_white);
+                            rx += 86;
+                        }
+                        if (rx + 82 <= w - inspect_w - 10) {
+                            draw_rib_btn(rx, rx + 78, is_vi ? L"Vừa ▾" : L"Fit ▾", false, col_text_white);
+                            rx += 82;
+                        }
+                    } else if (workflow().is_group(selection.front()) && rx + 144 <= w - inspect_w - 10) {
                         draw_rib_btn(rx, rx + 66, is_vi ? L"⛶ Rã" : L"⛶ Ungroup", false, col_teal);
                         rx += 72;
                         draw_rib_btn(rx, rx + 66, is_vi ? L"🔍 Chui vào" : L"🔍 Edit", true, col_teal);

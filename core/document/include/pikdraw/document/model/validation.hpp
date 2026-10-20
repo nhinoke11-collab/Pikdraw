@@ -144,14 +144,16 @@ inline void validate_image_source(const ImageObject& object) {
         throw std::invalid_argument("Invalid image dimensions or bounds");
     const auto expected_pixels = static_cast<uint64_t>(object.width_px) *
                                  static_cast<uint64_t>(object.height_px);
-    if (expected_pixels != object.pixels_rgba.size())
+    if (expected_pixels != object.rgba_pixels().size())
         throw std::invalid_argument("Image pixel count does not match its dimensions");
     const auto& source = object.source;
     if ((!source.media_type.empty() &&
          source.media_type != "image/png" &&
          source.media_type != "image/jpeg" &&
-         source.media_type != "image/tiff") ||
-        source.original_bytes.size() > RasterSourceMetadata::kMaxSourceBytes ||
+         source.media_type != "image/tiff" &&
+         source.media_type != "image/bmp" &&
+         source.media_type != "application/x-pikdraw-rgba8") ||
+        source.original_data().size() > RasterSourceMetadata::kMaxSourceBytes ||
         source.icc_profile.size() > RasterSourceMetadata::kMaxIccProfileBytes ||
         !std::isfinite(source.dpi_x) || !std::isfinite(source.dpi_y) ||
         source.dpi_x <= 0.0 || source.dpi_y <= 0.0 ||
@@ -160,7 +162,7 @@ inline void validate_image_source(const ImageObject& object) {
         source.frame_index >= source.frame_count ||
         source.source_bits_per_pixel > 128 ||
         source.exif_orientation == 0 || source.exif_orientation > 8 ||
-        (!source.original_bytes.empty() && source.media_type.empty()))
+        (!source.original_data().empty() && source.media_type.empty()))
         throw std::invalid_argument("Invalid raster source metadata or embedded asset budget");
     if (object.clip_path)
         validate_geometry_path(*object.clip_path);
@@ -186,6 +188,12 @@ inline void validate_object_source(ObjectId key, const ObjectVariant& value) {
             for (auto child : object.children_ids)
                 if (child == kInvalidObjectId || child == key || !unique.insert(child).second)
                     throw std::invalid_argument("Invalid or repeated group child ID");
+            if (object.clip.has_value()) {
+                if (object.clip->mask_object_id == kInvalidObjectId || object.clip->mask_object_id == key)
+                    throw std::invalid_argument("Invalid clipping mask object ID");
+                if (static_cast<uint8_t>(object.clip->fit_mode) > static_cast<uint8_t>(ClipContentFitMode::StretchToFill))
+                    throw std::invalid_argument("Invalid clipping fit mode");
+            }
         } else if constexpr (std::is_same_v<T, ImageObject>) validate_image_source(object);
     }, value);
 }

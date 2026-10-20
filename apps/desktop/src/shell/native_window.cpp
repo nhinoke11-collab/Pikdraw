@@ -15,6 +15,7 @@
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/gradient_tool_controller.hpp"
+#include "../tools/dimension_tool_controller.hpp"
 #include "pikdraw/vector/tools/shape_tools.hpp"
 #include "pikdraw/document/commands/path_commands.hpp"
 #include <iostream>

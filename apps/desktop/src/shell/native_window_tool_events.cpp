@@ -806,19 +806,29 @@ bool NativeWindow::handle_contour_property_click(int x, int y) {
     } else if (x >= 596 && x < 656) {
         contour_tool_->set_join_type(geometry::JoinType::Bevel);
         status_msg_ = language_ == UILanguage::Vietnamese ? "Góc nối: Vát (Bevel)" : "Corner join: Bevel";
-    } else if (x >= 665 && x < 740) {
+    } else if (x >= 662 && x < 715) {
+        contour_tool_->set_has_outline(!contour_tool_->has_outline());
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? (contour_tool_->has_outline() ? "Bật viền Contour (mặc định đen)" : "Tắt viền Contour")
+            : (contour_tool_->has_outline() ? "Contour outline enabled (black)" : "Contour outline disabled");
+    } else if (x >= 720 && x < 770) {
+        contour_tool_->set_has_fill(!contour_tool_->has_fill());
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? (contour_tool_->has_fill() ? "Bật tô màu Contour" : "Tắt tô màu Contour")
+            : (contour_tool_->has_fill() ? "Contour fill enabled" : "Contour fill disabled");
+    } else if (x >= 775 && x < 850) {
         if (contour_tool_->apply()) {
             status_msg_ = language_ == UILanguage::Vietnamese
                 ? "Đã áp dụng viền Contour vào đối tượng" : "Applied contour to object";
         }
-    } else if (x >= 745 && x < 875) {
+    } else if (x >= 855 && x < 985) {
         trigger_break_contour_apart();
-    } else if (x >= 880 && x < 950) {
+    } else if (x >= 990 && x < 1055) {
         if (contour_tool_->remove()) {
             status_msg_ = language_ == UILanguage::Vietnamese
                 ? "Đã xóa viền Contour khỏi đối tượng" : "Removed contour from object";
         }
-    } else if (x >= 955 && x < 1015) {
+    } else if (x >= 1060 && x < 1115) {
         contour_tool_->cancel();
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Đã hủy thiết lập Contour" : "Cancelled contour draft";

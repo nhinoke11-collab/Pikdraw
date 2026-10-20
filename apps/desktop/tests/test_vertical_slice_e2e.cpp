@@ -200,8 +200,8 @@ void test_e2e_m06_m07_interop_and_diagnostics() {
     assert(interop::FormatCapabilities::is_worker_import_profile_supported(
         interop::FormatType::Dxf, "dxf-entities-v1"));
     assert(!interop::FormatCapabilities::is_import_supported(interop::FormatType::Pdf));
-    assert(interop::FormatCapabilities::is_import_supported(interop::FormatType::Cdr));
-    assert(interop::FormatCapabilities::is_worker_import_profile_supported(
+    assert(!interop::FormatCapabilities::is_import_supported(interop::FormatType::Cdr));
+    assert(!interop::FormatCapabilities::is_worker_import_profile_supported(
         interop::FormatType::Cdr, "cdr-preview-v1"));
     assert(!interop::FormatCapabilities::is_import_supported(interop::FormatType::Ai));
     assert(interop::FormatCapabilities::is_import_supported(interop::FormatType::Png));

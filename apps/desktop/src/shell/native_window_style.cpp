@@ -14,11 +14,11 @@ bool NativeWindow::apply_style_patch(const vector::StylePatch &patch) {
     bool success = true;
     if (ids.empty()) {
         if (patch.fill) {
-            default_style_.fill = color::convert_color_to_mode(*patch.fill, root().document().color_mode());
+            default_style_.fill = *patch.fill;
             default_style_.has_fill = true;
         }
         if (patch.stroke) {
-            default_style_.stroke = color::convert_color_to_mode(*patch.stroke, root().document().color_mode());
+            default_style_.stroke = *patch.stroke;
             default_style_.has_stroke = true;
         }
         if (patch.width_mm)

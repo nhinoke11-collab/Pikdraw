@@ -12,6 +12,8 @@
 
 namespace pikdraw::workers {
 
+inline constexpr std::chrono::minutes kMaxV2ProposalStreamTimeout{5};
+
 [[nodiscard]] bool NegotiateV2WorkerProcess(
     HANDLE stdin_pipe,
     HANDLE stdout_pipe,

@@ -130,7 +130,7 @@ void write_object(Writer &writer, const ObjectVariant &value,
         } else if constexpr (std::is_same_v<T, ImageObject>) {
           if (object.width_px <= 0 || object.height_px <= 0 ||
               static_cast<uint64_t>(object.width_px) * object.height_px !=
-                  object.pixels_rgba.size())
+                  object.rgba_pixels().size())
             throw std::invalid_argument("Invalid native image pixel dimensions or count");
           writer.f64(object.bounds_rect.x);
           writer.f64(object.bounds_rect.y);
@@ -138,8 +138,8 @@ void write_object(Writer &writer, const ObjectVariant &value,
           writer.f64(object.bounds_rect.height);
           writer.u32(static_cast<uint32_t>(object.width_px));
           writer.u32(static_cast<uint32_t>(object.height_px));
-          writer.count(object.pixels_rgba.size(), max_image_pixels);
-          for (auto px : object.pixels_rgba)
+          writer.count(object.rgba_pixels().size(), max_image_pixels);
+          for (auto px : object.rgba_pixels())
             writer.u32(px);
           writer.flag(object.clip_path.has_value());
           if (object.clip_path)

@@ -1,5 +1,6 @@
 #include "native_window_selection_geometry.hpp"
 #include "../tools/contour_tool_controller.hpp"
+#include "../tools/dimension_tool_controller.hpp"
 #include "pikdraw/vector/gestures/selection_resize.hpp"
 #include "pikdraw/vector/tools/shape_tools.hpp"
 #include <algorithm>
@@ -241,6 +242,23 @@ void NativeWindow::handle_canvas_mouse_down(int x, int y, unsigned modifiers) {
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
+    if (active_tool_ == 10) {
+        if (!dimension_tool_) {
+            try {
+                dimension_tool_ = std::make_unique<tools::DimensionToolController>(root().document());
+            } catch (...) {
+                return;
+            }
+        }
+        if (!dimension_tool_->active()) {
+            dimension_tool_->activate(document::DimensionKind::Aligned, false);
+        }
+        const double tolerance = 6.0 / root().renderer().camera().zoom();
+        auto hit = vector::SelectionModel::hit_test(pointer_down_world_, *snapshot, tolerance);
+        dimension_tool_->handle_pointer_press(pointer_down_world_, hit);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
     if (active_tool_ == 12) {
         const double tolerance = 6.0 / root().renderer().camera().zoom();
         auto hit = vector::SelectionModel::hit_test(pointer_down_world_, *snapshot, tolerance);
@@ -419,6 +437,11 @@ void NativeWindow::handle_canvas_mouse_move(int x, int y, unsigned modifiers) {
         page.width_mm * 0.5 - half_canvas, page.width_mm * 0.5 + half_canvas);
     pointer_current_world_.y = std::clamp(pointer_current_world_.y,
         page.height_mm * 0.5 - half_canvas, page.height_mm * 0.5 + half_canvas);
+    if (active_tool_ == 10 && dimension_tool_ && dimension_tool_->active()) {
+        dimension_tool_->handle_pointer_move(pointer_current_world_);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
     if (is_contour_dragging_ && active_tool_ == 12 && contour_tool_ && contour_tool_->active()) {
         const auto target = contour_tool_->target_object();
         const auto snapshot = root().document().current_snapshot();
@@ -718,6 +741,11 @@ bool NativeWindow::commit_created_shape() {
 }
 
 void NativeWindow::handle_canvas_mouse_up(int x, int y, unsigned modifiers) {
+    if (active_tool_ == 10 && dimension_tool_ && dimension_tool_->active()) {
+        dimension_tool_->handle_pointer_release(pointer_current_world_);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
     if (text_editor_ && text_editor_->selecting && handle_inline_text_mouse(x, y, 2)) return;
     if (!pointer_active_) return;
     force_live_text_scale_update_ = true;

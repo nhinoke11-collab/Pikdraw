@@ -1,4 +1,5 @@
 #include "pikdraw/document/document.hpp"
+#include <algorithm>
 #include <limits>
 #include <stdexcept>
 
@@ -11,7 +12,8 @@ AsyncProposalMetadata Document::begin_job(uint64_t job_id) {
         throw std::overflow_error("Job generation exhausted");
     const auto generation = ++next_job_generation_;
     jobs_[job_id] = generation;
-    return {document_id_, epoch_, revision_, job_id, generation, {}};
+    return {document_id_, epoch_, revision_, job_id, generation, {},
+            active_page_id_, page_navigation_generation_};
 }
 
 void Document::cancel_job(uint64_t job_id) {
@@ -29,10 +31,16 @@ void Document::close() {
 ProposalStatus Document::validate_and_commit_proposal(AsyncProposal proposal) {
     try { require_idle_writer(); }
     catch (...) { return ProposalStatus::ExecutionFailed; }
+    if (is_content_locked()) return ProposalStatus::ReadOnlyDocument;
     const auto& metadata = proposal.metadata;
     if (metadata.document_id != document_id_ || metadata.epoch != epoch_)
         return ProposalStatus::EpochMismatch;
     if (metadata.base_revision != revision_) return ProposalStatus::StaleRevision;
+    if (metadata.target_page_id != kInvalidPageId &&
+        std::none_of(pages_.begin(), pages_.end(), [&](const auto& page) {
+            return page.id == metadata.target_page_id;
+        }))
+        return ProposalStatus::ExecutionFailed;
     const auto job = jobs_.find(metadata.job_id);
     if (job == jobs_.end() || job->second != metadata.job_generation)
         return ProposalStatus::JobCancelled;

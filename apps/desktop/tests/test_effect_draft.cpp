@@ -374,7 +374,7 @@ void test_properties_draft_preview_buttons_and_localized_captures() {
     window.root().vector_controller().selection().select(path_id);
     const auto before = window.root().document().current_snapshot();
     const int panel_left = 1440 - 280;
-    window.handle_mouse_down(20, 382); // Open Appearance Properties from the toolbox.
+    window.open_object_properties_panel();
     assert(window.style_inspector_visible());
 
     window.scroll_style_inspector(-360);

@@ -20,6 +20,7 @@ struct IccPreview::Impl {
 #ifdef _WIN32
     HTRANSFORM rgb{nullptr}, cmyk{nullptr}, to_cmyk{nullptr}, to_rgb{nullptr};
     mutable std::mutex mutex;
+    mutable PreviewOptions options;
     mutable std::map<std::array<WORD, 5>, PreviewRGBA> cache;
     ~Impl() {
         if (rgb)
@@ -163,11 +164,70 @@ bool IccPreview::convert_process(const ColorValue& source, DocumentColorMode tar
     return false;
 #endif
 }
+
+void IccPreview::set_preview_options(const PreviewOptions& options) const noexcept {
+#ifdef _WIN32
+    std::lock_guard lock(impl_->mutex);
+    impl_->options = options;
+    impl_->cache.clear();
+#else
+    (void)options;
+#endif
+}
+
+PreviewOptions IccPreview::preview_options() const noexcept {
+#ifdef _WIN32
+    std::lock_guard lock(impl_->mutex);
+    return impl_->options;
+#else
+    return {};
+#endif
+}
+
+bool IccPreview::is_out_of_gamut(const ColorValue &source) const noexcept {
+#ifdef _WIN32
+    if (!source.is_valid() || !impl_->to_cmyk || !impl_->to_rgb) return false;
+    const auto* rgb = std::get_if<RGBColor>(&source.payload());
+    if (!rgb) return false;
+
+    COLOR input{}, cmyk_mid{}, roundtrip_rgb{};
+    input.rgb = {channel(rgb->r), channel(rgb->g), channel(rgb->b)};
+
+    std::lock_guard lock(impl_->mutex);
+    if (!TranslateColors(impl_->to_cmyk, &input, 1, COLOR_RGB, &cmyk_mid, COLOR_CMYK)) {
+        return false;
+    }
+    if (!TranslateColors(impl_->to_rgb, &cmyk_mid, 1, COLOR_CMYK, &roundtrip_rgb, COLOR_RGB)) {
+        return false;
+    }
+    const double r_diff = (input.rgb.red - roundtrip_rgb.rgb.red) / 65535.0;
+    const double g_diff = (input.rgb.green - roundtrip_rgb.rgb.green) / 65535.0;
+    const double b_diff = (input.rgb.blue - roundtrip_rgb.rgb.blue) / 65535.0;
+    const double distance = std::sqrt(r_diff * r_diff + g_diff * g_diff + b_diff * b_diff);
+    // Standard industry gamut threshold: delta RGB > 0.12 (roughly delta E > 3.0)
+    return distance > 0.12;
+#else
+    (void)source;
+    return false;
+#endif
+}
+
 PreviewRGBA IccPreview::convert(const ColorValue &source) const noexcept {
+    return convert(source, preview_options());
+}
+
+PreviewRGBA IccPreview::convert(const ColorValue &source, const PreviewOptions &options) const noexcept {
     auto fallback = to_preview_rgba(source);
 #ifdef _WIN32
     if (!source.is_valid())
         return fallback;
+
+    if (options.gamut_warning && is_out_of_gamut(source)) {
+        auto warning = options.gamut_warning_color;
+        warning.a = fallback.a;
+        return warning;
+    }
+
     try {
         COLOR input{}, output{};
         COLORTYPE type = COLOR_RGB;
@@ -181,11 +241,33 @@ PreviewRGBA IccPreview::convert(const ColorValue &source) const noexcept {
             type = COLOR_CMYK;
             transform = impl_->cmyk;
         } else {
-            if (const auto *rgb = std::get_if<RGBColor>(&source.payload()))
-                key = {channel(rgb->r), channel(rgb->g), channel(rgb->b), 0, 0};
-            else
-                key = {channel(fallback.r), channel(fallback.g), channel(fallback.b), 0, 0};
-            input.rgb = {key[0], key[1], key[2]};
+            const auto *rgb = std::get_if<RGBColor>(&source.payload());
+            const WORD r = channel(rgb ? rgb->r : fallback.r);
+            const WORD g = channel(rgb ? rgb->g : fallback.g);
+            const WORD b = channel(rgb ? rgb->b : fallback.b);
+            if (options.proof_colors && impl_->to_cmyk && impl_->cmyk) {
+                // Soft proofing: convert RGB through CMYK press profile to simulate printed output
+                key = {r, g, b, 2, 0};
+                COLOR rgb_in{}, cmyk_mid{};
+                rgb_in.rgb = {r, g, b};
+                std::lock_guard lock(impl_->mutex);
+                if (const auto found = impl_->cache.find(key); found != impl_->cache.end()) {
+                    auto value = found->second;
+                    value.a = fallback.a;
+                    return value;
+                }
+                if (TranslateColors(impl_->to_cmyk, &rgb_in, 1, COLOR_RGB, &cmyk_mid, COLOR_CMYK) &&
+                    TranslateColors(impl_->cmyk, &cmyk_mid, 1, COLOR_CMYK, &output, COLOR_RGB)) {
+                    PreviewRGBA value{output.rgb.red / 65535.0f, output.rgb.green / 65535.0f,
+                                      output.rgb.blue / 65535.0f, 1};
+                    if (impl_->cache.size() >= 4096) impl_->cache.clear();
+                    impl_->cache.emplace(key, value);
+                    value.a = fallback.a;
+                    return value;
+                }
+            }
+            key = {r, g, b, 0, 0};
+            input.rgb = {r, g, b};
         }
         std::lock_guard lock(impl_->mutex);
         if (const auto found = impl_->cache.find(key); found != impl_->cache.end()) {
@@ -212,3 +294,4 @@ PreviewRGBA IccPreview::convert(const ColorValue &source) const noexcept {
     return fallback;
 }
 } // namespace pikdraw::color
+

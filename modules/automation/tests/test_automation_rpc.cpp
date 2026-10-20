@@ -3,6 +3,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <set>
+#include <string>
 
 namespace {
 void check(bool condition, const char* message) {
@@ -117,6 +119,9 @@ int main() {
     auto invalid_batch_ops = batch_operations;
     invalid_batch_ops[1] = automation::JsonValue::Object{{"op", "object.create_rectangle"},
         {"x_mm", 0.0}, {"y_mm", 0.0}, {"width_mm", -5.0}, {"height_mm", 10.0}};
+    const auto snapshot_before_invalid_batch = document.current_snapshot();
+    const bool dirty_before_invalid_batch = document.is_dirty();
+    const bool undo_before_invalid_batch = document.can_undo();
     auto invalid_args = batch_args;
     invalid_args["request_id"] = "test-batch-invalid";
     invalid_args["idempotency_key"] = "test-batch-invalid-key";
@@ -124,8 +129,10 @@ int main() {
     invalid_args["operations"] = std::move(invalid_batch_ops);
     auto invalid_batch = rpc.handle(automation::JsonValue(std::move(invalid_args)));
     check(invalid_batch.get("code") && *invalid_batch.get("code")->string() == "INVALID_ARGUMENT" &&
-              document.revision() == 2,
-          "invalid batch members reject the complete batch without partial document changes");
+              document.revision() == 2 && document.current_snapshot() == snapshot_before_invalid_batch &&
+              document.is_dirty() == dirty_before_invalid_batch &&
+              document.can_undo() == undo_before_invalid_batch,
+          "AC02 invalid batch preserves root snapshot, dirty state and undo history without partial changes");
     automation::JsonValue objects(automation::JsonValue::Object{
         {"operation", "objects.query"}, {"session_handle", write_handle}});
     auto queried = rpc.handle(objects);
@@ -266,7 +273,23 @@ int main() {
           "retrying a mixed edit batch returns the original receipt without duplicating geometry");
     check(document.undo() && document.revision() == before_design_ops.revision + 2 &&
               document.current_snapshot()->object_count() == 5,
-          "one document undo reverses the entire mixed MCP design transaction");
+          "AC02 one document undo reverses the entire mixed MCP design transaction");
+    const auto triangle_id = *design_receipt.get("created_ids")->array()->at(0).string();
+    const auto duplicate_id = *design_receipt.get("created_ids")->array()->at(1).string();
+    check(!document.current_snapshot()->get_object(std::stoull(triangle_id)).has_value() &&
+              !document.current_snapshot()->get_object(std::stoull(duplicate_id)).has_value() &&
+              document.current_snapshot()->get_object(std::stoull(stripe_id)).has_value(),
+          "AC02 undo restores deleted source IDs and removes every object created by the atomic batch");
+    check(document.redo() && document.revision() == before_design_ops.revision + 3 &&
+              document.current_snapshot()->object_count() == 6 &&
+              document.current_snapshot()->get_object(std::stoull(triangle_id)).has_value() &&
+              document.current_snapshot()->get_object(std::stoull(duplicate_id)).has_value() &&
+              !document.current_snapshot()->get_object(std::stoull(stripe_id)).has_value(),
+          "AC02 redo reapplies the complete atomic batch with its original stable IDs");
+    check(document.undo() && document.revision() == before_design_ops.revision + 4 &&
+              document.current_snapshot()->object_count() == 5 &&
+              document.current_snapshot()->get_object(std::stoull(stripe_id)).has_value(),
+          "AC02 second undo restores the prior source document for the remaining RPC checks");
 
     const auto after_undo = service.inspect();
     std::vector<automation::CreateObject> layout_seed(3);
@@ -382,5 +405,73 @@ int main() {
               restored_object.get("top_level") && *restored_object.get("top_level")->boolean() &&
               !restored_object.get("parent_group_id"),
           "MCP ungroup restores children as top-level objects and objects.get reports their current location");
+
+    document::Document scale_document("rpc-scale-test", document::Page::make_default());
+    automation::AutomationService scale_service(scale_document);
+    automation::AutomationRpc scale_rpc(scale_service, {"document.read", "document.edit"});
+    const auto scale_session = scale_rpc.handle(parse(
+        "{\"operation\":\"session.create\",\"scopes\":[\"document.read\",\"document.edit\"]}"));
+    const auto scale_handle = *scale_session.get("session_handle")->string();
+    auto scale_state = scale_service.inspect();
+    for (size_t batch_index = 0; batch_index < 4; ++batch_index) {
+        std::vector<automation::CreateObject> batch_requests;
+        batch_requests.reserve(250);
+        for (size_t item = 0; item < 250; ++item) {
+            const auto index = batch_index * 250 + item;
+            automation::CreateObject object;
+            object.bounds_mm = {static_cast<double>(index % 100) * 2.0,
+                                static_cast<double>(index / 100) * 2.0, 1.0, 1.0};
+            batch_requests.push_back(std::move(object));
+        }
+        const auto receipt = scale_service.create_objects(scale_state.epoch, scale_state.revision,
+                                                           batch_requests);
+        check(receipt.ok() && receipt.created_ids.size() == 250,
+              "AC07 scale fixture commits each bounded batch of 250 objects");
+        scale_state = scale_service.inspect();
+    }
+    std::set<std::string> paged_ids;
+    std::string scale_epoch;
+    std::string scale_revision;
+    std::string offset;
+    size_t page_count = 0;
+    do {
+        automation::JsonValue::Object query_args{{"operation", "objects.query"},
+            {"session_handle", scale_handle}, {"limit", 100.0}};
+        if (!offset.empty()) {
+            query_args["offset"] = offset;
+            query_args["expected_epoch"] = scale_epoch;
+            query_args["expected_revision"] = scale_revision;
+        }
+        const auto page = scale_rpc.handle(automation::JsonValue(std::move(query_args)));
+        check(page.get("status") && *page.get("status")->string() == "ok" &&
+                  page.get("objects") && page.get("objects")->array() &&
+                  page.get("objects")->array()->size() == 100,
+              "AC07 scale paging returns each full bounded page");
+        if (page_count == 0) {
+            scale_epoch = *page.get("epoch")->string();
+            scale_revision = *page.get("revision")->string();
+        } else {
+            check(*page.get("epoch")->string() == scale_epoch &&
+                      *page.get("revision")->string() == scale_revision,
+                  "AC07 all continuation pages retain one epoch and revision");
+        }
+        for (const auto& object : *page.get("objects")->array())
+            paged_ids.insert(*object.get("id")->string());
+        offset = *page.get("next_offset")->string();
+        ++page_count;
+    } while (!offset.empty());
+    check(page_count == 10 && paged_ids.size() == 1000 &&
+              scale_service.inspect().object_count == 1000,
+          "AC07 1,000-object query pages cover every stable ID exactly once");
+    automation::CreateObject later_object;
+    later_object.bounds_mm = {10.0, 30.0, 1.0, 1.0};
+    const auto later_edit = scale_service.create_objects(scale_state.epoch, scale_state.revision,
+        std::vector<automation::CreateObject>{later_object});
+    check(later_edit.ok(), "AC07 scale fixture can advance after a completed read snapshot");
+    const auto stale_continuation = scale_rpc.handle(automation::JsonValue(automation::JsonValue::Object{
+        {"operation", "objects.query"}, {"session_handle", scale_handle}, {"limit", 100.0},
+        {"offset", "100"}, {"expected_epoch", scale_epoch}, {"expected_revision", scale_revision}}));
+    check(stale_continuation.get("code") && *stale_continuation.get("code")->string() == "REVISION_CONFLICT",
+          "AC07 continuation rejects a page when the document changes after the first snapshot");
     return 0;
 }

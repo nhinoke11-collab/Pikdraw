@@ -789,9 +789,9 @@ void test_source_color_models_and_object_overprint_patches() {
 
 void test_toolbox_customization_and_node_tool_slot() {
     NativeWindow win(1440, 900);
-    // 1. Initial defaults: 11 slots visible.
+    // 1. Initial defaults: 12 slots visible.
     const auto initial_slots = win.visible_toolbox_slots();
-    assert(initial_slots.size() == 11);
+    assert(initial_slots.size() == 12);
     assert(initial_slots[0] == ToolboxSlotId::Pick);
     assert(initial_slots[1] == ToolboxSlotId::Node);
     assert(initial_slots[2] == ToolboxSlotId::QuickShapes);
@@ -803,6 +803,7 @@ void test_toolbox_customization_and_node_tool_slot() {
     assert(initial_slots[8] == ToolboxSlotId::DropShadow);
     assert(initial_slots[9] == ToolboxSlotId::Contour);
     assert(initial_slots[10] == ToolboxSlotId::Gradient);
+    assert(initial_slots[11] == ToolboxSlotId::Dimension);
 
     // 2. Direct click on Row 1 activates Node tool (tool 11).
     win.set_active_tool(0);
@@ -814,16 +815,21 @@ void test_toolbox_customization_and_node_tool_slot() {
     win.handle_mouse_down(26, 130); // Row 0: Pick tool (y=130)
     assert(win.active_tool() == 0);
 
-    // 3. Quick Customize [+] button at bottom of toolbox strip (row 11, y=594).
+    // Direct click on Row 11 activates Dimension tool (tool 10).
+    win.handle_mouse_down(26, 112 + 11 * 42 + 20); // Row 11: Dimension tool
+    assert(win.active_tool() == 10);
+    win.set_active_tool(0);
+
+    // 3. Quick Customize [+] button at bottom of toolbox strip (row 12, y=636).
     assert(!win.is_toolbox_customize_open());
-    win.handle_mouse_down(26, 594);
+    win.handle_mouse_down(26, 636);
     assert(win.is_toolbox_customize_open());
 
     // Toggle slot visibility from Quick Customize flyout (e.g. toggle Knife, slot 6)
     assert(win.is_toolbox_slot_visible(ToolboxSlotId::Knife));
     win.toggle_toolbox_slot_visible(ToolboxSlotId::Knife);
     assert(!win.is_toolbox_slot_visible(ToolboxSlotId::Knife));
-    assert(win.visible_toolbox_slots().size() == 10);
+    assert(win.visible_toolbox_slots().size() == 11);
 
     // Pick tool is mandatory and cannot be hidden
     assert(win.is_toolbox_slot_visible(ToolboxSlotId::Pick));
@@ -840,13 +846,14 @@ void test_toolbox_customization_and_node_tool_slot() {
     assert(win.is_toolbox_slot_visible(ToolboxSlotId::Node));
     win.handle_mouse_down(38, 160); // Click [-] badge on row 1
     assert(!win.is_toolbox_slot_visible(ToolboxSlotId::Node));
-    assert(win.visible_toolbox_slots().size() == 9);
+    assert(win.visible_toolbox_slots().size() == 10);
 
-    // Reset defaults restores all 11 slots and disables edit mode
+    // Reset defaults restores all 12 slots and disables edit mode
     win.reset_toolbox_slots_default();
-    assert(win.visible_toolbox_slots().size() == 11);
+    assert(win.visible_toolbox_slots().size() == 12);
     assert(win.is_toolbox_slot_visible(ToolboxSlotId::Node));
     assert(win.is_toolbox_slot_visible(ToolboxSlotId::Knife));
+    assert(win.is_toolbox_slot_visible(ToolboxSlotId::Dimension));
     assert(!win.is_toolbox_edit_mode());
 
     // Close flyout

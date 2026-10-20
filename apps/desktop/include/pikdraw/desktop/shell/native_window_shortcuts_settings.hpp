@@ -24,7 +24,8 @@ enum class ShortcutCategory : uint8_t {
     Order = 1,
     Nudge = 2,
     Edit = 3,
-    Tools = 4
+    Tools = 4,
+    View = 5
 };
 
 struct ShortcutItem {

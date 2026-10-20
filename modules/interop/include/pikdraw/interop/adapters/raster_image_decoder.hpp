@@ -7,7 +7,7 @@
 
 namespace pikdraw::interop {
 
-enum class RasterImageFormat : uint8_t { Unknown, Jpeg, Png, Tiff };
+enum class RasterImageFormat : uint8_t { Unknown, Jpeg, Png, Tiff, Bmp };
 enum class RasterIccProfileStatus : uint8_t {
     NotPresent,
     Preserved,
@@ -17,10 +17,10 @@ enum class RasterIccProfileStatus : uint8_t {
 };
 
 struct RasterImageDecodeOptions {
-    uint64_t max_source_bytes{64ULL * 1024ULL * 1024ULL};
-    uint64_t max_decoded_pixels{16ULL * 1024ULL * 1024ULL};
-    uint64_t max_decoded_bytes{64ULL * 1024ULL * 1024ULL};
-    uint64_t max_icc_profile_bytes{1024ULL * 1024ULL};
+    uint64_t max_source_bytes{UINT64_MAX};
+    uint64_t max_decoded_pixels{UINT32_MAX / 4};
+    uint64_t max_decoded_bytes{UINT32_MAX};
+    uint64_t max_icc_profile_bytes{UINT32_MAX};
     uint32_t max_frames{256};
     uint32_t frame_index{0};
     bool apply_orientation{true};

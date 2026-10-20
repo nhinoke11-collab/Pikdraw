@@ -1,5 +1,6 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
 #include "native_window_paint_icons.hpp"
+#include "native_window_toolbox.hpp"
 #include "native_window_gradient_properties_paint.hpp"
 #include "native_window_text_properties.hpp"
 #include "../tools/drawing_tool_controller.hpp"
@@ -7,6 +8,7 @@
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/gradient_tool_controller.hpp"
+#include "../tools/dimension_tool_controller.hpp"
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -44,27 +46,37 @@ void NativeWindow::paint_left_toolbox(HDC mem_dc, int w, int h) {
         FillRect(mem_dc, &rc_tools, br_tools);
         DeleteObject(br_tools);
 
-        const int toolbox_tools[] = {0, quick_shapes_last_tool_, path_drawing_last_tool_, 3, 4, 5, -1, -2, 12, 13};
-        const int group_for_row[] = {0, 1, 2, 0, 0, 0, 0, 0, 0, 0};
-        for (int row = 0; row < 10; ++row) {
-            const int tool = toolbox_tools[row];
-            const int group = group_for_row[row];
+        const auto slots = visible_toolbox_slots();
+        const int num_slots = static_cast<int>(slots.size());
+
+        for (int row = 0; row < num_slots; ++row) {
+            const auto slot = slots[row];
+            const auto info = get_toolbox_slot_info(slot);
+            const int group = info.group_id;
             const int ty = content_top + 10 + row * 42;
             RECT rc_tb = { 6, ty, tool_w - 6, ty + 36 };
-            const bool active = group == 1 ? (active_tool_ == 1 || active_tool_ == 2 || active_tool_ == 9)
-                              : group == 2 ? ((active_tool_ >= 6 && active_tool_ <= 8) || active_tool_ == 11)
-                              : row == 6 ? workflow().selected_effect_index(document::GaussianBlurEffect{1.0, 1.0}).has_value()
-                              : row == 7 ? workflow().selected_effect_index(document::DropShadowEffect{}).has_value()
-                              : row == 8 ? (active_tool_ == 12 || (contour_tool_ && contour_tool_->active()))
-                              : row == 9 ? (active_tool_ == 13 || (gradient_tool_ && gradient_tool_->active()))
-                                           : active_tool_ == tool;
+
+            const bool active = (slot == ToolboxSlotId::Pick) ? (active_tool_ == 0)
+                              : (slot == ToolboxSlotId::Node) ? (active_tool_ == 11 || (node_tool_ && node_tool_->active()))
+                              : (slot == ToolboxSlotId::QuickShapes) ? (active_tool_ == 1 || active_tool_ == 2 || active_tool_ == 9)
+                              : (slot == ToolboxSlotId::PathDrawing) ? ((active_tool_ >= 6 && active_tool_ <= 8))
+                              : (slot == ToolboxSlotId::Pan) ? (active_tool_ == 3)
+                              : (slot == ToolboxSlotId::Text) ? (active_tool_ == 4)
+                              : (slot == ToolboxSlotId::Knife) ? (active_tool_ == 5)
+                              : (slot == ToolboxSlotId::Blur) ? workflow().selected_effect_index(document::GaussianBlurEffect{1.0, 1.0}).has_value()
+                              : (slot == ToolboxSlotId::DropShadow) ? workflow().selected_effect_index(document::DropShadowEffect{}).has_value()
+                              : (slot == ToolboxSlotId::Contour) ? (active_tool_ == 12 || (contour_tool_ && contour_tool_->active()))
+                              : (slot == ToolboxSlotId::Gradient) ? (active_tool_ == 13 || (gradient_tool_ && gradient_tool_->active()))
+                              : (slot == ToolboxSlotId::Dimension) ? (active_tool_ == 10 || (dimension_tool_ && dimension_tool_->active()))
+                              : false;
+
             const int btn_cx = (rc_tb.left + rc_tb.right) / 2;
             const int btn_cy = (rc_tb.top + rc_tb.bottom) / 2;
-            const int icon = row == 6 ? 11
-                           : row == 7 ? 12
-                           : row == 8 ? 14
-                           : row == 9 ? 13
-                           : (group == 2 && tool == 11 ? 15 : tool);
+            const int icon = (slot == ToolboxSlotId::Node) ? 15
+                           : (slot == ToolboxSlotId::QuickShapes) ? quick_shapes_last_tool_
+                           : (slot == ToolboxSlotId::PathDrawing) ? path_drawing_last_tool_
+                           : info.icon_id;
+
             if (active) {
                 HBRUSH br_t_act = CreateSolidBrush(col_active_tab);
                 HPEN pen_t_act = CreatePen(PS_SOLID, 1, col_teal);
@@ -75,8 +87,7 @@ void NativeWindow::paint_left_toolbox(HDC mem_dc, int w, int h) {
                 SelectObject(mem_dc, old_pen);
                 DeleteObject(pen_t_act);
                 DeleteObject(br_t_act);
-                draw_tool_icon(mem_dc, icon,
-                               btn_cx, btn_cy, col_teal);
+                draw_tool_icon(mem_dc, icon, btn_cx, btn_cy, col_teal);
             } else {
                 HBRUSH br_t_inact = CreateSolidBrush(col_header);
                 HPEN pen_t_inact = CreatePen(PS_SOLID, 1, col_border);
@@ -87,13 +98,36 @@ void NativeWindow::paint_left_toolbox(HDC mem_dc, int w, int h) {
                 SelectObject(mem_dc, old_pen);
                 DeleteObject(pen_t_inact);
                 DeleteObject(br_t_inact);
-                draw_tool_icon(mem_dc, icon,
-                               btn_cx, btn_cy, col_text_muted);
+                draw_tool_icon(mem_dc, icon, btn_cx, btn_cy, col_text_muted);
             }
+
             if (group != 0) {
                 draw_toolbox_flyout_marker(mem_dc, rc_tb.right - 5, rc_tb.bottom - 5,
                                            active ? col_teal : RGB(100, 116, 139));
             }
+
+            // Quick Remove badge in edit mode (except Pick)
+            if (toolbox_edit_mode_ && slot != ToolboxSlotId::Pick) {
+                const int badge_x = rc_tb.right - 6;
+                const int badge_y = rc_tb.top + 6;
+                HBRUSH br_red = CreateSolidBrush(RGB(239, 68, 68));
+                HPEN pen_red = CreatePen(PS_SOLID, 1, RGB(220, 38, 38));
+                const HGDIOBJ o_pen = SelectObject(mem_dc, pen_red);
+                const HGDIOBJ o_brush = SelectObject(mem_dc, br_red);
+                Ellipse(mem_dc, badge_x - 5, badge_y - 5, badge_x + 5, badge_y + 5);
+                SelectObject(mem_dc, o_brush);
+                SelectObject(mem_dc, o_pen);
+                DeleteObject(pen_red);
+                DeleteObject(br_red);
+
+                HPEN pen_white = CreatePen(PS_SOLID, 1, RGB(255, 255, 255));
+                const HGDIOBJ o_white = SelectObject(mem_dc, pen_white);
+                MoveToEx(mem_dc, badge_x - 3, badge_y, nullptr);
+                LineTo(mem_dc, badge_x + 4, badge_y);
+                SelectObject(mem_dc, o_white);
+                DeleteObject(pen_white);
+            }
+
             if (toolbox_keyboard_focus_ && group == toolbox_focus_group_) {
                 RECT focus = rc_tb;
                 InflateRect(&focus, -3, -3);
@@ -101,10 +135,38 @@ void NativeWindow::paint_left_toolbox(HDC mem_dc, int w, int h) {
             }
         }
 
+        // Draw Quick Customize [+] button at bottom of toolbox
+        {
+            const int plus_y = content_top + 10 + num_slots * 42;
+            RECT rc_plus = { 10, plus_y + 3, tool_w - 10, plus_y + 33 };
+            const bool plus_open = show_toolbox_customize_flyout_;
+            HBRUSH br_plus = CreateSolidBrush(plus_open ? col_active_tab : col_header);
+            HPEN pen_plus = CreatePen(PS_SOLID, 1, plus_open ? col_teal : col_border);
+            const HGDIOBJ o_pen = SelectObject(mem_dc, pen_plus);
+            const HGDIOBJ o_brush = SelectObject(mem_dc, br_plus);
+            RoundRect(mem_dc, rc_plus.left, rc_plus.top, rc_plus.right, rc_plus.bottom, 6, 6);
+            SelectObject(mem_dc, o_brush);
+            SelectObject(mem_dc, o_pen);
+            DeleteObject(pen_plus);
+            DeleteObject(br_plus);
+
+            // Draw '+' glyph
+            const int pcx = (rc_plus.left + rc_plus.right) / 2;
+            const int pcy = (rc_plus.top + rc_plus.bottom) / 2;
+            HPEN pen_glyph = CreatePen(PS_SOLID, 1, plus_open ? col_teal : col_text_muted);
+            const HGDIOBJ o_glyph = SelectObject(mem_dc, pen_glyph);
+            MoveToEx(mem_dc, pcx - 5, pcy, nullptr);
+            LineTo(mem_dc, pcx + 6, pcy);
+            MoveToEx(mem_dc, pcx, pcy - 5, nullptr);
+            LineTo(mem_dc, pcx, pcy + 6);
+            SelectObject(mem_dc, o_glyph);
+            DeleteObject(pen_glyph);
+        }
+
         if (toolbox_open_group_ >= 1 && toolbox_open_group_ <= 3) {
-            const int group_row = toolbox_open_group_ == 1 ? 1
-                                : toolbox_open_group_ == 2 ? 2 : 6;
-            const int flyout_top = content_top + 10 + group_row * 42;
+            const int group_row = toolbox_open_group_ == 1 ? get_visible_row_for_slot(ToolboxSlotId::QuickShapes)
+                                : toolbox_open_group_ == 2 ? get_visible_row_for_slot(ToolboxSlotId::PathDrawing) : 6;
+            const int flyout_top = content_top + 10 + (group_row >= 0 ? group_row : 1) * 42;
             const int flyout_left = 54;
             const int flyout_width = toolbox_open_group_ == 3 ? 208 : 188;
             const int flyout_height = toolbox_open_group_ == 3 ? 174
@@ -185,6 +247,127 @@ void NativeWindow::paint_left_toolbox(HDC mem_dc, int w, int h) {
                 DrawTextW(mem_dc, label, -1, &item_label,
                           DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
             }
+        }
+
+        if (show_toolbox_customize_flyout_) {
+            const int plus_y = content_top + 10 + num_slots * 42;
+            const int flyout_left = 54;
+            const int flyout_top = std::max(content_top + 10, std::min(plus_y - 200, h - status_h - 430));
+            const int flyout_w = 264;
+            const int flyout_h = 405;
+            RECT flyout{flyout_left, flyout_top, flyout_left + flyout_w, flyout_top + flyout_h};
+
+            HBRUSH flyout_brush = CreateSolidBrush(is_dark ? RGB(20, 31, 46) : RGB(250, 252, 255));
+            HPEN flyout_pen = CreatePen(PS_SOLID, 1, col_border);
+            const HGDIOBJ old_flyout_pen = SelectObject(mem_dc, flyout_pen);
+            const HGDIOBJ old_flyout_brush = SelectObject(mem_dc, flyout_brush);
+            RoundRect(mem_dc, flyout.left, flyout.top, flyout.right, flyout.bottom, 7, 7);
+            SelectObject(mem_dc, old_flyout_brush);
+            SelectObject(mem_dc, old_flyout_pen);
+            DeleteObject(flyout_brush);
+            DeleteObject(flyout_pen);
+
+            // Title
+            SelectObject(mem_dc, font_be_vietnam_bold);
+            SetTextColor(mem_dc, col_teal);
+            RECT flyout_title{flyout_left + 10, flyout_top + 6, flyout.right - 26, flyout_top + 26};
+            const wchar_t *title = is_vi ? L"Tùy biến Hộp công cụ" : L"Customize Toolbox";
+            DrawTextW(mem_dc, title, -1, &flyout_title, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+            // Close 'X'
+            RECT rc_close{flyout.right - 24, flyout_top + 4, flyout.right - 4, flyout_top + 24};
+            SetTextColor(mem_dc, col_text_muted);
+            DrawTextW(mem_dc, L"×", -1, &rc_close, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+            // Subtitle
+            SelectObject(mem_dc, font_secondary);
+            SetTextColor(mem_dc, col_text_muted);
+            RECT flyout_sub{flyout_left + 10, flyout_top + 25, flyout.right - 10, flyout_top + 40};
+            const wchar_t *sub = is_vi ? L"Đánh dấu để hiện/ẩn icon trên thanh:" : L"Check to show/hide tool icons:";
+            DrawTextW(mem_dc, sub, -1, &flyout_sub, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+            // Checklist of all 11 slots
+            for (int i = 0; i < static_cast<int>(ToolboxSlotId::Count); ++i) {
+                const auto slot = static_cast<ToolboxSlotId>(i);
+                const auto info = get_toolbox_slot_info(slot);
+                const bool visible = is_toolbox_slot_visible(slot);
+                const int item_top = flyout_top + 43 + i * 26;
+
+                // Checkbox rect:
+                RECT rc_chk{flyout_left + 12, item_top + 4, flyout_left + 26, item_top + 18};
+                HBRUSH br_chk = CreateSolidBrush(visible ? col_teal : (is_dark ? RGB(26, 40, 58) : RGB(241, 245, 249)));
+                HPEN pen_chk = CreatePen(PS_SOLID, 1, visible ? col_teal : col_border);
+                const HGDIOBJ o_pen_chk = SelectObject(mem_dc, pen_chk);
+                const HGDIOBJ o_br_chk = SelectObject(mem_dc, br_chk);
+                RoundRect(mem_dc, rc_chk.left, rc_chk.top, rc_chk.right, rc_chk.bottom, 3, 3);
+                SelectObject(mem_dc, o_br_chk);
+                SelectObject(mem_dc, o_pen_chk);
+                DeleteObject(pen_chk);
+                DeleteObject(br_chk);
+
+                if (visible) {
+                    HPEN pen_chk_mark = CreatePen(PS_SOLID, 1, RGB(255, 255, 255));
+                    const HGDIOBJ o_pen_m = SelectObject(mem_dc, pen_chk_mark);
+                    MoveToEx(mem_dc, rc_chk.left + 3, rc_chk.top + 7, nullptr);
+                    LineTo(mem_dc, rc_chk.left + 6, rc_chk.top + 11);
+                    LineTo(mem_dc, rc_chk.left + 11, rc_chk.top + 4);
+                    SelectObject(mem_dc, o_pen_m);
+                    DeleteObject(pen_chk_mark);
+                }
+
+                // Name and shortcut
+                SelectObject(mem_dc, font_secondary);
+                SetTextColor(mem_dc, visible ? col_text_white : col_text_muted);
+                RECT name_rc{flyout_left + 32, item_top + 1, flyout.right - 58, item_top + 21};
+                const wchar_t* name = is_vi ? info.name_vi : info.name_en;
+                DrawTextW(mem_dc, name, -1, &name_rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+                if (slot == ToolboxSlotId::Pick) {
+                    SelectObject(mem_dc, font_mono);
+                    SetTextColor(mem_dc, col_text_muted);
+                    RECT lock_rc{flyout.right - 62, item_top + 1, flyout.right - 8, item_top + 21};
+                    DrawTextW(mem_dc, L"[Khóa]", -1, &lock_rc, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                } else if (info.shortcut[0] != L'\0') {
+                    SelectObject(mem_dc, font_mono);
+                    SetTextColor(mem_dc, col_text_muted);
+                    RECT sc_rc{flyout.right - 62, item_top + 1, flyout.right - 8, item_top + 21};
+                    DrawTextW(mem_dc, info.shortcut, -1, &sc_rc, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                }
+            }
+
+            // Bottom Buttons: Reset & Quick Remove Mode
+            const int bottom_y = flyout_top + 338;
+            // Reset button
+            RECT rc_reset{flyout_left + 10, bottom_y, flyout_left + 122, bottom_y + 26};
+            HBRUSH br_btn = CreateSolidBrush(is_dark ? RGB(26, 40, 58) : RGB(236, 242, 248));
+            HPEN pen_btn = CreatePen(PS_SOLID, 1, col_border);
+            SelectObject(mem_dc, pen_btn);
+            SelectObject(mem_dc, br_btn);
+            RoundRect(mem_dc, rc_reset.left, rc_reset.top, rc_reset.right, rc_reset.bottom, 4, 4);
+            SetTextColor(mem_dc, col_text_white);
+            SelectObject(mem_dc, font_secondary);
+            const wchar_t* rst_text = is_vi ? L"Mặc định" : L"Reset Defaults";
+            DrawTextW(mem_dc, rst_text, -1, &rc_reset, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+            // Edit Mode button
+            RECT rc_edit{flyout_left + 128, bottom_y, flyout.right - 10, bottom_y + 26};
+            HBRUSH br_edit = CreateSolidBrush(toolbox_edit_mode_ ? col_teal : (is_dark ? RGB(26, 40, 58) : RGB(236, 242, 248)));
+            SelectObject(mem_dc, br_edit);
+            RoundRect(mem_dc, rc_edit.left, rc_edit.top, rc_edit.right, rc_edit.bottom, 4, 4);
+            SetTextColor(mem_dc, toolbox_edit_mode_ ? RGB(255, 255, 255) : col_text_white);
+            const wchar_t* edit_text = is_vi ? (toolbox_edit_mode_ ? L"Xóa nhanh: BẬT" : L"Xóa nhanh: TẮT")
+                                             : (toolbox_edit_mode_ ? L"Quick Del: ON" : L"Quick Del: OFF");
+            DrawTextW(mem_dc, edit_text, -1, &rc_edit, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            DeleteObject(pen_btn);
+            DeleteObject(br_btn);
+            DeleteObject(br_edit);
+
+            // Tip at bottom
+            RECT rc_tip{flyout_left + 10, bottom_y + 30, flyout.right - 10, bottom_y + 50};
+            SetTextColor(mem_dc, col_text_muted);
+            const wchar_t* tip_str = is_vi ? L"Mẹo: Bấm nút [-] trên icon để xóa nhanh"
+                                            : L"Tip: Click [-] on icon to remove quickly";
+            DrawTextW(mem_dc, tip_str, -1, &rc_tip, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
 }
 
@@ -369,8 +552,8 @@ void NativeWindow::paint_right_inspector_dock(HDC mem_dc, int w, int h) {
             draw_coordinate(content_y + 88, L"Y (mm)", NumericFieldId::ObjectY,
                             position ? position->y : 0.0);
 
-            const wchar_t* mode_names_en[] = {L"Cusp", L"Smooth", L"Symmetric"};
-            const wchar_t* mode_names_vi[] = {L"Cusp", L"Smooth", L"Đối xứng"};
+            const wchar_t* mode_names_en[] = {L"⋀ Cusp", L"∿ Smooth", L"⎚ Symm"};
+            const wchar_t* mode_names_vi[] = {L"⋀ Cusp", L"∿ Smooth", L"⎚ Đối xứng"};
             constexpr document::PathNodeMode modes[] = {
                 document::PathNodeMode::Cusp,
                 document::PathNodeMode::Smooth,
@@ -739,6 +922,21 @@ void NativeWindow::paint_right_inspector_dock(HDC mem_dc, int w, int h) {
                         content << L"\nX: " << std::fixed << std::setprecision(1) << bounds->x
                                 << L" mm\nY: " << bounds->y << L" mm\nW: " << bounds->width
                                 << L" mm\nH: " << bounds->height << L" mm";
+                    }
+                    vector::RectCornerSettings rcs;
+                    if (is_selected_rectangle(nullptr, &rcs)) {
+                        const wchar_t* type_name = rcs.type == vector::RectCornerType::Round
+                            ? (is_vi ? L"Tròn (Fillet)" : L"Round")
+                            : rcs.type == vector::RectCornerType::Scallop
+                                ? (is_vi ? L"Lõm (Scallop)" : L"Scallop")
+                                : (is_vi ? L"Vát (Chamfer)" : L"Chamfer");
+                        content << (is_vi ? L"\n[Bo góc: " : L"\n[Corners: ") << type_name << L"]"
+                                << L"\n  TL: " << std::fixed << std::setprecision(1) << rcs.tl << L" mm"
+                                << L" · TR: " << rcs.tr << L" mm"
+                                << L"\n  BL: " << rcs.bl << L" mm"
+                                << L" · BR: " << rcs.br << L" mm"
+                                << (rcs.locked ? (is_vi ? L" [Khóa]" : L" [Locked]") : L"")
+                                << (rcs.scale_relative ? (is_vi ? L" [Tỷ lệ]" : L" [Scaled]") : L"");
                     }
                     if (workflow().is_group(sel_id) && !is_in_isolation_mode()) {
                         content << (is_vi ? L"\nNhấp đúp/Enter để chui vào nhóm."

@@ -10,12 +10,16 @@
 #include "pikdraw/workers/process_launcher.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <string>
 #include <securityappcontainer.h>
 #include <stdexcept>
 #include <string_view>
+#include <utility>
 
 using namespace pikdraw::interop;
 using namespace pikdraw::workers;
@@ -121,10 +125,40 @@ struct TemporaryWorkerPackage final {
              std::to_string(GetTickCount64()));
         if (!fs::create_directory(root)) return false;
         const auto source = fs::current_path() / "spike_worker.exe";
+        const auto pdfium = fs::current_path() / "pdfium.dll";
         executable = root / "spike_worker.exe";
-        return fs::exists(source) && fs::copy_file(source, executable);
+        return fs::exists(source) && fs::exists(pdfium) &&
+            fs::copy_file(source, executable) && fs::copy_file(pdfium, root / "pdfium.dll");
     }
 };
+
+std::vector<uint8_t> make_vector_pdf() {
+    const std::string stream = "1 0 0 rg\n10 10 40 20 re\nf\nBT\n/F1 12 Tf\n20 60 Td\n(Hello) Tj\nET\n";
+    const std::vector<std::string> objects{
+        "<< /Type /Catalog /Pages 2 0 R /Creator (Adobe Illustrator 2025) >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] "
+        "/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+        "<< /Length " + std::to_string(stream.size()) + ">>\nstream\n" + stream + "endstream",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
+    };
+    std::string pdf = "%PDF-1.4\n";
+    std::vector<size_t> offsets(objects.size() + 1, 0);
+    for (size_t index = 0; index < objects.size(); ++index) {
+        offsets[index + 1] = pdf.size();
+        pdf += std::to_string(index + 1) + " 0 obj\n" + objects[index] + "\nendobj\n";
+    }
+    const size_t xref_offset = pdf.size();
+    pdf += "xref\n0 " + std::to_string(objects.size() + 1) + "\n0000000000 65535 f \n";
+    for (size_t index = 1; index < offsets.size(); ++index) {
+        char line[32]{};
+        std::snprintf(line, sizeof(line), "%010zu 00000 n \n", offsets[index]);
+        pdf += line;
+    }
+    pdf += "trailer\n<< /Size " + std::to_string(objects.size() + 1) +
+        " /Root 1 0 R >>\nstartxref\n" + std::to_string(xref_offset) + "\n%%EOF\n";
+    return {pdf.begin(), pdf.end()};
+}
 
 struct Capture final {
     size_t callbacks{0};
@@ -155,7 +189,8 @@ bool capture_frame(const IpcV2Frame& frame, Capture& capture) {
                 (static_cast<uint32_t>(chunk->canonical_record_bytes[offset + 6]) << 16) |
                 (static_cast<uint32_t>(chunk->canonical_record_bytes[offset + 7]) << 24);
             offset += 8;
-            if (flags != 0 || raw_type < 1 || raw_type > 9 ||
+            if (flags != 0 || raw_type < 1 ||
+                raw_type > static_cast<uint16_t>(ImportRecordType::RasterSourceChunk) ||
                 size > chunk->canonical_record_bytes.size() - offset)
                 return capture.records_valid = false;
             auto record = DeserializeImportRecord(static_cast<ImportRecordType>(raw_type),
@@ -186,7 +221,8 @@ struct RunResult final {
     Capture capture;
 };
 
-RunResult run_import(const SourceSnapshot& source) {
+RunResult run_import(const SourceSnapshot& source, std::string format_id = "PNG",
+                     std::string profile_id = "raster-rgba8-v1") {
     TemporaryWorkerPackage package;
     Require(package.Create(), "could not stage the production worker for AppContainer execution");
     const auto profile_name = L"PikDraw.Raster.Import.Tests." +
@@ -223,8 +259,8 @@ RunResult run_import(const SourceSnapshot& source) {
     begin.job.source_token = source.Token();
     begin.source_bytes = source.SizeBytes();
     begin.source_sha256 = source.Sha256();
-    begin.format_id = "PNG";
-    begin.profile_id = "raster-rgba8-v1";
+    begin.format_id = std::move(format_id);
+    begin.profile_id = std::move(profile_id);
     const auto request = SerializeV2ImportBegin(begin, 1);
     RunResult result;
     const V2ProposalStreamLimits limits{4 * 1024 * 1024, 2 * 1024 * 1024, 128, 16, 17};
@@ -298,6 +334,61 @@ void test_malformed_png_rejected_without_partial_proposal() {
             "malformed PNG was accepted or leaked a partial proposal");
 }
 
+void test_pdf_and_pdf_compatible_ai_stream_editable_path_text() {
+    TemporarySource file;
+    const auto bytes = make_vector_pdf();
+    Require(file.Write(bytes), "could not write PDF vector source");
+    auto source = snapshot_for(file.path);
+    Require(source && source->IsValid(), "could not snapshot PDF vector source");
+    for (const auto& [format, profile] : std::array<std::pair<std::string_view, std::string_view>, 2>{{
+             {"PDF", "pdf-page-vector-v2"}, {"AI", "ai-pdf-compatible-vector-v2"}}}) {
+        const auto result = run_import(*source, std::string(format), std::string(profile));
+        Require(result.complete && result.capture.ended && result.capture.records_valid,
+                "worker did not complete an editable PDF/AI path-text proposal");
+        bool saw_path = false, saw_text = false, saw_image = false, saw_report = false, saw_ai_warning = false;
+        for (const auto& record : result.capture.records) {
+            saw_path |= std::holds_alternative<ImportPathRecord>(record);
+            saw_text |= std::holds_alternative<ImportTextRecord>(record);
+            saw_image |= std::holds_alternative<ImportRasterImageRecord>(record);
+            if (const auto* issue = std::get_if<ImportFidelityIssueRecord>(&record))
+                saw_ai_warning |= issue->feature_code == "ai-authoring-data-not-read";
+            if (const auto* report = std::get_if<ImportFidelityReportRecord>(&record)) {
+                saw_report = report->coverage == ImportCoverage::Partial &&
+                    report->editability == ImportEditability::NativeEditable;
+                Require(report->coverage_profile == profile, "worker changed the PDF/AI coverage profile");
+            }
+        }
+        Require(saw_path && saw_text && !saw_image && saw_report,
+                "worker did not produce native path/text without a thumbnail raster");
+        Require(format == "AI" ? saw_ai_warning : !saw_ai_warning,
+                "AI private-data loss warning does not match the selected source representation");
+    }
+}
+
+void test_preview_only_vector_profiles_are_rejected_without_proposals() {
+    TemporarySource file;
+    const auto bytes = make_png();
+    Require(file.Write(bytes), "could not write source for unsupported-profile checks");
+    auto source = snapshot_for(file.path);
+    Require(source && source->IsValid(), "could not snapshot unsupported-profile source");
+
+    const std::array<std::pair<std::string_view, std::string_view>, 4> profiles{{
+        {"CDR", "cdr-preview-v1"},
+        {"AI", "pdf-ai-preview-v1"},
+        {"PDF", "pdf-ai-preview-v1"},
+        {"EPS", "eps-preview-v1"}
+    }};
+    for (const auto& [format, profile] : profiles) {
+        const auto result = run_import(*source, std::string(format), std::string(profile));
+        Require(!result.complete && result.capture.callbacks == 0 &&
+                result.capture.records.empty() &&
+                (result.failure == "worker returned v2 error response" ||
+                 result.failure == "unsupported format import profile"),
+                (std::string("legacy preview profile was not rejected for ") + std::string(format) +
+                 ": " + result.failure).c_str());
+    }
+}
+
 } // namespace
 
 int main() {
@@ -305,7 +396,9 @@ int main() {
         test_png_worker_stream();
         test_raster_stream_exceeds_single_frame();
         test_malformed_png_rejected_without_partial_proposal();
-        std::cout << "Raster isolated worker import tests passed\n";
+        test_pdf_and_pdf_compatible_ai_stream_editable_path_text();
+        test_preview_only_vector_profiles_are_rejected_without_proposals();
+        std::cout << "Raster import and unsupported vector-profile worker tests passed\n";
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "Raster worker import tests failed: " << error.what() << '\n';

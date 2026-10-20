@@ -60,6 +60,7 @@ add_library(pikdraw_desktop STATIC
     src/automation/native_window_automation.cpp
     src/shell/native_window_events.cpp
     src/shell/native_window_menu_actions.cpp
+    src/shell/native_window_context_menu.cpp
     src/shell/native_window_pointer_dispatch.cpp
     src/shell/native_window_tool_events.cpp
     src/shell/native_window_modal_clicks.cpp
@@ -84,6 +85,7 @@ add_library(pikdraw_desktop STATIC
     src/shell/native_window_paint_icons.cpp
     src/shell/native_window_paint_context_icons.cpp
     src/shell/native_window_paint_docks.cpp
+    src/shell/native_window_toolbox.cpp
     src/shell/native_window_layers_dock.cpp
     src/shell/native_window_layers_events.cpp
     src/shell/native_window_paint.cpp
@@ -125,11 +127,23 @@ add_executable(pikdraw
 
 if(WIN32 AND TARGET spike_worker)
     # Refresh the package even when only the worker changed and pikdraw does not relink.
-    add_custom_target(pikdraw_stage_worker
+    set(_stage_worker_commands
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:pikdraw>/workers"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:spike_worker>"
                 "$<TARGET_FILE_DIR:pikdraw>/workers/spike_worker.exe"
-        DEPENDS spike_worker
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${PDFium_LIBRARY}"
+                "$<TARGET_FILE_DIR:pikdraw>/workers/pdfium.dll"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${PIKDRAW_CDR_BRIDGE_DLL}"
+                "$<TARGET_FILE_DIR:pikdraw>/workers/pikdraw_cdr_bridge.dll")
+    foreach(runtime_dll IN LISTS PIKDRAW_LIBCDR_RUNTIME_DLLS)
+        get_filename_component(runtime_name "${runtime_dll}" NAME)
+        list(APPEND _stage_worker_commands
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${runtime_dll}"
+                    "$<TARGET_FILE_DIR:pikdraw>/workers/${runtime_name}")
+    endforeach()
+    add_custom_target(pikdraw_stage_worker
+        ${_stage_worker_commands}
+        DEPENDS spike_worker pikdraw_cdr_bridge
         VERBATIM
     )
     add_dependencies(pikdraw pikdraw_stage_worker)
@@ -150,11 +164,11 @@ if(PIKDRAW_BUILD_TESTS)
     add_test(NAME test_pikdraw_save_recovery COMMAND test_pikdraw_save_recovery)
     add_executable(test_pikdraw_desktop_import tests/test_svg_dxf_import.cpp)
     target_link_libraries(test_pikdraw_desktop_import PRIVATE pikdraw_desktop)
-    if(WIN32 AND TARGET pikdraw)
-        add_dependencies(test_pikdraw_desktop_import pikdraw)
+    if(WIN32 AND TARGET pikdraw_stage_worker)
+        add_dependencies(test_pikdraw_desktop_import pikdraw_stage_worker)
     endif()
     add_test(NAME test_pikdraw_desktop_import COMMAND test_pikdraw_desktop_import)
-    set_tests_properties(test_pikdraw_desktop_import PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE LABELS "windows;isolated-import")
+    set_tests_properties(test_pikdraw_desktop_import PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE LABELS "windows;isolated-import")
     add_executable(test_pikdraw_desktop_shell
         tests/test_desktop_shell.cpp
         tests/test_desktop_shell_align_boolean.cpp

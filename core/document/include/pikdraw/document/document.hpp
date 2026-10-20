@@ -12,6 +12,7 @@
 #include <vector>
 #include <atomic>
 #include <thread>
+#include <stdexcept>
 #include <unordered_map>
 
 namespace pikdraw::document {
@@ -28,6 +29,10 @@ public:
     Document& operator=(const Document&) = delete;
 
     [[nodiscard]] const std::string& id() const noexcept { return document_id_; }
+    [[nodiscard]] DocumentContentMode content_mode() const noexcept { return content_mode_; }
+    [[nodiscard]] bool is_content_locked() const noexcept {
+        return content_mode_ == DocumentContentMode::PdfPrintLocked;
+    }
     [[nodiscard]] uint64_t epoch() const { require_writer(); return epoch_; }
     [[nodiscard]] uint64_t revision() const { require_writer(); return revision_; }
     [[nodiscard]] SnapshotPtr current_snapshot() const noexcept {
@@ -37,9 +42,18 @@ public:
     [[nodiscard]] const PersistentObjectMap& objects() const { require_writer(); return current_objects_; }
     [[nodiscard]] const std::vector<DocumentPage>& pages() const { require_writer(); return pages_; }
     [[nodiscard]] PageId active_page_id() const { require_writer(); return active_page_id_; }
+    [[nodiscard]] uint64_t page_navigation_generation() const {
+        require_writer(); return page_navigation_generation_;
+    }
     [[nodiscard]] color::DocumentColorMode color_mode() const { return page().color_mode; }
     [[nodiscard]] const std::string& color_profile_name() const { return page().color_profile_name; }
     [[nodiscard]] int32_t raster_dpi() const { return page().raster_dpi; }
+    [[nodiscard]] color::DocumentColorMode page_color_mode(PageId id) const {
+        return current_snapshot()->page_color_mode(id);
+    }
+    [[nodiscard]] int32_t page_raster_dpi(PageId id) const {
+        return current_snapshot()->page_raster_dpi(id);
+    }
 
     [[nodiscard]] bool can_undo() const { require_writer(); return history_.can_undo(); }
     [[nodiscard]] bool can_redo() const { require_writer(); return history_.can_redo(); }
@@ -56,7 +70,12 @@ public:
     bool undo();
     bool redo();
 
-    TransactionWriter& writer() { require_idle_writer(); return writer_; }
+    TransactionWriter& writer() {
+        require_idle_writer();
+        if (is_content_locked())
+            throw std::logic_error("PDF source is locked for printing");
+        return writer_;
+    }
 
     // Register before dispatch. Restarting a job ID invalidates its old generation.
     AsyncProposalMetadata begin_job(uint64_t job_id);
@@ -85,7 +104,7 @@ private:
     void require_writer() const;
     void require_idle_writer() const;
     CommandResult prepare_command(DocumentCommand& cmd, bool reverse, SnapshotPtr& next);
-    void publish_snapshot(SnapshotPtr next) noexcept;
+    void publish_snapshot(SnapshotPtr next, bool invalidate_jobs = true) noexcept;
     bool move_history(bool reverse);
 
     std::string document_id_;
@@ -94,6 +113,7 @@ private:
     uint64_t saved_epoch_{1};
     uint64_t saved_revision_{0};
     bool recovery_pending_save_{false};
+    DocumentContentMode content_mode_{DocumentContentMode::Editable};
 
     Page current_page_;
     PersistentObjectMap current_objects_;
@@ -105,6 +125,7 @@ private:
     bool executing_{false};
     bool open_{true};
     uint64_t next_job_generation_{0};
+    uint64_t page_navigation_generation_{0};
     size_t listener_failures_{0};
     std::unordered_map<uint64_t, uint64_t> jobs_;
 

@@ -664,3 +664,175 @@ void test_double_click_rotate_and_flip_transform_suite() {
     std::cout << "[PASS] test_double_click_rotate_and_flip_transform_suite\n";
 }
 
+void test_powerclip_and_clipping_mask_suite() {
+    pikdraw::desktop::NativeWindow win(1440, 900);
+    auto& workflow = win.workflow();
+    auto& controller = win.root().vector_controller();
+    auto& sel = controller.selection();
+
+    // 1. Create content (ellipse) and container mask (rectangle on top)
+    const auto content_id = workflow.add_ellipse(70.0, 70.0, 80.0, 80.0, "#f59e0b", "#d97706", 1.5);
+    const auto mask_id = workflow.add_rectangle(50.0, 50.0, 100.0, 100.0, "#00f2c3", "#0ea5e9", 2.0);
+    assert(content_id != pikdraw::document::kInvalidObjectId);
+    assert(mask_id != pikdraw::document::kInvalidObjectId);
+
+    // 2. Select both objects
+    sel.clear();
+    sel.select(content_id, pikdraw::vector::SelectionMode::Add);
+    sel.select(mask_id, pikdraw::vector::SelectionMode::Add);
+    assert(sel.count() == 2);
+    assert(workflow.can_make_clipping_mask_selected());
+
+    // 3. Make Clipping Mask / PowerClip (preserve frame appearance = true)
+    const auto clip_id = workflow.make_clipping_mask_selected(true);
+    assert(clip_id != pikdraw::document::kInvalidObjectId);
+    assert(workflow.is_group(clip_id));
+    assert(workflow.is_clipping_container(clip_id));
+    assert(sel.count() == 1);
+    assert(sel.is_selected(clip_id));
+
+    // Bounds of clipping container must match the mask frame
+    const auto clip_bounds = workflow.get_object_bounds(clip_id);
+    const auto mask_bounds = workflow.get_object_bounds(mask_id);
+    assert(clip_bounds.has_value() && mask_bounds.has_value());
+    assert(std::abs(clip_bounds->width - mask_bounds->width) < 1e-4);
+    assert(std::abs(clip_bounds->height - mask_bounds->height) < 1e-4);
+
+    // Contents must be auto-centered inside the frame!
+    const auto content_bounds = workflow.get_object_bounds(content_id);
+    assert(content_bounds.has_value());
+    assert(std::abs(content_bounds->center().x - mask_bounds->center().x) < 1e-4);
+    assert(std::abs(content_bounds->center().y - mask_bounds->center().y) < 1e-4);
+
+    // 4. Test Lock Contents and Fit Modes
+    assert(workflow.set_powerclip_lock_contents(clip_id, true));
+    assert(workflow.fit_powerclip_contents(clip_id, pikdraw::document::ClipContentFitMode::CenterContents));
+    assert(workflow.fit_powerclip_contents(clip_id, pikdraw::document::ClipContentFitMode::FitProportionally));
+    assert(workflow.fit_powerclip_contents(clip_id, pikdraw::document::ClipContentFitMode::FillProportionally));
+    assert(workflow.fit_powerclip_contents(clip_id, pikdraw::document::ClipContentFitMode::StretchToFill));
+    const auto stretched_bounds = workflow.get_object_bounds(content_id);
+    assert(stretched_bounds.has_value());
+    assert(std::abs(stretched_bounds->width - mask_bounds->width) < 1e-4);
+    assert(std::abs(stretched_bounds->height - mask_bounds->height) < 1e-4);
+    assert(workflow.fit_powerclip_contents(clip_id, pikdraw::document::ClipContentFitMode::CurrentPosition));
+
+    // 5. Test Group Isolation Mode for PowerClip editing
+    assert(!win.is_in_isolation_mode());
+    win.enter_group_isolation(clip_id);
+    assert(win.is_in_isolation_mode());
+    assert(win.current_isolated_group_id() == clip_id);
+    assert(win.is_object_in_isolated_group(content_id));
+
+    // Exit isolation mode
+    win.exit_group_isolation();
+    assert(!win.is_in_isolation_mode());
+
+    // 6. Place Inside PowerClip (Container Pick Target)
+    const auto extra_content = workflow.add_ellipse(10.0, 10.0, 30.0, 30.0);
+    const auto extra_frame = workflow.add_rectangle(0.0, 0.0, 50.0, 50.0);
+    const auto new_clip = workflow.place_inside_powerclip(extra_content, extra_frame);
+    assert(new_clip != pikdraw::document::kInvalidObjectId);
+    assert(workflow.is_clipping_container(new_clip));
+
+    // 7. Test Release Clipping Mask
+    sel.clear();
+    sel.select(clip_id, pikdraw::vector::SelectionMode::Replace);
+    assert(workflow.release_clipping_mask_selected());
+    assert(!workflow.is_clipping_container(clip_id));
+
+    // 8. Test Undo & Redo fidelity
+    assert(workflow.undo());
+    assert(workflow.is_clipping_container(clip_id));
+    assert(workflow.redo());
+    assert(!workflow.is_clipping_container(clip_id));
+
+    std::cout << "[PASS] test_powerclip_and_clipping_mask_suite\n";
+}
+
+void test_smart_context_menu_suite() {
+    pikdraw::desktop::NativeWindow win(1440, 900);
+    auto& workflow = win.workflow();
+    auto& controller = win.root().vector_controller();
+    auto& sel = controller.selection();
+
+    // 1. Context menu on empty canvas (no selection)
+    sel.clear();
+    HMENU hEmptyMenu = win.build_context_menu({}, false);
+    assert(hEmptyMenu != nullptr);
+    const int emptyCount = GetMenuItemCount(hEmptyMenu);
+    assert(emptyCount > 5); // Paste, Select All, Zoom, Guidelines, Snap, Page Setup
+    DestroyMenu(hEmptyMenu);
+
+    // 2. Context menu for 1 regular object
+    const auto rect_id = workflow.add_rectangle(10.0, 10.0, 50.0, 30.0);
+    assert(rect_id != pikdraw::document::kInvalidObjectId);
+    sel.clear();
+    sel.select(rect_id, pikdraw::vector::SelectionMode::Replace);
+
+    HMENU hSingleMenu = win.build_context_menu({rect_id}, true);
+    assert(hSingleMenu != nullptr);
+    const int singleCount = GetMenuItemCount(hSingleMenu);
+    assert(singleCount > 5);
+    DestroyMenu(hSingleMenu);
+
+    // Test actions from context menu: Lock & Unlock
+    win.execute_menu_action(static_cast<int>(pikdraw::desktop::MenuActionId::ObjectLock));
+    auto snap = win.root().document().current_snapshot();
+    auto obj = snap->objects().get(rect_id);
+    assert(obj.has_value());
+    std::visit([](const auto& o) { assert(o.locked); }, *obj);
+
+    win.execute_menu_action(static_cast<int>(pikdraw::desktop::MenuActionId::ObjectUnlock));
+    snap = win.root().document().current_snapshot();
+    obj = snap->objects().get(rect_id);
+    assert(obj.has_value());
+    std::visit([](const auto& o) { assert(!o.locked); }, *obj);
+
+    // 3. Context menu for PowerClip container
+    const auto circle_id = workflow.add_ellipse(15.0, 15.0, 20.0, 20.0);
+    const auto clip_id = workflow.place_inside_powerclip(circle_id, rect_id);
+    assert(clip_id != pikdraw::document::kInvalidObjectId);
+    assert(workflow.is_clipping_container(clip_id));
+    sel.clear();
+    sel.select(clip_id, pikdraw::vector::SelectionMode::Replace);
+
+    HMENU hClipMenu = win.build_context_menu({clip_id}, true);
+    assert(hClipMenu != nullptr);
+    DestroyMenu(hClipMenu);
+
+    // Test toggle lock contents via context menu action
+    win.execute_menu_action(static_cast<int>(pikdraw::desktop::MenuActionId::ObjectPowerClipToggleLock));
+    snap = win.root().document().current_snapshot();
+    auto clip_obj = snap->objects().get(clip_id);
+    assert(clip_obj.has_value());
+    if (const auto* grp = std::get_if<pikdraw::document::GroupObject>(&(*clip_obj))) {
+        assert(grp->clip.has_value());
+        assert(!grp->clip->lock_contents_to_frame);
+    }
+
+    // 4. Context menu for Multi-Selection (2+ objects)
+    const auto shape2 = workflow.add_rectangle(100.0, 100.0, 40.0, 40.0);
+    const auto shape3 = workflow.add_rectangle(200.0, 100.0, 40.0, 40.0);
+    sel.clear();
+    sel.select(shape2, pikdraw::vector::SelectionMode::Add);
+    sel.select(shape3, pikdraw::vector::SelectionMode::Add);
+    assert(sel.count() == 2);
+
+    HMENU hMultiMenu = win.build_context_menu({shape2, shape3}, true);
+    assert(hMultiMenu != nullptr);
+    const int multiCount = GetMenuItemCount(hMultiMenu);
+    assert(multiCount >= 6); // Group, PowerClip, Shaping submenu, Align submenu, Order submenu, etc.
+    DestroyMenu(hMultiMenu);
+
+    // Test reverse order
+    win.execute_menu_action(static_cast<int>(pikdraw::desktop::MenuActionId::ObjectOrderReverse));
+
+    // Test multi-object group via context menu
+    win.execute_menu_action(static_cast<int>(pikdraw::desktop::MenuActionId::ObjectGroup));
+    assert(sel.count() == 1);
+    assert(workflow.is_group(sel.selected_ids().front()));
+
+    std::cout << "[PASS] test_smart_context_menu_suite\n";
+}
+
+

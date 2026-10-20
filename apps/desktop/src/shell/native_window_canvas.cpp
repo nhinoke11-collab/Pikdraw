@@ -4,6 +4,7 @@
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/gradient_tool_controller.hpp"
+#include "../tools/dimension_tool_controller.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -461,6 +462,8 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
 void NativeWindow::paint_drawing_overlay(HDC dc) {
     if (active_tool_ == 8 && pen_tool_ && pen_tool_->active())
         paint_pen_overlay(dc);
+    if (active_tool_ == 10 && dimension_tool_ && dimension_tool_->active())
+        paint_dimension_canvas_overlay(dc, canvas_rect(width_, height_));
     if (active_tool_ == 11 && node_tool_ && node_tool_->active())
         paint_node_canvas_overlay(dc, width_, height_);
     if (active_tool_ == 12 && contour_tool_ && contour_tool_->active())

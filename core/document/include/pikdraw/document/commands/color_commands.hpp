@@ -35,4 +35,46 @@ private:
     int32_t dpi_;
     SnapshotPtr before_;
 };
+
+class SetPageColorModeCommand final : public DocumentCommand {
+public:
+    explicit SetPageColorModeCommand(PageId page_id, color::DocumentColorMode mode,
+        std::string profile = {}, std::shared_ptr<const color::IccPreview> icc = {});
+    std::string_view name() const noexcept override { return "Set Page Color Mode"; }
+    CommandResult execute(Document& doc) override;
+    CommandResult undo(Document& doc) override;
+private:
+    PageId page_id_;
+    color::DocumentColorMode mode_;
+    std::string profile_;
+    std::shared_ptr<const color::IccPreview> icc_;
+    SnapshotPtr before_;
+};
+
+class SetPageRasterDpiCommand final : public DocumentCommand {
+public:
+    explicit SetPageRasterDpiCommand(PageId page_id, int32_t dpi) : page_id_(page_id), dpi_(dpi) {}
+    std::string_view name() const noexcept override { return "Set Page Raster Effects DPI"; }
+    CommandResult execute(Document& doc) override;
+    CommandResult undo(Document& doc) override;
+private:
+    PageId page_id_;
+    int32_t dpi_;
+    SnapshotPtr before_;
+};
+
+class ConvertObjectsColorModeCommand final : public DocumentCommand {
+public:
+    ConvertObjectsColorModeCommand(std::vector<ObjectId> object_ids, color::DocumentColorMode mode,
+        std::string profile = {}, std::shared_ptr<const color::IccPreview> icc = {});
+    std::string_view name() const noexcept override { return "Convert Selected Objects Color Mode"; }
+    CommandResult execute(Document& doc) override;
+    CommandResult undo(Document& doc) override;
+private:
+    std::vector<ObjectId> object_ids_;
+    color::DocumentColorMode mode_;
+    std::string profile_;
+    std::shared_ptr<const color::IccPreview> icc_;
+    SnapshotPtr before_;
+};
 } // namespace pikdraw::document

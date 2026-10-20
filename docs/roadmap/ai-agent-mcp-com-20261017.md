@@ -1,17 +1,20 @@
 # Kế hoạch cổng AI agent qua MCP và COM
 
-Ngày: 18/10/2026. Ưu tiên: **P0 cho khả năng tự động hóa và kiểm thử editor**.
-Trạng thái: **Verified in-app HTTP, NativeWindow E2E, Settings controls & canonical package (18/10/2026)**.
-A01–A08 đạt 100% trên mã nguồn gốc. Desktop host MCP Streamable HTTP trực tiếp trong tiến trình và route
+Ngày: 20/10/2026. Ưu tiên: **P0 cho khả năng tự động hóa và kiểm thử editor**.
+Trạng thái: **Verified in-app HTTP, AC01 content/layout, AC02 atomic/undo, AC05 path denial, AC07 1.000-object paging, Settings revoke & Release package (20/10/2026)**.
+A01–A08 có source implementation; packaged-canonical client và các resilience gates AC03–AC09 còn lại vẫn mở. Desktop host MCP Streamable HTTP trực tiếp trong tiến trình và route
 semantic calls qua UI-owner queue tới document writer. Stdio sidecar vẫn là compatibility cho
 client chỉ hỗ trợ stdio; COM local server dùng cùng tool definitions/schema qua named pipe.
-Catalog source có 20 tools, gồm mở file native vào tab mới. MCP không dùng screenshot hay
-mouse/keyboard automation. Toàn bộ chuỗi NativeWindow HTTP E2E (`test_pikdraw_in_process_mcp_e2e`)
-đã pass 100% gồm discovery, catalog, scope enforcement, create/edit/validate/save/reopen,
-thao tác Copy URL / Copy key trên Settings UI qua clipboard snapshot an toàn, và thu hồi (revoke)
-bằng phím trong Settings cùng kiểm tra từ chối stale endpoint. Gói phát hành chuẩn
-`build/win-dev/packages/PikDraw-0.1.0-win64.zip` đã được kiểm chứng 23/23 entries khớp mã nhị phân
-canonical (SHA-256: `15E2F1463EDCF5FB668C5A3BBEBC1B12BF8FBE1B2B7047019D724D51085FD5C1`).
+Catalog source có 20 tools, gồm mở file native vào tab mới. NativeWindow HTTP E2E
+(`test_pikdraw_in_process_mcp_e2e`) pass 1/1: discovery, scope enforcement, thiết kế 600×300 mm
+đạt brief AC01 (font query/đo chữ Unicode, lề 10 mm, ba icon đều nhau, source color, stable IDs,
+save/reopen, semantic edit/undo), và biển hiệu vector 5×2 m gồm 36 đối tượng xác minh qua document
+data. Client tạo và sửa thiết kế trực tiếp qua MCP, không dùng screenshot, chuột hay bàn phím.
+Host là NativeWindow thật trong test process; acceptance với executable desktop đóng gói vẫn mở.
+Settings keyboard focus/revoke và stale-endpoint denial cũng pass. Copy URL/key UI assertions
+chỉ chạy khi clipboard hiện có thể được khôi phục an toàn; test đã báo skip khi clipboard chứa định dạng
+phi văn bản. Release package `build/win-dev/packages/PikDraw-0.1.0-win64.zip` có 25 entries và cả 3 executable khớp output canonical (SHA-256:
+`E8D8A30DA88D684CCEA256BA9213F5B7A74859A9D6EF12A8EFE61209044A67F8`).
 Không tạo branch/worktree, không commit.
 
 ### Bằng chứng triển khai hiện tại
@@ -24,15 +27,49 @@ Không tạo branch/worktree, không commit.
   discovery/catalog/connect/create, legacy initialize/notification/session delete, invalid
   bearer, Host/Origin rejection, method/name metadata checks, token rotation, UI-owner dispatch
   and queued revoke cancellation. Sidecar stdio and COM continue to use the same-user named pipe.
-  NativeWindow HTTP E2E (`test_pikdraw_in_process_mcp_e2e`) runs and passes 100% on the live Win32 shell,
-  including Settings Copy URL/key clipboard verification, create/edit/validate/save/reopen and keyboard revoke.
-- Current focused command `./tooling/native/build.ps1 -Test -TestTarget
-  test_pikdraw_embedded_mcp_http,test_pikdraw_mcp_server,test_pikdraw_mcp_pipe_integration
-  -TestRegex '^test_pikdraw_(embedded_mcp_http|mcp_server|mcp_pipe_integration)$'` built the
-  changed desktop automation and test targets, then passed CTest 3/3. The subsequent
+  NativeWindow HTTP E2E (`test_pikdraw_in_process_mcp_e2e`) passes on the live Win32 shell,
+  including create/edit/validate/save/reopen, the AC01 600×300 mm layout assertions, a 36-object
+  5×2 m design verified semantically, keyboard Settings revoke and stale-endpoint denial. Copy URL/key checks remain conditional on
+  safe clipboard restoration.
+- Current focused command `tooling/native/build.ps1 -Test -TestTarget
+  test_pikdraw_in_process_mcp_e2e,test_pikdraw_embedded_mcp_http,test_pikdraw_mcp_server,
+  test_pikdraw_mcp_pipe_integration,test_pikdraw_com_dispatch -TestRegex
+  '^test_pikdraw_(in_process_mcp_e2e|embedded_mcp_http|mcp_server|mcp_pipe_integration|com_dispatch)$'`
+  built changed targets and passed CTest 5/5, including AC01 content/layout and edit-after-reopen.
+  Follow-up `tooling/native/build.ps1 -Test -TestTarget
+  test_pikdraw_automation_service,test_pikdraw_automation_rpc,test_pikdraw_com_runtime_e2e
+  -TestRegex '^test_pikdraw_(automation_service|automation_rpc|com_runtime_e2e)$'` passed 3/3,
+  including the live NativeWindow COM-dispatch runtime fixture. AC02 check
+  `tooling/native/build.ps1 -Test -TestTarget test_pikdraw_automation_rpc -TestRegex
+  '^test_pikdraw_automation_rpc$'` passed 1/1 after asserting failed-batch snapshot/dirty/history
+  preservation and valid-batch undo/redo with stable IDs and monotonic revisions. The subsequent
   `./tooling/native/build.ps1 -Test -TestTarget pikdraw -BuildOnly` linked the canonical app
   successfully. A prior full configured CTest snapshot ran 86/87; its contour assertion is
   recorded below as historical evidence and must be rerun against the final source snapshot.
+- AC03 stale-write subcase: `tooling/native/build.ps1 -Test -TestTarget
+  test_pikdraw_in_process_mcp_e2e -TestRegex '^test_pikdraw_in_process_mcp_e2e$'` passed 1/1;
+  a NativeWindow workflow edit advances the document after the agent read revision R, the stale
+  MCP batch receives `REVISION_CONFLICT`, and assertions preserve the local object with no partial
+  agent object. The same current-source E2E also starts an inline text draft and proves MCP batch
+  and document creation return `BUSY_INTERACTION` without closing the draft or changing committed
+  objects/revision. It also waits for an HTTP write to enter the UI-owner queue, closes its target
+  tab, opens a replacement, then verifies `SESSION_EXPIRED` and an empty replacement document.
+  Pen/effect draft coverage remains open. The queue-depth synchronizer is private to the E2E
+  friend accessor and does not add a network-visible diagnostic tool.
+- AC05 path-boundary subcase: the same current-source NativeWindow HTTP E2E passed 1/1 with an
+  edit/file grant. Native save and open requests containing `../` traversal return `PATH_DENIED`,
+  and the connected document keeps its revision and object count; broader ACL, junction, queued
+  revoke and cross-user cases remain open.
+- AC07 read-scale subcase: `tooling/native/build.ps1 -Test -TestTarget test_pikdraw_automation_rpc
+  -TestRegex '^test_pikdraw_automation_rpc$'` passed 1/1 after creating 1,000 objects in four
+  bounded batches. Ten pages return every stable ID once under one epoch/revision; a continuation
+  after a committed edit returns `REVISION_CONFLICT`. Latency budgets, concurrent UI edits and
+  import-job cancel/revoke/late-commit behavior remain open.
+- AC09 document-safety subcases pass in the same NativeWindow E2E: MCP saves revision R, a native
+  workflow edit commits R+1 and leaves the tab dirty, while `file.verify_reopen` confirms the file
+  still contains only R and preserves its stable ID. `document.create`/`file.open` leave that dirty
+  original tab intact; unavailable-font measurement reports fallback and warning. A true save/edit
+  race during one I/O operation remains open.
 - A03/A05: batch rectangle/ellipse/text có dry-run, một transaction/undo,
   revision/epoch guard và receipt/idempotency; `document.create` mở tab riêng có ID duy nhất;
   có font query/text metrics, document validation, native save và verify-reopen trong file
@@ -47,14 +84,19 @@ Không tạo branch/worktree, không commit.
   revoke và keyboard focus; `Help > AI Automation…` mở cùng trang hướng dẫn. Hai nút Copy URL
   và Copy key có action IDs `action.settings.ai_connections.copy_endpoint` và
   `action.settings.ai_connections.copy_access_key`. EN/VI GDI shell captures và focused shell
-  tests xác nhận trạng thái/action; source mới của thao tác copy và revoke bằng Settings keyboard
-  chưa link/chạy tích hợp hoặc được nghiệm thu trên cửa sổ desktop.
+  tests xác nhận trạng thái/action; direct NativeWindow E2E đã xác nhận keyboard focus/revoke.
+  Copy URL/key assertions giữ clipboard snapshot an toàn và có thể bị skip nếu clipboard hiện có
+  định dạng phi văn bản.
 - A06 COM: `apps/com-server/` cung cấp ProgID `PikDraw.Automation`, per-user
   `/RegServer`/`/UnregServer`, same-user DACL, MTA local server và late-bound `IDispatch`.
 -  `GetInstances`, `GetTools`, `CallTool` dùng nguyên MCP tool/schema/session; registered
   out-of-process smoke trên source mới trả 20 tools. PowerShell và client STA/MTA gọi
-  `GetTools`/`CallTool` thành công; COM-to-app smoke xác nhận scope create và reconnect;
+  `GetTools`/`CallTool` thành công; `test_pikdraw_com_runtime_e2e` hiện chạy lại 3/3 cùng
+  automation service/RPC, còn COM-to-app smoke xác nhận scope create và reconnect;
   `/UnregServer` đã gỡ ProgID/CLSID keys.
+- Current registration check built `pikdraw-com-server,test_pikdraw_com_client`, registered
+  under HKCU, activated the independent C++ client in STA and MTA, and passed `GetTools` plus
+  `CallTool`; `/UnregServer` ran in `finally` and the three ProgID/CLSID roots were confirmed absent.
 - Historical live MCP smoke qua stdio sidecar và desktop binary pass protocol `2025-11-25`, catalog 20 tools,
   từ chối create/open trong session read-only, tạo batch 6 object trên trang 600×300 mm,
   validate, save/verify-reopen, mở tab mới, transform theo stable ID và verify save lần hai.
@@ -66,10 +108,13 @@ Không tạo branch/worktree, không commit.
   bằng `tooling/native/package.ps1` (SHA-256: `15E2F1463EDCF5FB668C5A3BBEBC1B12BF8FBE1B2B7047019D724D51085FD5C1`).
   Cả 3 binary `pikdraw.exe`, `apps/mcp-server/pikdraw-mcp-server.exe`, `apps/com-server/pikdraw-com-server.exe`
   đều khớp 100% mã canonical build.
-- `test_pikdraw_in_process_mcp_e2e` dùng NativeWindow thật và Streamable HTTP trực tiếp đã pass 100%:
-  kiểm discovery, scope enforcement, create/edit/validate/save/reopen, Settings Copy URL/Copy key
-  clipboard verification, và revoke bằng Settings keyboard kèm stale-endpoint denial.
-- Còn mở: toàn bộ brief/layout/production assertions của AC01–AC09; package là ZIP giải nén được, chưa phải MSI hay installer cập nhật.
+- `test_pikdraw_in_process_mcp_e2e` dùng NativeWindow thật và Streamable HTTP trực tiếp đã pass 1/1:
+  discovery, scope enforcement, thiết kế AC01 600×300 mm với font/glyph, margin 10 mm, ba icon cân
+  nhau, source color, stable IDs và edit/undo sau khi mở lại; cùng biển hiệu 5×2 m gồm 36 vector
+  object. Xác minh bằng document data, không screenshot/chuột/bàn phím trong luồng thiết kế. Settings
+  revoke và stale-endpoint denial pass. Clipboard copy test conditional, không khẳng định khi bị skip.
+- Còn mở: chạy independent client với executable desktop đóng gói; resilience gates AC03–AC09;
+  package hiện là ZIP giải nén được, chưa phải MSI hay installer cập nhật.
 
 Kiểm tra cập nhật 17/10/2026: `./tooling/native/build.ps1 -Test -TestTarget
 pikdraw,pikdraw-mcp-server,test_pikdraw_automation_service,test_pikdraw_automation_rpc,
@@ -328,11 +373,12 @@ luôn báo độc lập; missing/unknown không trở thành verified vì tool g
 ## 9. Các gói triển khai và gate
 
 Bảng giữ dependency và acceptance gate của từng gói. A01–A08 hiện có source implementation;
-focused tests cho A07 editing, file.open và COM catalog pass. Registered COM smoke xác nhận
+focused tests cho A07 editing, file.open, COM catalog và transport regressions pass. Registered COM smoke xác nhận
 20-tool catalog, read-only denial, scoped document create/reconnect, STA/MTA discovery/call
-và cleanup trên snapshot đã kiểm. Các smoke qua sidecar/package trước đây là evidence lịch sử;
-chưa có live HTTP E2E trên source mới nhất qua canonical desktop executable. Settings UI revoke,
-package mới và toàn bộ AC01–AC09 vẫn là gate riêng. A09 interop/jobs nâng cao chưa được triển khai;
+và cleanup trên snapshot đã kiểm. Current-source NativeWindow HTTP E2E and Release package both
+pass, but the test host is not the packaged canonical desktop process. Full brief/layout/production
+acceptance AC01–AC09, package installation, and canonical executable live-client acceptance remain
+open. A09 interop/jobs nâng cao chưa được triển khai;
 các trạng thái không suy ra từ nhãn module registry.
 
 | Gói | Phạm vi dự kiến | Phụ thuộc | Gate bàn giao |
@@ -340,11 +386,11 @@ các trạng thái không suy ra từ nhãn module registry.
 | A01 Audit + service | `modules/automation/`, registry; command consumers | C10/ADR | Focused service tests pass; canonical app interaction and undo/history acceptance remain open |
 | A02 Query/capabilities | Service + desktop composition | A01 | MCP exposes implemented snapshot/query/font/text metrics; complete fidelity and query scale gates remain open |
 | A03 Batch/receipts | Service, document command integration, desktop workflow targets | A01 | Atomic create batch, stale rejection and receipts have focused tests; full crash/concurrency matrix remains open |
-| A04 In-app MCP + compatibility transports | `apps/desktop/src/automation/`, `apps/mcp-server/` | A02+A03 | Focused in-process HTTP test passes modern 2026 stateless and legacy 2025 handshake, auth/routing/revoke queue and fixture UI-thread dispatch; latest NativeWindow HTTP E2E passed authoring/save/reopen and applied Settings revoke, but stale-endpoint denial assertion is being rechecked after diagnostic-status update; credential-copy check skipped due non-text clipboard; canonical app, Settings UI, installed-client and current Release package gates remain open |
-| A05 Brief + IO + validation | Automation service, typography metrics, native IO consumer tests | A04 | Earlier sidecar/package smoke created six objects, validated, saved/reopened a 600×300 mm native file, opened it in a new tab, edited by stable ID and verified a second save; this is historical transport/package evidence, not current direct in-app HTTP acceptance. Full brief/layout assertions remain open |
-| A06 COM adapter | `apps/com-server/`, per-user registry, independent COM client | A04+A05 | Same-user ACL, per-user register/remove, registered 20-tool GetTools, STA/MTA GetTools/CallTool, read-only create denial, scoped create/reconnect, and IDispatch→MCP→pipe fixture pass; package install and Settings revoke parity remain open |
+| A04 In-app MCP + compatibility transports | `apps/desktop/src/automation/`, `apps/mcp-server/` | A02+A03 | Focused HTTP test passes modern stateless/legacy protocol, auth/routing/revoke queue and UI-thread dispatch; current NativeWindow E2E passes authoring/save/reopen, Settings keyboard revoke and stale-endpoint denial. Copy checks are conditional on safe clipboard restoration; packaged canonical-process client acceptance remains open |
+| A05 Brief + IO + validation | Automation service, typography metrics, native IO consumer tests | A04 | Current direct HTTP E2E checks the AC01 600×300 mm font, Vietnamese glyphs, 10 mm margin, icon spacing, source color, stable IDs and edit/undo after reopen; it also creates and validates a 36-object 5×2 m billboard. Canonical packaged-process client acceptance remains open |
+| A06 COM adapter | `apps/com-server/`, per-user registry, independent COM client | A04+A05 | Focused COM dispatch, live NativeWindow IDispatch, and registered 20-tool/STA-MTA smoke evidence pass; package install and Settings revoke parity remain open |
 | A07 Design editing operations | Automation service/MCP/COM: line/polyline, stable-ID edits, style, group/ungroup, align/distribute, object.get, undo/redo | A03+A05 | Focused service/RPC/MCP/COM/pipe tests pass; canonical live-app authoring acceptance remains open |
-| A08 UI/release | Settings/locales/icons/docs, project-state tuần tự | A05; A06 nếu công bố COM | Config/revoke, client config mẫu, canonical packaged app và installed binary evidence |
+| A08 UI/release | Settings/locales/icons/docs, project-state tuần tự | A05; A06 nếu công bố COM | Settings revoke and a 25-entry Release ZIP are verified; client-config and installed canonical-binary acceptance remain open |
 | A09 Interop/jobs nâng cao | interop/workers, style/effects và per-format fixture gates | A04+A05 | C6/C8/C9, cancel/stale/limits, fidelity/export cụ thể |
 
 MVP agent = A01–A08, gồm phần cấu hình/quyền/đóng gói. Release công bố cả MCP+COM
@@ -365,15 +411,15 @@ in the evidence above. The full cases remain open and use [cấu trúc nghiệm 
 
 | ID | Given | When | Then | Verify dự kiến |
 | --- | --- | --- | --- | --- |
-| AC01 Thiết kế | App chuẩn, font fixture, brief mục 5, grant phù hợp | Client MCP tạo/query/validate/save/reopen | Đúng 600×300 mm, text Unicode, lề/khoảng cách, nguồn màu, editable; không UI automation | Client độc lập + assertions model/native reopen và font/layout oracle |
-| AC02 Atomic/undo | Document có nội dung, revision R | Batch 3 ops có op cuối invalid; sau đó batch đúng và undo/redo | Batch lỗi giữ root/history/dirty; batch đúng một Undo unit; undo/redo giữ IDs và revision tăng | Command consumer tests so snapshot/receipts, không chỉ status |
-| AC03 Concurrent | Agent đọc R; user sửa hoặc đang nhập Pen/effect draft | Agent apply R; tiếp theo close/reopen rồi job cũ trả | Conflict/busy/epoch reject; giữ edit/draft, không tự rebase | Desktop service integration với barriers xác định |
+| AC01 Thiết kế | App chuẩn có Segoe UI, brief mục 5, grant phù hợp | Client MCP tạo/query/validate/save/reopen | Đúng 600×300 mm, text Unicode, lề/khoảng cách, nguồn màu, editable; không UI automation | NativeWindow E2E verifies font query/measure, zero missing glyphs, 10 mm margin, three evenly spaced icons, source color, stable IDs and edit/undo after native reopen. Independent client against packaged canonical executable remains open |
+| AC02 Atomic/undo | Document có nội dung, revision R | Batch có op cuối invalid; sau đó batch đúng và undo/redo | Batch lỗi giữ root/history/dirty; batch đúng một Undo unit; undo/redo giữ IDs và revision tăng | `test_pikdraw_automation_rpc` verifies snapshot pointer, dirty state, Undo history, atomic mixed batch, restored/deleted IDs and revision increments; 1/1 pass |
+| AC03 Concurrent | Agent đọc R; user sửa hoặc đang nhập Pen/effect draft | Agent apply R; tiếp theo close/reopen rồi job cũ trả | Conflict/busy/epoch reject; giữ edit/draft, không tự rebase | NativeWindow E2E verifies stale-revision conflict, active inline-text draft protection, and a queued HTTP write rejected with `SESSION_EXPIRED` after close/reopen; replacement stays empty. Pen/effect drafts remain open |
 | AC04 Retry/crash | Request commit nhưng mất response | Retry cùng key; đổi payload cùng key; restart và gửi epoch cũ | Không duplicate; conflict key; instance/epoch cũ bị từ chối | Fault injection bridge + query object count/history/IDs |
-| AC05 Quyền | Hai user/session hoặc read-only, grant thư mục hẹp | Ghi/undo/save ngoài grant, path traversal/junction hoặc revoke lúc queued | Denied, không partial effect; read vẫn đúng scope | Live pipe ACL/peer tests + service/file handle boundary tests |
+| AC05 Quyền | Hai user/session hoặc read-only, grant thư mục hẹp | Ghi/undo/save ngoài grant, path traversal/junction hoặc revoke lúc queued | Denied, không partial effect; read vẫn đúng scope | NativeWindow HTTP E2E denies read-only writes and traversal save/open, preserving document revision/count. ACL/peer, junction and queued-revoke matrix remains open |
 | AC06 Capability/fidelity | SVG có opacity/effect, DXF subset, PDF/AI/CDR/EPS | Agent yêu cầu unsupported import/export/checker | Typed unsupported/loss report; không fake vector, không pass production | Adapter-specific fixtures + host capability tests |
-| AC07 Scale/job | Fixture 1.000 objects, query paging; import job đang prepare | Query nhiều trang, UI edit, cancel/revoke/sidecar exit | Snapshot nhất quán hoặc expired; không late commit; budgets/latency có số đo | Native performance harness + fault/job consumer tests |
-| AC08 COM parity | Client COM độc lập, quyền như MCP | Query/apply/get receipt ở STA/MTA, callback/revoke | Kết quả semantic/permission giống MCP, không deadlock/reentrant commit | Registered 20-tool smoke and independent STA/MTA GetTools/CallTool pass; COM-to-app smoke confirms read-only create denial, scoped create/reconnect and registry cleanup. Registered apply/receipt parity, Settings revoke and package install remain open |
-| AC09 Không phá tài liệu | User có document dirty và font thiếu | Agent create/open, text fallback, save R trong lúc user sửa R+1 | Không discard; font warning; R+1 vẫn dirty; grant/decision rõ | Desktop/native IO integration và report độc lập |
+| AC07 Scale/job | Fixture 1.000 objects, query paging; import job đang prepare | Query nhiều trang, UI edit, cancel/revoke/sidecar exit | Snapshot nhất quán hoặc expired; không late commit; budgets/latency có số đo | RPC test covers 1,000 objects, ten pages, stable IDs and stale-continuation rejection; performance budgets and async job fault/cancel gates remain open |
+| AC08 COM parity | Client COM độc lập, quyền như MCP | Query/apply/get receipt ở STA/MTA, callback/revoke | Kết quả semantic/permission giống MCP, không deadlock/reentrant commit | Current registered independent STA/MTA client passes GetTools/CallTool and registry cleanup; NativeWindow COM runtime fixture covers the shared 20-tool catalog and document create/edit/save. Registered apply/receipt parity, Settings revoke and package install remain open |
+| AC09 Không phá tài liệu | User có document dirty và font thiếu | Agent create/open, text fallback, save R rồi user sửa thành R+1 | NativeWindow E2E preserves the dirty original across create/open, confirms explicit missing-font warning, and verifies saved R stays on disk while R+1 remains dirty. Simultaneous save/edit race and broader decision UI remain open |
 
 Khi triển khai, đăng ký targets rồi dùng `./tooling/native/build.ps1 -Test -TestRegex
 '<targets đã đăng ký>'`; không coi placeholder là lệnh đã chạy. Bản cuối phải thử client

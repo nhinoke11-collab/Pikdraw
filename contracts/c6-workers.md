@@ -141,7 +141,9 @@ unsupported_protocol, không gọi parser trong host.
   zero. Payload có thêm document ID, epoch, base revision, token và generation đầy đủ để host so
   khớp identity sau khi đọc phần bounded còn lại. Proposal frames có payload tối đa 1 MiB; producer
   chỉ có tối đa hai frame đang chờ để tạo backpressure.
-- ImportBegin xác nhận token/hash/size/format profile; worker hash lại chính handle nguồn trước khi
+- ImportBegin xác nhận token/hash/size/format profile; PDF và AI-PDF có thể kèm `source_page_index:u32`
+  zero-based khi host đã negotiate feature `SOURCE_PAGE_SELECTION`. Trường vắng mặt chọn trang 0.
+  Worker hash lại chính handle nguồn trước khi
   gọi adapter. ProposalChunk chứa chunk ordinal, first-record ordinal và các record có header
   canonical `type:u16, flags:u16=0, length:u32, bytes`; mọi record có type khác zero, length tối đa
   512 KiB và tổng chunk tối đa 1 MiB. CRC32/IEEE tính trên chuỗi canonical records. ImportEnd mang
@@ -161,22 +163,37 @@ unsupported_protocol, không gọi parser trong host.
   FidelityReport tóm tắt coverage, appearance, editability, production assessment và tổng issue;
   host kiểm từng record, thứ tự, số issue và report trước khi nhận proposal.
 - Record schema v2 tại [`import-record-v2.json`](../tests/fixtures/reference-fixtures/import-record-v2.json)
-  giữ nguyên payload v1 cho Page/Path/Text/FidelityReport/FidelityIssue và thêm `6=Layer`, `7=Group`.
-  Layer trỏ tới các object gốc; Group trỏ tới các object con. Host kiểm thứ tự, ID, UTF-8/source ID,
+  giữ nguyên payload cơ sở v1 cho Page/Path/Text/FidelityReport/FidelityIssue và thêm `6=Layer`, `7=Group`.
+  Riêng PDF/AI profile v2, Text có thể nối thêm `font_postscript_name:string16` sau Color; vắng trường
+  nghĩa là nguồn không cung cấp tên PostScript. Layer trỏ tới các object gốc; Group trỏ tới các object con.
+  Host kiểm thứ tự, ID, UTF-8/source ID,
   mọi tham chiếu, đúng một owner cho mỗi object, đồ thị không chu trình, issue locator và report
-  trước khi chấp nhận terminal frame. Production worker dispatch chỉ nhận đúng các cặp profile đã đăng ký:
-  `format_id=SVG`, `profile_id=svg-hierarchy-v2` và `format_id=DXF`,
-  `profile_id=dxf-entities-v1`; profile khác không được dispatch. Với hai profile này host semantic
-  validator khớp profile report chính xác. Generic stream fixtures chỉ kiểm protocol, không phải
-  format adapters. DXF hiện chỉ được báo là worker profile; `FormatCapabilities::is_import_supported(Dxf)`
-  vẫn false cho tới khi app có consumer áp dụng proposal vào document bằng transaction và UI import flow.
-- **SVG profile `svg-hierarchy-v2`:** nguồn UTF-8 tĩnh tối đa 16 MiB, root có width/height rõ đơn vị,
+  trước khi chấp nhận terminal frame. Production worker dispatch kiểm cặp format/profile đã đăng ký
+  cho SVG, DXF, PDF, AI PDF-compatible, EPS và CDR; mỗi profile có semantic validator riêng.
+  PDF/AI page selection hiện trả một page proposal mỗi lần; inspect toàn bộ Page tree đã tách khỏi
+  materialize, còn Open/Import cả tập hoặc page range bằng một transaction đang chờ tích hợp ở host/UI.
+  Generic stream fixtures chỉ kiểm protocol, không phải format adapters. DXF vẫn chưa được báo
+  runtime-supported cho tới khi app có consumer áp dụng proposal vào document bằng transaction và UI import flow.
+- **Raster source assets:** record `8=RasterImage` giữ metadata source và kích thước preview; `9=RasterImageChunk`
+  mang pixel RGBA8 để dựng/chỉnh sửa trong canvas; `10=RasterSourceChunk` mang bytes ảnh gốc theo từng asset.
+  `RASTER_SOURCE_ASSETS` phải được negotiate cho CDR. Ảnh RGB 24-bit giữ đủ ba kênh; preview RGBA 8-bit mỗi
+  kênh giữ alpha (32-bit/pixel); PNG RGB, grayscale và indexed dùng `tRNS` cũng được chuyển đúng
+  thành alpha preview. Bytes gốc được chia sẻ giữa các placement và lưu cùng document native.
+  Metadata `source_bits_per_pixel` mô tả ảnh nguồn, không phải preview. Không đặt trần nhập 64 MiB; kích thước
+  bytes ảnh gốc theo giới hạn U32 của blob native/record, còn admission/cấp phát theo RAM vật lý toàn hệ thống
+  và hủy/rollback khi ngưỡng 90% đạt hoặc vượt.
+- **SVG profile `svg-hierarchy-v3`:** nguồn UTF-8 tĩnh tối đa 16 MiB, root có width/height rõ đơn vị,
   hỗ trợ `rect`, `path`, `text`, `<g>` lồng nhau và layer Inkscape ở cấp root qua namespace chính thức.
   Group giữ thứ tự/con trỏ con; layer giữ tên, source ID, visibility/lock hiện tại và danh sách object
-  gốc. SVG không khai báo layer được tạo một layer mặc định. `viewBox` chỉ dùng mapping xMidYMid meet
-  mặc định hoặc none đồng tỷ lệ. Path commands nhận M/L/H/V/C/S/Q/T/Z. Text giữ Unicode, family/weight/
-  style/cỡ chữ; việc tìm font và glyph hiển thị chưa được xác minh. Profile từ chối transform, CSS/style,
-  filter/effect, mask, image/link ngoài, script, DTD/entity, layer lồng nhau, arc command và phần tử lạ.
+  gốc. Group có thể mang `clip_mask_local_id` trỏ tới đúng một Path con; host kiểm mask tồn tại, đúng loại
+  và thuộc group trước khi áp dụng. Codec vẫn đọc được Group payload cũ không có trường này.
+  SVG không khai báo layer được tạo một layer mặc định. `viewBox` chỉ dùng mapping xMidYMid meet
+  mặc định hoặc none đồng tỷ lệ. Path commands nhận M/L/H/V/C/S/Q/T/Z. Affine transform trong group,
+  rect và path nhận matrix/translate/scale/rotate/skewX/skewY theo thứ tự nguồn; text chỉ nhận transform
+  dương, đồng tỷ lệ, không xoay. Clip-path subset từ rect/path giữ mask reference trên Group. Text giữ
+  Unicode, family/weight/style/cỡ chữ; việc tìm font và glyph hiển thị chưa được xác minh. Profile từ chối
+  CSS/style, filter/effect, mask tổng quát, image/link ngoài, script, DTD/entity, layer lồng nhau, arc command
+  và phần tử lạ.
   Từ chối toàn nguồn bằng structured worker error, không phát chunk dở dang. Giới hạn: 10.000 phần tử
   gồm group, depth 128, 6.000 verb/path, 100.000 path elements cộng dồn, 64 thuộc tính/tag, 256 KiB
   text/object, 16 MiB canonical stream và 1.000.000 mm mỗi chiều trang. Đây là phạm vi subset, chưa

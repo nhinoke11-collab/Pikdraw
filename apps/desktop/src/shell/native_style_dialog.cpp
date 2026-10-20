@@ -460,8 +460,6 @@ void initialize_editor(HWND dialog, EditorState &state) {
     const wchar_t *models_vi[] = {L"RGB · 0–255", L"CMYK · 0–100%", L"Spot · tên + tint", L"Thang xám · 0–100%"};
     const auto *models = state.vi ? models_vi : models_en;
     for (int m = 0; m < 4; ++m) {
-        if (state.document_mode && m == (state.document_mode == color::DocumentColorMode::Cmyk ? 0 : 1))
-            continue;
         const auto index = SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(models[m]));
         SendMessageW(combo, CB_SETITEMDATA, index, m);
     }
@@ -852,7 +850,6 @@ std::optional<StyleEditorResult> edit_source_color(HWND owner, const color::Colo
     EditorState state;
     state.original = initial; state.draft = initial; state.width = width_mm;
     state.document_mode = document_mode;
-    if (document_mode) state.draft = color::convert_color_to_mode(initial, *document_mode);
     state.stroke = stroke; state.vi = vietnamese; state.context = context;
     state.mixed_color = mixed_color; state.mixed_overprint = mixed_overprint;
     state.dark = dark_theme;

@@ -2,11 +2,13 @@
 
 #include "pikdraw/document/model/object_id.hpp"
 #include "pikdraw/document/model/object.hpp"
+#include "pikdraw/document/model/pdf_source_reference.hpp"
 #include "pikdraw/document/snapshots/persistent_map.hpp"
 
 #include <atomic>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -53,15 +55,18 @@ struct DocumentPage {
     std::string name;
     Page layout;
     PersistentObjectMap objects;
+    std::optional<PdfSourcePageReference> pdf_source;
 };
 
 [[nodiscard]] inline DocumentPage make_document_page(
     std::string name = "Page 1", Page layout = Page::make_default(),
-    PersistentObjectMap objects = {}) {
+    PersistentObjectMap objects = {},
+    std::optional<PdfSourcePageReference> pdf_source = std::nullopt) {
     const auto id = generate_page_id();
     if (id == kInvalidPageId)
         throw std::overflow_error("Document page ID range exhausted");
-    return DocumentPage{id, std::move(name), std::move(layout), std::move(objects)};
+    return DocumentPage{id, std::move(name), std::move(layout), std::move(objects),
+                        std::move(pdf_source)};
 }
 
 } // namespace pikdraw::document

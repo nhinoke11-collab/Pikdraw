@@ -65,12 +65,11 @@ public:
             case FormatType::Png:
             case FormatType::Jpeg:
             case FormatType::Tiff:
-            case FormatType::Cdr:
             case FormatType::Pdf:
             case FormatType::Ai:
-                return true;
             case FormatType::Eps:
-                return false; // Reported as unsupported without silent flattening
+            case FormatType::Cdr:
+                return true;
         }
         return false;
     }
@@ -79,20 +78,23 @@ public:
         FormatType type, std::string_view profile) noexcept {
         switch (type) {
             case FormatType::Svg:
-                return profile == "svg-hierarchy-v2";
+                return profile == "svg-hierarchy-v3";
             case FormatType::Dxf:
                 return profile == "dxf-entities-v1";
             case FormatType::Pdf:
+                return profile == "pdf-page-vector-v2" ||
+                       profile == "pdf-page-set-v3";
             case FormatType::Ai:
-                return profile == "pdf-ai-preview-v1" || profile == "raster-rgba8-v1";
+                return profile == "ai-pdf-compatible-vector-v2" ||
+                       profile == "ai-pdf-compatible-page-set-v3";
+            case FormatType::Eps:
+                return profile == "eps-path-v1";
+            case FormatType::Cdr:
+                return profile == "cdr-libcdr-svg-v2";
             case FormatType::Png:
             case FormatType::Jpeg:
             case FormatType::Tiff:
                 return profile == "raster-rgba8-v1";
-            case FormatType::Cdr:
-                return profile == "cdr-preview-v1" || profile == "raster-rgba8-v1";
-            case FormatType::Eps:
-                return false;
         }
         return false;
     }

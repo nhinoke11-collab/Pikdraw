@@ -40,6 +40,9 @@ public:
 
     // Grants read/execute access to test worker binary directory only
     [[nodiscard]] static bool GrantDirectoryAccess(const std::wstring& directory_path, PSID appcontainer_sid) noexcept;
+    // Grants read/write/execute access to a dedicated per-job temporary directory.
+    [[nodiscard]] static bool GrantDirectoryModifyAccess(const std::wstring& directory_path,
+                                                         PSID appcontainer_sid) noexcept;
 
 private:
     std::wstring profile_name_;

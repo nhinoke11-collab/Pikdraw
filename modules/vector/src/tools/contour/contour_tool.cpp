@@ -16,6 +16,11 @@ void ContourTool::set_target_object(document::ObjectId object_id) {
             join_type_ = feat->join_type;
             miter_limit_ = feat->miter_limit;
             arc_tolerance_mm_ = feat->arc_tolerance_mm;
+            outline_color_ = feat->outline_color;
+            fill_color_ = feat->fill_color;
+            has_outline_ = feat->has_outline;
+            has_fill_ = feat->has_fill;
+            stroke_width_mm_ = feat->stroke_width_mm;
         }
     }
     update_preview();
@@ -87,6 +92,11 @@ bool ContourTool::apply() {
     feat.join_type = join_type_;
     feat.miter_limit = miter_limit_;
     feat.arc_tolerance_mm = arc_tolerance_mm_;
+    feat.outline_color = outline_color_;
+    feat.fill_color = fill_color_;
+    feat.has_outline = has_outline_;
+    feat.has_fill = has_fill_;
+    feat.stroke_width_mm = stroke_width_mm_;
 
     auto cmd = std::make_unique<document::ApplyContourCommand>(target_object_id_, feat);
     auto res = document_.execute_command(std::move(cmd));
@@ -131,6 +141,11 @@ void ContourTool::cancel() {
             join_type_ = feat->join_type;
             miter_limit_ = feat->miter_limit;
             arc_tolerance_mm_ = feat->arc_tolerance_mm;
+            outline_color_ = feat->outline_color;
+            fill_color_ = feat->fill_color;
+            has_outline_ = feat->has_outline;
+            has_fill_ = feat->has_fill;
+            stroke_width_mm_ = feat->stroke_width_mm;
         }
     }
     update_preview();

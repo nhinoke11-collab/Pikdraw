@@ -453,12 +453,12 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
         RECT rc_sys_b = { cx, cy + 186, cx + 490, cy + 300 };
         const wchar_t* sys_text = is_vi ?
             L"• Renderer Backend: DirectX / Skia GPU Rasterizer (Probed: Windows D3D11)\n"
-            L"• Bộ nhớ đệm đồ họa (RAM Cache): 512 MB (Tự động dọn rác bộ nhớ)\n"
+            L"• Cache ảnh GPU không có hạn mức cố định; dừng tải ảnh mới trước ngưỡng 90% RAM hệ thống\n"
             L"• Tần số làm tươi: 120 FPS / Tự động đồng bộ V-Sync màn hình\n"
             L"• Bản phục hồi tự động: Mỗi 60 giây vào %LOCALAPPDATA%/PikDraw/Recovery\n"
             L"• Giới hạn lịch sử thao tác: 50 bước Undo/Redo" :
             L"• Renderer Backend: DirectX / Skia GPU Rasterizer (Probed: Windows D3D11)\n"
-            L"• Raster Cache RAM Budget: 512 MB with automatic garbage collection\n"
+            L"• GPU image cache has no fixed quota; stops new uploads before 90% system RAM\n"
             L"• Refresh Rate: 120 FPS / V-Sync hardware synchronized\n"
             L"• Auto-recovery: Every 60 seconds to %LOCALAPPDATA%/PikDraw/Recovery\n"
             L"• Undo/Redo Depth: 50 atomic command revisions";

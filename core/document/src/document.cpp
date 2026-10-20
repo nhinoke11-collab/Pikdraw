@@ -69,6 +69,7 @@ void Document::require_writer() const {
 Document::Document(const DocumentSnapshot& saved) : Document(saved.document_id()) {
     epoch_ = allocate_epoch(saved.epoch());
     saved_epoch_ = epoch_;
+    content_mode_ = saved.content_mode();
     pages_ = saved.pages();
     active_page_id_ = saved.active_page_id();
     current_page_ = saved.page();
@@ -77,7 +78,7 @@ Document::Document(const DocumentSnapshot& saved) : Document(saved.document_id()
     saved_revision_ = revision_;
     if (!current_objects_.empty()) reserve_object_id((*current_objects_.all().rbegin()).first);
     current_snapshot_ = std::make_shared<const DocumentSnapshot>(
-        epoch_, revision_, pages_, active_page_id_, document_id_);
+        epoch_, revision_, pages_, active_page_id_, document_id_, content_mode_);
 }
 
 void Document::require_idle_writer() const {
@@ -87,6 +88,8 @@ void Document::require_idle_writer() const {
 }
 
 CommandResult Document::prepare_command(DocumentCommand& cmd, bool reverse, SnapshotPtr& next) {
+    if (is_content_locked())
+        return CommandResult::fail("PDF source is locked for printing");
     Page before_page = current_page_;
     const auto before_objects = current_objects_;
     const auto before_pages = pages_;
@@ -113,7 +116,7 @@ CommandResult Document::prepare_command(DocumentCommand& cmd, bool reverse, Snap
             return CommandResult::fail("Document revision exhausted");
         }
         next = std::make_shared<const DocumentSnapshot>(
-            epoch_, revision_ + 1, pages_, active_page_id_, document_id_);
+            epoch_, revision_ + 1, pages_, active_page_id_, document_id_, content_mode_);
         return result;
     } catch (const std::exception& error) {
         restore();
@@ -127,6 +130,8 @@ CommandResult Document::prepare_command(DocumentCommand& cmd, bool reverse, Snap
 CommandResult Document::execute_command(CommandPtr cmd) {
     try { require_idle_writer(); }
     catch (const std::exception& error) { return CommandResult::fail(error.what()); }
+    if (is_content_locked())
+        return CommandResult::fail("PDF source is locked for printing");
     if (!cmd) return CommandResult::fail("Null document command");
     BusyScope scope(busy_);
     auto before = current_snapshot();
@@ -146,6 +151,7 @@ CommandResult Document::execute_command(CommandPtr cmd) {
 bool Document::move_history(bool reverse) {
     try { require_idle_writer(); }
     catch (...) { return false; }
+    if (is_content_locked()) return false;
     BusyScope scope(busy_);
     auto cmd = reverse ? history_.pop_undo() : history_.pop_redo();
     if (!cmd) return false;
@@ -167,10 +173,9 @@ bool Document::redo() { return move_history(false); }
 
 void Document::apply_mutation(Page page, PersistentObjectMap objects) {
     require_writer();
+    if (is_content_locked()) throw std::logic_error("PDF source is locked for printing");
     if (!open_ || !executing_) throw std::logic_error("Mutation requires an executing document command");
     validate_page(page);
-    if (page.color_mode_explicit)
-        objects = normalize_process_colors(objects, page.color_mode);
     current_page_ = std::move(page);
     current_objects_ = std::move(objects);
     const auto active = std::find_if(pages_.begin(), pages_.end(), [&](const auto& item) {
@@ -186,12 +191,10 @@ void Document::apply_page_collection(std::vector<DocumentPage> pages, PageId act
     require_writer();
     if (!open_ || !executing_)
         throw std::logic_error("Page collection mutation requires an executing document command");
-    // History restores exact committed roots. Other writers normalize new process paints.
-    for (auto& page : pages)
-        if (page.layout.color_mode_explicit)
-            page.objects = normalize_process_colors(page.objects, page.layout.color_mode);
+    if (is_content_locked()) throw std::logic_error("PDF source is locked for printing");
     // Validate the entire replacement before publishing any part of it.
-    DocumentSnapshot validation{epoch_, revision_, pages, active_page_id, document_id_};
+    DocumentSnapshot validation{epoch_, revision_, pages, active_page_id, document_id_,
+                                content_mode_};
     const auto* active = validation.find_page(active_page_id);
     if (!active) throw std::invalid_argument("Active page ID is not present in the document");
     pages_ = std::move(pages);
@@ -206,17 +209,21 @@ bool Document::set_active_page(PageId page_id) {
     try { require_idle_writer(); }
     catch (...) { return false; }
     if (page_id == active_page_id_) return true;
+    if (page_navigation_generation_ == std::numeric_limits<uint64_t>::max()) return false;
     const auto target = std::find_if(pages_.begin(), pages_.end(), [&](const auto& page) {
         return page.id == page_id;
     });
     if (target == pages_.end()) return false;
     try {
         auto next = std::make_shared<const DocumentSnapshot>(
-            epoch_, revision_, pages_, page_id, document_id_);
+            epoch_, revision_, pages_, page_id, document_id_, content_mode_);
         active_page_id_ = page_id;
         current_page_ = target->layout;
         current_objects_ = target->objects;
-        publish_snapshot(std::move(next));
+        ++page_navigation_generation_;
+        // Page navigation changes view state, not document content. Jobs with a
+        // captured target page remain valid and commit to that stable page.
+        publish_snapshot(std::move(next), false);
         return true;
     } catch (...) {
         return false;
@@ -236,14 +243,17 @@ bool Document::reset_from_snapshot(SnapshotPtr snapshot) {
         auto next_pages = snapshot->pages();
         auto next_active_page_id = snapshot->active_page_id();
         const auto next_revision = snapshot->revision();
+        const auto next_content_mode = snapshot->content_mode();
         const auto next_epoch = allocate_epoch(epoch_);
         auto next = std::make_shared<const DocumentSnapshot>(
-            next_epoch, next_revision, next_pages, next_active_page_id, next_document_id);
+            next_epoch, next_revision, next_pages, next_active_page_id, next_document_id,
+            next_content_mode);
 
         document_id_ = std::move(next_document_id);
         epoch_ = next_epoch;
         pages_ = std::move(next_pages);
         active_page_id_ = next_active_page_id;
+        content_mode_ = next_content_mode;
         current_page_ = next->page();
         current_objects_ = next->objects();
         history_.clear();
@@ -257,11 +267,11 @@ bool Document::reset_from_snapshot(SnapshotPtr snapshot) {
     }
 }
 
-void Document::publish_snapshot(SnapshotPtr next) noexcept {
+void Document::publish_snapshot(SnapshotPtr next, bool invalidate_jobs) noexcept {
     revision_ = next->revision();
     std::atomic_store_explicit(&current_snapshot_, next, std::memory_order_release);
     // Edits invalidate every outstanding proposal under strict-base semantics.
-    jobs_.clear();
+    if (invalidate_jobs) jobs_.clear();
     for (const auto& listener : listeners_) {
         // An observer failure must not turn an already committed edit into a failed command.
         try { if (listener) listener(next); } catch (...) { ++listener_failures_; }

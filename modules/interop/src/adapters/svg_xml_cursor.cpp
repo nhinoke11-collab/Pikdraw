@@ -9,7 +9,7 @@ namespace pikdraw::interop {
 namespace {
 
 constexpr size_t kMaxTextBytes = 256 * 1024;
-constexpr size_t kMaxTagBytes = 64 * 1024;
+constexpr size_t kMaxTagBytes = 4 * 1024 * 1024;
 constexpr size_t kMaxAttributesPerTag = 64;
 
 bool IsNameStart(char c) {
@@ -40,9 +40,10 @@ void AppendUtf8(uint32_t codepoint, std::string& output) {
     }
 }
 
-bool DecodeEntities(std::string_view input, std::string& output) {
+bool DecodeEntities(std::string_view input, std::string& output,
+                    size_t max_bytes = kMaxTextBytes) {
     output.clear();
-    if (input.size() > kMaxTextBytes) return false;
+    if (input.size() > max_bytes) return false;
     for (size_t index = 0; index < input.size();) {
         if (input[index] != '&') {
             if (input[index] == '\0') return false;
@@ -67,7 +68,7 @@ bool DecodeEntities(std::string_view input, std::string& output) {
             AppendUtf8(value, output);
         } else return false;
         index = end + 1;
-        if (output.size() > kMaxTextBytes) return false;
+        if (output.size() > max_bytes) return false;
     }
     return IsValidUtf8(output);
 }
@@ -144,6 +145,8 @@ bool XmlCursor::SkipMisc() {
 
 bool XmlCursor::ParseTag(XmlTag& tag) {
     if (position_ >= source_.size() || source_[position_++] != '<') return false;
+    const size_t tag_start = position_ - 1;
+    const auto within_tag_limit = [&] { return position_ - tag_start <= kMaxTagBytes; };
     tag = {};
     if (position_ < source_.size() && source_[position_] == '/') {
         tag.closing = true;
@@ -156,7 +159,7 @@ bool XmlCursor::ParseTag(XmlTag& tag) {
     if (tag.closing) {
         SkipSpace();
         if (position_ >= source_.size() || source_[position_++] != '>') return false;
-        return true;
+        return within_tag_limit();
     }
 
     while (position_ < source_.size()) {
@@ -164,9 +167,9 @@ bool XmlCursor::ParseTag(XmlTag& tag) {
         if (source_.substr(position_).starts_with("/>")) {
             position_ += 2;
             tag.self_closing = true;
-            return true;
+            return within_tag_limit();
         }
-        if (source_[position_] == '>') { ++position_; return true; }
+        if (source_[position_] == '>') { ++position_; return within_tag_limit(); }
         if (!IsNameStart(source_[position_])) return false;
         const size_t attr_start = position_++;
         while (position_ < source_.size() && IsNameChar(source_[position_])) ++position_;
@@ -182,9 +185,10 @@ bool XmlCursor::ParseTag(XmlTag& tag) {
         if (source_.substr(value_start, end - value_start).find('<') != std::string_view::npos ||
             tag.attributes.size() >= kMaxAttributesPerTag) return false;
         std::string value;
-        if (!DecodeEntities(source_.substr(value_start, end - value_start), value) ||
+        if (!DecodeEntities(source_.substr(value_start, end - value_start), value, kMaxTagBytes) ||
             !tag.attributes.emplace(std::move(name), std::move(value)).second) return false;
         position_ = end + 1;
+        if (!within_tag_limit()) return false;
     }
     return false;
 }

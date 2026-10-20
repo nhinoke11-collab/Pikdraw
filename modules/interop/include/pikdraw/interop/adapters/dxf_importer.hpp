@@ -4,6 +4,7 @@
 #include "pikdraw/interop/capabilities/format_capabilities.hpp"
 
 #include <cstddef>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -24,7 +25,7 @@ struct DxfImportResult {
 /// drawing.
 class DxfImporter final {
 public:
-  static constexpr size_t kMaxSourceBytes = 16 * 1024 * 1024;
+  static constexpr size_t kMaxSourceBytes = std::numeric_limits<size_t>::max();
   static constexpr size_t kMaxPairs = 500000;
   static constexpr size_t kMaxObjects = 10000;
   static constexpr size_t kMaxPathElements = 6000;

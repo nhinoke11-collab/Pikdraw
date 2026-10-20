@@ -172,9 +172,30 @@ void NativeWindow::paint_status_bar(HDC mem_dc, int w, int h, int status_h) {
     DrawTextW(mem_dc, gpu_badge, -1, &rc_gbadge,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
+    HBRUSH br_cbadge = CreateSolidBrush(col_btn_bg);
+    HPEN p_cb = CreatePen(PS_SOLID, 1, col_btn_bdr);
+    const HGDIOBJ old_cb_pen = SelectObject(mem_dc, p_cb);
+    const HGDIOBJ old_cb_brush = SelectObject(mem_dc, br_cbadge);
+    RoundRect(mem_dc, 540, h - status_h + 3, 685, h - 3, 5, 5);
+    SelectObject(mem_dc, old_cb_pen);
+    SelectObject(mem_dc, old_cb_brush);
+    DeleteObject(p_cb);
+    DeleteObject(br_cbadge);
+
+    const auto snapshot_cur = root().document().current_snapshot();
+    std::wstring color_badge = (snapshot_cur && snapshot_cur->color_mode() == color::DocumentColorMode::Cmyk ? L"CMYK" : L"RGB");
+    if (proof_colors_enabled_) color_badge += L" • Proof";
+    if (gamut_warning_enabled_) color_badge += L" • !Gamut";
+    if (overprint_preview_enabled_) color_badge += L" • OP";
+
+    SetTextColor(mem_dc, (proof_colors_enabled_ || gamut_warning_enabled_ || overprint_preview_enabled_) ? RGB(255, 170, 0) : col_teal);
+    RECT rc_cbadge_txt{540, h - status_h + 3, 685, h - 3};
+    DrawTextW(mem_dc, color_badge.c_str(), -1, &rc_cbadge_txt,
+              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
     SetTextColor(mem_dc, col_text_white);
     const std::wstring wmsg = utf8_to_wide(status_msg_);
-    RECT rc_st_msg{545, h - status_h, w - 230, h};
+    RECT rc_st_msg{695, h - status_h, w - 230, h};
     DrawTextW(mem_dc, wmsg.c_str(), -1, &rc_st_msg,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 

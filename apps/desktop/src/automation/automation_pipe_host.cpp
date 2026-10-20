@@ -436,6 +436,12 @@ void AutomationPipeHost::stop() noexcept {
 }
 
 const std::wstring& AutomationPipeHost::pipe_name() const noexcept { return impl_->pipe; }
+
+size_t AutomationPipeHost::pending_request_count_for_e2e() noexcept {
+    if (!impl_) return 0;
+    std::lock_guard guard(impl_->queue_mutex);
+    return impl_->queue.size();
+}
 #else
 bool AutomationPipeHost::start(Handler, std::string& error) {
     error = "PikDraw MCP bridge is available only on Windows."; return false;

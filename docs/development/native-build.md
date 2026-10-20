@@ -36,5 +36,17 @@ Chỉ truyền `-TestTarget <tên_target>` của module đang sửa; không gọ
 
 C++20, CMake >= 3.25, Ninja và Python >= 3.10. `tooling/native/env.ps1` dò công cụ
 cục bộ/PATH và `.agent/toolchains`; không tự cài dependency.
+
+PDF/AI vector import dùng PDFium 157.0.8100.0 trong worker cách ly. Trên checkout mới,
+cài runtime đã khóa hash trước khi configure/build bằng `.\tooling\native\setup-pdfium.ps1`.
+Build chỉ chép `pdfium.dll` cạnh worker và test executable cần nó. Bản nhị phân không được lưu
+trong Git; nguồn, revision, SHA-256 và các license notice nằm ở
+`third_party/pdfium.lock.json` và `third_party/licenses/pdfium-157.0.8100.0/`.
+CDR subset import dùng libcdr 0.1.9/librevenge 0.0.6 UCRT64. Trên checkout mới,
+cài các package đã khóa hash bằng `.\tooling\native\setup-libcdr.ps1` trước khi configure/build.
+Build tạo `pikdraw_cdr_bridge.dll` bằng C ABI, rồi chép bridge và runtime cạnh worker cách ly.
+Archive hash, package version và license notices nằm trong `third_party/libcdr.lock.json` và
+`third_party/licenses/libcdr/`. Worker chuyển CDR qua SVG rồi nhận path/text/group/layer subset;
+đây không phải bảo đảm giữ effect, màu nguồn, metadata authoring hoặc round-trip.
 Đã có editor Win32/GDI; Qt/Skia vẫn là kế hoạch kiến trúc. Build pass không nghiệm thu fidelity,
 editability, graphics performance hoặc OS containment. Xem `docs/project-state.json` để biết trạng thái hiện tại.

@@ -147,6 +147,12 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
     case WM_SYSKEYDOWN:
         if (self && self->show_recovery_modal_)
             return 0;
+        if (self && (wParam == VK_PRIOR || wParam == VK_NEXT) &&
+            (GetKeyState(VK_MENU) & 0x8000) != 0) {
+            self->execute_menu_action(static_cast<int>(wParam == VK_PRIOR
+                ? MenuActionId::LayoutPagePrevious : MenuActionId::LayoutPageNext));
+            return 0;
+        }
         if (self && wParam == VK_F10) {
             const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
             if (alt) {
@@ -314,6 +320,8 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
             if (handle_shortcuts_settings_key(*self, wParam))
                 return 0;
         }
+        if (self && (self->handle_pen_key_down(wParam) || self->handle_drawing_key_down(wParam)))
+            return 0;
         if (self && !self->show_settings_modal_ && dispatch_canvas_shortcuts(*self, wParam))
             return 0;
         if (self && self->handle_key_down(wParam))
@@ -408,9 +416,47 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
                                         static_cast<unsigned>(wParam));
         return 0;
     case WM_RBUTTONDOWN:
-        if (self && !self->show_recovery_modal_)
-            self->handle_style_click(self->logical_pixel(GET_X_LPARAM(lParam)), self->logical_pixel(GET_Y_LPARAM(lParam)), true);
+        if (self && !self->show_recovery_modal_) {
+            const int rx = self->logical_pixel(GET_X_LPARAM(lParam));
+            const int ry = self->logical_pixel(GET_Y_LPARAM(lParam));
+            if (rx >= 0 && rx <= 52 && ry >= 102) {
+                self->toggle_toolbox_customize_flyout();
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (self->handle_style_click(rx, ry, true)) {
+                return 0;
+            }
+            if (self->is_canvas_point(rx, ry)) {
+                POINT screen_pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+                ClientToScreen(hwnd, &screen_pt);
+                self->show_context_menu(screen_pt.x, screen_pt.y, rx, ry);
+                return 0;
+            }
+        }
         return 0;
+    case WM_CONTEXTMENU:
+        if (self && !self->show_recovery_modal_) {
+            int screen_x = GET_X_LPARAM(lParam);
+            int screen_y = GET_Y_LPARAM(lParam);
+            if (screen_x == -1 && screen_y == -1) {
+                RECT client{};
+                GetClientRect(hwnd, &client);
+                POINT pt{client.right / 2, client.bottom / 2};
+                ClientToScreen(hwnd, &pt);
+                screen_x = pt.x;
+                screen_y = pt.y;
+                POINT client_pt{screen_x, screen_y};
+                ScreenToClient(hwnd, &client_pt);
+                const int rx = self->logical_pixel(client_pt.x);
+                const int ry = self->logical_pixel(client_pt.y);
+                if (self->is_canvas_point(rx, ry)) {
+                    self->show_context_menu(screen_x, screen_y, rx, ry);
+                    return 0;
+                }
+            }
+        }
+        break;
     case WM_MBUTTONDOWN:
         if (self && self->show_recovery_modal_) return 0;
         if (self && self->is_canvas_point(self->logical_pixel(GET_X_LPARAM(lParam)), self->logical_pixel(GET_Y_LPARAM(lParam)))) {

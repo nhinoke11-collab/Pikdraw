@@ -20,12 +20,23 @@ bool NativeWindow::configure_preview_profiles(const std::filesystem::path &rgb_s
     color_preview_ = preview;
     rgb_preview_profile_ = rgb_source;
     cmyk_preview_profile_ = cmyk_source;
+    update_color_preview_options();
+    return true;
+}
+
+void NativeWindow::update_color_preview_options() noexcept {
+    if (color_preview_) {
+        color::PreviewOptions options;
+        options.proof_colors = proof_colors_enabled_;
+        options.gamut_warning = gamut_warning_enabled_;
+        options.overprint_preview = overprint_preview_enabled_;
+        color_preview_->set_preview_options(options);
+    }
     canvas_cache_valid_ = false;
 #ifdef _WIN32
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, FALSE);
 #endif
-    return true;
 }
 #ifdef _WIN32
 namespace {

@@ -30,6 +30,8 @@ public:
     [[nodiscard]] DimensionSessionState state() const noexcept { return state_; }
     [[nodiscard]] document::DimensionKind current_kind() const noexcept { return current_kind_; }
     [[nodiscard]] bool is_smart_mode() const noexcept { return smart_mode_; }
+    [[nodiscard]] geometry::Point2D first_point() const noexcept { return first_point_; }
+    [[nodiscard]] geometry::Point2D second_point() const noexcept { return second_point_; }
 
     void set_linear_orientation(geometry::LinearOrientation orientation) noexcept;
     [[nodiscard]] geometry::LinearOrientation linear_orientation() const noexcept { return orientation_; }

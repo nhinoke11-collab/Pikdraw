@@ -22,7 +22,8 @@ enum class ImportRecordType : uint16_t {
     Layer = 6,
     Group = 7,
     RasterImage = 8,
-    RasterImageChunk = 9
+    RasterImageChunk = 9,
+    RasterSourceChunk = 10
 };
 
 enum class ImportColorModel : uint8_t { Rgb = 1, Cmyk = 2, Spot = 3, Gray = 4 };
@@ -48,7 +49,19 @@ struct ImportPathElementRecord {
     std::array<double, 9> values{}; // endpoint, controls, then arc radii and rotation; all model mm.
 };
 
-struct ImportPageRecord { double width_mm{0}; double height_mm{0}; };
+struct ImportPageRecord {
+    ImportPageRecord() = default;
+    ImportPageRecord(double width, double height) : width_mm(width), height_mm(height) {}
+
+    double width_mm{0};
+    double height_mm{0};
+    uint32_t local_id{1};
+    uint32_t source_page_index{0};
+    std::string name;
+    uint16_t rotation_degrees{0};
+    bool blank{false};
+    bool has_manifest_metadata{false};
+};
 
 struct ImportLayerRecord {
     uint32_t local_id{0};
@@ -57,6 +70,8 @@ struct ImportLayerRecord {
     bool visible{true};
     bool locked{false};
     std::vector<uint32_t> object_local_ids;
+    uint32_t page_local_id{1};
+    bool has_page_association{false};
 };
 
 struct ImportGroupRecord {
@@ -64,6 +79,9 @@ struct ImportGroupRecord {
     std::string source_id;
     std::string name;
     std::vector<uint32_t> child_local_ids;
+    // Zero means no clip. When present, this must identify a Path child.
+    // The wire codec accepts the legacy payload without this trailing field.
+    uint32_t clip_mask_local_id{0};
 };
 
 struct ImportPathRecord {
@@ -85,8 +103,10 @@ struct ImportTextRecord {
     std::string name;
     std::string utf8_text;
     std::string font_family;
+    std::string font_postscript_name;
     uint16_t font_weight{400};
     bool italic{false};
+    uint16_t rotation_degrees{0};
     double font_size_pt{12};
     double x_mm{0};
     double y_mm{0};
@@ -110,9 +130,30 @@ struct ImportRasterImageRecord {
     double dpi_x{96.0};
     double dpi_y{96.0};
     std::vector<uint8_t> icc_profile;
+    // Optional placement in page coordinates; all-zero keeps source-DPI sizing.
+    double x_mm{0.0};
+    double y_mm{0.0};
+    double width_mm{0.0};
+    double height_mm{0.0};
+    bool has_placement_transform{false};
+    std::array<double, 6> placement_transform{1.0, 0.0, 0.0, 1.0, 0.0, 0.0};
+    // Zero means this record owns its pixel chunks; otherwise it references an
+    // earlier raster record that carries the same decoded image data.
+    uint32_t pixel_data_local_id{0};
+    // Original encoded source bytes are separate from the editable RGBA preview.
+    // Zero means the source bytes are not present in this proposal.
+    uint32_t source_data_local_id{0};
+    uint32_t source_bytes_size{0};
 };
 
 struct ImportRasterImageChunkRecord {
+    uint32_t local_id{0};
+    uint32_t byte_offset{0};
+    uint32_t total_bytes{0};
+    std::vector<uint8_t> bytes;
+};
+
+struct ImportRasterSourceChunkRecord {
     uint32_t local_id{0};
     uint32_t byte_offset{0};
     uint32_t total_bytes{0};
@@ -142,6 +183,7 @@ using ImportRecordValue = std::variant<
     ImportGroupRecord,
     ImportRasterImageRecord,
     ImportRasterImageChunkRecord,
+    ImportRasterSourceChunkRecord,
     ImportPathRecord,
     ImportTextRecord,
     ImportFidelityReportRecord,

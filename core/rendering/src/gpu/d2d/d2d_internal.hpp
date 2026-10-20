@@ -26,6 +26,9 @@
 #include "pikdraw/rendering/software_rasterizer.hpp"
 
 #include <chrono>
+#include <cstdint>
+#include <functional>
+#include <limits>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -46,22 +49,59 @@ inline D2D1_COLOR_F to_d2d_color(float r, float g, float b, float a = 1.0f) noex
   return D2D1::ColorF(r, g, b, a);
 }
 
-// Per-device image uploads, bounded to 64 images / 256 MiB.
+struct ImageCacheKey {
+  const uint32_t* pixels{};
+  int32_t width_px{};
+  int32_t height_px{};
+  bool operator==(const ImageCacheKey&) const noexcept = default;
+};
+
+struct ImageCacheKeyHash {
+  size_t operator()(const ImageCacheKey& key) const noexcept {
+    size_t value = std::hash<const uint32_t*>{}(key.pixels);
+    value ^= std::hash<int32_t>{}(key.width_px) + 0x9e3779b9u +
+             (value << 6) + (value >> 2);
+    value ^= std::hash<int32_t>{}(key.height_px) + 0x9e3779b9u +
+             (value << 6) + (value >> 2);
+    return value;
+  }
+};
+
+// Per-device image uploads are shared by placements that reference the same
+// immutable pixel storage. New uploads stop before whole-system RAM reaches 90%.
 class D2DImageCache {
 public:
-  void clear() { images_.clear(); bytes_ = 0; }
+  void clear() { images_.clear(); }
+  [[nodiscard]] size_t cached_image_count() const noexcept { return images_.size(); }
+
   ComPtr<ID2D1Bitmap1> get(ID2D1DeviceContext* context,
                           const document::ImageObject& image, uint64_t revision) {
     if (revision_ != revision) { clear(); revision_ = revision; }
-    if (const auto it = images_.find(image.id); it != images_.end()) return it->second;
-    constexpr size_t budget = 256ULL * 1024 * 1024;
-    const size_t bytes = image.pixels_rgba.size() * sizeof(uint32_t);
-    if (bytes > budget) return nullptr;
-    if (images_.size() >= 64 || bytes_ > budget - bytes) clear();
-    std::vector<uint32_t> bgra(image.pixels_rgba.size());
+    if (!context || image.width_px <= 0 || image.height_px <= 0) return nullptr;
+    const auto pixels = image.rgba_pixels();
+    const size_t expected_pixels = static_cast<size_t>(image.width_px) *
+                                   static_cast<size_t>(image.height_px);
+    if (pixels.empty() || pixels.size() != expected_pixels ||
+        pixels.size() > std::numeric_limits<size_t>::max() / sizeof(uint32_t))
+      return nullptr;
+    const ImageCacheKey key{pixels.data(), image.width_px, image.height_px};
+    if (const auto it = images_.find(key); it != images_.end()) return it->second;
+
+    const size_t bytes = pixels.size() * sizeof(uint32_t);
+    // Account for both the temporary premultiplied upload buffer and the
+    // persistent Direct2D bitmap when deciding whether this allocation fits.
+    if (bytes > std::numeric_limits<size_t>::max() / 2 ||
+        !has_system_memory_headroom(bytes * 2)) return nullptr;
+
+    std::vector<uint32_t> bgra;
+    try {
+      bgra.resize(pixels.size());
+    } catch (...) {
+      return nullptr;
+    }
     for (int32_t y = 0; y < image.height_px; ++y) {
       for (int32_t x = 0; x < image.width_px; ++x) {
-        const auto rgba = image.pixels_rgba[
+        const auto rgba = pixels[
             static_cast<size_t>(image.height_px - 1 - y) * image.width_px + x];
         const uint32_t a = rgba & 255;
         const uint32_t r = ((rgba >> 24) & 255) * a / 255;
@@ -78,14 +118,24 @@ public:
     if (FAILED(context->CreateBitmap(D2D1::SizeU(image.width_px, image.height_px),
         bgra.data(), image.width_px * 4, &props, bitmap.ReleaseAndGetAddressOf())))
       return nullptr;
-    images_.emplace(image.id, bitmap);
-    bytes_ += bytes;
+    images_.emplace(key, bitmap);
     return bitmap;
   }
 private:
-  std::unordered_map<document::ObjectId, ComPtr<ID2D1Bitmap1>> images_;
+  static bool has_system_memory_headroom(size_t additional_bytes) noexcept {
+    MEMORYSTATUSEX status{};
+    status.dwLength = sizeof(status);
+    if (!GlobalMemoryStatusEx(&status) || status.ullTotalPhys == 0 ||
+        status.ullAvailPhys > status.ullTotalPhys) return false;
+    constexpr uint64_t limit_percent = 90;
+    const uint64_t threshold = (status.ullTotalPhys / 100) * limit_percent +
+        ((status.ullTotalPhys % 100) * limit_percent) / 100;
+    const uint64_t used = status.ullTotalPhys - status.ullAvailPhys;
+    return used < threshold && static_cast<uint64_t>(additional_bytes) < threshold - used;
+  }
+
+  std::unordered_map<ImageCacheKey, ComPtr<ID2D1Bitmap1>, ImageCacheKeyHash> images_;
   uint64_t revision_{};
-  size_t bytes_{};
 };
 
 class D2DDeviceManager {

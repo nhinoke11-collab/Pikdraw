@@ -2,6 +2,8 @@
 #include "pikdraw/document/commands/appearance_commands.hpp"
 #include "pikdraw/document/commands/path_commands.hpp"
 #include "pikdraw/document/commands/import_content_command.hpp"
+#include "pikdraw/document/commands/page_commands.hpp"
+#include "pikdraw/geometry/primitives/validation.hpp"
 #include <cassert>
 #include <cmath>
 #include <iostream>
@@ -585,6 +587,8 @@ void test_hidden_locked_and_failed_composite_edits_do_not_publish() {
 void test_import_content_preserves_layers_and_undoes_atomically() {
     Document doc("import-command-test", Page::make_default());
     const auto original_layers = doc.current_snapshot()->page().layers.size();
+    const auto original_width_mm = doc.current_snapshot()->page().width_mm;
+    const auto original_height_mm = doc.current_snapshot()->page().height_mm;
 
     PathObject path;
     path.id = generate_object_id();
@@ -602,18 +606,24 @@ void test_import_content_preserves_layers_and_undoes_atomically() {
     objects.emplace_back(group);
     const auto imported_group_id = group.id;
     auto result = doc.execute_command(std::make_unique<ImportContentCommand>(
-        std::vector<Layer>{source_layer}, std::move(objects)));
+        std::vector<Layer>{source_layer}, std::move(objects), std::pair{400.0, 200.0}));
     if (!result.success) std::cerr << "ImportContentCommand rejected valid hierarchy: " << result.error_message << '\n';
     assert(result.success && doc.revision() == 1);
     assert(doc.current_snapshot()->page().layers.size() == original_layers + 1);
     assert(doc.current_snapshot()->page().layers.back().name == "Source layer");
     assert(!doc.current_snapshot()->page().layers.back().visible);
     assert(doc.current_snapshot()->page().layers.back().locked);
+    assert(doc.current_snapshot()->page().width_mm == 400.0);
+    assert(doc.current_snapshot()->page().height_mm == 200.0);
     assert(doc.current_snapshot()->object_count() == 2);
     assert(doc.undo());
     assert(doc.current_snapshot()->page().layers.size() == original_layers);
+    assert(doc.current_snapshot()->page().width_mm == original_width_mm);
+    assert(doc.current_snapshot()->page().height_mm == original_height_mm);
     assert(doc.current_snapshot()->object_count() == 0);
     assert(doc.redo());
+    assert(doc.current_snapshot()->page().width_mm == 400.0);
+    assert(doc.current_snapshot()->page().height_mm == 200.0);
     const auto restored = doc.current_snapshot()->get_object(imported_group_id);
     assert(restored && std::get<GroupObject>(*restored).children_ids.size() == 1);
 
@@ -628,6 +638,145 @@ void test_import_content_preserves_layers_and_undoes_atomically() {
     assert(!rejected_result.success);
     assert(rejected.revision() == 0 && rejected.current_snapshot()->object_count() == 0);
     assert(rejected.current_snapshot()->page().layers.size() == 1);
+
+    Document oversized_source("oversized-import-page-test", Page::make_default());
+    PathObject oversized_path;
+    oversized_path.id = generate_object_id();
+    oversized_path.path.move_to(0, 0);
+    oversized_path.path.line_to(1, 1);
+    Layer oversized_layer{"Oversized source", true, false, {oversized_path.id}};
+    const auto original_page_width = oversized_source.current_snapshot()->page().width_mm;
+    const auto oversized_result = oversized_source.execute_command(
+        std::make_unique<ImportContentCommand>(
+            std::vector<Layer>{oversized_layer},
+            std::vector<ObjectVariant>{oversized_path},
+            std::pair{geometry::limits::kCanvasMaxMm + 1.0, 200.0}));
+    assert(!oversized_result.success);
+    assert(oversized_source.revision() == 0);
+    assert(oversized_source.current_snapshot()->page().width_mm == original_page_width);
+    assert(oversized_source.current_snapshot()->object_count() == 0);
+}
+
+void test_import_pages_is_atomic_and_keeps_page_and_object_ids_on_redo() {
+    Document doc("import-pages-command-test", Page::make_default());
+    const PageId first_existing_id = doc.active_page_id();
+    const auto second_existing = make_document_page("Existing page 2");
+    assert(doc.execute_command(std::make_unique<AddPageCommand>(second_existing)).success);
+    const PageId second_existing_id = second_existing.id;
+
+    ImportedPageContent artwork_page;
+    artwork_page.name = "Imported artwork";
+    artwork_page.layout = Page::make_default();
+    artwork_page.layout.width_mm = 210.0;
+    artwork_page.layout.height_mm = 297.0;
+    PathObject artwork;
+    artwork.id = generate_object_id();
+    artwork.name = "Page one path";
+    artwork.path.move_to({5.0, 8.0});
+    artwork.path.line_to({25.0, 8.0});
+    const ObjectId artwork_id = artwork.id;
+    artwork_page.layout.layers.front().object_ids.push_back(artwork_id);
+    artwork_page.objects.emplace_back(artwork);
+
+    ImportedPageContent blank_page;
+    blank_page.name = "Blank source page";
+    blank_page.layout = Page::make_default();
+    blank_page.layout.width_mm = 100.0;
+    blank_page.layout.height_mm = 80.0;
+
+    const uint64_t revision_before = doc.revision();
+    const auto result = doc.execute_command(std::make_unique<ImportPagesCommand>(
+        std::vector<ImportedPageContent>{artwork_page, blank_page}, first_existing_id));
+    if (!result.success) std::cerr << "ImportPagesCommand rejected valid pages: " << result.error_message << '\n';
+    assert(result.success && doc.revision() == revision_before + 1);
+    auto imported = doc.current_snapshot();
+    assert(imported->page_count() == 4);
+    assert(imported->active_page_id() == second_existing_id);
+    assert(imported->pages()[0].id == first_existing_id);
+    assert(imported->pages()[1].name == "Imported artwork");
+    assert(imported->pages()[1].layout.width_mm == 210.0);
+    assert(imported->pages()[1].objects.contains(artwork_id));
+    assert(imported->pages()[2].name == "Blank source page");
+    assert(imported->pages()[2].objects.empty());
+    assert(imported->pages()[3].id == second_existing_id);
+    const PageId imported_artwork_page_id = imported->pages()[1].id;
+    const PageId imported_blank_page_id = imported->pages()[2].id;
+
+    assert(doc.undo());
+    assert(doc.current_snapshot()->page_count() == 2);
+    assert(doc.current_snapshot()->active_page_id() == second_existing_id);
+    assert(doc.redo());
+    imported = doc.current_snapshot();
+    assert(imported->page_count() == 4);
+    assert(imported->pages()[1].id == imported_artwork_page_id);
+    assert(imported->pages()[2].id == imported_blank_page_id);
+    assert(imported->pages()[1].objects.contains(artwork_id));
+
+    Document rejected("invalid-import-pages-test", Page::make_default());
+    const auto before_reject = rejected.current_snapshot();
+    auto invalid_page = blank_page;
+    invalid_page.layout.width_mm = 0.0;
+    const auto invalid_result = rejected.execute_command(std::make_unique<ImportPagesCommand>(
+        std::vector<ImportedPageContent>{artwork_page, invalid_page}, kInvalidPageId));
+    assert(!invalid_result.success);
+    assert(rejected.revision() == 0);
+    assert(rejected.current_snapshot() == before_reject);
+    assert(rejected.current_snapshot()->page_count() == 1);
+
+    Document opened("replace-import-pages-test", Page::make_default());
+    const PageId old_page_id = opened.active_page_id();
+    const auto replace_result = opened.execute_command(std::make_unique<ImportPagesCommand>(
+        std::vector<ImportedPageContent>{blank_page}, kInvalidPageId, true));
+    assert(replace_result.success);
+    assert(opened.current_snapshot()->page_count() == 1);
+    assert(opened.current_snapshot()->pages().front().name == "Blank source page");
+    assert(opened.current_snapshot()->pages().front().id != old_page_id);
+    assert(opened.undo());
+    assert(opened.current_snapshot()->page_count() == 1);
+    assert(opened.current_snapshot()->pages().front().id == old_page_id);
+}
+
+void test_pdf_print_locked_document_rejects_content_mutation() {
+    auto asset = std::make_shared<PdfSourceAsset>();
+    asset->sha256_hex = std::string(64, 'a');
+    asset->page_count = 2;
+    asset->bytes = std::make_shared<const std::vector<uint8_t>>(
+        std::vector<uint8_t>{'%', 'P', 'D', 'F', '-', '1', '.', '7'});
+
+    Page first_layout = Page::make_default();
+    first_layout.width_mm = 210.0;
+    first_layout.height_mm = 297.0;
+    Page second_layout = first_layout;
+    second_layout.width_mm = 297.0;
+    second_layout.height_mm = 210.0;
+    auto first = make_document_page("PDF Page 1", first_layout);
+    auto second = make_document_page("PDF Page 2", second_layout);
+    first.pdf_source = PdfSourcePageReference{asset, 0, 0};
+    second.pdf_source = PdfSourcePageReference{asset, 1, 1};
+    DocumentSnapshot locked_snapshot{1, 0, {first, second}, first.id, "pdf-print-locked",
+        DocumentContentMode::PdfPrintLocked};
+    Document doc(locked_snapshot);
+
+    PathObject path;
+    path.id = generate_object_id();
+    path.path.move_to({0.0, 0.0});
+    path.path.line_to({10.0, 0.0});
+    const auto before = doc.current_snapshot();
+    const auto rejected = doc.execute_command(std::make_unique<AddObjectCommand>(path));
+    assert(!rejected.success && rejected.error_message.find("locked") != std::string::npos);
+    assert(doc.current_snapshot() == before && doc.revision() == 0);
+    assert(!doc.undo() && !doc.redo());
+
+    bool writer_denied = false;
+    try {
+        static_cast<void>(doc.writer());
+    } catch (const std::logic_error&) {
+        writer_denied = true;
+    }
+    assert(writer_denied);
+    assert(doc.set_active_page(second.id));
+    assert(doc.current_snapshot()->active_page_id() == second.id);
+    assert(doc.current_snapshot()->is_content_locked());
 }
 
 void test_document_color_commands();
@@ -649,6 +798,8 @@ int main() {
     test_close_zero_length_requires_explicit_target();
     test_hidden_locked_and_failed_composite_edits_do_not_publish();
     test_import_content_preserves_layers_and_undoes_atomically();
+    test_import_pages_is_atomic_and_keeps_page_and_object_ids_on_redo();
+    test_pdf_print_locked_document_rejects_content_mutation();
     std::cout << "[test_commands] All tests passed!\n";
     return 0;
 }

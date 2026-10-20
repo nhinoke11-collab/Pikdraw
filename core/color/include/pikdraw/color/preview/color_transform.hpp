@@ -1,15 +1,16 @@
 #pragma once
 
 #include "pikdraw/color/values/color_value.hpp"
+#include <algorithm>
 #include <cstdint>
 
 namespace pikdraw::color {
 
 class IccPreview;
-// Explicit source edit. Spot identity/alternate and all overprint metadata survive.
-// A missing ICC transform uses deterministic subtractive conversion, not print proofing.
-[[nodiscard]] ColorValue convert_color_to_mode(const ColorValue& source,
-    DocumentColorMode target_mode, const IccPreview* icc = nullptr);
+enum class BlackGeneration {
+    PureK100,  /// C=0, M=0, Y=0, K=1 with overprint=true for small text and line art
+    RichBlack  /// C=0.40, M=0.30, Y=0.30, K=1.00 for large solid dark fills
+};
 
 /// Device-ready RGBA color (8-bit per channel)
 struct DeviceRGBA {
@@ -42,6 +43,23 @@ struct PreviewRGBA {
         };
     }
 };
+
+/// Calculate Total Area Coverage (TAC / TIC) percentage [0.0%, 400.0%]
+[[nodiscard]] double calculate_tac(const CMYKColor& cmyk) noexcept;
+
+/// Clamp CMYK ink coverage to maximum TAC (default 320% ISO 12647-2) using UCR/GCR balance
+[[nodiscard]] CMYKColor clamp_tac(const CMYKColor& cmyk, double max_tac_percent = 320.0) noexcept;
+
+// Explicit source edit. Spot identity/alternate and all overprint metadata survive.
+// A missing ICC transform uses deterministic subtractive conversion, not print proofing.
+[[nodiscard]] ColorValue convert_color_to_mode(const ColorValue& source,
+    DocumentColorMode target_mode, const IccPreview* icc = nullptr,
+    BlackGeneration black_gen = BlackGeneration::PureK100,
+    double max_tac_percent = 320.0);
+
+/// Subtractive ink blend for overprint simulation in linear display RGB
+[[nodiscard]] PreviewRGBA simulate_overprint(const PreviewRGBA& background,
+                                            const PreviewRGBA& foreground) noexcept;
 
 /// Transforms any source ColorValue into PreviewRGBA for screen viewport display
 [[nodiscard]] PreviewRGBA to_preview_rgba(const ColorValue& color) noexcept;

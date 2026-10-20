@@ -324,7 +324,7 @@ struct D2DRenderBackend::Impl {
             }
             auto d2d_bitmap = image_cache.get(context, obj, snapshot.revision());
             if (!d2d_bitmap)
-              return fail("Direct2D image upload failed or exceeded the 256 MiB budget");
+              return fail("Direct2D could not allocate or upload the image bitmap");
             HRESULT hr = S_OK;
 
             const auto effective_transform = parent_transform * obj.transform;

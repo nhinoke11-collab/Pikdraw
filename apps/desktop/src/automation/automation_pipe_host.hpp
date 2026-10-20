@@ -3,6 +3,7 @@
 #include "pikdraw/automation/json_value.hpp"
 
 #include <atomic>
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <string>
@@ -34,6 +35,9 @@ public:
 #endif
 
 private:
+    friend struct NativeWindowMcpE2eAccess;
+    [[nodiscard]] size_t pending_request_count_for_e2e() noexcept;
+
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

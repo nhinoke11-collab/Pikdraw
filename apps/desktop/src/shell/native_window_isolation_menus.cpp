@@ -13,6 +13,7 @@
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/gradient_tool_controller.hpp"
+#include "pikdraw/document/commands/path_commands.hpp"
 #include "pikdraw/vector/tools/shape_tools.hpp"
 #include <iostream>
 #include <fstream>
@@ -21,6 +22,7 @@
 #include <sstream>
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <filesystem>
 #include <stdexcept>
 #include <system_error>
@@ -103,6 +105,55 @@ void NativeWindow::fit_page_to_canvas() noexcept {
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 #endif
+}
+
+bool NativeWindow::fit_document_content_to_canvas(bool* content_outside_page) noexcept {
+    if (content_outside_page) *content_outside_page = false;
+    try {
+        const auto snapshot = root().document().current_snapshot();
+        if (!snapshot || snapshot->objects().empty()) return false;
+
+        std::optional<geometry::Rect2D> content_bounds;
+        for (const auto& [id, object] : snapshot->objects().all()) {
+            (void)object;
+            const auto bounds = workflow().get_object_bounds(id);
+            if (!bounds || !std::isfinite(bounds->x) || !std::isfinite(bounds->y) ||
+                !std::isfinite(bounds->width) || !std::isfinite(bounds->height) ||
+                bounds->width <= 0.0 || bounds->height <= 0.0)
+                continue;
+            content_bounds = content_bounds ? content_bounds->united(*bounds) : *bounds;
+        }
+        if (!content_bounds) return false;
+
+        const auto& page = snapshot->page();
+        constexpr double tolerance_mm = 1.0e-6;
+        if (content_outside_page) {
+            *content_outside_page = content_bounds->x < -tolerance_mm ||
+                content_bounds->y < -tolerance_mm ||
+                content_bounds->right() > page.width_mm + tolerance_mm ||
+                content_bounds->bottom() > page.height_mm + tolerance_mm;
+        }
+
+        const int canvas_width = std::max(1, width_ - 352);
+        const int canvas_height = std::max(1, height_ - 118);
+        const double zoom = std::clamp(
+            std::min(static_cast<double>(canvas_width) / content_bounds->width,
+                     static_cast<double>(canvas_height) / content_bounds->height) * 0.9,
+            0.01, 64.0);
+        auto& camera = root().renderer().camera();
+        camera.set_viewport_size(canvas_width, canvas_height);
+        camera.set_center({content_bounds->x + content_bounds->width * 0.5,
+                           content_bounds->y + content_bounds->height * 0.5});
+        camera.set_zoom(zoom);
+        zoom_level_ = static_cast<int>(std::lround(zoom * 100.0));
+#ifdef _WIN32
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+        return true;
+    } catch (...) {
+        if (content_outside_page) *content_outside_page = false;
+        return false;
+    }
 }
 
 void NativeWindow::open_menu(int menu_id) noexcept {
@@ -352,16 +403,34 @@ void NativeWindow::enter_group_isolation(document::ObjectId group_id) {
     const auto obj = snapshot->objects().get(group_id);
     if (obj) {
         if (const auto* grp = std::get_if<document::GroupObject>(&*obj)) {
-            if (!grp->children_ids.empty()) {
-                root().vector_controller().selection().select(grp->children_ids.front(), vector::SelectionMode::Replace);
+            if (grp->is_clipping_container()) {
+                document::ObjectId first_content = document::kInvalidObjectId;
+                for (auto cid : grp->children_ids) {
+                    if (cid != grp->clip->mask_object_id) {
+                        first_content = cid;
+                        break;
+                    }
+                }
+                if (first_content != document::kInvalidObjectId) {
+                    root().vector_controller().selection().select(first_content, vector::SelectionMode::Replace);
+                } else if (!grp->children_ids.empty()) {
+                    root().vector_controller().selection().select(grp->children_ids.front(), vector::SelectionMode::Replace);
+                }
+                status_msg_ = (language_ == UILanguage::Vietnamese)
+                    ? "Chế độ sửa PowerClip / Clipping Mask · Nhấn Esc để kết thúc"
+                    : "PowerClip Isolation: Editing contents · Press Esc to finish";
             } else {
-                root().vector_controller().selection().clear();
+                if (!grp->children_ids.empty()) {
+                    root().vector_controller().selection().select(grp->children_ids.front(), vector::SelectionMode::Replace);
+                } else {
+                    root().vector_controller().selection().clear();
+                }
+                status_msg_ = (language_ == UILanguage::Vietnamese)
+                    ? "Chế độ cô lập nhóm: Đang chỉnh sửa bên trong Nhóm · Nhấn Esc để thoát"
+                    : "Group Isolation Mode: Editing inside Group · Press Esc or double-click to exit";
             }
         }
     }
-    status_msg_ = (language_ == UILanguage::Vietnamese)
-        ? "Chế độ cô lập nhóm: Đang chỉnh sửa bên trong Nhóm · Nhấn Esc để thoát"
-        : "Group Isolation Mode: Editing inside Group · Press Esc or double-click to exit";
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 #endif
@@ -440,6 +509,45 @@ void NativeWindow::handle_double_click(int x, int y) {
     }
 
     const auto pt_world = canvas_to_world(x, y);
+
+    if (active_tool_ == 11 && node_tool_ && node_tool_->active()) {
+        const double zoom = root().renderer().camera().zoom();
+        const double tol_mm = (zoom > 1e-4) ? (8.0 / zoom) : 5.0;
+        // Check if double clicked on an existing node -> delete it (CorelDRAW - Node)
+        if (auto node_hit = node_tool_->tool().hit_test_node(pt_world, tol_mm)) {
+            if (!node_tool_->is_node_selected(node_hit->first, node_hit->second)) {
+                (void)node_tool_->pointer_down(pt_world, false, tol_mm);
+            }
+            if (node_tool_->delete_selected()) {
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Đã xóa node (Nhấp đúp chuột · CorelDRAW F10)"
+                    : "Deleted node (Double-click · CorelDRAW F10)";
+                if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
+        }
+        // Check if double clicked on a segment -> add node at double click point (CorelDRAW + Node)
+        double seg_t = 0.5;
+        if (auto seg_hit = node_tool_->tool().hit_test_segment(pt_world, tol_mm, &seg_t)) {
+            auto cmd = std::make_unique<document::SplitPathSegmentCommand>(
+                node_tool_->target_object(), seg_hit->first, seg_hit->second, seg_t);
+            if (root().document().execute_command(std::move(cmd)).success) {
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Đã thêm node mới trên đoạn (Nhấp đúp chuột · CorelDRAW F10)"
+                    : "Added new node on segment (Double-click · CorelDRAW F10)";
+                if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
+        }
+        // Double-click on open canvas / object space in Node Tool selects all nodes
+        node_tool_->tool().select_all();
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đã chọn toàn bộ " + std::to_string(node_tool_->selected_node_count()) + " node (Nhấp đúp chuột)"
+            : "Selected all " + std::to_string(node_tool_->selected_node_count()) + " nodes (Double-click)";
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+
     const auto snapshot = root().document().current_snapshot();
     auto hit_id = vector::SelectionModel::hit_test(pt_world, *snapshot);
 
@@ -456,6 +564,11 @@ void NativeWindow::handle_double_click(int x, int y) {
         const bool hit_selection = (hit_id && root().vector_controller().selection().is_selected(*hit_id)) ||
                                    (bounds && bounds->contains(pt_world));
         if (hit_selection) {
+            const auto& sel_ids = root().vector_controller().selection().selected_ids();
+            if (sel_ids.size() == 1 && workflow().is_clipping_container(sel_ids.front())) {
+                enter_group_isolation(sel_ids.front());
+                return;
+            }
             toggle_rotate_mode();
             if (is_rotate_mode_) {
                 status_msg_ = language_ == UILanguage::Vietnamese

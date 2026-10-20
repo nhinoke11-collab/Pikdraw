@@ -1,9 +1,25 @@
 #include "node_tool_controller.hpp"
+#include "pikdraw/document/commands/path_commands.hpp"
+#include "pikdraw/document/model/path_adapter.hpp"
 
 namespace pikdraw::desktop::tools {
 
 bool NodeToolController::activate(document::ObjectId target_id) {
     if (target_id != document::kInvalidObjectId) {
+        auto snap = document_.current_snapshot();
+        if (snap) {
+            auto obj = snap->objects().get(target_id);
+            if (obj && std::holds_alternative<document::PathObject>(*obj)) {
+                const auto& po = std::get<document::PathObject>(*obj);
+                if (!po.authoring_source && !po.locked && po.visible) {
+                    auto ep = document::editable_path_from_path2d(po.path, nullptr);
+                    if (ep) {
+                        auto cmd = std::make_unique<document::SetAuthoringSourceCommand>(target_id, std::move(*ep));
+                        (void)document_.execute_command(std::move(cmd));
+                    }
+                }
+            }
+        }
         tool_->set_target_object(target_id);
     } else {
         // If no target provided, pick the first eligible path in document
@@ -12,7 +28,14 @@ bool NodeToolController::activate(document::ObjectId target_id) {
             for (const auto& [id, obj] : snap->objects().all()) {
                 if (std::holds_alternative<document::PathObject>(obj)) {
                     const auto& po = std::get<document::PathObject>(obj);
-                    if (po.authoring_source && !po.locked && po.visible) {
+                    if (!po.locked && po.visible) {
+                        if (!po.authoring_source) {
+                            auto ep = document::editable_path_from_path2d(po.path, nullptr);
+                            if (ep) {
+                                auto cmd = std::make_unique<document::SetAuthoringSourceCommand>(id, std::move(*ep));
+                                (void)document_.execute_command(std::move(cmd));
+                            }
+                        }
                         tool_->set_target_object(id);
                         break;
                     }
@@ -29,9 +52,9 @@ void NodeToolController::deactivate() {
     tool_->cancel();
 }
 
-bool NodeToolController::pointer_down(geometry::Point2D world, bool shift, double tol_mm) {
+bool NodeToolController::pointer_down(geometry::Point2D world, bool shift, double tol_mm, double zoom) {
     if (!is_active_) return false;
-    return tool_->pointer_down(world, shift, tol_mm);
+    return tool_->pointer_down(world, shift, tol_mm, zoom);
 }
 
 bool NodeToolController::pointer_move(geometry::Point2D world) {

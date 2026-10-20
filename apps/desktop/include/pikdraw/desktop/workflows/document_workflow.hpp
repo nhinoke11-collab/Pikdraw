@@ -8,6 +8,7 @@
 #include "pikdraw/geometry/operations/boolean.hpp"
 #include "pikdraw/geometry/operations/align.hpp"
 #include "pikdraw/document/effects/effect_stack.hpp"
+#include "pikdraw/document/commands/import_content_command.hpp"
 #include "pikdraw/document/model/clone_utils.hpp"
 #include "pikdraw/geometry/primitives/point.hpp"
 
@@ -24,6 +25,16 @@ namespace pikdraw::desktop {
 
 enum class ImportFormat : uint8_t { Svg, Dxf };
 enum class ImportProgressStage : uint8_t { Snapshotting, StartingWorker, Reading, Validating, Complete };
+
+enum class SelectSameCriterion : uint8_t {
+    FillColor,
+    StrokeColor,
+    FillAndStroke,
+    ColorSpace,
+    CmykOnly,
+    RgbOnly,
+    SpotOnly
+};
 
 struct ImportProgress {
     ImportProgressStage stage{ImportProgressStage::Snapshotting};
@@ -46,6 +57,9 @@ struct ImportedContentProposal {
     std::string editability_status;
     std::string production_status;
     std::vector<ImportIssueSummary> issues;
+    // Populated by page-set profiles; legacy single-page profiles keep using
+    // the flat layer/object fields below.
+    std::vector<document::ImportedPageContent> pages;
     std::vector<document::Layer> layers;
     std::vector<document::ObjectVariant> objects;
 };
@@ -178,6 +192,22 @@ public:
     bool convert_document_color_mode(color::DocumentColorMode mode,
         std::shared_ptr<const color::IccPreview> icc = {});
     bool set_document_raster_dpi(int32_t dpi);
+    bool set_page_color_mode(document::PageId page_id, color::DocumentColorMode mode,
+        std::shared_ptr<const color::IccPreview> icc = {});
+    bool set_page_raster_dpi(document::PageId page_id, int32_t dpi);
+    bool convert_selected_objects_color_mode(color::DocumentColorMode mode,
+        std::shared_ptr<const color::IccPreview> icc = {});
+    bool convert_active_page_color_mode(color::DocumentColorMode mode,
+        std::shared_ptr<const color::IccPreview> icc = {});
+
+    /// Find objects matching color / Select Same
+    [[nodiscard]] std::vector<document::ObjectId> find_objects_matching_color(
+        const document::ObjectId* reference_id,
+        const color::ColorValue* reference_color,
+        SelectSameCriterion criterion) const;
+    bool select_same(SelectSameCriterion criterion);
+    bool select_by_color(const color::ColorValue& color,
+        SelectSameCriterion criterion = SelectSameCriterion::FillColor);
 
     /// Resize document page size without clearing objects
     void set_page_size(double page_width_mm, double page_height_mm);
@@ -243,6 +273,18 @@ public:
 
     /// Check if object is a GroupObject
     [[nodiscard]] bool is_group(document::ObjectId id) const;
+
+    /// PowerClip / Clipping Mask methods
+    [[nodiscard]] bool can_make_clipping_mask_selected() const;
+    document::ObjectId make_clipping_mask_selected(bool preserve_appearance = true);
+    bool release_clipping_mask_selected();
+    [[nodiscard]] bool is_clipping_container(document::ObjectId id) const;
+    document::ObjectId place_inside_powerclip(
+        document::ObjectId content_id,
+        document::ObjectId frame_id,
+        document::ClipContentFitMode fit_mode = document::ClipContentFitMode::CurrentPosition);
+    bool fit_powerclip_contents(document::ObjectId group_id, document::ClipContentFitMode mode);
+    bool set_powerclip_lock_contents(document::ObjectId group_id, bool locked);
 
     /// Find parent group ID for a child object (if any)
     [[nodiscard]] std::optional<document::ObjectId> find_parent_group(document::ObjectId child_id) const;
@@ -428,7 +470,8 @@ public:
     [[nodiscard]] document::AsyncProposalMetadata begin_import_job(uint64_t job_id);
     void cancel_import_job(uint64_t job_id);
     [[nodiscard]] document::ProposalStatus commit_import_proposal(
-        document::AsyncProposalMetadata metadata, ImportedContentProposal proposal);
+        document::AsyncProposalMetadata metadata, ImportedContentProposal proposal,
+        bool resize_page_to_source = false);
 
     /// Export SVG XML string
     [[nodiscard]] std::string export_svg();

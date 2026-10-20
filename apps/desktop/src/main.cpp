@@ -28,6 +28,8 @@ int main(int argc, char* argv[]) {
     bool demo_solid_trim = false;
     bool demo_knife = false;
     bool demo_vector_bitmap = false;
+    bool demo_powerclip = false;
+    bool demo_powerclip_edit = false;
     int tool_id = -1;
     int flyout_group = 0;
 
@@ -87,6 +89,10 @@ int main(int argc, char* argv[]) {
             demo_knife = true;
         } else if (arg == "--demo-vector-bitmap") {
             demo_vector_bitmap = true;
+        } else if (arg == "--demo-powerclip") {
+            demo_powerclip = true;
+        } else if (arg == "--demo-powerclip-edit") {
+            demo_powerclip_edit = true;
         } else if (arg == "--tool" && i + 1 < argc) {
             tool_id = std::stoi(argv[++i]);
         } else if (arg == "--flyout" && i + 1 < argc) {
@@ -205,6 +211,24 @@ int main(int argc, char* argv[]) {
         if (gid != pikdraw::document::kInvalidObjectId) {
             window.enter_group_isolation(gid);
             window.root().vector_controller().selection().select(id1, pikdraw::vector::SelectionMode::Replace);
+        }
+    }
+    if (demo_powerclip || demo_powerclip_edit) {
+        // Create red inner content rectangle (like user's Image 1)
+        const auto content_id = window.workflow().add_rectangle(120.0, 60.0, 75.0, 50.0, "#ef4444", "#b91c1c", 1.5);
+        // Create cyan outer frame container (on top)
+        const auto frame_id = window.workflow().add_rectangle(50.0, 30.0, 120.0, 90.0, "#00f2c3", "#0ea5e9", 2.0);
+        window.root().vector_controller().selection().clear();
+        window.root().vector_controller().selection().select(content_id, pikdraw::vector::SelectionMode::Add);
+        window.root().vector_controller().selection().select(frame_id, pikdraw::vector::SelectionMode::Add);
+        const auto clip_id = window.workflow().make_clipping_mask_selected(true);
+        if (clip_id != pikdraw::document::kInvalidObjectId) {
+            if (demo_powerclip_edit) {
+                window.enter_group_isolation(clip_id);
+                window.root().vector_controller().selection().select(content_id, pikdraw::vector::SelectionMode::Replace);
+            } else {
+                window.root().vector_controller().selection().select(clip_id, pikdraw::vector::SelectionMode::Replace);
+            }
         }
     }
     if (open_settings) {

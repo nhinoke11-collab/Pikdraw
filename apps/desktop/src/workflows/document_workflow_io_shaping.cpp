@@ -305,10 +305,11 @@ bool DocumentWorkflow::split_objects_by_line(
                 im1.width_px = w_px1;
                 im1.height_px = h_px;
                 im1.pixels_rgba.resize(static_cast<size_t>(w_px1) * h_px);
+                const auto source_pixels = im->rgba_pixels();
                 for (int y = 0; y < h_px; ++y) {
                     for (int x = 0; x < w_px1; ++x) {
                         im1.pixels_rgba[static_cast<size_t>(y) * w_px1 + x] =
-                            im->pixels_rgba[static_cast<size_t>(y) * w_px + x];
+                            source_pixels[static_cast<size_t>(y) * w_px + x];
                     }
                 }
 
@@ -322,7 +323,7 @@ bool DocumentWorkflow::split_objects_by_line(
                 for (int y = 0; y < h_px; ++y) {
                     for (int x = 0; x < w_px2; ++x) {
                         im2.pixels_rgba[static_cast<size_t>(y) * w_px2 + x] =
-                            im->pixels_rgba[static_cast<size_t>(y) * w_px + (w_px1 + x)];
+                            source_pixels[static_cast<size_t>(y) * w_px + (w_px1 + x)];
                     }
                 }
 
@@ -432,11 +433,12 @@ bool DocumentWorkflow::trim_bitmap_with_vector(
     patch.width_px = sub_w;
     patch.height_px = sub_h;
     patch.pixels_rgba.resize(static_cast<size_t>(sub_w) * sub_h);
+    const auto source_pixels = im->rgba_pixels();
 
     for (int y = 0; y < sub_h; ++y) {
         for (int x = 0; x < sub_w; ++x) {
             patch.pixels_rgba[static_cast<size_t>(y) * sub_w + x] =
-                im->pixels_rgba[static_cast<size_t>(src_y0 + y) * im->width_px + (src_x0 + x)];
+                source_pixels[static_cast<size_t>(src_y0 + y) * im->width_px + (src_x0 + x)];
         }
     }
 

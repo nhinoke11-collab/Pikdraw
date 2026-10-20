@@ -9,7 +9,9 @@ param(
     [string[]]$TestTarget = @(),
     [switch]$BuildOnly,
     [string]$TestRegex = '',
-    [int]$LockWaitSeconds = 120
+    [int]$LockWaitSeconds = 5,
+    [switch]$NoLock,
+    [switch]$Force
 )
 $ErrorActionPreference = 'Stop'
 if ($TestTarget.Count -gt 0 -and -not $Test) {
@@ -31,39 +33,57 @@ New-Item -ItemType Directory -Path $boardDir -Force | Out-Null
 $lockPath = Join-Path $boardDir 'native-build.lock'
 $lockStream = $null
 try {
-    $deadline = (Get-Date).AddSeconds([Math]::Max(0, $LockWaitSeconds))
-    while ($null -eq $lockStream) {
-        try {
-            $lockStream = [System.IO.File]::Open($lockPath, 'CreateNew', 'Write', 'Read')
-        } catch [System.IO.IOException] {
-            $lockText = ''
+    if ($Force -and (Test-Path -LiteralPath $lockPath)) {
+        Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+    }
+    if (-not $NoLock) {
+        $deadline = (Get-Date).AddSeconds([Math]::Max(0, $LockWaitSeconds))
+        $warned = $false
+        while ($null -eq $lockStream) {
             try {
-                $readStream = [System.IO.File]::Open($lockPath, 'Open', 'Read', 'ReadWrite')
+                $lockStream = [System.IO.File]::Open($lockPath, 'CreateNew', 'Write', 'Read')
+            } catch [System.IO.IOException] {
+                $lockText = ''
                 try {
-                    $reader = New-Object System.IO.StreamReader($readStream)
-                    $lockText = $reader.ReadToEnd()
-                } finally {
-                    $readStream.Dispose()
-                }
-            } catch {}
-            if ($lockText -match '^pid=(\d+)\b') {
-                $ownerPid = [int]$Matches[1]
-                $ownerProc = Get-Process -Id $ownerPid -ErrorAction SilentlyContinue
-                if ($null -eq $ownerProc) {
+                    $readStream = [System.IO.File]::Open($lockPath, 'Open', 'Read', 'ReadWrite')
+                    try {
+                        $reader = New-Object System.IO.StreamReader($readStream)
+                        $lockText = $reader.ReadToEnd()
+                    } finally {
+                        $readStream.Dispose()
+                    }
+                } catch {}
+                if ([string]::IsNullOrWhiteSpace($lockText)) {
+                    if ((Get-Date) -lt $deadline) {
+                        Start-Sleep -Milliseconds 200
+                        continue
+                    }
                     Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
                     continue
                 }
-                if ((Get-Date) -lt $deadline) {
-                    Start-Sleep -Milliseconds 500
-                    continue
+                if ($lockText -match '^pid=(\d+)\b') {
+                    $ownerPid = [int]$Matches[1]
+                    $ownerProc = Get-Process -Id $ownerPid -ErrorAction SilentlyContinue
+                    if ($null -eq $ownerProc) {
+                        Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+                        continue
+                    }
+                    if (-not $warned) {
+                        Write-Host "[build.ps1] Waiting for .agent/native-build.lock held by PID $ownerPid ($($ownerProc.ProcessName))..." -ForegroundColor Yellow
+                        $warned = $true
+                    }
+                    if ((Get-Date) -lt $deadline) {
+                        Start-Sleep -Milliseconds 500
+                        continue
+                    }
                 }
+                throw 'Another session owns .agent/native-build.lock. Wait for it; never steal an active build lock.'
             }
-            throw 'Another session owns .agent/native-build.lock. Wait for it; never steal an active build lock.'
         }
+        $lockBytes = [System.Text.Encoding]::UTF8.GetBytes("pid=$PID source=$repoRoot")
+        $lockStream.Write($lockBytes, 0, $lockBytes.Length)
+        $lockStream.Flush()
     }
-    $lockBytes = [System.Text.Encoding]::UTF8.GetBytes("pid=$PID source=$repoRoot")
-    $lockStream.Write($lockBytes, 0, $lockBytes.Length)
-    $lockStream.Flush()
     Push-Location -LiteralPath $repoRoot
     try {
         if (-not $tools.CMake) { throw 'CMake was not found.' }
@@ -152,6 +172,15 @@ try {
 } finally {
     if ($null -ne $lockStream) {
         $lockStream.Dispose()
-        Remove-Item -LiteralPath $lockPath
+        for ($i = 0; $i -lt 10; $i++) {
+            try {
+                if (Test-Path -LiteralPath $lockPath) {
+                    Remove-Item -LiteralPath $lockPath -Force -ErrorAction Stop
+                }
+                break
+            } catch {
+                Start-Sleep -Milliseconds 100
+            }
+        }
     }
 }

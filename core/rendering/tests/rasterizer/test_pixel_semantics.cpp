@@ -4,6 +4,7 @@
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <set>
 #include <stdexcept>
 #include <utility>
@@ -341,7 +342,8 @@ void test_image_clip_masks_transformed_pixels() {
   image.id = 10;
   image.width_px = 2;
   image.height_px = 1;
-  image.pixels_rgba = {0xff0000ff, 0x0000ffff};
+  image.shared_pixels_rgba = std::make_shared<const std::vector<uint32_t>>(
+      std::vector<uint32_t>{0xff0000ff, 0x0000ffff});
   image.bounds_rect = {8, 8, 40, 40};
   image.transform = geometry::Transform2D::translation(10, 0);
   image.clip_path = geometry::Path2D::make_rect(8, 8, 20, 40);
@@ -356,6 +358,26 @@ void test_image_clip_masks_transformed_pixels() {
               f.channel(45, 32, 2) == 255,
           "image clip path did not mask pixels outside its path");
 }
+
+void test_image_scaling_uses_linear_sampling() {
+  Fixture f;
+  ImageObject image;
+  image.id = 451;
+  image.width_px = 2;
+  image.height_px = 2;
+  image.pixels_rgba = {0xff0000ff, 0x00ff00ff,
+                       0x0000ffff, 0xffffffff};
+  image.bounds_rect = {10, 10, 4, 4};
+  f.objects = f.objects.set(image.id, image);
+  f.page.layers[0].object_ids = {image.id};
+
+  require(f.render(), "scaled image frame failed");
+  require(std::abs(f.channel(11, 51, 0) - 159) <= 2 &&
+              std::abs(f.channel(11, 51, 1) - 64) <= 2 &&
+              std::abs(f.channel(11, 51, 2) - 64) <= 2,
+          "scaled image used nearest-neighbor sampling or changed source orientation");
+}
+
 void test_text_backend() {
   Fixture f;
   TextObject text;
@@ -578,6 +600,7 @@ int main() {
     test_curve_projection_and_source_preservation();
     test_nested_groups_apply_parent_transforms();
     test_image_clip_masks_transformed_pixels();
+    test_image_scaling_uses_linear_sampling();
     std::cout << "Pixel semantics, winding, layers, alpha, stroke, clipping "
                  "and validation passed.\n";
   } catch (const std::exception &error) {

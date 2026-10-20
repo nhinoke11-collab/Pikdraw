@@ -33,6 +33,11 @@ uint32_t read_be32(const uint8_t* p) noexcept {
            static_cast<uint32_t>(p[3]);
 }
 
+uint16_t read_be16(const uint8_t* p) noexcept {
+    return static_cast<uint16_t>((static_cast<uint16_t>(p[0]) << 8) |
+                                 static_cast<uint16_t>(p[1]));
+}
+
 uint8_t paeth_predictor(int a, int b, int c) noexcept {
     const int p = a + b - c;
     const int pa = std::abs(p - a);
@@ -57,6 +62,8 @@ RasterImageDecodeResult decode_png_pure(
     double dpi_x = 96.0, dpi_y = 96.0;
     std::vector<uint8_t> idat_bytes;
     std::vector<uint8_t> palette;
+    std::vector<uint8_t> transparency;
+    bool has_transparency = false;
 
     size_t offset = 8;
     while (offset + 12 <= source.size()) {
@@ -82,6 +89,11 @@ RasterImageDecodeResult decode_png_pure(
             idat_bytes.insert(idat_bytes.end(), payload.begin(), payload.end());
         } else if (std::memcmp(chunk_type, "PLTE", 4) == 0) {
             palette.assign(payload.begin(), payload.end());
+        } else if (std::memcmp(chunk_type, "tRNS", 4) == 0) {
+            if (has_transparency)
+                return failure("RASTER_DECODE_FAILED", "PNG contains duplicate tRNS chunks.");
+            transparency.assign(payload.begin(), payload.end());
+            has_transparency = true;
         } else if (std::memcmp(chunk_type, "pHYs", 4) == 0) {
             if (payload.size() >= 9 && payload[8] == 1) {
                 const uint32_t ppux = read_be32(payload.data());
@@ -115,6 +127,20 @@ RasterImageDecodeResult decode_png_pure(
 
     if (color_type == 3 && palette.empty())
         return failure("RASTER_DECODE_FAILED", "Indexed PNG missing palette.");
+    if (color_type == 3 && (palette.size() % 3 != 0 || palette.size() > 256 * 3))
+        return failure("RASTER_DECODE_FAILED", "Indexed PNG palette has an invalid size.");
+    if (has_transparency) {
+        const bool valid_transparency =
+            (color_type == 0 && transparency.size() == 2 && read_be16(transparency.data()) <= 255) ||
+            (color_type == 2 && transparency.size() == 6 &&
+                read_be16(transparency.data()) <= 255 &&
+                read_be16(transparency.data() + 2) <= 255 &&
+                read_be16(transparency.data() + 4) <= 255) ||
+            (color_type == 3 && !transparency.empty() &&
+                transparency.size() <= palette.size() / 3);
+        if (!valid_transparency)
+            return failure("RASTER_DECODE_FAILED", "PNG tRNS transparency does not match its color type.");
+    }
 
     const uint64_t pixel_count = static_cast<uint64_t>(width) * height;
     const uint64_t output_bytes = pixel_count * 4;
@@ -195,10 +221,14 @@ RasterImageDecodeResult decode_png_pure(
             std::memcpy(dst_row, src_row, static_cast<size_t>(width) * 4);
         } else if (color_type == 2) {
             for (uint32_t x = 0; x < width; ++x) {
+                const bool transparent = has_transparency &&
+                    src_row[x * 3 + 0] == read_be16(transparency.data()) &&
+                    src_row[x * 3 + 1] == read_be16(transparency.data() + 2) &&
+                    src_row[x * 3 + 2] == read_be16(transparency.data() + 4);
                 dst_row[x * 4 + 0] = src_row[x * 3 + 0];
                 dst_row[x * 4 + 1] = src_row[x * 3 + 1];
                 dst_row[x * 4 + 2] = src_row[x * 3 + 2];
-                dst_row[x * 4 + 3] = 255;
+                dst_row[x * 4 + 3] = transparent ? 0 : 255;
             }
         } else if (color_type == 0) {
             for (uint32_t x = 0; x < width; ++x) {
@@ -206,7 +236,8 @@ RasterImageDecodeResult decode_png_pure(
                 dst_row[x * 4 + 0] = g;
                 dst_row[x * 4 + 1] = g;
                 dst_row[x * 4 + 2] = g;
-                dst_row[x * 4 + 3] = 255;
+                dst_row[x * 4 + 3] = has_transparency &&
+                    g == read_be16(transparency.data()) ? 0 : 255;
             }
         } else if (color_type == 4) {
             for (uint32_t x = 0; x < width; ++x) {
@@ -220,16 +251,12 @@ RasterImageDecodeResult decode_png_pure(
         } else if (color_type == 3) {
             for (uint32_t x = 0; x < width; ++x) {
                 const size_t idx = src_row[x];
-                if (idx * 3 + 2 < palette.size()) {
-                    dst_row[x * 4 + 0] = palette[idx * 3 + 0];
-                    dst_row[x * 4 + 1] = palette[idx * 3 + 1];
-                    dst_row[x * 4 + 2] = palette[idx * 3 + 2];
-                } else {
-                    dst_row[x * 4 + 0] = 0;
-                    dst_row[x * 4 + 1] = 0;
-                    dst_row[x * 4 + 2] = 0;
-                }
-                dst_row[x * 4 + 3] = 255;
+                if (idx * 3 + 2 >= palette.size())
+                    return failure("RASTER_DECODE_FAILED", "Indexed PNG pixel refers to a missing palette entry.");
+                dst_row[x * 4 + 0] = palette[idx * 3 + 0];
+                dst_row[x * 4 + 1] = palette[idx * 3 + 1];
+                dst_row[x * 4 + 2] = palette[idx * 3 + 2];
+                dst_row[x * 4 + 3] = idx < transparency.size() ? transparency[idx] : 255;
             }
         }
     }
@@ -330,6 +357,7 @@ GUID decoder_class(RasterImageFormat format) noexcept {
     case RasterImageFormat::Jpeg: return CLSID_WICJpegDecoder;
     case RasterImageFormat::Png: return CLSID_WICPngDecoder;
     case RasterImageFormat::Tiff: return CLSID_WICTiffDecoder;
+    case RasterImageFormat::Bmp: return CLSID_WICBmpDecoder;
     case RasterImageFormat::Unknown: break;
     }
     return GUID_NULL;
@@ -340,6 +368,7 @@ GUID container_format(RasterImageFormat format) noexcept {
     case RasterImageFormat::Jpeg: return GUID_ContainerFormatJpeg;
     case RasterImageFormat::Png: return GUID_ContainerFormatPng;
     case RasterImageFormat::Tiff: return GUID_ContainerFormatTiff;
+    case RasterImageFormat::Bmp: return GUID_ContainerFormatBmp;
     case RasterImageFormat::Unknown: break;
     }
     return GUID_NULL;
@@ -491,6 +520,8 @@ RasterImageFormat RasterImageDecoder::sniff_format(
         ((source[0] == 'I' && source[1] == 'I' && source[2] == 0x2A && source[3] == 0x00) ||
          (source[0] == 'M' && source[1] == 'M' && source[2] == 0x00 && source[3] == 0x2A)))
         return RasterImageFormat::Tiff;
+    if (source.size() >= 14 && source[0] == 'B' && source[1] == 'M')
+        return RasterImageFormat::Bmp;
     return RasterImageFormat::Unknown;
 }
 
@@ -508,7 +539,7 @@ RasterImageDecodeResult RasterImageDecoder::decode(
 
     const auto format = sniff_format(source);
     if (format == RasterImageFormat::Unknown)
-        return failure("RASTER_SIGNATURE_UNSUPPORTED", "The file signature is not PNG, JPEG or TIFF.");
+        return failure("RASTER_SIGNATURE_UNSUPPORTED", "The file signature is not PNG, JPEG, TIFF or BMP.");
 
     if (format == RasterImageFormat::Png)
         return decode_png_pure(source, options);

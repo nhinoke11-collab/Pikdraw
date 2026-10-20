@@ -11,13 +11,13 @@ namespace pikdraw::document {
 
 /// Fixed native container header: PKDR, version, flags, epoch, revision,
 /// payload-byte count and CRC32. All integers are little-endian; CRC offset 32.
-/// v3 adds authoring paths, v4 appearance records, v5 gradients, v6 stable
-/// multi-page roots, v7 paragraph text layout, v8 embedded raster assets,
-/// and v9 document process mode/profile/raster DPI. Readers retain v2-v8 sources.
+/// v3 adds authoring paths, v4 appearance, v5 gradients, v6 multi-page roots,
+/// v7 text layout, v8 embedded raster assets, v9 page color/DPI, v10 PowerClip,
+/// and v11 locked PDF source-page references. Readers retain v2-v10 sources.
 #pragma pack(push, 1)
 struct PikDrawHeader {
     uint8_t magic[4];       // {'P', 'K', 'D', 'R'}
-    uint32_t version;       // v2-v8 legacy input or current v9 source
+    uint32_t version;       // v2-v10 legacy input or current v11 source
     uint32_t flags;         // feature flags / compression
     uint64_t epoch;         // document epoch at save
     uint64_t revision;      // document revision at save
@@ -35,8 +35,10 @@ inline constexpr uint32_t kMultiPageFormatVersion = 6;
 inline constexpr uint32_t kTextLayoutFormatVersion = 7;
 inline constexpr uint32_t kRasterAssetFormatVersion = 8;
 inline constexpr uint32_t kDocumentColorFormatVersion = 9;
-inline constexpr uint32_t kCurrentFormatVersion = 9;
-inline constexpr uint32_t kMinimumCompatibleVersion = 9;
+inline constexpr uint32_t kPowerClipFormatVersion = 10;
+inline constexpr uint32_t kPdfSourceFormatVersion = 11;
+inline constexpr uint32_t kCurrentFormatVersion = kPdfSourceFormatVersion;
+inline constexpr uint32_t kMinimumCompatibleVersion = kCurrentFormatVersion;
 inline constexpr uint32_t kAuthoringPathSchemaMajor = 1;
 inline constexpr uint32_t kAuthoringPathSchemaMinor = 0;
 

@@ -29,8 +29,11 @@ inline constexpr uint32_t IPC_MAX_DEPTH = 64;
 
 inline constexpr uint32_t IPC_V2_FEATURE_SOURCE_HANDLE = 1u << 0;
 inline constexpr uint32_t IPC_V2_FEATURE_CHECKED_PROPOSAL_STREAM = 1u << 1;
+inline constexpr uint32_t IPC_V2_FEATURE_SOURCE_PAGE_SELECTION = 1u << 2;
+inline constexpr uint32_t IPC_V2_FEATURE_RASTER_SOURCE_ASSETS = 1u << 3;
 inline constexpr uint32_t IPC_V2_SUPPORTED_FEATURES =
-    IPC_V2_FEATURE_SOURCE_HANDLE | IPC_V2_FEATURE_CHECKED_PROPOSAL_STREAM;
+    IPC_V2_FEATURE_SOURCE_HANDLE | IPC_V2_FEATURE_CHECKED_PROPOSAL_STREAM |
+    IPC_V2_FEATURE_SOURCE_PAGE_SELECTION | IPC_V2_FEATURE_RASTER_SOURCE_ASSETS;
 
 enum class MessageType : uint16_t {
     Ping = 1,
@@ -110,6 +113,8 @@ struct V2ImportBegin {
     IpcV2Digest source_sha256{};
     std::string format_id;
     std::string profile_id;
+    // Optional zero-based PDF page index. Absent means the adapter default.
+    std::optional<uint32_t> source_page_index;
 };
 
 struct V2ProposalChunk {

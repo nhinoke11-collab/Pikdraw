@@ -48,6 +48,26 @@ std::vector<uint8_t> NativeFormat::serialize(const DocumentSnapshot &snapshot) {
   payload.u32(static_cast<uint32_t>(snapshot.raster_dpi()));
   payload.u8((snapshot.page().color_mode_explicit ? 1 : 0) |
              (snapshot.page().raster_dpi_explicit ? 2 : 0));
+
+  std::vector<std::shared_ptr<const PdfSourceAsset>> pdf_source_assets;
+  std::unordered_map<const PdfSourceAsset*, uint32_t> pdf_source_asset_indices;
+  for (const auto& page : snapshot.pages()) {
+    if (!page.pdf_source) continue;
+    const auto* source = page.pdf_source->asset.get();
+    if (pdf_source_asset_indices.contains(source)) continue;
+    if (pdf_source_assets.size() >= 10000)
+      throw std::length_error("Too many embedded PDF source assets");
+    const auto index = static_cast<uint32_t>(pdf_source_assets.size() + 1);
+    pdf_source_asset_indices.emplace(source, index);
+    pdf_source_assets.push_back(page.pdf_source->asset);
+  }
+  payload.u8(static_cast<uint8_t>(snapshot.content_mode()));
+  payload.count(pdf_source_assets.size(), 10000);
+  for (const auto& source : pdf_source_assets) {
+    payload.str(source->sha256_hex);
+    payload.u32(source->page_count);
+    payload.blob(*source->bytes, static_cast<uint32_t>(max_file_bytes));
+  }
   payload.count(snapshot.page_count(), 10000);
   payload.u64(snapshot.active_page_id());
 
@@ -55,8 +75,6 @@ std::vector<uint8_t> NativeFormat::serialize(const DocumentSnapshot &snapshot) {
   for (const auto &page : snapshot.pages()) {
     validate_document_structure(page.layout, page.objects);
     for (const auto &[id, object] : page.objects.all()) {
-      if (page.layout.color_mode_explicit && !object_colors_match_mode(object, page.layout.color_mode))
-        throw std::invalid_argument("Native explicit document mode conflicts with source process colors");
       maximum_stable_id = std::max(maximum_stable_id, id);
       const Appearance *appearance = nullptr;
       if (const auto *path = std::get_if<PathObject>(&object)) {
@@ -114,6 +132,13 @@ std::vector<uint8_t> NativeFormat::serialize(const DocumentSnapshot &snapshot) {
     const auto &page = document_page.layout;
     payload.f64(page.width_mm);
     payload.f64(page.height_mm);
+    payload.flag(document_page.pdf_source.has_value());
+    if (document_page.pdf_source) {
+      const auto& reference = *document_page.pdf_source;
+      payload.u32(pdf_source_asset_indices.at(reference.asset.get()));
+      payload.u32(reference.source_page_index);
+      payload.u8(reference.rotation_quarters_clockwise);
+    }
     if (page.layers.size() > 10000 - total_layers)
       throw std::length_error("Too many layers across document pages");
     total_layers += page.layers.size();
@@ -180,10 +205,19 @@ std::vector<uint8_t> NativeFormat::serialize(const DocumentSnapshot &snapshot) {
         payload.u32(source.source_bits_per_pixel);
         payload.u32(source.exif_orientation);
         payload.flag(source.orientation_applied);
-        payload.blob(source.original_bytes,
+        payload.blob(source.original_data(),
             static_cast<uint32_t>(RasterSourceMetadata::kMaxSourceBytes));
         payload.blob(source.icc_profile,
             static_cast<uint32_t>(RasterSourceMetadata::kMaxIccProfileBytes));
+      } else if (const auto* grp = std::get_if<GroupObject>(&object)) {
+        payload.flag(grp->clip.has_value());
+        if (grp->clip) {
+          payload.u64(grp->clip->mask_object_id);
+          payload.flag(grp->clip->lock_contents_to_frame);
+          payload.flag(grp->clip->preserve_frame_appearance);
+          payload.u8(static_cast<uint8_t>(grp->clip->fit_mode));
+          payload.flag(grp->clip->is_empty_frame);
+        }
       }
     }
   }
@@ -224,10 +258,13 @@ NativeFormat::deserialize(const uint8_t *data, size_t length,
         version != kMultiPageFormatVersion &&
         version != kTextLayoutFormatVersion &&
         version != kRasterAssetFormatVersion &&
+        version != kDocumentColorFormatVersion &&
+        version != kPowerClipFormatVersion &&
+        version != kPdfSourceFormatVersion &&
         version != kCurrentFormatVersion)
       throw std::invalid_argument(
           "Unsupported native version; v1 is not silently migrated and "
-          "versions v2-v9 require a compatible reader");
+          "versions v2-v11 require a compatible reader");
     if (header.u32() != 0)
       throw std::invalid_argument("Unsupported native feature flags");
     const auto epoch = header.u64();
@@ -281,6 +318,27 @@ NativeFormat::deserialize(const uint8_t *data, size_t length,
       color_settings.raster_dpi_explicit = (settings_flags & 2) != 0;
       validate_page(color_settings);
     }
+    DocumentContentMode content_mode = DocumentContentMode::Editable;
+    std::vector<std::shared_ptr<const PdfSourceAsset>> pdf_source_assets;
+    if (version >= kPdfSourceFormatVersion) {
+      const auto raw_mode = reader.u8();
+      if (raw_mode > static_cast<uint8_t>(DocumentContentMode::PdfPrintLocked))
+        throw std::invalid_argument("Invalid native document content mode");
+      content_mode = static_cast<DocumentContentMode>(raw_mode);
+      const auto asset_count = reader.count(10000, 76);
+      pdf_source_assets.reserve(asset_count);
+      for (uint32_t i = 0; i < asset_count; ++i) {
+        auto source = std::make_shared<PdfSourceAsset>();
+        source->sha256_hex = reader.str(64);
+        source->page_count = reader.u32();
+        auto bytes = reader.blob(static_cast<uint32_t>(max_file_bytes));
+        source->bytes = std::make_shared<const std::vector<uint8_t>>(std::move(bytes));
+        if (source->sha256_hex.size() != 64 || source->page_count == 0 ||
+            source->bytes->empty())
+          throw std::invalid_argument("Invalid embedded PDF source asset metadata");
+        pdf_source_assets.push_back(std::move(source));
+      }
+    }
     std::vector<DocumentPage> pages;
     PageId active_page_id = kInvalidPageId;
     std::unordered_set<PageId> seen_page_ids;
@@ -307,6 +365,15 @@ NativeFormat::deserialize(const uint8_t *data, size_t length,
       }
       result.layout.width_mm = reader.f64();
       result.layout.height_mm = reader.f64();
+      if (version >= kPdfSourceFormatVersion && reader.flag()) {
+        const auto asset_id = reader.u32();
+        const auto source_page_index = reader.u32();
+        const auto rotation = reader.u8();
+        if (asset_id == 0 || asset_id > pdf_source_assets.size() || rotation > 3)
+          throw std::invalid_argument("Invalid native PDF source page locator");
+        result.pdf_source = PdfSourcePageReference{
+            pdf_source_assets[asset_id - 1], source_page_index, rotation};
+      }
       result.layout.color_mode = color_settings.color_mode;
       result.layout.color_profile_name = color_settings.color_profile_name;
       result.layout.raster_dpi = color_settings.raster_dpi;
@@ -379,8 +446,19 @@ NativeFormat::deserialize(const uint8_t *data, size_t length,
                 static_cast<uint32_t>(RasterSourceMetadata::kMaxIccProfileBytes));
           }
         }
-        if (color_settings.color_mode_explicit && !object_colors_match_mode(object, color_settings.color_mode))
-          throw std::invalid_argument("Native explicit document mode conflicts with source process colors");
+        if (version >= kPowerClipFormatVersion) {
+          if (auto* grp = std::get_if<GroupObject>(&object)) {
+            if (reader.flag()) {
+              ClipProperties clip;
+              clip.mask_object_id = reader.u64();
+              clip.lock_contents_to_frame = reader.flag();
+              clip.preserve_frame_appearance = reader.flag();
+              clip.fit_mode = static_cast<ClipContentFitMode>(reader.u8());
+              clip.is_empty_frame = reader.flag();
+              grp->clip = clip;
+            }
+          }
+        }
         const auto id = std::visit([](const auto &value) { return value.id; }, object);
         if (id == kInvalidObjectId || !seen_object_ids.insert(id).second)
           throw std::invalid_argument("Duplicate native object ID");
@@ -407,7 +485,8 @@ NativeFormat::deserialize(const uint8_t *data, size_t length,
     };
 
     if (version >= kMultiPageFormatVersion) {
-      const auto page_count = reader.count(10000, 37);
+      const auto page_count = reader.count(10000,
+          version >= kPdfSourceFormatVersion ? 38 : 37);
       if (page_count == 0) throw std::invalid_argument("Native document has no pages");
       active_page_id = reader.u64();
       pages.reserve(page_count);
@@ -421,7 +500,7 @@ NativeFormat::deserialize(const uint8_t *data, size_t length,
       throw std::invalid_argument("Trailing native payload bytes");
 
     auto result = std::make_shared<DocumentSnapshot>(
-        epoch, revision, std::move(pages), active_page_id, document_id);
+        epoch, revision, std::move(pages), active_page_id, document_id, content_mode);
     uint64_t maximum_stable_id = 0;
     for (const auto &page : result->pages()) {
       for (const auto &[id, object] : page.objects.all()) {

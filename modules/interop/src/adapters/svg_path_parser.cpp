@@ -4,6 +4,7 @@
 #include <charconv>
 #include <cctype>
 #include <cmath>
+#include <utility>
 
 namespace pikdraw::interop {
 
@@ -54,32 +55,26 @@ private:
 
 enum class SvgPathVerb : uint8_t { Move, Line, Quad, Cubic, Arc, Close };
 
-bool AddPathElement(geometry::Path2D& path, const geometry::Transform2D& transform,
-                    SvgPathVerb verb, const std::array<double, 9>& values, uint8_t flags,
+bool AddPathElement(geometry::Path2D& path, SvgPathVerb verb,
+                    const std::array<double, 9>& values, uint8_t flags,
                     size_t maximum) {
     if (path.size() >= maximum) return false;
-    const auto point = [&](size_t index) { return transform.map_point({values[index], values[index + 1]}); };
     switch (verb) {
-        case SvgPathVerb::Move: { const auto p = point(0); path.move_to(p); return true; }
-        case SvgPathVerb::Line: { const auto p = point(0); path.line_to(p); return true; }
+        case SvgPathVerb::Move: path.move_to(values[0], values[1]); return true;
+        case SvgPathVerb::Line: path.line_to(values[0], values[1]); return true;
         case SvgPathVerb::Quad: {
-            const auto control = point(2); const auto p = point(0); path.quad_to(control.x, control.y, p.x, p.y); return true;
+            path.quad_to(values[2], values[3], values[0], values[1]);
+            return true;
         }
         case SvgPathVerb::Cubic: {
-            const auto first = point(2); const auto second = point(4); const auto p = point(0);
-            path.cubic_to(first.x, first.y, second.x, second.y, p.x, p.y); return true;
+            path.cubic_to(values[2], values[3], values[4], values[5], values[0], values[1]);
+            return true;
         }
         case SvgPathVerb::Close: path.close(); return true;
         case SvgPathVerb::Arc: {
-            const auto p = point(0);
-            const double scale_x = std::hypot(transform.a, transform.b);
-            const double scale_y = std::hypot(transform.c, transform.d);
-            const double rx = values[2] * (scale_x > 0.0 ? scale_x : 1.0);
-            const double ry = values[3] * (scale_y > 0.0 ? scale_y : 1.0);
-            const double rot_deg = values[4];
-            const bool large_arc = (flags & 1) != 0;
-            const bool sweep = (flags & 2) != 0;
-            path.arc_to(rx, ry, rot_deg, large_arc, sweep, p.x, p.y);
+            path.arc_to(values[2], values[3], values[4],
+                        (flags & 1) != 0, (flags & 2) != 0,
+                        values[0], values[1]);
             return true;
         }
     }
@@ -98,6 +93,9 @@ bool ParseSvgNumberList(std::string_view input, std::span<double> values) {
 
 bool ParseSvgPath(std::string_view data, const geometry::Transform2D& transform,
                geometry::Path2D& output, size_t maximum) {
+    // Build in source space first. Applying an affine map to each endpoint
+    // alone breaks elliptical arcs under rotation, shear, or reflection.
+    geometry::Path2D source_path;
     NumberCursor cursor(data);
     char command = 0;
     char previous = 0;
@@ -110,7 +108,7 @@ bool ParseSvgPath(std::string_view data, const geometry::Transform2D& transform,
         const char upper = static_cast<char>(std::toupper(static_cast<unsigned char>(command)));
         const bool relative = std::islower(static_cast<unsigned char>(command)) != 0;
         if (upper == 'Z') {
-            if (!has_move || !AddPathElement(output, transform, SvgPathVerb::Close, {}, 0, maximum)) return false;
+            if (!has_move || !AddPathElement(source_path, SvgPathVerb::Close, {}, 0, maximum)) return false;
             x = start_x; y = start_y; previous = 'Z'; command = 0;
             continue;
         }
@@ -179,13 +177,17 @@ bool ParseSvgPath(std::string_view data, const geometry::Transform2D& transform,
             }
             for (double value : values) if (!std::isfinite(value) || std::abs(value) > 1.0e9) return false;
             if (!has_move && verb != SvgPathVerb::Move) return false;
-            if (!AddPathElement(output, transform, verb, values, flags, maximum)) return false;
+            if (!AddPathElement(source_path, verb, values, flags, maximum)) return false;
             x = nx; y = ny; previous = upper; ++sets; ++elements;
             if (upper == 'M' && sets == 1) command = relative ? 'l' : 'L';
         }
         if (sets == 0) return false;
     }
-    return has_move && elements > 0;
+    if (!has_move || elements == 0) return false;
+    auto transformed = source_path.transformed_checked(transform);
+    if (transformed.status != geometry::GeometryOperationStatus::Success) return false;
+    output = std::move(transformed.path);
+    return true;
 }
 
 

@@ -61,8 +61,13 @@ void validate_document_structure(const Page& page, const PersistentObjectMap& ob
             throw std::invalid_argument("Object hierarchy is cyclic, multiply parented or too deep");
         const auto* object = objects.lookup_ref(id);
         if (!object) throw std::invalid_argument("Layer or group references a missing object");
-        if (const auto* group = std::get_if<GroupObject>(object))
+        if (const auto* group = std::get_if<GroupObject>(object)) {
             for (auto child : group->children_ids) pending.emplace_back(child, depth + 1);
+            if (group->is_clipping_container()) {
+                if (std::find(group->children_ids.begin(), group->children_ids.end(), group->clip->mask_object_id) == group->children_ids.end())
+                    throw std::invalid_argument("Clipping mask object must be a child of the clipping container");
+            }
+        }
     }
     if (reached.size() != objects.size())
         throw std::invalid_argument("Object has no layer/group parent");

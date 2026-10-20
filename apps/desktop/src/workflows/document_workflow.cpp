@@ -171,23 +171,25 @@ bool DocumentWorkflow::convert_text_to_curves(document::ObjectId text_id) {
     const auto& text_obj = std::get<document::TextObject>(*opt);
     auto layout = text_obj.layout();
     auto outline_path = typography::text_to_path_outlines(layout, text_obj.underline);
-    if (outline_path.empty()) {
-        auto b = text_obj.bounds();
-        outline_path = geometry::Path2D::make_rect(b.x, b.y, b.width, b.height);
-    } else {
-        geometry::Transform2D pos_tx = geometry::Transform2D::translation(text_obj.position.x, text_obj.position.y);
-        outline_path = outline_path.transformed(text_obj.transform * pos_tx * geometry::Transform2D::scale(1, -1));
-    }
+    if (outline_path.empty()) return false;
+    geometry::Transform2D pos_tx = geometry::Transform2D::translation(text_obj.position.x, text_obj.position.y);
+    outline_path = outline_path.transformed(text_obj.transform * pos_tx * geometry::Transform2D::scale(1, -1));
 
     document::PathObject path_obj;
     path_obj.id = document::generate_object_id();
     path_obj.name = "Đường cong: " + (text_obj.text.empty() ? "Curves" : detail::utf8_truncate_codepoints(text_obj.text, 16));
     path_obj.path = std::move(outline_path);
     path_obj.fill = text_obj.fill;
-    path_obj.stroke = color::RGBColor{0.0, 0.0, 0.0, 1.0};
-    path_obj.stroke_width_mm = 0.5;
+    path_obj.appearance = text_obj.appearance;
+    path_obj.stroke_width_mm = 0.0;
     path_obj.has_fill = true;
-    path_obj.has_stroke = true;
+    path_obj.has_stroke = false;
+    path_obj.visible = text_obj.visible;
+    path_obj.locked = text_obj.locked;
+    auto ep = document::editable_path_from_path2d(path_obj.path, nullptr);
+    if (ep) {
+        path_obj.set_authoring_source(std::move(*ep));
+    }
 
     auto composite = std::make_unique<document::CompositeCommand>("Convert Text to Curves");
     composite->add_command(std::make_unique<document::RemoveObjectCommand>(text_id));

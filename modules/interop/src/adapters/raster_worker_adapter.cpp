@@ -9,7 +9,7 @@
 namespace pikdraw::interop {
 namespace {
 
-constexpr uint32_t kMaxRasterPixelBytes = 32u * 1024u * 1024u;
+constexpr uint32_t kMaxRasterPixelBytes = UINT32_MAX;
 constexpr uint32_t kRasterChunkBytes = 256u * 1024u;
 
 const char* media_type_for(RasterImageFormat format) noexcept {
@@ -17,6 +17,7 @@ const char* media_type_for(RasterImageFormat format) noexcept {
     case RasterImageFormat::Png: return "image/png";
     case RasterImageFormat::Jpeg: return "image/jpeg";
     case RasterImageFormat::Tiff: return "image/tiff";
+    case RasterImageFormat::Bmp: return "image/bmp";
     case RasterImageFormat::Unknown: break;
     }
     return "";
@@ -31,10 +32,10 @@ bool BuildRasterImportRecords(std::span<const uint8_t> source,
     diagnostic.clear();
     try {
         RasterImageDecodeOptions options;
-        options.max_source_bytes = 64ULL * 1024ULL * 1024ULL;
-        options.max_decoded_pixels = 8ULL * 1024ULL * 1024ULL;
+        options.max_source_bytes = UINT64_MAX;
+        options.max_decoded_pixels = UINT32_MAX / 4;
         options.max_decoded_bytes = kMaxRasterPixelBytes;
-        options.max_icc_profile_bytes = 256ULL * 1024ULL;
+        options.max_icc_profile_bytes = UINT32_MAX;
         options.max_frames = 1;
         options.frame_index = 0;
         const auto decoded = RasterImageDecoder::decode(source, options);

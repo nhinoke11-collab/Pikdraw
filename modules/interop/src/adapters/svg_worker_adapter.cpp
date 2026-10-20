@@ -143,6 +143,17 @@ bool BuildSvgImportRecords(std::span<const uint8_t> source,
                 if (found == local_ids.end()) return fail("SVG group references an unknown child");
                 record.child_local_ids.push_back(found->second);
             }
+            if (group->clip) {
+                const auto mask = local_ids.find(group->clip->mask_object_id);
+                if (mask == local_ids.end() ||
+                    std::find(record.child_local_ids.begin(), record.child_local_ids.end(), mask->second) ==
+                        record.child_local_ids.end())
+                    return fail("SVG clipping group references a mask outside its children");
+                const size_t mask_index = object_indices.at(group->clip->mask_object_id);
+                if (!std::holds_alternative<document::PathObject>(imported.objects[mask_index]))
+                    return fail("SVG clipping group mask is not a path");
+                record.clip_mask_local_id = mask->second;
+            }
             if (!add_record(record)) return fail("SVG group record exceeds C6 record limits");
         } else if (const auto* path = std::get_if<document::PathObject>(&object)) {
             ImportPathRecord record;
@@ -197,7 +208,7 @@ bool BuildSvgImportRecords(std::span<const uint8_t> source,
         if (!add_record(record)) return fail("SVG fidelity report exceeds C6 record limits");
     }
     ImportFidelityReportRecord report;
-    report.coverage_profile = "svg-hierarchy-v2";
+    report.coverage_profile = "svg-hierarchy-v3";
     report.parse_outcome = imported.report.is_clean() ? ImportParseOutcome::Complete : ImportParseOutcome::CompleteWithDiagnostics;
     report.coverage = ImportCoverage::Partial;
     report.appearance = imported.report.is_clean() ? ImportAppearance::Unknown : ImportAppearance::Partial;
@@ -225,7 +236,10 @@ bool BuildSvgImportRecords(std::span<const uint8_t> source,
             }
         } else if (record.type == ImportRecordType::Group) {
             const auto* group = std::get_if<ImportGroupRecord>(&*decoded);
-            if (!group || issues_started || group->local_id != expected_local_id++) {
+            if (!group || issues_started || group->local_id != expected_local_id++ ||
+                (group->clip_mask_local_id != 0 &&
+                 std::find(group->child_local_ids.begin(), group->child_local_ids.end(),
+                           group->clip_mask_local_id) == group->child_local_ids.end())) {
                 return fail("SVG proposal group record order or ID is invalid");
             }
             objects_started = true;

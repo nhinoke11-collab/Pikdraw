@@ -166,9 +166,9 @@ void test_toolbox_appearance_flyout_activation() {
     assert(window.active_tool() == 13);
     assert(window.toolbox_open_group() == 0);
 
-    // Also test direct toolbox button click on row 9 (Gradient, y = 508)
+    // Also test direct toolbox button click on row 10 (Gradient, y = 550)
     window.set_active_tool(0);
-    window.handle_mouse_down(26, 508);
+    window.handle_mouse_down(26, 550);
     assert(window.active_tool() == 13);
 }
 

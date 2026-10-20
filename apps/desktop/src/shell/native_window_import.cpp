@@ -39,6 +39,10 @@ struct ImportJobSession {
     std::mutex result_mutex;
     std::optional<ImportWorkerResult> result;
     bool is_open_action{false};
+    bool created_open_tab{false};
+    uint64_t view_generation{0};
+    std::string previous_tab_title;
+    std::string previous_file_path;
     std::string source_filename;
 };
 
@@ -64,19 +68,20 @@ bool NativeWindow::import_file_to_tab(const std::wstring& path, bool is_open_act
     if (_wcsicmp(extension.c_str(), L".dxf") == 0) {
         format = ImportFormat::Dxf;
     } else if (_wcsicmp(extension.c_str(), L".svg") == 0 ||
+               _wcsicmp(extension.c_str(), L".ai") == 0 ||
+               _wcsicmp(extension.c_str(), L".pdf") == 0 ||
+               _wcsicmp(extension.c_str(), L".cdr") == 0 ||
+               _wcsicmp(extension.c_str(), L".eps") == 0 ||
                _wcsicmp(extension.c_str(), L".png") == 0 ||
                _wcsicmp(extension.c_str(), L".jpg") == 0 ||
                _wcsicmp(extension.c_str(), L".jpeg") == 0 ||
                _wcsicmp(extension.c_str(), L".tif") == 0 ||
-               _wcsicmp(extension.c_str(), L".tiff") == 0 ||
-               _wcsicmp(extension.c_str(), L".cdr") == 0 ||
-               _wcsicmp(extension.c_str(), L".ai") == 0 ||
-               _wcsicmp(extension.c_str(), L".pdf") == 0) {
+               _wcsicmp(extension.c_str(), L".tiff") == 0) {
         format = ImportFormat::Svg;
     } else {
         status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Định dạng này chưa có bộ nhập. Hỗ trợ SVG, DXF 2D, CDR, AI, PDF và ảnh PNG/JPEG/TIFF."
-            : "No reader is enabled for this format. SVG, 2D DXF, CDR, AI, PDF and PNG/JPEG/TIFF are supported.";
+            ? "Chưa có bộ nhập cho định dạng này. Có thể mở PikDraw, SVG/DXF, subset CDR/PDF/AI/EPS và PNG/JPEG/TIFF."
+            : "No reader is enabled for this format. Supported: PikDraw, SVG/DXF, CDR/PDF/AI/EPS subsets, and PNG/JPEG/TIFF.";
         InvalidateRect(hwnd_, nullptr, FALSE);
         return false;
     }
@@ -84,20 +89,37 @@ bool NativeWindow::import_file_to_tab(const std::wstring& path, bool is_open_act
     const auto u8_filename = std::filesystem::path(path).filename().u8string();
     const std::string filename(u8_filename.begin(), u8_filename.end());
 
+    bool created_open_tab = false;
+    std::string previous_tab_title;
+    std::string previous_file_path;
     if (is_open_action) {
         const bool tab_has_content = root().document().is_dirty() ||
             root().document().current_snapshot()->object_count() > 0;
         if (tab_has_content) {
             create_new_tab(filename, 297.0, 210.0);
+            created_open_tab = true;
         } else {
+            previous_tab_title = active_tab().title;
+            previous_file_path = active_tab().file_path;
             active_tab().title = filename;
         }
     }
+    const auto restore_open_tab = [&] {
+        if (!is_open_action) return;
+        if (created_open_tab) {
+            if (tabs_.size() > 1) close_tab(active_tab_index_);
+        } else {
+            active_tab().title = previous_tab_title;
+            active_tab().file_path = previous_file_path;
+            document_path_ = active_tab().file_path;
+        }
+    };
 
     static std::atomic<uint64_t> next_job_id{1};
     auto session = std::make_shared<ImportJobSession>();
     const uint64_t job_id = next_job_id.fetch_add(1, std::memory_order_relaxed);
     if (job_id == 0) {
+        restore_open_tab();
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Không thể bắt đầu thêm tác vụ nhập tệp"
             : "No import job identifiers remain";
@@ -106,6 +128,7 @@ bool NativeWindow::import_file_to_tab(const std::wstring& path, bool is_open_act
     try {
         session->metadata = workflow().begin_import_job(job_id);
     } catch (...) {
+        restore_open_tab();
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Không thể tạo phiên nhập cho tài liệu hiện tại"
             : "Could not start an import job for this document";
@@ -113,6 +136,10 @@ bool NativeWindow::import_file_to_tab(const std::wstring& path, bool is_open_act
     }
     session->target_tab_id = active_tab().id;
     session->is_open_action = is_open_action;
+    session->created_open_tab = created_open_tab;
+    session->view_generation = view_generation_;
+    session->previous_tab_title = previous_tab_title;
+    session->previous_file_path = previous_file_path;
     session->source_filename = filename;
     const HWND notify_window = hwnd_;
     const auto metadata = session->metadata;
@@ -149,16 +176,18 @@ void NativeWindow::open_import_dialog() {
     }
     std::wstring path(32768, L'\0');
     const wchar_t* filter = language_ == UILanguage::Vietnamese
-        ? L"Tất cả tệp hỗ trợ (*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr;*.ai;*.pdf)\0*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr;*.ai;*.pdf\0"
-          L"Adobe Illustrator & PDF (*.ai;*.pdf)\0*.ai;*.pdf\0"
-          L"Bản vẽ CorelDRAW (*.cdr)\0*.cdr\0"
+        ? L"Định dạng có adapter nhập (*.svg;*.dxf;*.cdr;*.ai;*.pdf;*.eps;*.png;*.jpg;*.jpeg;*.tif;*.tiff)\0*.svg;*.dxf;*.cdr;*.ai;*.pdf;*.eps;*.png;*.jpg;*.jpeg;*.tif;*.tiff\0"
+          L"PDF/AI: nhập path, chữ và ảnh theo subset (PDF chỉ trang 1) (*.ai;*.pdf)\0*.ai;*.pdf\0"
+          L"EPS: path vector PostScript trong subset an toàn (*.eps)\0*.eps\0"
+          L"CorelDRAW CDR: path/chữ/layer subset (*.cdr)\0*.cdr\0"
           L"Ảnh PNG/JPEG/TIFF (*.png;*.jpg;*.jpeg;*.tif;*.tiff)\0*.png;*.jpg;*.jpeg;*.tif;*.tiff\0"
           L"Vector SVG (*.svg)\0*.svg\0"
           L"Tập con AutoCAD DXF 2D (*.dxf)\0*.dxf\0"
           L"Tất cả tệp\0*.*\0\0"
-        : L"All Supported Files (*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr;*.ai;*.pdf)\0*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.cdr;*.ai;*.pdf\0"
-          L"Adobe Illustrator & PDF (*.ai;*.pdf)\0*.ai;*.pdf\0"
-          L"CorelDRAW Files (*.cdr)\0*.cdr\0"
+        : L"Import formats with adapters (*.svg;*.dxf;*.cdr;*.ai;*.pdf;*.eps;*.png;*.jpg;*.jpeg;*.tif;*.tiff)\0*.svg;*.dxf;*.cdr;*.ai;*.pdf;*.eps;*.png;*.jpg;*.jpeg;*.tif;*.tiff\0"
+          L"PDF/AI: path, text and image subset (PDF page 1 only) (*.ai;*.pdf)\0*.ai;*.pdf\0"
+          L"EPS: safe editable PostScript vector path subset (*.eps)\0*.eps\0"
+          L"CorelDRAW CDR path/text/layer subset (*.cdr)\0*.cdr\0"
           L"PNG/JPEG/TIFF images (*.png;*.jpg;*.jpeg;*.tif;*.tiff)\0*.png;*.jpg;*.jpeg;*.tif;*.tiff\0"
           L"SVG vector (*.svg)\0*.svg\0"
           L"AutoCAD DXF 2D subset (*.dxf)\0*.dxf\0"
@@ -257,6 +286,20 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
             break;
         }
     }
+    const auto rollback_open_tab = [&] {
+        if (!session->is_open_action || !target) return;
+        const auto current = target->root->document().current_snapshot();
+        if (!current || current->document_id() != session->metadata.document_id ||
+            current->epoch() != session->metadata.epoch ||
+            current->revision() != session->metadata.base_revision) return;
+        if (session->created_open_tab) {
+            if (tabs_.size() > 1) close_tab(target_index);
+        } else {
+            target->title = session->previous_tab_title;
+            target->file_path = session->previous_file_path;
+            if (target_index == active_tab_index_) document_path_ = target->file_path;
+        }
+    };
     if (!result || !target || !target->workflow || !target->root) {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Tác vụ nhập đã kết thúc nhưng tài liệu đích không còn mở"
@@ -266,6 +309,7 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
     }
     if (session->cancel_requested.load(std::memory_order_acquire) || result->cancelled) {
         try { target->workflow->cancel_import_job(session->metadata.job_id); } catch (...) {}
+        rollback_open_tab();
         status_msg_ = language_ == UILanguage::Vietnamese ? "Đã hủy nhập; tài liệu không đổi"
                                                           : "Import cancelled; document unchanged";
         close_session();
@@ -273,6 +317,7 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
     }
     if (!result->success) {
         try { target->workflow->cancel_import_job(session->metadata.job_id); } catch (...) {}
+        rollback_open_tab();
         const auto message = NativeWindow::utf8_to_wide(result->error_message);
         status_msg_ = language_ == UILanguage::Vietnamese ? "Nhập tệp thất bại" : "Import failed";
         MessageBoxW(hwnd_, message.c_str(),
@@ -293,38 +338,51 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
         return;
     }
 
-    const size_t object_count = result->proposal.objects.size();
+    size_t object_count = result->proposal.objects.size();
+    for (const auto& page : result->proposal.pages)
+        object_count += page.objects.size();
     const size_t layer_count = result->proposal.layers.size();
     const auto& proposal = result->proposal;
     const bool is_raster = proposal.profile_id == "raster-rgba8-v1";
-    const bool is_preview = proposal.profile_id == "cdr-preview-v1" ||
-                            proposal.profile_id == "pdf-ai-preview-v1";
+    const bool is_pdf_subset = proposal.profile_id == "pdf-page-vector-v2" ||
+                               proposal.profile_id == "ai-pdf-compatible-vector-v2" ||
+                               proposal.profile_id == "pdf-page-set-v3" ||
+                               proposal.profile_id == "ai-pdf-compatible-page-set-v3";
+    const bool is_eps_subset = proposal.profile_id == "eps-path-v1";
+    const bool is_cdr_subset = proposal.profile_id == "cdr-libcdr-svg-v2";
     std::wostringstream content;
     content << (language_ == UILanguage::Vietnamese ? L"Nguồn: " : L"Source: ")
             << NativeWindow::utf8_to_wide(proposal.format_name).c_str() << L" · "
-            << (language_ == UILanguage::Vietnamese ? L"trang nguồn " : L"source page ")
+            << (language_ == UILanguage::Vietnamese ? L"trang nguồn · " : L"source pages · ")
+            << (proposal.pages.empty() ? 1 : proposal.pages.size()) << L" · "
             << FormatNumber(proposal.source_page_width_mm) << L" × "
             << FormatNumber(proposal.source_page_height_mm) << L" mm\n"
             << object_count << (language_ == UILanguage::Vietnamese
-                ? ((is_raster || is_preview) ? L" ảnh raster · " : L" đối tượng chỉnh sửa được · ")
-                : ((is_raster || is_preview) ? L" raster image · " : L" editable objects · "))
+                ? (is_raster ? L" ảnh raster · " : L" đối tượng chỉnh sửa được · ")
+                : (is_raster ? L" raster image · " : L" editable objects · "))
             << layer_count << (language_ == UILanguage::Vietnamese ? L" layer nguồn\n" : L" source layers\n")
             << (language_ == UILanguage::Vietnamese ? L"Độ bao phủ: một phần · Hiển thị: chưa xác minh · Sẵn sàng sản xuất: chưa đánh giá."
                                                     : L"Coverage: partial · Appearance: unverified · Production: not assessed.");
 
     std::wstring details;
-    if (is_preview) {
-        details = language_ == UILanguage::Vietnamese
-            ? L"Chỉ nhập ảnh xem trước nhúng trong tệp CDR/AI/PDF. Không có đường vector, chữ hoặc layer gốc để chỉnh sửa hay cắt CNC. Chất lượng phóng to phụ thuộc thumbnail nguồn.\n"
-              L"Ảnh được đặt theo khổ trang nguồn. Dữ liệu thiết kế gốc không được lưu cùng tài liệu .pikdraw; hãy giữ tệp nguồn."
-            : L"Only the embedded CDR/AI/PDF preview is imported. Original vector paths, text and layers are unavailable for editing or CNC. Enlargement is limited by the source thumbnail.\n"
-              L"The image uses the source page dimensions. Original authoring data is not stored in the .pikdraw document; keep the source file.";
-    } else if (is_raster) {
+    if (is_raster) {
         details = language_ == UILanguage::Vietnamese
             ? L"Ảnh được giải mã thành pixel RGBA8 để hiển thị; byte nguồn, DPI, hướng EXIF và ICC được giữ trong tài liệu. Chuyển đổi màu chưa được chứng nhận giống tuyệt đối giữa các ứng dụng.\n"
               L"Ảnh raster không phải đường vector để cắt CNC. Độ phân giải nguồn và việc chuyển sang RGBA8 có thể giới hạn chất lượng phóng to. Khổ trang tài liệu hiện tại không đổi."
             : L"The image is decoded to RGBA8 pixels for display; source bytes, DPI, EXIF orientation and ICC data are retained in the document. Color conversion is not certified to match every application exactly.\n"
               L"A raster image is not vector geometry for CNC cutting. Source resolution and RGBA8 conversion can limit enlargement quality. The current document page size stays unchanged.";
+    } else if (is_pdf_subset) {
+        details = language_ == UILanguage::Vietnamese
+            ? L"Các trang PDF được đọc thành path/chữ chỉnh sửa được theo từng trang; trang trắng vẫn được giữ. Hệ thống từ chối toàn bộ nếu một trang không đọc được. Hiệu ứng, clipping, ảnh nhúng, profile màu và overprint chưa được giữ đầy đủ. Với AI, đây chỉ là representation PDF-compatible; dữ liệu authoring riêng của Illustrator chưa được đọc. Không bảo đảm khớp giao diện, round-trip hay sản xuất CNC."
+            : L"PDFium maps supported paths, text and placed images into editable objects on each source page; blank pages are retained. The whole proposal is rejected if any selected page cannot be read. Effects, clipping, source color profiles and overprint are not fully preserved. For AI, this reads only its PDF-compatible representation; Illustrator authoring data is not read. Appearance, round-trip and CNC production are not certified.";
+    } else if (is_eps_subset) {
+        details = language_ == UILanguage::Vietnamese
+            ? L"DOS EPS được diễn giải trong Ghostscript chạy bằng AppContainer, không có quyền mạng và không được tạo process con; plain DSC EPS dùng bộ đọc operator allowlist. DOS EPS được chuyển tạm sang PDF rồi ánh xạ thành đối tượng PikDraw có thể sửa; ảnh nhúng có thể thành ImageObject. Cách này giữ nội dung trong giới hạn PDFium hỗ trợ, không giữ đầy đủ layer nguồn, hiệu ứng live, clipping, profile màu hay metadata EPS. Hình thức, round-trip và sản xuất chưa được xác minh."
+            : L"DOS EPS is interpreted by Ghostscript in an AppContainer with no network capability or child processes; plain DSC EPS uses the allowlisted operator reader. DOS EPS is converted temporarily to PDF and mapped into editable PikDraw objects; embedded images may become ImageObjects. This retains only the content supported by the PDFium mapping and does not preserve source layers, live effects, clipping, color profiles or EPS metadata in full. Appearance, round-trip and production are not assessed.";
+    } else if (is_cdr_subset) {
+        details = language_ == UILanguage::Vietnamese
+            ? L"libcdr chuyển trang CDR thành path/chữ/group chỉnh sửa được; layer cấp cao có mã Layer được ánh xạ sang layer PikDraw. Các đoạn chữ khác font/cỡ có thể được gộp theo font đầu tiên; cap/join và style chưa hỗ trợ có thể đổi hình thức. Hiệu ứng live, clipping, gradient, bitmap, tên layer, quản lý màu và dữ liệu authoring Corel không được giữ đầy đủ. Đối tượng ngoài subset làm từ chối toàn bộ file. Không nhập thumbnail; không bảo đảm appearance, round-trip hay sản xuất CNC."
+            : L"libcdr converts a CDR page into editable path/text/group objects; top-level groups with Layer IDs map to PikDraw layers. Text runs with different fonts or sizes may be merged using the first font; unsupported cap/join and styles may change appearance. Live effects, clipping, gradients, bitmaps, source layer names, color management and Corel authoring data are not fully preserved. Unsupported generated objects reject the whole file. No thumbnail is imported; appearance, round-trip and CNC production are not certified.";
     } else {
         details = language_ == UILanguage::Vietnamese
             ? L"Các đơn vị SVG được quy đổi sang mm. DXF dùng $INSUNITS của nguồn; thiếu đơn vị được hỗ trợ thì từ chối.\n"
@@ -333,6 +391,15 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
             : L"SVG source units are converted to mm. DXF uses source $INSUNITS; unsupported or missing units are rejected.\n"
               L"The current document page size stays unchanged. Source geometry and layers are added to its current page.\n"
               L"The source file and fidelity report are not stored in the .pikdraw document. Import does not prove round-trip export or production readiness.";
+    }
+    if (is_pdf_subset || is_eps_subset || is_cdr_subset) {
+        details += language_ == UILanguage::Vietnamese
+            ? (session->is_open_action
+              ? L"\nOpen tạo tài liệu mới với đầy đủ trang nguồn và khổ riêng từng trang. Nguồn và báo cáo nhập không được nhúng trong file .pikdraw."
+                : L"\nImport thêm trang nguồn sau trang đang chọn và giữ nguyên nội dung hiện tại. Nguồn và báo cáo nhập không được nhúng trong file .pikdraw.")
+            : (session->is_open_action
+                ? L"\nOpen creates a document with every source page and its own dimensions. The source file and import report are not embedded in the .pikdraw document."
+                : L"\nImport inserts source pages after the active page and leaves existing content in place. The source file and import report are not embedded in the .pikdraw document.");
     }
     for (const auto& issue : proposal.issues) {
         details += L"\n• ";
@@ -344,6 +411,10 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
             details += language_ == UILanguage::Vietnamese
                 ? L"Màu DXF ACI 7 phụ thuộc nền CAD; preview dùng màu trắng."
                 : L"DXF ACI 7 depends on CAD background; preview uses white.";
+        } else if (issue.feature_code == "postscript_conversion") {
+            details += language_ == UILanguage::Vietnamese
+                ? L"DOS EPS được chuyển qua PDF trong worker cô lập; các phần ngoài ánh xạ PDFium không được giữ đầy đủ."
+                : L"DOS EPS was normalized through PDF in an isolated worker; content outside the PDFium mapping is not fully retained.";
         } else {
             details += language_ == UILanguage::Vietnamese
                 ? L"Có chẩn đoán giới hạn subset trong báo cáo nhập."
@@ -353,15 +424,21 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
 
     const std::wstring title = language_ == UILanguage::Vietnamese ? L"Xem lại kết quả nhập" : L"Review import fidelity";
     const std::wstring instruction = language_ == UILanguage::Vietnamese
-        ? (is_preview ? L"Nhập ảnh xem trước với các giới hạn nêu trên?"
-           : is_raster ? L"Nhập ảnh raster đã chuyển đổi với các giới hạn hiển thị nêu trên?"
+        ? ((is_pdf_subset || is_eps_subset || is_cdr_subset) ? (session->is_open_action
+              ? L"Mở tài liệu path/chữ subset này và chấp nhận các phần không được giữ?"
+              : L"Chỉ nhập subset path/chữ này và chấp nhận các phần không được giữ?")
+          : is_raster ? L"Nhập ảnh raster đã chuyển đổi với các giới hạn hiển thị nêu trên?"
                      : L"Chỉ nhập các đối tượng được biểu diễn trong subset hiện tại?")
-        : (is_preview ? L"Import the embedded preview with these limitations?"
-           : is_raster ? L"Import the converted raster image with these display limitations?"
+        : ((is_pdf_subset || is_eps_subset || is_cdr_subset) ? (session->is_open_action
+              ? L"Open an editable path/text document from this subset and accept the listed losses?"
+              : L"Import only this editable path/text subset and accept the listed losses?")
+          : is_raster ? L"Import the converted raster image with these display limitations?"
                      : L"Import only the objects represented by the current subset?");
     const std::wstring apply_label = language_ == UILanguage::Vietnamese
-        ? ((is_raster || is_preview) ? L"Nhập ảnh" : L"Nhập đối tượng")
-        : ((is_raster || is_preview) ? L"Import image" : L"Import editable subset");
+        ? ((is_pdf_subset || is_eps_subset || is_cdr_subset) ? (session->is_open_action ? L"Mở subset" : L"Nhập subset")
+          : is_raster ? L"Nhập ảnh" : L"Nhập đối tượng")
+        : ((is_pdf_subset || is_eps_subset || is_cdr_subset) ? (session->is_open_action ? L"Open subset" : L"Import subset")
+          : is_raster ? L"Import image" : L"Import editable subset");
     const std::wstring cancel_label = language_ == UILanguage::Vietnamese ? L"Hủy" : L"Cancel";
     const TASKDIALOG_BUTTON buttons[]{{kImportChoiceApply, apply_label.c_str()},
                                       {kImportChoiceCancel, cancel_label.c_str()}};
@@ -378,7 +455,7 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
     config.pButtons = buttons;
     config.nDefaultButton = kImportChoiceCancel;
     int choice = kImportChoiceCancel;
-    if (session->is_open_action) {
+    if (session->is_open_action && !is_pdf_subset && !is_eps_subset && !is_cdr_subset) {
         choice = kImportChoiceApply;
     } else {
         using TaskDialogFunction = HRESULT(WINAPI*)(const TASKDIALOGCONFIG*, int*, int*, BOOL*);
@@ -396,25 +473,38 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
     }
     if (choice != kImportChoiceApply) {
         try { target->workflow->cancel_import_job(session->metadata.job_id); } catch (...) {}
+        rollback_open_tab();
         status_msg_ = language_ == UILanguage::Vietnamese ? "Đã hủy nhập; tài liệu không đổi"
                                                           : "Import cancelled; document unchanged";
         close_session();
         return;
     }
 
-    const double source_page_w = proposal.source_page_width_mm;
-    const double source_page_h = proposal.source_page_height_mm;
     const auto committed = target->workflow->commit_import_proposal(
-        session->metadata, std::move(result->proposal));
+        session->metadata, std::move(result->proposal), session->is_open_action);
     if (committed == document::ProposalStatus::Accepted) {
-        if (source_page_w > 0.0 && source_page_h > 0.0) {
-            target->workflow->set_page_size(source_page_w, source_page_h);
-            target->page_width_mm = source_page_w;
-            target->page_height_mm = source_page_h;
+        if (session->is_open_action) {
+            const auto opened_snapshot = target->root->document().current_snapshot();
+            if (opened_snapshot) {
+                target->page_width_mm = opened_snapshot->page().width_mm;
+                target->page_height_mm = opened_snapshot->page().height_mm;
+            }
         }
         const bool target_active = target_index == active_tab_index_;
-        if (target_active) {
-            fit_page_to_canvas();
+        const auto& target_document = target->root->document();
+        const bool target_view_current = target_active &&
+            view_generation_ == session->view_generation &&
+            target_document.active_page_id() == session->metadata.target_page_id &&
+            target_document.page_navigation_generation() ==
+                session->metadata.page_navigation_generation;
+        bool cdr_content_outside_page = false;
+        if (target_view_current) {
+            if (is_cdr_subset) {
+                if (!fit_document_content_to_canvas(&cdr_content_outside_page))
+                    fit_page_to_canvas();
+            } else {
+                fit_page_to_canvas();
+            }
             root().vector_controller().selection().clear();
             set_active_tool(0);
         }
@@ -422,6 +512,11 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
             target->file_path.clear();
             status_msg_ = (language_ == UILanguage::Vietnamese ? "Đã mở tệp: " : "Opened file: ") +
                 session->source_filename;
+            if (target_active && is_cdr_subset && cdr_content_outside_page) {
+                status_msg_ += language_ == UILanguage::Vietnamese
+                    ? " · nội dung nằm ngoài trang, tọa độ được giữ; nhấn F để vừa trang"
+                    : " · artwork extends beyond the page; coordinates preserved; press F to fit page";
+            }
         } else {
             const std::string count_text = std::to_string(object_count);
             if (target_active) {
@@ -429,6 +524,11 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
                     count_text + (language_ == UILanguage::Vietnamese
                         ? " đối tượng · một bước Ctrl+Z · khổ trang giữ nguyên"
                         : " objects · one Ctrl+Z step · page size unchanged");
+                if (is_cdr_subset && cdr_content_outside_page) {
+                    status_msg_ += language_ == UILanguage::Vietnamese
+                        ? " · nội dung nằm ngoài trang, tọa độ được giữ; nhấn F để vừa trang"
+                        : " · artwork extends beyond the page; coordinates preserved; press F to fit page";
+                }
             }
         }
     } else {

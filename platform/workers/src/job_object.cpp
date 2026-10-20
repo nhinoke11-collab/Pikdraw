@@ -1,6 +1,40 @@
 #include "pikdraw/workers/job_object.hpp"
 
+#include <algorithm>
+#include <limits>
+
 namespace pikdraw::workers {
+
+namespace {
+constexpr unsigned kSystemMemoryPressureLimitPercent = 90;
+
+bool ReadSystemMemoryStatus(MEMORYSTATUSEX& status) noexcept {
+    status = {};
+    status.dwLength = sizeof(status);
+    return GlobalMemoryStatusEx(&status) != FALSE && status.ullTotalPhys != 0 &&
+           status.ullAvailPhys <= status.ullTotalPhys;
+}
+}
+
+size_t SystemMemoryHeadroomBeforePressureLimit() noexcept {
+    MEMORYSTATUSEX status{};
+    if (!ReadSystemMemoryStatus(status)) return 0;
+    const uint64_t threshold = (status.ullTotalPhys / 100) * kSystemMemoryPressureLimitPercent +
+        ((status.ullTotalPhys % 100) * kSystemMemoryPressureLimitPercent) / 100;
+    const uint64_t used = status.ullTotalPhys - status.ullAvailPhys;
+    if (used >= threshold) return 0;
+    const uint64_t headroom = threshold - used;
+    return static_cast<size_t>((std::min)(headroom,
+        static_cast<uint64_t>(std::numeric_limits<size_t>::max())));
+}
+
+bool IsSystemMemoryPressureLimitReached() noexcept {
+    MEMORYSTATUSEX status{};
+    if (!ReadSystemMemoryStatus(status)) return false;
+    const uint64_t threshold = (status.ullTotalPhys / 100) * kSystemMemoryPressureLimitPercent +
+        ((status.ullTotalPhys % 100) * kSystemMemoryPressureLimitPercent) / 100;
+    return status.ullTotalPhys - status.ullAvailPhys >= threshold;
+}
 
 bool JobObjectGuard::Create(const JobLimitsConfig& config) {
     HANDLE h = CreateJobObjectW(nullptr, nullptr);

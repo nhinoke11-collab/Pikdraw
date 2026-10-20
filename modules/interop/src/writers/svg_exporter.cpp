@@ -143,6 +143,64 @@ void write_transform(std::ostream &stream,
          << ' ' << transform.c << ' ' << transform.d << ' ' << transform.tx
          << ' ' << transform.ty << ")\"";
 }
+void write_path_element(std::ostream &stream, document::ObjectId id,
+                        const document::PathObject &path,
+                        SvgStreamExportResult &result) {
+  if (!path.visible) return;
+  std::string issue;
+  std::optional<document::EditablePath> migrated;
+  const document::EditablePath *source = path.authoring_source.get();
+  if (!source) {
+    migrated = adapters::SvgPathAdapter::from_path2d(path.path, &issue);
+    if (migrated)
+      source = &*migrated;
+  }
+  const auto data = source
+                        ? adapters::SvgPathAdapter::to_path_data(*source, &issue)
+                        : std::optional<std::string>{};
+  if (!data) {
+    result.report.add_issue(FidelitySeverity::Unsupported,
+                            "object " + std::to_string(id),
+                            "Editable path", issue);
+    return;
+  }
+  stream << "  <path d=\"" << *data << '"';
+  if (path.has_fill) {
+    stream << " fill=\"" << color_to_hex(path.fill) << '"';
+    write_paint_opacity(stream, "fill-opacity", path.fill,
+                        path.appearance.fill_opacity);
+    warn_preview_color(result, id, path.fill, "fill color");
+  } else {
+    stream << " fill=\"none\"";
+  }
+  if (path.has_stroke) {
+    stream << " stroke=\"" << color_to_hex(path.stroke)
+           << "\" stroke-width=\"" << path.stroke_width_mm << '"';
+    write_paint_opacity(stream, "stroke-opacity", path.stroke,
+                        path.appearance.stroke_opacity);
+    warn_preview_color(result, id, path.stroke, "stroke color");
+  }
+  write_object_opacity(stream, path.appearance.object_opacity);
+  write_transform(stream, path.transform);
+  stream << "/>\n";
+}
+
+void write_text_element(std::ostream &stream, document::ObjectId id,
+                        const document::TextObject &text,
+                        SvgStreamExportResult &result) {
+  if (!text.visible) return;
+  stream << "  <text x=\"" << text.position.x << "\" y=\""
+         << text.position.y << "\" font-family=\""
+         << xml_escape(text.font.family_name) << "\" font-size=\""
+         << text.font.size_pt * 25.4 / 72.0 << "\" fill=\"" << color_to_hex(text.fill)
+         << '"';
+  write_paint_opacity(stream, "fill-opacity", text.fill,
+                      text.appearance.fill_opacity);
+  write_object_opacity(stream, text.appearance.object_opacity);
+  write_transform(stream, text.transform);
+  stream << '>' << xml_escape(text.text) << "</text>\n";
+  warn_preview_color(result, id, text.fill, "text color");
+}
 } // namespace
 
 SvgStreamExportResult SvgExporter::write_to_stream(
@@ -166,6 +224,16 @@ SvgStreamExportResult SvgExporter::write_to_stream(
   std::unordered_set<document::ObjectId> root_ids;
   for (const auto &layer : snapshot.active_page().layout.layers)
     root_ids.insert(layer.object_ids.begin(), layer.object_ids.end());
+
+  std::unordered_set<document::ObjectId> nested_ids;
+  for (const auto &[id, object] : snapshot.objects().all()) {
+    if (const auto *grp = std::get_if<document::GroupObject>(&object)) {
+      for (const auto child_id : grp->children_ids) {
+        nested_ids.insert(child_id);
+      }
+    }
+  }
+
   std::unordered_set<document::ObjectId> unique_ids;
   for (const auto id : object_ids) {
     if (!unique_ids.insert(id).second) {
@@ -176,7 +244,7 @@ SvgStreamExportResult SvgExporter::write_to_stream(
       result.report.add_issue(FidelitySeverity::Unsupported,
                               "object " + std::to_string(id), "Object scope",
                               "The selected object is not present on the active page");
-    } else if (!root_ids.contains(id)) {
+    } else if (!root_ids.contains(id) && (!included_object_ids ? !nested_ids.contains(id) : true)) {
       result.report.add_issue(FidelitySeverity::Unsupported,
                               "object " + std::to_string(id), "Group transforms",
                               "A nested object cannot be exported independently until its group transforms are supported");
@@ -200,70 +268,88 @@ SvgStreamExportResult SvgExporter::write_to_stream(
          << page.width_mm << "mm\" height=\"" << page.height_mm
          << "mm\" viewBox=\"0 0 " << page.width_mm << ' ' << page.height_mm
          << "\">\n";
+
+  bool has_defs = false;
   for (const auto &[id, object] : snapshot.objects().all()) {
-    if (!unique_ids.contains(id))
+    if (!unique_ids.contains(id)) continue;
+    if (const auto *grp = std::get_if<document::GroupObject>(&object)) {
+      if (grp->is_clipping_container()) {
+        const auto *mask = snapshot.objects().lookup_ref(grp->clip->mask_object_id);
+        if (mask) {
+          if (const auto *mask_path = std::get_if<document::PathObject>(mask)) {
+            std::string issue;
+            std::optional<document::EditablePath> migrated;
+            const document::EditablePath *source = mask_path->authoring_source.get();
+            if (!source) {
+              migrated = adapters::SvgPathAdapter::from_path2d(mask_path->path, &issue);
+              if (migrated) source = &*migrated;
+            }
+            const auto data = source ? adapters::SvgPathAdapter::to_path_data(*source, &issue) : std::optional<std::string>{};
+            if (data) {
+              if (!has_defs) {
+                stream << "  <defs>\n";
+                has_defs = true;
+              }
+              stream << "    <clipPath id=\"clip_" << grp->id << "\">\n";
+              stream << "      <path d=\"" << *data << '"';
+              write_transform(stream, mask_path->transform);
+              stream << "/>\n    </clipPath>\n";
+            }
+          }
+        }
+      }
+    }
+  }
+  if (has_defs) {
+    stream << "  </defs>\n";
+  }
+
+  for (const auto &[id, object] : snapshot.objects().all()) {
+    if (!unique_ids.contains(id) || nested_ids.contains(id))
       continue;
     if (const auto *path = std::get_if<document::PathObject>(&object)) {
-      if (!path->visible)
-        continue;
-      std::string issue;
-      std::optional<document::EditablePath> migrated;
-      const document::EditablePath *source = path->authoring_source.get();
-      if (!source) {
-        migrated = adapters::SvgPathAdapter::from_path2d(path->path, &issue);
-        if (migrated)
-          source = &*migrated;
-      }
-      const auto data = source
-                            ? adapters::SvgPathAdapter::to_path_data(*source,
-                                                                     &issue)
-                            : std::optional<std::string>{};
-      if (!data) {
-        result.report.add_issue(FidelitySeverity::Unsupported,
-                                "object " + std::to_string(id),
-                                "Editable path", issue);
-        continue;
-      }
-      stream << "  <path d=\"" << *data << '"';
-      if (path->has_fill) {
-        stream << " fill=\"" << color_to_hex(path->fill) << '"';
-        write_paint_opacity(stream, "fill-opacity", path->fill,
-                            path->appearance.fill_opacity);
-        warn_preview_color(result, id, path->fill, "fill color");
-      } else {
-        stream << " fill=\"none\"";
-      }
-      if (path->has_stroke) {
-        stream << " stroke=\"" << color_to_hex(path->stroke)
-               << "\" stroke-width=\"" << path->stroke_width_mm << '"';
-        write_paint_opacity(stream, "stroke-opacity", path->stroke,
-                            path->appearance.stroke_opacity);
-        warn_preview_color(result, id, path->stroke, "stroke color");
-      }
-      write_object_opacity(stream, path->appearance.object_opacity);
-      write_transform(stream, path->transform);
-      stream << "/>\n";
+      write_path_element(stream, id, *path, result);
       continue;
     }
     if (const auto *text = std::get_if<document::TextObject>(&object)) {
-      if (!text->visible)
-        continue;
-      stream << "  <text x=\"" << text->position.x << "\" y=\""
-             << text->position.y << "\" font-family=\""
-             << xml_escape(text->font.family_name) << "\" font-size=\""
-             << text->font.size_pt * 25.4 / 72.0 << "\" fill=\"" << color_to_hex(text->fill)
-             << '"';
-      write_paint_opacity(stream, "fill-opacity", text->fill,
-                          text->appearance.fill_opacity);
-      write_object_opacity(stream, text->appearance.object_opacity);
-      write_transform(stream, text->transform);
-      stream << '>' << xml_escape(text->text) << "</text>\n";
-      warn_preview_color(result, id, text->fill, "text color");
+      write_text_element(stream, id, *text, result);
       continue;
     }
-    result.report.add_issue(FidelitySeverity::Unsupported,
-                            "object " + std::to_string(id), "Group object",
-                            "SVG group hierarchy and inherited transforms are not exported by this subset");
+    if (const auto *group = std::get_if<document::GroupObject>(&object)) {
+      if (group->is_clipping_container()) {
+        const auto *mask = snapshot.objects().lookup_ref(group->clip->mask_object_id);
+        const auto *mask_path = mask ? std::get_if<document::PathObject>(mask) : nullptr;
+        if (group->clip->preserve_frame_appearance && mask_path && mask_path->has_fill) {
+          auto fill_mask = *mask_path;
+          fill_mask.has_stroke = false;
+          write_path_element(stream, fill_mask.id, fill_mask, result);
+        }
+        stream << "  <g clip-path=\"url(#clip_" << group->id << ")\"";
+        write_transform(stream, group->transform);
+        stream << ">\n";
+        for (const auto child_id : group->children_ids) {
+          if (child_id == group->clip->mask_object_id) continue;
+          const auto *child = snapshot.objects().lookup_ref(child_id);
+          if (!child) continue;
+          if (const auto *cp = std::get_if<document::PathObject>(child)) {
+            write_path_element(stream, child_id, *cp, result);
+          } else if (const auto *ct = std::get_if<document::TextObject>(child)) {
+            write_text_element(stream, child_id, *ct, result);
+          }
+        }
+        stream << "  </g>\n";
+        if (group->clip->preserve_frame_appearance && mask_path && mask_path->has_stroke && mask_path->stroke_width_mm > 0.0) {
+          auto stroke_mask = *mask_path;
+          stroke_mask.has_fill = false;
+          write_path_element(stream, stroke_mask.id, stroke_mask, result);
+        }
+        continue;
+      }
+      result.report.add_issue(FidelitySeverity::Unsupported,
+                              "object " + std::to_string(id), "Group object",
+                              "SVG group hierarchy and inherited transforms are not exported by this subset");
+      continue;
+    }
   }
   if (result.report.has_unsupported()) {
     result.error_message =

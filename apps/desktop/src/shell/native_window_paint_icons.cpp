@@ -220,6 +220,23 @@ void draw_tool_icon_gdiplus(GdiplusApi* api, GpGraphics* g, int tool, float cx, 
         api->DrawRectangle(g, pen, cx - 8.5f, cy + 3.5f, 3.0f, 3.0f);
         api->DrawRectangle(g, pen, cx - 1.5f, cy - 6.5f, 3.0f, 3.0f);
         api->DrawRectangle(g, pen, cx + 5.5f, cy + 3.5f, 3.0f, 3.0f);
+    } else if (tool == 16) {
+        // Tool 16: Dimension Tool (CAD dimension line with extension ticks and arrows)
+        api->DrawLine(g, pen, cx - 6.5f, cy, cx + 6.5f, cy);
+        api->DrawLine(g, pen, cx - 6.5f, cy - 5.5f, cx - 6.5f, cy + 5.5f);
+        api->DrawLine(g, pen, cx + 6.5f, cy - 5.5f, cx + 6.5f, cy + 5.5f);
+        GpPointF left_arrow[] = {
+            {cx - 6.5f, cy},
+            {cx - 2.8f, cy - 2.5f},
+            {cx - 2.8f, cy + 2.5f}
+        };
+        api->FillPolygon(g, fill_brush, left_arrow, 3, kFillModeAlternate);
+        GpPointF right_arrow[] = {
+            {cx + 6.5f, cy},
+            {cx + 2.8f, cy - 2.5f},
+            {cx + 2.8f, cy + 2.5f}
+        };
+        api->FillPolygon(g, fill_brush, right_arrow, 3, kFillModeAlternate);
     }
 
     api->DeleteBrush(fill_brush);
@@ -318,6 +335,19 @@ void draw_tool_icon_gdi_fallback(HDC dc, int tool, int center_x, int center_y, C
         Rectangle(dc, center_x - 9, center_y + 3, center_x - 4, center_y + 8);
         Rectangle(dc, center_x - 2, center_y - 7, center_x + 3, center_y - 2);
         Rectangle(dc, center_x + 5, center_y + 3, center_x + 10, center_y + 8);
+    } else if (tool == 16) {
+        MoveToEx(dc, center_x - 7, center_y, nullptr);
+        LineTo(dc, center_x + 8, center_y);
+        MoveToEx(dc, center_x - 7, center_y - 5, nullptr);
+        LineTo(dc, center_x - 7, center_y + 6);
+        MoveToEx(dc, center_x + 7, center_y - 5, nullptr);
+        LineTo(dc, center_x + 7, center_y + 6);
+        MoveToEx(dc, center_x - 4, center_y - 3, nullptr);
+        LineTo(dc, center_x - 7, center_y);
+        LineTo(dc, center_x - 4, center_y + 3);
+        MoveToEx(dc, center_x + 4, center_y - 3, nullptr);
+        LineTo(dc, center_x + 7, center_y);
+        LineTo(dc, center_x + 4, center_y + 3);
     }
     SelectObject(dc, old_brush);
     SelectObject(dc, old_pen);
@@ -745,6 +775,159 @@ void draw_angle_icon(HDC dc, int cx, int cy, COLORREF color) {
     LineTo(dc, cx + 6, cy + 5);
     MoveToEx(dc, cx - 6, cy + 5, nullptr);
     LineTo(dc, cx + 3, cy - 4);
+    SelectObject(dc, old_pen);
+    DeleteObject(pen);
+}
+
+void draw_corner_round_icon(HDC dc, int cx, int cy, COLORREF color) {
+    auto* api = GdiplusApi::get();
+    if (api) {
+        GpGraphics* g = nullptr;
+        if (api->CreateFromHDC(dc, &g) == 0 && g) {
+            api->SetSmoothingMode(g, kSmoothingModeAntiAlias);
+            api->SetPixelOffsetMode(g, kPixelOffsetModeHalf);
+            const float fcx = static_cast<float>(cx);
+            const float fcy = static_cast<float>(cy);
+            GpPen* pen = nullptr;
+            api->CreatePen1(MakeGdiplusARGB(color, 255), 1.5f, kUnitPixel, &pen);
+            api->SetPenLineCap197819(pen, kLineCapRound, kLineCapRound, 0);
+
+            GpPath* path = nullptr;
+            api->CreatePath(kFillModeAlternate, &path);
+            api->AddPathLine(path, fcx - 6.0f, fcy + 6.0f, fcx - 6.0f, fcy - 1.0f);
+            api->AddPathArc(path, fcx - 6.0f, fcy - 6.0f, 10.0f, 10.0f, 180.0f, 90.0f);
+            api->AddPathLine(path, fcx - 1.0f, fcy - 6.0f, fcx + 6.0f, fcy - 6.0f);
+            api->DrawPath(g, pen, path);
+            api->DeletePath(path);
+
+            api->DeletePen(pen);
+            api->DeleteGraphics(g);
+            return;
+        }
+    }
+    HPEN pen = CreatePen(PS_SOLID, 2, color);
+    const HGDIOBJ old_pen = SelectObject(dc, pen);
+    MoveToEx(dc, cx - 6, cy + 6, nullptr);
+    LineTo(dc, cx - 6, cy - 1);
+    LineTo(dc, cx - 1, cy - 6);
+    LineTo(dc, cx + 6, cy - 6);
+    SelectObject(dc, old_pen);
+    DeleteObject(pen);
+}
+
+void draw_corner_scallop_icon(HDC dc, int cx, int cy, COLORREF color) {
+    auto* api = GdiplusApi::get();
+    if (api) {
+        GpGraphics* g = nullptr;
+        if (api->CreateFromHDC(dc, &g) == 0 && g) {
+            api->SetSmoothingMode(g, kSmoothingModeAntiAlias);
+            api->SetPixelOffsetMode(g, kPixelOffsetModeHalf);
+            const float fcx = static_cast<float>(cx);
+            const float fcy = static_cast<float>(cy);
+            GpPen* pen = nullptr;
+            api->CreatePen1(MakeGdiplusARGB(color, 255), 1.5f, kUnitPixel, &pen);
+            api->SetPenLineCap197819(pen, kLineCapRound, kLineCapRound, 0);
+
+            GpPath* path = nullptr;
+            api->CreatePath(kFillModeAlternate, &path);
+            api->AddPathLine(path, fcx - 6.0f, fcy + 6.0f, fcx - 6.0f, fcy);
+            api->AddPathArc(path, fcx - 12.0f, fcy - 12.0f, 12.0f, 12.0f, 0.0f, 90.0f);
+            api->AddPathLine(path, fcx, fcy - 6.0f, fcx + 6.0f, fcy - 6.0f);
+            api->DrawPath(g, pen, path);
+            api->DeletePath(path);
+
+            api->DeletePen(pen);
+            api->DeleteGraphics(g);
+            return;
+        }
+    }
+    HPEN pen = CreatePen(PS_SOLID, 2, color);
+    const HGDIOBJ old_pen = SelectObject(dc, pen);
+    MoveToEx(dc, cx - 6, cy + 6, nullptr);
+    LineTo(dc, cx - 6, cy);
+    LineTo(dc, cx - 2, cy - 2);
+    LineTo(dc, cx, cy - 6);
+    LineTo(dc, cx + 6, cy - 6);
+    SelectObject(dc, old_pen);
+    DeleteObject(pen);
+}
+
+void draw_corner_chamfer_icon(HDC dc, int cx, int cy, COLORREF color) {
+    auto* api = GdiplusApi::get();
+    if (api) {
+        GpGraphics* g = nullptr;
+        if (api->CreateFromHDC(dc, &g) == 0 && g) {
+            api->SetSmoothingMode(g, kSmoothingModeAntiAlias);
+            api->SetPixelOffsetMode(g, kPixelOffsetModeHalf);
+            const float fcx = static_cast<float>(cx);
+            const float fcy = static_cast<float>(cy);
+            GpPen* pen = nullptr;
+            api->CreatePen1(MakeGdiplusARGB(color, 255), 1.5f, kUnitPixel, &pen);
+            api->SetPenLineCap197819(pen, kLineCapRound, kLineCapRound, 0);
+
+            api->DrawLine(g, pen, fcx - 6.0f, fcy + 6.0f, fcx - 6.0f, fcy - 1.0f);
+            api->DrawLine(g, pen, fcx - 6.0f, fcy - 1.0f, fcx - 1.0f, fcy - 6.0f);
+            api->DrawLine(g, pen, fcx - 1.0f, fcy - 6.0f, fcx + 6.0f, fcy - 6.0f);
+
+            api->DeletePen(pen);
+            api->DeleteGraphics(g);
+            return;
+        }
+    }
+    HPEN pen = CreatePen(PS_SOLID, 2, color);
+    const HGDIOBJ old_pen = SelectObject(dc, pen);
+    MoveToEx(dc, cx - 6, cy + 6, nullptr);
+    LineTo(dc, cx - 6, cy - 1);
+    LineTo(dc, cx - 1, cy - 6);
+    LineTo(dc, cx + 6, cy - 6);
+    SelectObject(dc, old_pen);
+    DeleteObject(pen);
+}
+
+void draw_corner_scale_icon(HDC dc, int cx, int cy, bool active, COLORREF color) {
+    (void)active;
+    auto* api = GdiplusApi::get();
+    if (api) {
+        GpGraphics* g = nullptr;
+        if (api->CreateFromHDC(dc, &g) == 0 && g) {
+            api->SetSmoothingMode(g, kSmoothingModeAntiAlias);
+            api->SetPixelOffsetMode(g, kPixelOffsetModeHalf);
+            const float fcx = static_cast<float>(cx);
+            const float fcy = static_cast<float>(cy);
+            GpPen* pen = nullptr;
+            api->CreatePen1(MakeGdiplusARGB(color, 255), 1.2f, kUnitPixel, &pen);
+
+            GpPath* r1 = nullptr;
+            api->CreatePath(kFillModeAlternate, &r1);
+            api->AddPathLine(r1, fcx - 5.0f, fcy + 4.0f, fcx - 1.0f, fcy + 4.0f);
+            api->AddPathLine(r1, fcx - 1.0f, fcy + 4.0f, fcx - 1.0f, fcy);
+            api->AddPathLine(r1, fcx - 1.0f, fcy, fcx - 5.0f, fcy);
+            api->AddPathLine(r1, fcx - 5.0f, fcy, fcx - 5.0f, fcy + 4.0f);
+            api->DrawPath(g, pen, r1);
+            api->DeletePath(r1);
+
+            GpPath* r2 = nullptr;
+            api->CreatePath(kFillModeAlternate, &r2);
+            api->AddPathLine(r2, fcx - 6.0f, fcy + 5.0f, fcx + 5.0f, fcy + 5.0f);
+            api->AddPathLine(r2, fcx + 5.0f, fcy + 5.0f, fcx + 5.0f, fcy - 5.0f);
+            api->AddPathLine(r2, fcx + 5.0f, fcy - 5.0f, fcx - 6.0f, fcy - 5.0f);
+            api->AddPathLine(r2, fcx - 6.0f, fcy - 5.0f, fcx - 6.0f, fcy + 5.0f);
+            api->DrawPath(g, pen, r2);
+            api->DeletePath(r2);
+
+            api->DrawLine(g, pen, fcx, fcy, fcx + 4.0f, fcy - 4.0f);
+
+            api->DeletePen(pen);
+            api->DeleteGraphics(g);
+            return;
+        }
+    }
+    HPEN pen = CreatePen(PS_SOLID, 1, color);
+    const HGDIOBJ old_pen = SelectObject(dc, pen);
+    Rectangle(dc, cx - 6, cy - 5, cx + 5, cy + 5);
+    Rectangle(dc, cx - 5, cy, cx - 1, cy + 4);
+    MoveToEx(dc, cx, cy, nullptr);
+    LineTo(dc, cx + 4, cy - 4);
     SelectObject(dc, old_pen);
     DeleteObject(pen);
 }

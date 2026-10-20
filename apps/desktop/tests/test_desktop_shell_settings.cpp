@@ -63,6 +63,44 @@ void test_native_window_theme_and_settings_state() {
     std::cout << "[PASS] test_native_window_theme_and_settings_state\n";
 }
 
+void test_open_cdr_fits_artwork_without_changing_geometry() {
+    NativeWindow win(1440, 900);
+    auto& workflow = win.workflow();
+    workflow.new_document(210.0, 297.0);
+    const auto id = workflow.add_rectangle(1160.0, -67.0, 440.0, 600.0);
+    const auto original_bounds = workflow.get_object_bounds(id);
+    assert(original_bounds);
+
+    bool outside_page = false;
+    assert(win.fit_document_content_to_canvas(&outside_page));
+    assert(outside_page);
+    const auto content_center = win.root().renderer().camera().center();
+    assert(std::abs(content_center.x - 1380.0) < 1e-9);
+    assert(std::abs(content_center.y - 233.0) < 1e-9);
+    const auto content_fit_snapshot = win.root().document().current_snapshot();
+    assert(content_fit_snapshot->page().width_mm == 210.0);
+    assert(content_fit_snapshot->page().height_mm == 297.0);
+    const auto content_fit_bounds = workflow.get_object_bounds(id);
+    assert(content_fit_bounds);
+    assert(std::abs(content_fit_bounds->x - original_bounds->x) < 1e-9);
+    assert(std::abs(content_fit_bounds->y - original_bounds->y) < 1e-9);
+    assert(std::abs(content_fit_bounds->width - original_bounds->width) < 1e-9);
+    assert(std::abs(content_fit_bounds->height - original_bounds->height) < 1e-9);
+
+    win.fit_page_to_canvas();
+    const auto page_center = win.root().renderer().camera().center();
+    assert(std::abs(page_center.x - 105.0) < 1e-9);
+    assert(std::abs(page_center.y - 148.5) < 1e-9);
+    const auto page_fit_bounds = workflow.get_object_bounds(id);
+    assert(page_fit_bounds);
+    assert(std::abs(page_fit_bounds->x - original_bounds->x) < 1e-9);
+    assert(std::abs(page_fit_bounds->y - original_bounds->y) < 1e-9);
+    assert(std::abs(page_fit_bounds->width - original_bounds->width) < 1e-9);
+    assert(std::abs(page_fit_bounds->height - original_bounds->height) < 1e-9);
+
+    std::cout << "[PASS] test_open_cdr_fits_artwork_without_changing_geometry\n";
+}
+
 void test_ai_connections_settings_draft_state() {
     NativeWindow win(1440, 900);
     assert(!win.mcp_listener_active());
@@ -116,19 +154,23 @@ void test_compact_icons_and_hover_tooltips() {
     assert(win.tooltip().text.find(L"New Document Tab") != std::wstring::npos);
     assert(win.tooltip().text.find(L"Ctrl+N") != std::wstring::npos);
 
-    // 2. Hover over Left Tool Strip: Tool 0 (Pick Tool), Tool 4 (Text Tool), Tool 5 (Knife Tool)
+    // 2. Hover over Left Tool Strip: Tool 0 (Pick), Tool 11 (Node), Tool 4 (Text), Tool 5 (Knife)
     win.set_language(UILanguage::Vietnamese);
     win.update_hover_tooltip(20, 115); // Tool 0 (content_top + 10 = 112)
     assert(win.tooltip().visible);
     assert(win.tooltip().text.find(L"chọn") != std::wstring::npos);
     assert(win.tooltip().text.find(L"Phím V") != std::wstring::npos);
 
-    win.update_hover_tooltip(20, 115 + 4 * 42); // Tool 4 (Text Tool)
+    win.update_hover_tooltip(20, 115 + 1 * 42); // Node Tool (Row 1)
+    assert(win.tooltip().visible);
+    assert(win.tooltip().text.find(L"Node") != std::wstring::npos);
+
+    win.update_hover_tooltip(20, 115 + 5 * 42); // Tool 4 (Text Tool, Row 5)
     assert(win.tooltip().visible);
     assert(win.tooltip().text.find(L"văn bản") != std::wstring::npos);
     assert(win.tooltip().text.find(L"F8") != std::wstring::npos);
 
-    win.update_hover_tooltip(20, 115 + 5 * 42); // Tool 5 (Knife Tool)
+    win.update_hover_tooltip(20, 115 + 6 * 42); // Tool 5 (Knife Tool, Row 6)
     assert(win.tooltip().visible);
     assert(win.tooltip().text.find(L"Dao cắt") != std::wstring::npos);
     assert(win.tooltip().text.find(L"Phím K") != std::wstring::npos);
@@ -204,8 +246,9 @@ void test_compact_icons_and_hover_tooltips() {
     assert(!win.tooltip().visible);
 
     // Single-selection verification
+    auto s1 = win.workflow().add_ellipse(50.0, 50.0, 40.0, 40.0, "#00f2c3", "#0ea5e9", 1.0);
     win.root().vector_controller().selection().clear();
-    win.root().vector_controller().selection().select(r1, pikdraw::vector::SelectionMode::Add);
+    win.root().vector_controller().selection().select(s1, pikdraw::vector::SelectionMode::Add);
     win.update_hover_tooltip(490, 80);
     assert(win.tooltip().visible);
     assert(win.tooltip().text.find(L"góc xoay") != std::wstring::npos);

@@ -15,15 +15,30 @@ std::unordered_map<ObjectId, ContourFeature> g_attached_contours;
 } // namespace
 
 std::string serialize_contour_feature(const ContourFeature& feature) {
-    char buf[256];
+    auto get_rgb = [](const color::ColorValue& cv) {
+        return std::visit([](const auto& c) -> color::RGBColor {
+            using T = std::decay_t<decltype(c)>;
+            if constexpr (std::is_same_v<T, color::RGBColor>) return c;
+            else return color::RGBColor{0.0, 0.0, 0.0, 1.0};
+        }, cv.payload());
+    };
+    const auto out_rgb = get_rgb(feature.outline_color);
+    const auto fill_rgb = get_rgb(feature.fill_color);
+
+    char buf[512];
     std::snprintf(buf, sizeof(buf),
-                  "contour:v1;dir=%d;spacing=%.6f;steps=%d;join=%d;limit=%.6f;tol=%.6f",
+                  "contour:v1;dir=%d;spacing=%.6f;steps=%d;join=%d;limit=%.6f;tol=%.6f;out=%.3f,%.3f,%.3f;fill=%.3f,%.3f,%.3f;has_out=%d;has_fill=%d;w=%.6f",
                   static_cast<int>(feature.direction),
                   feature.spacing_mm,
                   feature.steps,
                   static_cast<int>(feature.join_type),
                   feature.miter_limit,
-                  feature.arc_tolerance_mm);
+                  feature.arc_tolerance_mm,
+                  out_rgb.r, out_rgb.g, out_rgb.b,
+                  fill_rgb.r, fill_rgb.g, fill_rgb.b,
+                  feature.has_outline ? 1 : 0,
+                  feature.has_fill ? 1 : 0,
+                  feature.stroke_width_mm);
     return std::string(buf);
 }
 
@@ -37,17 +52,39 @@ std::optional<ContourFeature> deserialize_contour_feature(std::string_view spec)
     double spacing = 1.0;
     int steps = 1;
     double limit = 4.0;
-    double tol = 0.005;
+    double tol = 0.05;
+
+    double out_r = 0.0, out_g = 0.0, out_b = 0.0;
+    double fill_r = 0.0, fill_g = 0.0, fill_b = 0.0;
+    int has_out = 1, has_fill = 0;
+    double w = 0.2;
 
     const std::string s(spec);
-    if (std::sscanf(s.c_str(), "contour:v1;dir=%d;spacing=%lf;steps=%d;join=%d;limit=%lf;tol=%lf",
-                    &dir, &spacing, &steps, &join, &limit, &tol) >= 6) {
+    int matched = std::sscanf(s.c_str(),
+        "contour:v1;dir=%d;spacing=%lf;steps=%d;join=%d;limit=%lf;tol=%lf;out=%lf,%lf,%lf;fill=%lf,%lf,%lf;has_out=%d;has_fill=%d;w=%lf",
+        &dir, &spacing, &steps, &join, &limit, &tol,
+        &out_r, &out_g, &out_b, &fill_r, &fill_g, &fill_b, &has_out, &has_fill, &w);
+
+    if (matched >= 6) {
         feature.direction = static_cast<geometry::ContourDirection>(dir);
         feature.spacing_mm = spacing;
         feature.steps = steps;
         feature.join_type = static_cast<geometry::JoinType>(join);
         feature.miter_limit = limit;
         feature.arc_tolerance_mm = tol;
+
+        if (matched >= 15) {
+            feature.outline_color = color::ColorValue::make_rgb(out_r, out_g, out_b, 1.0);
+            feature.fill_color = color::ColorValue::make_rgb(fill_r, fill_g, fill_b, 1.0);
+            feature.has_outline = (has_out != 0);
+            feature.has_fill = (has_fill != 0);
+            feature.stroke_width_mm = w;
+        } else {
+            feature.outline_color = color::ColorValue::make_rgb(0.0, 0.0, 0.0, 1.0);
+            feature.has_outline = true;
+            feature.has_fill = false;
+            feature.stroke_width_mm = 0.2;
+        }
         return feature;
     }
     return std::nullopt;
@@ -235,11 +272,12 @@ CommandResult BreakContourApartCommand::execute(Document& doc) {
             new_obj.name = path_obj->name.empty() ? "Contour" : (path_obj->name + " Contour");
             new_obj.path = loop;
             new_obj.transform = path_obj->transform;
-            new_obj.fill = path_obj->fill;
-            new_obj.stroke = path_obj->stroke;
-            new_obj.stroke_width_mm = path_obj->stroke_width_mm;
-            new_obj.has_fill = path_obj->has_fill;
-            new_obj.has_stroke = path_obj->has_stroke;
+            new_obj.fill = feature->has_fill ? feature->fill_color : path_obj->fill;
+            new_obj.stroke = feature->has_outline ? feature->outline_color : color::ColorValue::make_rgb(0.0, 0.0, 0.0, 1.0);
+            new_obj.stroke_width_mm = feature->stroke_width_mm > 0.0 ? feature->stroke_width_mm
+                : (path_obj->stroke_width_mm > 0.0 ? path_obj->stroke_width_mm : 0.2);
+            new_obj.has_fill = feature->has_fill;
+            new_obj.has_stroke = true; // Luôn hiển thị đường viền rõ nét
             new_obj.appearance = path_obj->appearance;
             new_obj.visible = true;
             new_obj.locked = false;

@@ -256,6 +256,7 @@ std::vector<uint8_t> SerializeV2ImportBegin(const V2ImportBegin& request, uint32
     if (!WriteIdentityPrefix(writer, prefix) || !WriteIdentity(writer, request.job) || !writer.U64(request.source_bytes) ||
         !writer.Bytes(request.source_sha256) || !writer.String16(request.format_id, IPC_V2_MAX_FORMAT_ID_BYTES) ||
         !writer.String16(request.profile_id, IPC_V2_MAX_PROFILE_ID_BYTES)) return {};
+    if (request.source_page_index && !writer.U32(*request.source_page_index)) return {};
     return SerializeV2Frame(MessageType::V2ImportBegin, sequence_id, writer.View());
 }
 
@@ -267,8 +268,13 @@ std::optional<V2ImportBegin> DeserializeV2ImportBegin(std::span<const uint8_t> p
     if (!ReadIdentityPrefix(reader, prefix) || !ReadIdentity(reader, request.job) ||
         !PrefixMatches(prefix, request.job) || !reader.U64(request.source_bytes) || request.source_bytes == 0 ||
         !reader.Bytes(request.source_sha256) || !reader.String16(request.format_id, IPC_V2_MAX_FORMAT_ID_BYTES) ||
-        !reader.String16(request.profile_id, IPC_V2_MAX_PROFILE_ID_BYTES) || !reader.Remaining().empty()) {
+        !reader.String16(request.profile_id, IPC_V2_MAX_PROFILE_ID_BYTES)) {
         return std::nullopt;
+    }
+    if (!reader.Remaining().empty()) {
+        uint32_t source_page_index = 0;
+        if (!reader.U32(source_page_index) || !reader.Remaining().empty()) return std::nullopt;
+        request.source_page_index = source_page_index;
     }
     return request;
 }

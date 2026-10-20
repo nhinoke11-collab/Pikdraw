@@ -40,7 +40,7 @@ struct ImportJobSession;
 struct ExportJobSession;
 enum class MenuActionId;
 class NativeFontPicker;
-namespace tools { class DrawingToolController; class PenToolController; class NodeToolController; class ContourToolController; class GradientToolController; }
+namespace tools { class DrawingToolController; class PenToolController; class NodeToolController; class ContourToolController; class GradientToolController; class DimensionToolController; }
 enum class ToolboxSlotId : int;
 
 enum class UILanguage {
@@ -426,6 +426,9 @@ public:
     bool handle_gradient_pointer_move(int x, int y, unsigned modifiers);
     bool handle_gradient_pointer_up(int x, int y, unsigned modifiers);
     void paint_gradient_canvas_overlay(HDC hdc, const RECT& canvas);
+    [[nodiscard]] tools::DimensionToolController* dimension_tool() noexcept { return dimension_tool_.get(); }
+    [[nodiscard]] const tools::DimensionToolController* dimension_tool() const noexcept { return dimension_tool_.get(); }
+    void paint_dimension_canvas_overlay(HDC hdc, const RECT& canvas);
 
     // Toolbox Customization & Dynamic Slots
     [[nodiscard]] uint32_t toolbox_visible_mask() const noexcept { return toolbox_visible_mask_; }
@@ -595,7 +598,7 @@ private:
     int toolbox_focus_group_{1};
     bool toolbox_keyboard_focus_{false};
     int toolbox_flyout_index_{0};
-    uint32_t toolbox_visible_mask_{0x7FF};
+    uint32_t toolbox_visible_mask_{0xFFF};
     bool toolbox_edit_mode_{false};
     bool show_toolbox_customize_flyout_{false};
     int polygon_sides_{6};
@@ -776,6 +779,7 @@ private:
     std::unique_ptr<tools::NodeToolController> node_tool_;
     std::unique_ptr<tools::ContourToolController> contour_tool_;
     std::unique_ptr<tools::GradientToolController> gradient_tool_;
+    std::unique_ptr<tools::DimensionToolController> dimension_tool_;
 #ifdef _WIN32
     std::shared_ptr<ImportJobSession> import_job_;
     std::shared_ptr<ExportJobSession> export_job_;
