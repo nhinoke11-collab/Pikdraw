@@ -455,6 +455,7 @@ void test_anisotropic_corner_rounding_uniformity() {
 void test_corner_types_round_scallop_chamfer() {
     Document doc("doc-corner-types-test");
     auto obj = make_test_quad();
+    obj.contour_spec = "rect_corner:round:0.0:0.0:0.0:0.0:1:0";
     const auto obj_id = obj.id;
     doc.execute_command(std::make_unique<AddObjectCommand>(obj));
     NodeTool tool(doc);
@@ -514,6 +515,11 @@ void test_corner_types_round_scallop_chamfer() {
 
     tool.pointer_up(drag_pt);
     assert(!tool.is_rounding_corners());
+
+    // After scalloping, corner widgets must STILL be present (4 persistent parametric corner handles)!
+    const auto widgets_after_scallop = tool.corner_widgets(1.0);
+    assert(widgets_after_scallop.size() == 4);
+    assert(widgets_after_scallop[0].current_radius > 9.0);
 
     snap = doc.current_snapshot();
     cur_obj = std::get<PathObject>(*snap->get_object(obj_id));

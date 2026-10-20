@@ -142,6 +142,7 @@ void NativeWindow::cancel_canvas_interaction() {
     }
     pointer_active_ = is_dragging_ = is_creating_shape_ = is_marquee_ = is_panning_ = false;
     is_knife_cutting_ = false;
+    is_contour_dragging_ = false;
     resize_handle_ = -1;
     drag_preview_bounds_.reset();
     drag_preview_delta_ = {};
@@ -244,13 +245,32 @@ void NativeWindow::handle_canvas_mouse_down(int x, int y, unsigned modifiers) {
         const double tolerance = 6.0 / root().renderer().camera().zoom();
         auto hit = vector::SelectionModel::hit_test(pointer_down_world_, *snapshot, tolerance);
         if (hit) {
-            controller.set_selection({*hit}, *snapshot);
+            const auto obj = snapshot->objects().get(*hit);
+            if (obj && std::holds_alternative<document::TextObject>(*obj)) {
+                if (workflow().convert_text_to_curves(*hit)) {
+                    const auto updated_snap = root().document().current_snapshot();
+                    controller.set_selection({*hit}, *updated_snap);
+                }
+            } else {
+                controller.set_selection({*hit}, *snapshot);
+            }
             if (contour_tool_) {
                 contour_tool_->activate(*hit);
             }
         }
-        pointer_active_ = false;
-        if (GetCapture() == hwnd_) ReleaseCapture();
+        if (contour_tool_ && contour_tool_->active() &&
+            contour_tool_->target_object() != document::kInvalidObjectId) {
+            is_contour_dragging_ = true;
+            contour_drag_start_world_ = pointer_down_world_;
+            pointer_active_ = true;
+            if (hwnd_) SetCapture(hwnd_);
+            status_msg_ = (language_ == UILanguage::Vietnamese)
+                ? "Kéo chuột để chỉnh khoảng cách và hướng viền Contour trực tiếp..."
+                : "Drag pointer to interactively adjust Contour spacing and direction...";
+        } else {
+            pointer_active_ = false;
+            if (GetCapture() == hwnd_) ReleaseCapture();
+        }
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
@@ -399,6 +419,36 @@ void NativeWindow::handle_canvas_mouse_move(int x, int y, unsigned modifiers) {
         page.width_mm * 0.5 - half_canvas, page.width_mm * 0.5 + half_canvas);
     pointer_current_world_.y = std::clamp(pointer_current_world_.y,
         page.height_mm * 0.5 - half_canvas, page.height_mm * 0.5 + half_canvas);
+    if (is_contour_dragging_ && active_tool_ == 12 && contour_tool_ && contour_tool_->active()) {
+        const auto target = contour_tool_->target_object();
+        const auto snapshot = root().document().current_snapshot();
+        const auto* object = snapshot ? snapshot->objects().lookup_ref(target) : nullptr;
+        const auto* path = object ? std::get_if<document::PathObject>(object) : nullptr;
+        if (path) {
+            const auto bounds = path->bounds();
+            const double center_x = bounds.x + bounds.width * 0.5;
+            const double center_y = bounds.y + bounds.height * 0.5;
+            const double start_dist = std::hypot(contour_drag_start_world_.x - center_x, contour_drag_start_world_.y - center_y);
+            const double curr_dist = std::hypot(pointer_current_world_.x - center_x, pointer_current_world_.y - center_y);
+            const double delta = curr_dist - start_dist;
+
+            if (delta >= 0.0) {
+                contour_tool_->set_direction(geometry::ContourDirection::Outside);
+            } else {
+                contour_tool_->set_direction(geometry::ContourDirection::Inside);
+            }
+            double dist = std::max(0.1, std::abs(delta));
+            dist = std::round(dist * 10.0) / 10.0;
+            contour_tool_->set_spacing_mm(dist);
+
+            std::ostringstream hint;
+            hint << std::fixed << std::setprecision(1) << dist << " mm ("
+                 << (delta >= 0.0 ? "Outside / Ngoài" : "Inside / Trong") << ")";
+            status_msg_ = (language_ == UILanguage::Vietnamese ? "Khoảng cách Contour: " : "Contour spacing: ") + hint.str();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+    }
     if (pointer_active_ && text_editor_ && text_editor_->is_moving_frame) {
         auto& editor = *text_editor_;
         geometry::Point2D delta = {pointer_current_world_.x - editor.live_move_start_world.x,
@@ -601,7 +651,15 @@ bool NativeWindow::commit_created_shape() {
     document::PathObject object;
     try {
         if (active_tool_ == 1) {
-            object = vector::ShapeFactory::create_rectangle(bounds, default_style_.fill,
+            vector::RectCornerSettings settings;
+            settings.type = creation_rect_corner_type_;
+            settings.tl = creation_rect_corner_tl_;
+            settings.tr = creation_rect_corner_tr_;
+            settings.br = creation_rect_corner_br_;
+            settings.bl = creation_rect_corner_bl_;
+            settings.locked = creation_rect_corners_locked_;
+            settings.scale_relative = creation_rect_corners_scale_relative_;
+            object = vector::ShapeFactory::create_rounded_rectangle(bounds, settings, default_style_.fill,
                 default_style_.stroke, default_style_.width_mm);
         } else if (active_tool_ == 2) {
             object = vector::ShapeFactory::create_ellipse(bounds.center(), bounds.width * .5,
@@ -665,6 +723,16 @@ void NativeWindow::handle_canvas_mouse_up(int x, int y, unsigned modifiers) {
     force_live_text_scale_update_ = true;
     handle_canvas_mouse_move(x, y, modifiers); // release can arrive without a final move event
     force_live_text_scale_update_ = false;
+    if (is_contour_dragging_) {
+        is_contour_dragging_ = false;
+        pointer_active_ = false;
+        if (hwnd_ && GetCapture() == hwnd_) ReleaseCapture();
+        status_msg_ = (language_ == UILanguage::Vietnamese)
+            ? "Đã điều chỉnh viền Contour · Nhấp 'Áp dụng' trên thanh thuộc tính để xác nhận"
+            : "Adjusted Contour · Click 'Apply' on the Property Bar to commit";
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
     if (text_editor_ && (text_editor_->live_scale_baseline || text_editor_->is_moving_frame)) {
         if (text_editor_->is_moving_frame && text_editor_->live_move_baseline) {
             const auto& b = *text_editor_->live_move_baseline;

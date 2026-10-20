@@ -351,6 +351,25 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
                (field == NumericFieldId::ObjectX || field == NumericFieldId::ObjectY)) {
         // The current coordinate remains visible in Properties; typing replaces it.
         num_input_buffer_.clear();
+    } else if (field == NumericFieldId::RectCornerRadiusTL ||
+               field == NumericFieldId::RectCornerRadiusTR ||
+               field == NumericFieldId::RectCornerRadiusBR ||
+               field == NumericFieldId::RectCornerRadiusBL) {
+        double r = 0.0;
+        if (active_tool_ == 1 && root().vector_controller().selection().selected_ids().empty()) {
+            if (field == NumericFieldId::RectCornerRadiusTL) r = creation_rect_corner_tl_;
+            else if (field == NumericFieldId::RectCornerRadiusTR) r = creation_rect_corner_tr_;
+            else if (field == NumericFieldId::RectCornerRadiusBR) r = creation_rect_corner_br_;
+            else if (field == NumericFieldId::RectCornerRadiusBL) r = creation_rect_corner_bl_;
+        } else {
+            sync_rect_corner_controls_from_selection();
+            if (field == NumericFieldId::RectCornerRadiusTL) r = rect_corner_tl_;
+            else if (field == NumericFieldId::RectCornerRadiusTR) r = rect_corner_tr_;
+            else if (field == NumericFieldId::RectCornerRadiusBR) r = rect_corner_br_;
+            else if (field == NumericFieldId::RectCornerRadiusBL) r = rect_corner_bl_;
+        }
+        ss << std::fixed << std::setprecision(1) << r;
+        num_input_buffer_ = ss.str();
     } else {
         const auto ids = root().vector_controller().selection().selected_ids();
         if (!ids.empty()) {
@@ -409,6 +428,17 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Độ mờ 0–100% · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
             : "Opacity 0–100% · Enter applies · Esc cancels · Ctrl+Z undoes";
+    } else if (field == NumericFieldId::RectCornerRadiusTL ||
+               field == NumericFieldId::RectCornerRadiusTR ||
+               field == NumericFieldId::RectCornerRadiusBR ||
+               field == NumericFieldId::RectCornerRadiusBL) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? (rect_corners_locked_
+                ? "Bán kính bo góc (mm) · Khóa 4 góc đang bật · Enter áp dụng · Tab đổi ô · Esc hủy"
+                : "Bán kính bo góc này (mm) · Khóa đang mở · Enter áp dụng · Tab đổi ô · Esc hủy")
+            : (rect_corners_locked_
+                ? "Corner radius (mm) · 4 corners locked together · Enter applies · Tab cycles · Esc cancels"
+                : "Corner radius (mm) · Independent corner · Enter applies · Tab cycles · Esc cancels");
     } else if (effect_numeric) {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Nhập mm (σ ≥ 0, lệch ±1.000.000) hoặc Opacity 0–100% · Enter áp dụng · Tab ô kế · Esc hủy · Ctrl+Z hoàn tác"
@@ -568,6 +598,19 @@ void NativeWindow::handle_numeric_char_input(wchar_t ch) {
                 : active_num_field_ == text_numeric_field(TextPropertyField::FrameWidth)
                     ? text_numeric_field(TextPropertyField::LineSpacing)
                     : text_numeric_field(TextPropertyField::FontSize);
+            commit_numeric_field();
+            if (active_num_field_ != NumericFieldId::None) return;
+            start_numeric_input(next);
+            return;
+        }
+        if (active_num_field_ == NumericFieldId::RectCornerRadiusTL ||
+            active_num_field_ == NumericFieldId::RectCornerRadiusTR ||
+            active_num_field_ == NumericFieldId::RectCornerRadiusBR ||
+            active_num_field_ == NumericFieldId::RectCornerRadiusBL) {
+            if (active_num_field_ == NumericFieldId::RectCornerRadiusTL) next = NumericFieldId::RectCornerRadiusTR;
+            else if (active_num_field_ == NumericFieldId::RectCornerRadiusTR) next = NumericFieldId::RectCornerRadiusBR;
+            else if (active_num_field_ == NumericFieldId::RectCornerRadiusBR) next = NumericFieldId::RectCornerRadiusBL;
+            else next = NumericFieldId::RectCornerRadiusTL;
             commit_numeric_field();
             if (active_num_field_ != NumericFieldId::None) return;
             start_numeric_input(next);

@@ -132,23 +132,23 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
             return true;
         } else if (active_tool_ == 1 && selection.empty()) {
             int rx = 78;
-            if (x >= rx && x < rx + 28) { set_rect_corner_type(vector::RectCornerType::Round); return true; }
-            if (x >= rx + 32 && x < rx + 60) { set_rect_corner_type(vector::RectCornerType::Scallop); return true; }
-            if (x >= rx + 64 && x < rx + 92) { set_rect_corner_type(vector::RectCornerType::Chamfer); return true; }
+            if (x >= rx && x < rx + 28) { set_creation_rect_corner_type(vector::RectCornerType::Round); return true; }
+            if (x >= rx + 32 && x < rx + 60) { set_creation_rect_corner_type(vector::RectCornerType::Scallop); return true; }
+            if (x >= rx + 64 && x < rx + 92) { set_creation_rect_corner_type(vector::RectCornerType::Chamfer); return true; }
             rx += 98;
             if (x >= rx && x <= rx + 48) {
                 if (y < 84) start_numeric_input(NumericFieldId::RectCornerRadiusTL);
                 else start_numeric_input(NumericFieldId::RectCornerRadiusBL);
                 return true;
             }
-            if (x >= rx + 51 && x <= rx + 73) { toggle_rect_corners_locked(); return true; }
+            if (x >= rx + 51 && x <= rx + 73) { toggle_creation_rect_corners_locked(); return true; }
             if (x >= rx + 76 && x <= rx + 124) {
                 if (y < 84) start_numeric_input(NumericFieldId::RectCornerRadiusTR);
                 else start_numeric_input(NumericFieldId::RectCornerRadiusBR);
                 return true;
             }
             rx += 128;
-            if (x >= rx && x <= rx + 68) { toggle_rect_corners_scale_relative(); return true; }
+            if (x >= rx && x <= rx + 68) { toggle_creation_rect_corners_scale_relative(); return true; }
             commit_numeric_field();
             return true;
         } else if (active_tool_ == 9) {

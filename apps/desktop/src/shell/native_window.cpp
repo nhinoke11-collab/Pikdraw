@@ -832,6 +832,32 @@ void NativeWindow::toggle_rect_corners_scale_relative() noexcept {
     apply_rect_corner_settings(s);
 }
 
+void NativeWindow::set_creation_rect_corner_type(vector::RectCornerType type) noexcept {
+    creation_rect_corner_type_ = type;
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::toggle_creation_rect_corners_locked() noexcept {
+    creation_rect_corners_locked_ = !creation_rect_corners_locked_;
+    if (creation_rect_corners_locked_) {
+        creation_rect_corner_tr_ = creation_rect_corner_tl_;
+        creation_rect_corner_br_ = creation_rect_corner_tl_;
+        creation_rect_corner_bl_ = creation_rect_corner_tl_;
+    }
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::toggle_creation_rect_corners_scale_relative() noexcept {
+    creation_rect_corners_scale_relative_ = !creation_rect_corners_scale_relative_;
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
 void NativeWindow::apply_rect_corner_settings(const vector::RectCornerSettings& settings) {
     rect_corner_type_ = settings.type;
     rect_corner_tl_ = settings.tl;

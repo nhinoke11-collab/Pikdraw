@@ -681,6 +681,45 @@ void NativeWindow::commit_numeric_field() {
                 new_doc_w_ = std::clamp(val, 10.0, geometry::kMaxObjectDimensionMm);
             } else if (field == NumericFieldId::ModalHeight) {
                 new_doc_h_ = std::clamp(val, 10.0, geometry::kMaxObjectDimensionMm);
+            } else if (field == NumericFieldId::RectCornerRadiusTL ||
+                       field == NumericFieldId::RectCornerRadiusTR ||
+                       field == NumericFieldId::RectCornerRadiusBR ||
+                       field == NumericFieldId::RectCornerRadiusBL) {
+                double radius = std::clamp(val, 0.0, 5000.0);
+                if (active_tool_ == 1 && root().vector_controller().selection().selected_ids().empty()) {
+                    if (creation_rect_corners_locked_) {
+                        creation_rect_corner_tl_ = radius;
+                        creation_rect_corner_tr_ = radius;
+                        creation_rect_corner_br_ = radius;
+                        creation_rect_corner_bl_ = radius;
+                    } else {
+                        if (field == NumericFieldId::RectCornerRadiusTL) creation_rect_corner_tl_ = radius;
+                        else if (field == NumericFieldId::RectCornerRadiusTR) creation_rect_corner_tr_ = radius;
+                        else if (field == NumericFieldId::RectCornerRadiusBR) creation_rect_corner_br_ = radius;
+                        else if (field == NumericFieldId::RectCornerRadiusBL) creation_rect_corner_bl_ = radius;
+                    }
+                } else {
+                    if (rect_corners_locked_) {
+                        rect_corner_tl_ = radius;
+                        rect_corner_tr_ = radius;
+                        rect_corner_br_ = radius;
+                        rect_corner_bl_ = radius;
+                    } else {
+                        if (field == NumericFieldId::RectCornerRadiusTL) rect_corner_tl_ = radius;
+                        else if (field == NumericFieldId::RectCornerRadiusTR) rect_corner_tr_ = radius;
+                        else if (field == NumericFieldId::RectCornerRadiusBR) rect_corner_br_ = radius;
+                        else if (field == NumericFieldId::RectCornerRadiusBL) rect_corner_bl_ = radius;
+                    }
+                    vector::RectCornerSettings s;
+                    s.type = rect_corner_type_;
+                    s.tl = rect_corner_tl_;
+                    s.tr = rect_corner_tr_;
+                    s.br = rect_corner_br_;
+                    s.bl = rect_corner_bl_;
+                    s.locked = rect_corners_locked_;
+                    s.scale_relative = rect_corners_scale_relative_;
+                    apply_rect_corner_settings(s);
+                }
             } else {
                 const auto ids = root().vector_controller().selection().selected_ids();
                 if (!ids.empty()) {

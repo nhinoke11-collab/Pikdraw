@@ -218,6 +218,18 @@ public:
     [[nodiscard]] bool rect_corners_scale_relative() const noexcept { return rect_corners_scale_relative_; }
     void toggle_rect_corners_scale_relative() noexcept;
 
+    // Rectangle Tool creation defaults (always sharp corners 0.0mm by default, separated from selection)
+    [[nodiscard]] vector::RectCornerType creation_rect_corner_type() const noexcept { return creation_rect_corner_type_; }
+    void set_creation_rect_corner_type(vector::RectCornerType type) noexcept;
+    [[nodiscard]] double creation_rect_corner_tl() const noexcept { return creation_rect_corner_tl_; }
+    [[nodiscard]] double creation_rect_corner_tr() const noexcept { return creation_rect_corner_tr_; }
+    [[nodiscard]] double creation_rect_corner_br() const noexcept { return creation_rect_corner_br_; }
+    [[nodiscard]] double creation_rect_corner_bl() const noexcept { return creation_rect_corner_bl_; }
+    [[nodiscard]] bool creation_rect_corners_locked() const noexcept { return creation_rect_corners_locked_; }
+    void toggle_creation_rect_corners_locked() noexcept;
+    [[nodiscard]] bool creation_rect_corners_scale_relative() const noexcept { return creation_rect_corners_scale_relative_; }
+    void toggle_creation_rect_corners_scale_relative() noexcept;
+
     [[nodiscard]] bool is_selected_rectangle(document::ObjectId* out_id = nullptr, vector::RectCornerSettings* out_settings = nullptr) const;
     void apply_rect_corner_settings(const vector::RectCornerSettings& settings);
     void sync_rect_corner_controls_from_selection();
@@ -595,6 +607,13 @@ private:
     double rect_corner_bl_{0.0};
     bool rect_corners_locked_{true};
     bool rect_corners_scale_relative_{false};
+    vector::RectCornerType creation_rect_corner_type_{vector::RectCornerType::Round};
+    double creation_rect_corner_tl_{0.0};
+    double creation_rect_corner_tr_{0.0};
+    double creation_rect_corner_br_{0.0};
+    double creation_rect_corner_bl_{0.0};
+    bool creation_rect_corners_locked_{true};
+    bool creation_rect_corners_scale_relative_{false};
     int active_workspace_{0}; // 0: Vector, 1: Print, 2: Production, 3: 3D
     int active_dock_tab_{0}; // 0: Inspector, 1: Layers, 2: History
     bool show_style_inspector_{false};

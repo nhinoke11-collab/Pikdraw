@@ -406,10 +406,15 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
                          join == geometry::JoinType::Bevel,
                          join == geometry::JoinType::Bevel ? col_teal : col_text_white);
 
-            draw_rib_btn(665, 740, is_vi ? L"✔ Áp dụng" : L"✔ Apply", false, col_teal);
-            draw_rib_btn(745, 875, is_vi ? L"⚲ Rã viền (Ctrl+K)" : L"⚲ Break (Ctrl+K)", false, col_text_white);
-            draw_rib_btn(880, 950, is_vi ? L"✕ Xóa" : L"✕ Clear", false, RGB(239, 68, 68));
-            draw_rib_btn(955, 1015, is_vi ? L"↺ Hủy" : L"↺ Reset", false, col_text_white);
+            draw_rib_btn(662, 715, is_vi ? L"✒ Viền ■" : L"✒ Line ■", contour_tool_->has_outline(),
+                         contour_tool_->has_outline() ? RGB(20, 20, 20) : col_text_muted);
+            draw_rib_btn(720, 770, is_vi ? L"🪣 Tô ⧄" : L"🪣 Fill ⧄", contour_tool_->has_fill(),
+                         contour_tool_->has_fill() ? col_teal : col_text_muted);
+
+            draw_rib_btn(775, 850, is_vi ? L"✔ Áp dụng" : L"✔ Apply", false, col_teal);
+            draw_rib_btn(855, 985, is_vi ? L"⚲ Rã viền (Ctrl+K)" : L"⚲ Break (Ctrl+K)", false, col_text_white);
+            draw_rib_btn(990, 1055, is_vi ? L"✕ Xóa" : L"✕ Clear", false, RGB(239, 68, 68));
+            draw_rib_btn(1060, 1115, is_vi ? L"↺ Hủy" : L"↺ Reset", false, col_text_white);
         } else if (active_tool_ == 13 && gradient_tool_ && gradient_tool_->active()) {
             SelectObject(mem_dc, font_be_vietnam_bold);
             SetTextColor(mem_dc, col_teal);
@@ -464,20 +469,20 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
             const int btn_y = (topbar_h + tabbar_h + 4 + content_top - 4) / 2;
             int rx = 78;
 
-            draw_rib_btn(rx, rx + 28, L"", rect_corner_type_ == vector::RectCornerType::Round,
-                         rect_corner_type_ == vector::RectCornerType::Round ? col_teal : col_text_white);
+            draw_rib_btn(rx, rx + 28, L"", creation_rect_corner_type_ == vector::RectCornerType::Round,
+                         creation_rect_corner_type_ == vector::RectCornerType::Round ? col_teal : col_text_white);
             draw_corner_round_icon(mem_dc, rx + 14, btn_y,
-                                   rect_corner_type_ == vector::RectCornerType::Round ? col_teal : col_text_white);
+                                   creation_rect_corner_type_ == vector::RectCornerType::Round ? col_teal : col_text_white);
 
-            draw_rib_btn(rx + 32, rx + 60, L"", rect_corner_type_ == vector::RectCornerType::Scallop,
-                         rect_corner_type_ == vector::RectCornerType::Scallop ? col_teal : col_text_white);
+            draw_rib_btn(rx + 32, rx + 60, L"", creation_rect_corner_type_ == vector::RectCornerType::Scallop,
+                         creation_rect_corner_type_ == vector::RectCornerType::Scallop ? col_teal : col_text_white);
             draw_corner_scallop_icon(mem_dc, rx + 46, btn_y,
-                                     rect_corner_type_ == vector::RectCornerType::Scallop ? col_teal : col_text_white);
+                                     creation_rect_corner_type_ == vector::RectCornerType::Scallop ? col_teal : col_text_white);
 
-            draw_rib_btn(rx + 64, rx + 92, L"", rect_corner_type_ == vector::RectCornerType::Chamfer,
-                         rect_corner_type_ == vector::RectCornerType::Chamfer ? col_teal : col_text_white);
+            draw_rib_btn(rx + 64, rx + 92, L"", creation_rect_corner_type_ == vector::RectCornerType::Chamfer,
+                         creation_rect_corner_type_ == vector::RectCornerType::Chamfer ? col_teal : col_text_white);
             draw_corner_chamfer_icon(mem_dc, rx + 78, btn_y,
-                                     rect_corner_type_ == vector::RectCornerType::Chamfer ? col_teal : col_text_white);
+                                     creation_rect_corner_type_ == vector::RectCornerType::Chamfer ? col_teal : col_text_white);
             rx += 98;
 
             {
@@ -490,10 +495,10 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
             }
 
             std::ostringstream stl, sbl, str, sbr;
-            stl << std::fixed << std::setprecision(1) << rect_corner_tl_;
-            sbl << std::fixed << std::setprecision(1) << rect_corner_bl_;
-            str << std::fixed << std::setprecision(1) << rect_corner_tr_;
-            sbr << std::fixed << std::setprecision(1) << rect_corner_br_;
+            stl << std::fixed << std::setprecision(1) << creation_rect_corner_tl_;
+            sbl << std::fixed << std::setprecision(1) << creation_rect_corner_bl_;
+            str << std::fixed << std::setprecision(1) << creation_rect_corner_tr_;
+            sbr << std::fixed << std::setprecision(1) << creation_rect_corner_br_;
 
             const int y0 = topbar_h + tabbar_h;
             // Left column (TL / BL)
@@ -501,8 +506,8 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
             draw_corner_input(rx, y0 + 19, rx + 48, y0 + 34, L"⌞", sbl.str(), NumericFieldId::RectCornerRadiusBL);
 
             // Center column (Lock toggle)
-            draw_rib_btn(rx + 51, rx + 73, L"", rect_corners_locked_, rect_corners_locked_ ? col_teal : col_text_muted);
-            draw_lock_icon(mem_dc, rx + 62, btn_y, rect_corners_locked_, rect_corners_locked_ ? col_teal : col_text_muted);
+            draw_rib_btn(rx + 51, rx + 73, L"", creation_rect_corners_locked_, creation_rect_corners_locked_ ? col_teal : col_text_muted);
+            draw_lock_icon(mem_dc, rx + 62, btn_y, creation_rect_corners_locked_, creation_rect_corners_locked_ ? col_teal : col_text_muted);
 
             // Right column (TR / BR)
             draw_corner_input(rx + 76, y0 + 2, rx + 124, y0 + 17, L"⌝", str.str(), NumericFieldId::RectCornerRadiusTR);
@@ -510,7 +515,7 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
             rx += 128;
 
             draw_rib_btn(rx, rx + 68, is_vi ? L"⇲ Tỷ lệ" : L"⇲ Scale",
-                         rect_corners_scale_relative_, rect_corners_scale_relative_ ? col_teal : col_text_white);
+                         creation_rect_corners_scale_relative_, creation_rect_corners_scale_relative_ ? col_teal : col_text_white);
             rx += 74;
 
             SetTextColor(mem_dc, col_text_muted);

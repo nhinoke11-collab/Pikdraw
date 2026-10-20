@@ -365,4 +365,146 @@ struct FilletPreviewSegment {
     return previews;
 }
 
+/// Detect the 4 persistent parametric corner widgets for a Rectangle (CorelDRAW / Illustrator standard).
+/// Even after corners are rounded, scalloped, or chamfered, these 4 widgets remain at the corners
+/// and allow continuous, real-time inward/outward dragging directly on canvas.
+[[nodiscard]] inline std::vector<CornerWidget> detect_rectangle_corner_widgets(
+    const geometry::Rect2D& rect,
+    const RectCornerSettings& settings,
+    double zoom,
+    const geometry::Transform2D& transform = geometry::Transform2D::identity(),
+    const std::vector<document::NodeId>& fallback_node_ids = {}) {
+    if (!rect.is_finite() || rect.width <= 0.0 || rect.height <= 0.0) return {};
+    if (zoom < 1e-4) zoom = 1.0;
+
+    const auto local_tl = geometry::Point2D{rect.x, rect.y};
+    const auto local_tr = geometry::Point2D{rect.x + rect.width, rect.y};
+    const auto local_br = geometry::Point2D{rect.x + rect.width, rect.y + rect.height};
+    const auto local_bl = geometry::Point2D{rect.x, rect.y + rect.height};
+    const auto local_center = geometry::Point2D{rect.x + rect.width * 0.5, rect.y + rect.height * 0.5};
+
+    const auto v_tl = transform.map_point(local_tl);
+    const auto v_tr = transform.map_point(local_tr);
+    const auto v_br = transform.map_point(local_br);
+    const auto v_bl = transform.map_point(local_bl);
+    const auto v_center = transform.map_point(local_center);
+
+    const double sx = std::hypot(transform.a, transform.b);
+    const double sy = std::hypot(transform.c, transform.d);
+    const double world_scale = (sx > 1e-6 && sy > 1e-6) ? (sx + sy) * 0.5 : 1.0;
+
+    const double max_r = std::min(rect.width, rect.height) * 0.499 * world_scale;
+    const std::array<geometry::Point2D, 4> vertices{v_tl, v_tr, v_br, v_bl};
+    const std::array<double, 4> radii{
+        settings.tl * world_scale,
+        settings.tr * world_scale,
+        settings.br * world_scale,
+        settings.bl * world_scale
+    };
+
+    std::vector<CornerWidget> widgets;
+    widgets.reserve(4);
+
+    for (size_t i = 0; i < 4; ++i) {
+        const auto& v = vertices[i];
+        const auto dir = v_center - v;
+        const double len = std::hypot(dir.x, dir.y);
+        if (len < 1e-4) continue;
+        const auto bisector = geometry::Point2D{dir.x / len, dir.y / len};
+
+        const double preferred_offset = 14.0 / zoom;
+        const double min_offset = std::clamp(preferred_offset, 2.0 / zoom, max_r * 0.35);
+        const double r = std::clamp(radii[i], 0.0, max_r);
+        const double dist = std::clamp(min_offset + r * 0.75, min_offset, max_r * 0.95);
+        const auto widget_pos = v + bisector * dist;
+
+        const auto nid = (i < fallback_node_ids.size())
+            ? fallback_node_ids[i]
+            : document::generate_path_element_id<document::NodeId>();
+
+        widgets.push_back(CornerWidget{
+            document::SubpathId{},
+            nid,
+            v,
+            widget_pos,
+            bisector,
+            max_r / world_scale,
+            r / world_scale
+        });
+    }
+
+    return widgets;
+}
+
+/// Generates world-space fillet preview segments for a parametric rectangle during live corner dragging.
+[[nodiscard]] inline std::vector<FilletPreviewSegment> generate_rectangle_fillet_preview_segments(
+    const geometry::Rect2D& rect,
+    const RectCornerSettings& settings,
+    double radius,
+    const geometry::Transform2D& transform,
+    RectCornerType corner_type,
+    const std::optional<geometry::Point2D>& active_corner_vertex = std::nullopt) {
+    if (!rect.is_finite() || rect.width <= 0.0 || rect.height <= 0.0 || radius <= 0.05) return {};
+
+    const double r = std::min(radius, std::min(rect.width, rect.height) * 0.499);
+
+    struct CornerGeom {
+        geometry::Point2D v;
+        geometry::Point2D u;
+        geometry::Point2D w;
+    };
+    const std::array<CornerGeom, 4> corners{
+        CornerGeom{ {rect.x, rect.y}, {1.0, 0.0}, {0.0, 1.0} },                              // TL
+        CornerGeom{ {rect.x + rect.width, rect.y}, {-1.0, 0.0}, {0.0, 1.0} },               // TR
+        CornerGeom{ {rect.x + rect.width, rect.y + rect.height}, {-1.0, 0.0}, {0.0, -1.0} },// BR
+        CornerGeom{ {rect.x, rect.y + rect.height}, {1.0, 0.0}, {0.0, -1.0} }               // BL
+    };
+
+    constexpr double kappa = 0.5522847498307935;
+    std::vector<FilletPreviewSegment> previews;
+
+    for (const auto& c : corners) {
+        const auto v_w = transform.map_point(c.v);
+        if (active_corner_vertex && !settings.locked) {
+            if (v_w.distance_to(*active_corner_vertex) > 1.0) continue;
+        }
+
+        const auto u_vec = transform.map_point(c.v + c.u) - transform.map_point(c.v);
+        const auto w_vec = transform.map_point(c.v + c.w) - transform.map_point(c.v);
+        const double u_len = std::hypot(u_vec.x, u_vec.y);
+        const double w_len = std::hypot(w_vec.x, w_vec.y);
+        if (u_len < 1e-4 || w_len < 1e-4) continue;
+        const auto u_norm = geometry::Point2D{u_vec.x / u_len, u_vec.y / u_len};
+        const auto w_norm = geometry::Point2D{w_vec.x / w_len, w_vec.y / w_len};
+
+        const double actual_r_u = r * u_len;
+        const double actual_r_w = r * w_len;
+
+        const auto t1_w = v_w + u_norm * actual_r_u;
+        const auto t2_w = v_w + w_norm * actual_r_w;
+
+        if (corner_type == RectCornerType::Chamfer) {
+            previews.push_back(FilletPreviewSegment{
+                t1_w, t1_w, t2_w, t2_w, false
+            });
+        } else if (corner_type == RectCornerType::Scallop) {
+            // Concave circular arc bowing inward into the shape
+            const auto c1_w = t1_w + w_norm * (actual_r_w * kappa);
+            const auto c2_w = t2_w + u_norm * (actual_r_u * kappa);
+            previews.push_back(FilletPreviewSegment{
+                t1_w, c1_w, c2_w, t2_w, true
+            });
+        } else {
+            // Round: Convex circular arc bowing outward towards corner vertex
+            const auto c1_w = t1_w + (v_w - t1_w) * kappa;
+            const auto c2_w = t2_w + (v_w - t2_w) * kappa;
+            previews.push_back(FilletPreviewSegment{
+                t1_w, c1_w, c2_w, t2_w, true
+            });
+        }
+    }
+
+    return previews;
+}
+
 } // namespace pikdraw::vector::tools::node
