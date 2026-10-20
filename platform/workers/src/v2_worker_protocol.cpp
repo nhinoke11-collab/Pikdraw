@@ -336,9 +336,10 @@ bool HandleImportBegin(
     const bool is_png = request->format_id == "PNG";
     const bool is_jpeg = request->format_id == "JPEG";
     const bool is_tiff = request->format_id == "TIFF";
-    const bool is_raster = (is_png || is_jpeg || is_tiff) &&
+    const bool is_bmp = request->format_id == "BMP";
+    const bool is_raster = (is_png || is_jpeg || is_tiff || is_bmp) &&
         FormatCapabilities::is_worker_import_profile_supported(
-            is_png ? FormatType::Png : is_jpeg ? FormatType::Jpeg : FormatType::Tiff,
+            is_png ? FormatType::Png : is_jpeg ? FormatType::Jpeg : is_tiff ? FormatType::Tiff : FormatType::Bmp,
             request->profile_id);
     if (!is_svg && !is_dxf && !is_pdf && !is_ai && !is_eps && !is_cdr && !is_raster) {
         return SendError(output, header.sequence_id, 1,
@@ -359,7 +360,7 @@ bool HandleImportBegin(
     }
     if (is_raster) {
         return SendImportProposal(output, *request, source_bytes, header.sequence_id,
-            "RASTER", 144, BuildRasterImportRecords);
+            "RASTER", IPC_MAX_OBJECTS, BuildRasterImportRecords);
     }
     if (is_pdf || is_ai) {
         const bool ai_representation = is_ai;

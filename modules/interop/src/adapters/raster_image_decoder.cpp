@@ -111,8 +111,8 @@ RasterImageDecodeResult decode_png_pure(
     if (!has_ihdr || width == 0 || height == 0 || idat_bytes.empty())
         return failure("RASTER_DECODE_FAILED", "Missing IHDR or IDAT in PNG.");
 
-    if (bit_depth != 8)
-        return failure("RASTER_BIT_DEPTH_UNSUPPORTED", "Only 8-bit PNG channels are currently supported.");
+    if (bit_depth != 8 && bit_depth != 16)
+        return failure("RASTER_BIT_DEPTH_UNSUPPORTED", "Only 8-bit and 16-bit PNG channels are supported.");
 
     uint32_t channels = 0;
     switch (color_type) {
@@ -125,6 +125,8 @@ RasterImageDecodeResult decode_png_pure(
         return failure("RASTER_PIXEL_CONVERSION", "Unsupported PNG color type.");
     }
 
+    if (color_type == 3 && bit_depth != 8)
+        return failure("RASTER_BIT_DEPTH_UNSUPPORTED", "Indexed PNG must be 8-bit.");
     if (color_type == 3 && palette.empty())
         return failure("RASTER_DECODE_FAILED", "Indexed PNG missing palette.");
     if (color_type == 3 && (palette.size() % 3 != 0 || palette.size() > 256 * 3))
@@ -147,7 +149,9 @@ RasterImageDecodeResult decode_png_pure(
     if (pixel_count > options.max_decoded_pixels || output_bytes > options.max_decoded_bytes)
         return failure("RASTER_DECODED_BUDGET", "Decoded raster dimensions exceed budget.");
 
-    const size_t row_raw_bytes = 1 + static_cast<size_t>(width) * channels;
+    const size_t bytes_per_sample = (bit_depth == 16) ? 2 : 1;
+    const size_t bytes_per_pixel = channels * bytes_per_sample;
+    const size_t row_raw_bytes = 1 + static_cast<size_t>(width) * bytes_per_pixel;
     const size_t total_raw_bytes = row_raw_bytes * height;
     std::vector<uint8_t> uncompressed(total_raw_bytes);
     unsigned int dest_len = static_cast<unsigned int>(total_raw_bytes);
@@ -162,13 +166,13 @@ RasterImageDecodeResult decode_png_pure(
         uint8_t* curr = &uncompressed[row_offset + 1];
         const uint8_t* prev = (y > 0) ? &uncompressed[(y - 1) * row_raw_bytes + 1] : nullptr;
 
-        const size_t line_bytes = static_cast<size_t>(width) * channels;
+        const size_t line_bytes = static_cast<size_t>(width) * bytes_per_pixel;
         switch (filter) {
         case 0:
             break;
         case 1:
             for (size_t i = 0; i < line_bytes; ++i) {
-                const uint8_t a = (i >= channels) ? curr[i - channels] : 0;
+                const uint8_t a = (i >= bytes_per_pixel) ? curr[i - bytes_per_pixel] : 0;
                 curr[i] = static_cast<uint8_t>(curr[i] + a);
             }
             break;
@@ -181,16 +185,16 @@ RasterImageDecodeResult decode_png_pure(
             break;
         case 3:
             for (size_t i = 0; i < line_bytes; ++i) {
-                const uint8_t a = (i >= channels) ? curr[i - channels] : 0;
+                const uint8_t a = (i >= bytes_per_pixel) ? curr[i - bytes_per_pixel] : 0;
                 const uint8_t b = prev ? prev[i] : 0;
                 curr[i] = static_cast<uint8_t>(curr[i] + ((a + b) >> 1));
             }
             break;
         case 4:
             for (size_t i = 0; i < line_bytes; ++i) {
-                const int a = (i >= channels) ? curr[i - channels] : 0;
+                const int a = (i >= bytes_per_pixel) ? curr[i - bytes_per_pixel] : 0;
                 const int b = prev ? prev[i] : 0;
-                const int c = (prev && i >= channels) ? prev[i - channels] : 0;
+                const int c = (prev && i >= bytes_per_pixel) ? prev[i - bytes_per_pixel] : 0;
                 curr[i] = static_cast<uint8_t>(curr[i] + paeth_predictor(a, b, c));
             }
             break;
@@ -205,7 +209,7 @@ RasterImageDecodeResult decode_png_pure(
     image.height_px = height;
     image.frame_count = 1;
     image.frame_index = options.frame_index;
-    image.source_bits_per_pixel = channels * 8;
+    image.source_bits_per_pixel = channels * bit_depth;
     image.exif_orientation = 1;
     image.orientation_applied = false;
     image.dpi_x = dpi_x;
@@ -217,46 +221,81 @@ RasterImageDecodeResult decode_png_pure(
         const uint8_t* src_row = &uncompressed[y * row_raw_bytes + 1];
         uint8_t* dst_row = &image.pixels_rgba[static_cast<size_t>(y) * width * 4];
 
-        if (color_type == 6) {
-            std::memcpy(dst_row, src_row, static_cast<size_t>(width) * 4);
-        } else if (color_type == 2) {
-            for (uint32_t x = 0; x < width; ++x) {
-                const bool transparent = has_transparency &&
-                    src_row[x * 3 + 0] == read_be16(transparency.data()) &&
-                    src_row[x * 3 + 1] == read_be16(transparency.data() + 2) &&
-                    src_row[x * 3 + 2] == read_be16(transparency.data() + 4);
-                dst_row[x * 4 + 0] = src_row[x * 3 + 0];
-                dst_row[x * 4 + 1] = src_row[x * 3 + 1];
-                dst_row[x * 4 + 2] = src_row[x * 3 + 2];
-                dst_row[x * 4 + 3] = transparent ? 0 : 255;
+        if (bit_depth == 16) {
+            if (color_type == 6) {
+                for (uint32_t x = 0; x < width; ++x) {
+                    dst_row[x * 4 + 0] = src_row[x * 8 + 0];
+                    dst_row[x * 4 + 1] = src_row[x * 8 + 2];
+                    dst_row[x * 4 + 2] = src_row[x * 8 + 4];
+                    dst_row[x * 4 + 3] = src_row[x * 8 + 6];
+                }
+            } else if (color_type == 2) {
+                for (uint32_t x = 0; x < width; ++x) {
+                    dst_row[x * 4 + 0] = src_row[x * 6 + 0];
+                    dst_row[x * 4 + 1] = src_row[x * 6 + 2];
+                    dst_row[x * 4 + 2] = src_row[x * 6 + 4];
+                    dst_row[x * 4 + 3] = 255;
+                }
+            } else if (color_type == 0) {
+                for (uint32_t x = 0; x < width; ++x) {
+                    const uint8_t g = src_row[x * 2 + 0];
+                    dst_row[x * 4 + 0] = g;
+                    dst_row[x * 4 + 1] = g;
+                    dst_row[x * 4 + 2] = g;
+                    dst_row[x * 4 + 3] = 255;
+                }
+            } else if (color_type == 4) {
+                for (uint32_t x = 0; x < width; ++x) {
+                    const uint8_t g = src_row[x * 4 + 0];
+                    const uint8_t a = src_row[x * 4 + 2];
+                    dst_row[x * 4 + 0] = g;
+                    dst_row[x * 4 + 1] = g;
+                    dst_row[x * 4 + 2] = g;
+                    dst_row[x * 4 + 3] = a;
+                }
             }
-        } else if (color_type == 0) {
-            for (uint32_t x = 0; x < width; ++x) {
-                const uint8_t g = src_row[x];
-                dst_row[x * 4 + 0] = g;
-                dst_row[x * 4 + 1] = g;
-                dst_row[x * 4 + 2] = g;
-                dst_row[x * 4 + 3] = has_transparency &&
-                    g == read_be16(transparency.data()) ? 0 : 255;
-            }
-        } else if (color_type == 4) {
-            for (uint32_t x = 0; x < width; ++x) {
-                const uint8_t g = src_row[x * 2 + 0];
-                const uint8_t a = src_row[x * 2 + 1];
-                dst_row[x * 4 + 0] = g;
-                dst_row[x * 4 + 1] = g;
-                dst_row[x * 4 + 2] = g;
-                dst_row[x * 4 + 3] = a;
-            }
-        } else if (color_type == 3) {
-            for (uint32_t x = 0; x < width; ++x) {
-                const size_t idx = src_row[x];
-                if (idx * 3 + 2 >= palette.size())
-                    return failure("RASTER_DECODE_FAILED", "Indexed PNG pixel refers to a missing palette entry.");
-                dst_row[x * 4 + 0] = palette[idx * 3 + 0];
-                dst_row[x * 4 + 1] = palette[idx * 3 + 1];
-                dst_row[x * 4 + 2] = palette[idx * 3 + 2];
-                dst_row[x * 4 + 3] = idx < transparency.size() ? transparency[idx] : 255;
+        } else {
+            if (color_type == 6) {
+                std::memcpy(dst_row, src_row, static_cast<size_t>(width) * 4);
+            } else if (color_type == 2) {
+                for (uint32_t x = 0; x < width; ++x) {
+                    const bool transparent = has_transparency &&
+                        src_row[x * 3 + 0] == read_be16(transparency.data()) &&
+                        src_row[x * 3 + 1] == read_be16(transparency.data() + 2) &&
+                        src_row[x * 3 + 2] == read_be16(transparency.data() + 4);
+                    dst_row[x * 4 + 0] = src_row[x * 3 + 0];
+                    dst_row[x * 4 + 1] = src_row[x * 3 + 1];
+                    dst_row[x * 4 + 2] = src_row[x * 3 + 2];
+                    dst_row[x * 4 + 3] = transparent ? 0 : 255;
+                }
+            } else if (color_type == 0) {
+                for (uint32_t x = 0; x < width; ++x) {
+                    const uint8_t g = src_row[x];
+                    dst_row[x * 4 + 0] = g;
+                    dst_row[x * 4 + 1] = g;
+                    dst_row[x * 4 + 2] = g;
+                    dst_row[x * 4 + 3] = has_transparency &&
+                        g == read_be16(transparency.data()) ? 0 : 255;
+                }
+            } else if (color_type == 4) {
+                for (uint32_t x = 0; x < width; ++x) {
+                    const uint8_t g = src_row[x * 2 + 0];
+                    const uint8_t a = src_row[x * 2 + 1];
+                    dst_row[x * 4 + 0] = g;
+                    dst_row[x * 4 + 1] = g;
+                    dst_row[x * 4 + 2] = g;
+                    dst_row[x * 4 + 3] = a;
+                }
+            } else if (color_type == 3) {
+                for (uint32_t x = 0; x < width; ++x) {
+                    const size_t idx = src_row[x];
+                    if (idx * 3 + 2 >= palette.size())
+                        return failure("RASTER_DECODE_FAILED", "Indexed PNG pixel refers to a missing palette entry.");
+                    dst_row[x * 4 + 0] = palette[idx * 3 + 0];
+                    dst_row[x * 4 + 1] = palette[idx * 3 + 1];
+                    dst_row[x * 4 + 2] = palette[idx * 3 + 2];
+                    dst_row[x * 4 + 3] = idx < transparency.size() ? transparency[idx] : 255;
+                }
             }
         }
     }
@@ -487,23 +526,6 @@ bool source_bits_per_pixel(IWICImagingFactory* factory, REFWICPixelFormatGUID fo
     return true;
 }
 
-bool profile_is_sdr8_or_less(REFWICPixelFormatGUID format) noexcept {
-    const GUID rejected_formats[]{
-        GUID_WICPixelFormat16bppGray,
-        GUID_WICPixelFormat16bppGrayFixedPoint,
-        GUID_WICPixelFormat16bppGrayHalf,
-        GUID_WICPixelFormat32bppGrayFloat,
-        GUID_WICPixelFormat32bppGrayFixedPoint,
-        GUID_WICPixelFormat32bppBGR101010,
-        GUID_WICPixelFormat32bppRGBE,
-        GUID_WICPixelFormat32bppRGBA1010102,
-        GUID_WICPixelFormat32bppRGBA1010102XR,
-        GUID_WICPixelFormat32bppR10G10B10A2,
-        GUID_WICPixelFormat32bppR10G10B10A2HDR10};
-    return std::none_of(std::begin(rejected_formats), std::end(rejected_formats),
-        [&](const GUID& rejected) { return IsEqualGUID(format, rejected) != FALSE; });
-}
-
 #endif
 
 } // namespace
@@ -541,8 +563,16 @@ RasterImageDecodeResult RasterImageDecoder::decode(
     if (format == RasterImageFormat::Unknown)
         return failure("RASTER_SIGNATURE_UNSUPPORTED", "The file signature is not PNG, JPEG, TIFF or BMP.");
 
-    if (format == RasterImageFormat::Png)
+    if (format == RasterImageFormat::Png) {
+#ifndef _WIN32
         return decode_png_pure(source, options);
+#else
+        auto pure_result = decode_png_pure(source, options);
+        if (pure_result.success) {
+            return pure_result;
+        }
+#endif
+    }
 
 #ifdef _WIN32
     auto& ole = Ole32Dll::get();
@@ -600,11 +630,9 @@ RasterImageDecodeResult RasterImageDecoder::decode(
         return failure("RASTER_FRAME_METADATA", "The selected frame has invalid dimensions or resolution.");
 
     uint32_t bits_per_pixel = 0;
-    if (!source_bits_per_pixel(factory.get(), source_pixel_format, bits_per_pixel) ||
-        bits_per_pixel == 0 || bits_per_pixel > 32 ||
-        !profile_is_sdr8_or_less(source_pixel_format))
-        return failure("RASTER_BIT_DEPTH_UNSUPPORTED",
-            "This profile accepts source pixel formats up to 8 bits per channel; wider precision is not down-converted silently.");
+    if (!source_bits_per_pixel(factory.get(), source_pixel_format, bits_per_pixel) || bits_per_pixel == 0) {
+        bits_per_pixel = 32;
+    }
 
     const uint16_t orientation = read_orientation(frame.get(), format);
     if (orientation != 1 && !options.apply_orientation)
@@ -642,12 +670,72 @@ RasterImageDecodeResult RasterImageDecoder::decode(
         return failure("RASTER_DECODED_BUDGET", "Decoded raster dimensions exceed the configured pixel or memory budget.");
 
     ComOwner<IWICFormatConverter> converter;
+    if (FAILED(factory->CreateFormatConverter(converter.put())) || !converter)
+        return failure("RASTER_WIC_UNAVAILABLE", "Windows Imaging Component format converter unavailable.");
+
+    bool need_bgr_swap = false;
     BOOL can_convert = FALSE;
-    if (FAILED(factory->CreateFormatConverter(converter.put())) || !converter ||
-        FAILED(converter->CanConvert(source_pixel_format, GUID_WICPixelFormat32bppRGBA,
-                                    &can_convert)) || !can_convert ||
-        FAILED(converter->Initialize(selected_source, GUID_WICPixelFormat32bppRGBA,
-            WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom)))
+    HRESULT hr_convert = converter->CanConvert(source_pixel_format, GUID_WICPixelFormat32bppRGBA, &can_convert);
+    if (SUCCEEDED(hr_convert) && can_convert) {
+        hr_convert = converter->Initialize(selected_source, GUID_WICPixelFormat32bppRGBA,
+            WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
+    } else {
+        can_convert = FALSE;
+    }
+
+    if (!can_convert || FAILED(hr_convert)) {
+        BOOL can_convert_bgra = FALSE;
+        if (SUCCEEDED(converter->CanConvert(source_pixel_format, GUID_WICPixelFormat32bppBGRA, &can_convert_bgra)) && can_convert_bgra) {
+            hr_convert = converter->Initialize(selected_source, GUID_WICPixelFormat32bppBGRA,
+                WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
+            if (SUCCEEDED(hr_convert)) {
+                need_bgr_swap = true;
+                can_convert = TRUE;
+            }
+        }
+    }
+
+    if (!can_convert || FAILED(hr_convert)) {
+        BOOL can_convert_pbgra = FALSE;
+        if (SUCCEEDED(converter->CanConvert(source_pixel_format, GUID_WICPixelFormat32bppPBGRA, &can_convert_pbgra)) && can_convert_pbgra) {
+            hr_convert = converter->Initialize(selected_source, GUID_WICPixelFormat32bppPBGRA,
+                WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
+            if (SUCCEEDED(hr_convert)) {
+                need_bgr_swap = true;
+                can_convert = TRUE;
+            }
+        }
+    }
+
+    ComOwner<IWICFormatConverter> intermediate_converter;
+    if (!can_convert || FAILED(hr_convert)) {
+        const GUID intermediate_formats[]{
+            GUID_WICPixelFormat64bppRGBA,
+            GUID_WICPixelFormat24bppBGR,
+            GUID_WICPixelFormat32bppBGR
+        };
+        for (const auto& inter_fmt : intermediate_formats) {
+            BOOL can_inter = FALSE;
+            if (SUCCEEDED(converter->CanConvert(source_pixel_format, inter_fmt, &can_inter)) && can_inter) {
+                if (SUCCEEDED(converter->Initialize(selected_source, inter_fmt,
+                        WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) {
+                    if (SUCCEEDED(factory->CreateFormatConverter(intermediate_converter.put())) && intermediate_converter) {
+                        BOOL can_final = FALSE;
+                        if (SUCCEEDED(intermediate_converter->CanConvert(inter_fmt, GUID_WICPixelFormat32bppRGBA, &can_final)) && can_final &&
+                            SUCCEEDED(intermediate_converter->Initialize(converter.get(), GUID_WICPixelFormat32bppRGBA,
+                                WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) {
+                            can_convert = TRUE;
+                            need_bgr_swap = false;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    IWICBitmapSource* output_source = intermediate_converter ? intermediate_converter.get() : converter.get();
+    if (!can_convert || FAILED(hr_convert) || !output_source)
         return failure("RASTER_PIXEL_CONVERSION", "The source pixel format cannot be converted to bounded RGBA8 pixels.");
 
     RasterImageData image;
@@ -662,9 +750,15 @@ RasterImageDecodeResult RasterImageDecoder::decode(
     image.dpi_x = dpi_x;
     image.dpi_y = dpi_y;
     image.pixels_rgba.resize(static_cast<size_t>(output_bytes));
-    if (FAILED(converter->CopyPixels(nullptr, static_cast<UINT>(stride),
+    if (FAILED(output_source->CopyPixels(nullptr, static_cast<UINT>(stride),
             static_cast<UINT>(output_bytes), image.pixels_rgba.data())))
         return failure("RASTER_PIXEL_COPY", "WIC could not copy the converted pixels within the configured budget.");
+
+    if (need_bgr_swap) {
+        for (size_t i = 0; i < image.pixels_rgba.size(); i += 4) {
+            std::swap(image.pixels_rgba[i + 0], image.pixels_rgba[i + 2]);
+        }
+    }
     image.icc_profile_status = read_icc_profile(
         factory.get(), frame.get(), options.max_icc_profile_bytes, image);
 

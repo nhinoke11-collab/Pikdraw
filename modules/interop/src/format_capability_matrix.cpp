@@ -39,11 +39,16 @@ std::vector<FormatCapabilityEntry> FormatCapabilityRegistry::GetMatrix() {
          "Windows Imaging Component", "Windows built-in JPEG decoder", "system component",
          "isolated worker for import",
          "Import only: one opaque SDR frame converted to straight-alpha RGBA8 preview. Original encoded bytes, DPI/orientation and ICC metadata are retained separately. No fixed file-byte or pixel quota; U32 protocol/storage representation bounds remain and import stops at 90% whole-system physical RAM. Color-managed appearance is not certified; no JPEG export or CNC vector-cut claim."},
-        {"TIFF", ".tif", "single-frame SDR TIFF to embedded RGBA8 image asset",
+        {"TIFF", ".tif", "single-frame SDR/HDR TIFF to embedded RGBA8 image asset",
          FormatCapabilityStatus::SupportedPrototype, FormatCapabilityStatus::UnsupportedReject,
          "Windows Imaging Component", "Windows built-in TIFF decoder", "system component",
          "isolated worker for import",
-         "Import only: one source frame up to 8 bits per channel converted to straight-alpha RGBA8. Original encoded bytes, DPI/orientation and ICC metadata are retained separately. No fixed file-byte or pixel quota; U32 protocol/storage representation bounds remain and import stops at 90% whole-system physical RAM. Multipage TIFF, wider precision and color-managed appearance are not supported; no TIFF export or CNC vector-cut claim."}
+         "Import only: source frame up to 32 bits per channel converted to straight-alpha RGBA8. Original encoded bytes, DPI/orientation and ICC metadata are retained separately. No fixed file-byte or pixel quota; U32 protocol/storage representation bounds remain and import stops at 90% whole-system physical RAM. Multipage TIFF requires frame selection; no TIFF export or CNC vector-cut claim."},
+        {"BMP", ".bmp", "single-frame BMP to embedded RGBA8 image asset",
+         FormatCapabilityStatus::SupportedPrototype, FormatCapabilityStatus::UnsupportedReject,
+         "Windows Imaging Component", "Windows built-in BMP decoder", "system component",
+         "isolated worker for import",
+         "Import only: standard BMP frame converted to straight-alpha RGBA8 preview. Original encoded bytes, DPI/orientation and ICC metadata are retained separately. No fixed file-byte or pixel quota; U32 protocol/storage representation bounds remain and import stops at 90% whole-system physical RAM. No BMP export or CNC vector-cut claim."}
     };
 }
 std::vector<ThirdPartyProvenance> FormatCapabilityRegistry::GetCandidateLibraries() {
@@ -80,7 +85,9 @@ bool FormatCapabilityRegistry::IsFormatSupported(std::string_view format_name) n
            equal_ascii_case_insensitive(format_name, ".jpeg") ||
            equal_ascii_case_insensitive(format_name, "TIFF") ||
            equal_ascii_case_insensitive(format_name, ".tif") ||
-           equal_ascii_case_insensitive(format_name, ".tiff");
+           equal_ascii_case_insensitive(format_name, ".tiff") ||
+           equal_ascii_case_insensitive(format_name, "BMP") ||
+           equal_ascii_case_insensitive(format_name, ".bmp");
 }
 std::string FormatCapabilityRegistry::GetDiagnosticForFormat(std::string_view format_name) {
     const auto matrix = GetMatrix();

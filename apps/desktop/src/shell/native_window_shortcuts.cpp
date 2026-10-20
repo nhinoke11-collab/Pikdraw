@@ -430,7 +430,22 @@ bool NativeWindow::handle_key_down(WPARAM key) {
             return true;
         }
         if (shift && key == 'I') {
-            toggle_font_italic();
+            const auto& sel = root().vector_controller().selection().selected_ids();
+            bool has_text = false;
+            const auto snap = root().document().current_snapshot();
+            for (auto id : sel) {
+                if (auto obj = snap->objects().get(id)) {
+                    if (std::holds_alternative<document::TextObject>(*obj)) {
+                        has_text = true;
+                        break;
+                    }
+                }
+            }
+            if (has_text) {
+                toggle_font_italic();
+            } else {
+                trigger_boolean_operation(geometry::BooleanOp::Intersection);
+            }
             return true;
         }
         if (key == 'U') {
@@ -455,10 +470,6 @@ bool NativeWindow::handle_key_down(WPARAM key) {
             }
             if (key == 'T') {
                 trigger_boolean_operation(geometry::BooleanOp::Difference);
-                return true;
-            }
-            if (key == 'I') {
-                trigger_boolean_operation(geometry::BooleanOp::Intersection);
                 return true;
             }
             if (key == 'X') {

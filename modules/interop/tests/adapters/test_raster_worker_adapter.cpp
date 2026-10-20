@@ -147,7 +147,7 @@ void test_raster_above_old_limit_and_over_budget() {
         offset += static_cast<uint32_t>(chunk.bytes.size());
     }
     assert(offset == image.decoded_pixel_bytes);
-    png[16] = 0; png[17] = 0; png[18] = 0x20; png[19] = 1; // 8193 x 2048 exceeds 8 Mi pixels.
+    png[16] = 0xFF; png[17] = 0xFF; png[18] = 0xFF; png[19] = 0xFF; // Dimensions exceed decoded pixel budget
     assert(!BuildRasterImportRecords(png, records, diagnostic));
     assert(records.empty() && !diagnostic.empty());
 }

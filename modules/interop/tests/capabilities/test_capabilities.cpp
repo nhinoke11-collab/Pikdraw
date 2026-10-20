@@ -51,6 +51,8 @@ void test_format_capabilities() {
         FormatType::Jpeg, "raster-rgba8-v1"));
     assert(FormatCapabilities::is_worker_import_profile_supported(
         FormatType::Tiff, "raster-rgba8-v1"));
+    assert(FormatCapabilities::is_worker_import_profile_supported(
+        FormatType::Bmp, "raster-rgba8-v1"));
     assert(!FormatCapabilities::is_worker_import_profile_supported(
         FormatType::Dxf, "dxf-full-v1"));
 
@@ -60,6 +62,7 @@ void test_format_capabilities() {
     assert(!FormatCapabilities::is_export_supported(FormatType::Png));
     assert(!FormatCapabilities::is_export_supported(FormatType::Jpeg));
     assert(!FormatCapabilities::is_export_supported(FormatType::Tiff));
+    assert(!FormatCapabilities::is_export_supported(FormatType::Bmp));
     assert(!FormatCapabilities::is_export_supported(FormatType::Cdr));
     assert(!FormatCapabilities::is_export_supported(FormatType::Ai));
     assert(!FormatCapabilities::is_export_supported(FormatType::Eps));

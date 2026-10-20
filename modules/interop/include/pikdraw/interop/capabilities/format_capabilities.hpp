@@ -15,7 +15,8 @@ enum class FormatType {
     Tiff,
     Cdr,
     Ai,
-    Eps
+    Eps,
+    Bmp
 };
 
 enum class FidelitySeverity {
@@ -69,6 +70,7 @@ public:
             case FormatType::Ai:
             case FormatType::Eps:
             case FormatType::Cdr:
+            case FormatType::Bmp:
                 return true;
         }
         return false;
@@ -94,6 +96,7 @@ public:
             case FormatType::Png:
             case FormatType::Jpeg:
             case FormatType::Tiff:
+            case FormatType::Bmp:
                 return profile == "raster-rgba8-v1";
         }
         return false;
@@ -108,6 +111,7 @@ public:
             case FormatType::Png:
             case FormatType::Jpeg:
             case FormatType::Tiff:
+            case FormatType::Bmp:
             case FormatType::Cdr:
             case FormatType::Ai:
             case FormatType::Eps:

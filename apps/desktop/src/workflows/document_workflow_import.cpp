@@ -31,7 +31,7 @@ constexpr uint32_t kMaxImportFrames = pikdraw::interop::IPC_MAX_OBJECTS + 1;
 constexpr uint32_t kMaxRichImportChunks = pikdraw::interop::IPC_MAX_OBJECTS;
 constexpr uint32_t kMaxRichImportFrames = pikdraw::interop::IPC_MAX_OBJECTS + 1;
 
-enum class DetectedImportFormat { Svg, Dxf, Png, Jpeg, Tiff, Cdr, Ai, Pdf, Eps };
+enum class DetectedImportFormat { Svg, Dxf, Png, Jpeg, Tiff, Cdr, Ai, Pdf, Eps, Bmp };
 
 struct SourceSignature {
     DetectedImportFormat format{DetectedImportFormat::Svg};
@@ -61,6 +61,8 @@ SourceSignature DetectSignature(HANDLE source) {
         return {DetectedImportFormat::Jpeg, true};
     if (starts_with({'I', 'I', 0x2A, 0x00}) || starts_with({'M', 'M', 0x00, 0x2A}))
         return {DetectedImportFormat::Tiff, true};
+    if (starts_with({'B', 'M'}))
+        return {DetectedImportFormat::Bmp, true};
     if (starts_with({'P', 'K', 0x03, 0x04}) ||
         (count >= 12 && starts_with({'R', 'I', 'F', 'F'}) &&
          bytes[8] == 'C' && bytes[9] == 'D' && bytes[10] == 'R'))
@@ -348,6 +350,7 @@ const char* FormatName(DetectedImportFormat format) noexcept {
     case DetectedImportFormat::Ai: return "AI";
     case DetectedImportFormat::Pdf: return "PDF";
     case DetectedImportFormat::Eps: return "EPS";
+    case DetectedImportFormat::Bmp: return "BMP";
     }
     return "Unknown";
 }
@@ -355,7 +358,8 @@ const char* FormatName(DetectedImportFormat format) noexcept {
 bool IsRaster(DetectedImportFormat format) noexcept {
     return format == DetectedImportFormat::Png ||
            format == DetectedImportFormat::Jpeg ||
-           format == DetectedImportFormat::Tiff;
+           format == DetectedImportFormat::Tiff ||
+           format == DetectedImportFormat::Bmp;
 }
 
 const wchar_t* ExpectedExtension(DetectedImportFormat format) noexcept {
@@ -365,6 +369,7 @@ const wchar_t* ExpectedExtension(DetectedImportFormat format) noexcept {
     case DetectedImportFormat::Png: return L".png";
     case DetectedImportFormat::Jpeg: return L".jpg";
     case DetectedImportFormat::Tiff: return L".tif";
+    case DetectedImportFormat::Bmp: return L".bmp";
     case DetectedImportFormat::Cdr: return L".cdr";
     case DetectedImportFormat::Ai: return L".ai";
     case DetectedImportFormat::Pdf: return L".pdf";
@@ -377,6 +382,7 @@ bool ExtensionMatches(DetectedImportFormat format, std::wstring_view extension) 
     if (extension == ExpectedExtension(format)) return true;
     return (format == DetectedImportFormat::Jpeg && extension == L".jpeg") ||
            (format == DetectedImportFormat::Tiff && extension == L".tiff") ||
+           (format == DetectedImportFormat::Bmp && extension == L".bmp") ||
            (format == DetectedImportFormat::Cdr && extension == L".cdr") ||
            (format == DetectedImportFormat::Eps && extension == L".eps");
 }

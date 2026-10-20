@@ -76,12 +76,13 @@ bool NativeWindow::import_file_to_tab(const std::wstring& path, bool is_open_act
                _wcsicmp(extension.c_str(), L".jpg") == 0 ||
                _wcsicmp(extension.c_str(), L".jpeg") == 0 ||
                _wcsicmp(extension.c_str(), L".tif") == 0 ||
-               _wcsicmp(extension.c_str(), L".tiff") == 0) {
+               _wcsicmp(extension.c_str(), L".tiff") == 0 ||
+               _wcsicmp(extension.c_str(), L".bmp") == 0) {
         format = ImportFormat::Svg;
     } else {
         status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Chưa có bộ nhập cho định dạng này. Có thể mở PikDraw, SVG/DXF, subset CDR/PDF/AI/EPS và PNG/JPEG/TIFF."
-            : "No reader is enabled for this format. Supported: PikDraw, SVG/DXF, CDR/PDF/AI/EPS subsets, and PNG/JPEG/TIFF.";
+            ? "Chưa có bộ nhập cho định dạng này. Có thể mở PikDraw, SVG/DXF, subset CDR/PDF/AI/EPS và PNG/JPEG/TIFF/BMP."
+            : "No reader is enabled for this format. Supported: PikDraw, SVG/DXF, CDR/PDF/AI/EPS subsets, and PNG/JPEG/TIFF/BMP.";
         InvalidateRect(hwnd_, nullptr, FALSE);
         return false;
     }
@@ -176,19 +177,19 @@ void NativeWindow::open_import_dialog() {
     }
     std::wstring path(32768, L'\0');
     const wchar_t* filter = language_ == UILanguage::Vietnamese
-        ? L"Định dạng có adapter nhập (*.svg;*.dxf;*.cdr;*.ai;*.pdf;*.eps;*.png;*.jpg;*.jpeg;*.tif;*.tiff)\0*.svg;*.dxf;*.cdr;*.ai;*.pdf;*.eps;*.png;*.jpg;*.jpeg;*.tif;*.tiff\0"
+        ? L"Định dạng có adapter nhập (*.svg;*.dxf;*.cdr;*.ai;*.pdf;*.eps;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.bmp)\0*.svg;*.dxf;*.cdr;*.ai;*.pdf;*.eps;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.bmp\0"
           L"PDF/AI: nhập path, chữ và ảnh theo subset (PDF chỉ trang 1) (*.ai;*.pdf)\0*.ai;*.pdf\0"
           L"EPS: path vector PostScript trong subset an toàn (*.eps)\0*.eps\0"
           L"CorelDRAW CDR: path/chữ/layer subset (*.cdr)\0*.cdr\0"
-          L"Ảnh PNG/JPEG/TIFF (*.png;*.jpg;*.jpeg;*.tif;*.tiff)\0*.png;*.jpg;*.jpeg;*.tif;*.tiff\0"
+          L"Ảnh PNG/JPEG/TIFF/BMP (*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.bmp)\0*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.bmp\0"
           L"Vector SVG (*.svg)\0*.svg\0"
           L"Tập con AutoCAD DXF 2D (*.dxf)\0*.dxf\0"
           L"Tất cả tệp\0*.*\0\0"
-        : L"Import formats with adapters (*.svg;*.dxf;*.cdr;*.ai;*.pdf;*.eps;*.png;*.jpg;*.jpeg;*.tif;*.tiff)\0*.svg;*.dxf;*.cdr;*.ai;*.pdf;*.eps;*.png;*.jpg;*.jpeg;*.tif;*.tiff\0"
+        : L"Import formats with adapters (*.svg;*.dxf;*.cdr;*.ai;*.pdf;*.eps;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.bmp)\0*.svg;*.dxf;*.cdr;*.ai;*.pdf;*.eps;*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.bmp\0"
           L"PDF/AI: path, text and image subset (PDF page 1 only) (*.ai;*.pdf)\0*.ai;*.pdf\0"
           L"EPS: safe editable PostScript vector path subset (*.eps)\0*.eps\0"
           L"CorelDRAW CDR path/text/layer subset (*.cdr)\0*.cdr\0"
-          L"PNG/JPEG/TIFF images (*.png;*.jpg;*.jpeg;*.tif;*.tiff)\0*.png;*.jpg;*.jpeg;*.tif;*.tiff\0"
+          L"PNG/JPEG/TIFF/BMP images (*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.bmp)\0*.png;*.jpg;*.jpeg;*.tif;*.tiff;*.bmp\0"
           L"SVG vector (*.svg)\0*.svg\0"
           L"AutoCAD DXF 2D subset (*.dxf)\0*.dxf\0"
           L"All files\0*.*\0\0";

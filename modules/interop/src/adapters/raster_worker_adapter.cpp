@@ -38,20 +38,16 @@ bool BuildRasterImportRecords(std::span<const uint8_t> source,
         options.max_icc_profile_bytes = UINT32_MAX;
         options.max_frames = 1;
         options.frame_index = 0;
+        options.apply_orientation = true;
         const auto decoded = RasterImageDecoder::decode(source, options);
         if (!decoded.success) {
             diagnostic = decoded.message.empty()
-                ? "The raster source is outside the bounded PNG/JPEG/TIFF profile."
+                ? "The raster source is outside the bounded PNG/JPEG/TIFF/BMP profile."
                 : decoded.message;
             return false;
         }
         if (decoded.image.frame_count != 1) {
             diagnostic = "Multi-frame raster import requires an explicit frame selection.";
-            return false;
-        }
-        if (decoded.image.has_embedded_icc_profile &&
-            decoded.image.icc_profile_status != RasterIccProfileStatus::Preserved) {
-            diagnostic = "The embedded ICC profile exceeds the raster import budget or could not be retained.";
             return false;
         }
         const auto* media_type = media_type_for(decoded.image.format);
@@ -85,13 +81,16 @@ bool BuildRasterImportRecords(std::span<const uint8_t> source,
         image.dpi_y = decoded.image.dpi_y;
         image.dpi_from_source =
             decoded.image.dpi_x != 96.0 || decoded.image.dpi_y != 96.0;
-        image.icc_profile = decoded.image.embedded_icc_profile;
+        if (decoded.image.has_embedded_icc_profile &&
+            decoded.image.icc_profile_status == RasterIccProfileStatus::Preserved) {
+            image.icc_profile = decoded.image.embedded_icc_profile;
+        }
 
         const auto add_record = [&](const ImportRecordValue& value) {
             auto encoded = SerializeImportRecord(value);
             if (!encoded) return false;
             records.push_back(std::move(*encoded));
-            return records.size() <= 144;
+            return records.size() <= IPC_MAX_OBJECTS;
         };
         if (!add_record(ImportPageRecord{page_width_mm, page_height_mm}))
             throw std::runtime_error("Raster page dimensions exceed the import profile.");

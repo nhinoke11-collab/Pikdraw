@@ -192,6 +192,7 @@ V2ProposalStreamValidator::V2ProposalStreamValidator(
     const bool is_png = expected_.format_id == "PNG";
     const bool is_jpeg = expected_.format_id == "JPEG";
     const bool is_tiff = expected_.format_id == "TIFF";
+    const bool is_bmp = expected_.format_id == "BMP";
     const bool supported_svg_profile = is_svg &&
         FormatCapabilities::is_worker_import_profile_supported(
             FormatType::Svg, expected_.profile_id);
@@ -205,9 +206,9 @@ V2ProposalStreamValidator::V2ProposalStreamValidator(
         FormatType::Eps, expected_.profile_id);
     const bool supported_cdr_profile = is_cdr && FormatCapabilities::is_worker_import_profile_supported(
         FormatType::Cdr, expected_.profile_id);
-    const bool supported_raster_profile = (is_png || is_jpeg || is_tiff) &&
+    const bool supported_raster_profile = (is_png || is_jpeg || is_tiff || is_bmp) &&
         FormatCapabilities::is_worker_import_profile_supported(
-            is_png ? FormatType::Png : is_jpeg ? FormatType::Jpeg : FormatType::Tiff,
+            is_png ? FormatType::Png : is_jpeg ? FormatType::Jpeg : is_tiff ? FormatType::Tiff : FormatType::Bmp,
             expected_.profile_id);
 #ifdef PIKDRAW_WORKER_TEST_HOOKS
     const bool supported_test_profile = expected_.format_id == "TEST" &&
@@ -218,7 +219,7 @@ V2ProposalStreamValidator::V2ProposalStreamValidator(
     const bool supported_profile = supported_svg_profile || supported_dxf_profile ||
                                    supported_vector_pdf_profile || supported_eps_profile || supported_cdr_profile || supported_raster_profile ||
                                    supported_test_profile;
-    const bool requires_semantics = is_svg || is_dxf || is_pdf || is_ai || is_eps || is_cdr || is_png || is_jpeg || is_tiff;
+    const bool requires_semantics = is_svg || is_dxf || is_pdf || is_ai || is_eps || is_cdr || is_png || is_jpeg || is_tiff || is_bmp;
     if (requires_semantics && supported_profile) {
         semantic_.reset(new (std::nothrow) SemanticState());
         if (semantic_) semantic_->expected_coverage_profile = expected_.profile_id;
