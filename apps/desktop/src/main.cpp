@@ -1,12 +1,16 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include <chrono>
 #include <iostream>
 #include <string>
+#include <thread>
 
 int main(int argc, char* argv[]) {
     std::cout << "PikDraw Professional Vector Editor 2026 (Milestone M1 Native Shell)\n";
 
     bool screenshot_mode = false;
     std::string screenshot_path;
+    std::string import_file_path;
+    bool open_as_import = false;
     bool headless = false;
     bool mcp_enabled = false;
     bool mcp_edit_access = false;
@@ -35,7 +39,10 @@ int main(int argc, char* argv[]) {
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg == "--screenshot" && i + 1 < argc) {
+        if ((arg == "--open" || arg == "--open-file" || arg == "--import") && i + 1 < argc) {
+            import_file_path = argv[++i];
+            open_as_import = (arg == "--import");
+        } else if (arg == "--screenshot" && i + 1 < argc) {
             screenshot_mode = true;
             screenshot_path = argv[++i];
         } else if (arg == "--headless") {
@@ -214,18 +221,31 @@ int main(int argc, char* argv[]) {
         }
     }
     if (demo_powerclip || demo_powerclip_edit) {
-        // Create red inner content rectangle (like user's Image 1)
-        const auto content_id = window.workflow().add_rectangle(120.0, 60.0, 75.0, 50.0, "#ef4444", "#b91c1c", 1.5);
+        // Create 4 distinct objects inside the clipping container
+        const auto c1 = window.workflow().add_rectangle(50.0, 40.0, 50.0, 38.0, "#ef4444", "#b91c1c", 1.5);
+        const auto c2 = window.workflow().add_ellipse(105.0, 40.0, 42.0, 42.0, "#f59e0b", "#d97706", 1.5);
+        const auto c3 = window.workflow().add_rectangle(65.0, 72.0, 52.0, 36.0, "#8b5cf6", "#7c3aed", 1.5);
+        const auto c4 = window.workflow().add_ellipse(115.0, 68.0, 48.0, 48.0, "#3b82f6", "#1d4ed8", 1.5);
+
         // Create cyan outer frame container (on top)
-        const auto frame_id = window.workflow().add_rectangle(50.0, 30.0, 120.0, 90.0, "#00f2c3", "#0ea5e9", 2.0);
+        const auto frame_id = window.workflow().add_rectangle(40.0, 30.0, 140.0, 95.0, "#00f2c3", "#0ea5e9", 2.0);
+
         window.root().vector_controller().selection().clear();
-        window.root().vector_controller().selection().select(content_id, pikdraw::vector::SelectionMode::Add);
+        window.root().vector_controller().selection().select(c1, pikdraw::vector::SelectionMode::Add);
+        window.root().vector_controller().selection().select(c2, pikdraw::vector::SelectionMode::Add);
+        window.root().vector_controller().selection().select(c3, pikdraw::vector::SelectionMode::Add);
+        window.root().vector_controller().selection().select(c4, pikdraw::vector::SelectionMode::Add);
         window.root().vector_controller().selection().select(frame_id, pikdraw::vector::SelectionMode::Add);
+
         const auto clip_id = window.workflow().make_clipping_mask_selected(true);
         if (clip_id != pikdraw::document::kInvalidObjectId) {
+            // Shift c4 to partially stick out of the right edge of frame (at x = 180) to show clipping
+            window.workflow().move_object(c4, 155.0, 60.0);
+
             if (demo_powerclip_edit) {
+                // Enter isolation mode and select c4 to show editing inside
                 window.enter_group_isolation(clip_id);
-                window.root().vector_controller().selection().select(content_id, pikdraw::vector::SelectionMode::Replace);
+                window.root().vector_controller().selection().select(c4, pikdraw::vector::SelectionMode::Replace);
             } else {
                 window.root().vector_controller().selection().select(clip_id, pikdraw::vector::SelectionMode::Replace);
             }
@@ -246,6 +266,46 @@ int main(int argc, char* argv[]) {
         window.open_new_doc_modal();
     }
 
+    const std::string win_title = (initial_lang == pikdraw::desktop::UILanguage::Vietnamese) ?
+        "PikDraw 2026 - Bản vẽ không tên [Vector Workspace]" :
+        "PikDraw 2026 - Untitled Document [Vector Workspace]";
+    if (!window.initialize(win_title)) {
+        std::cerr << "Failed to create native desktop window.\n";
+        return 1;
+    }
+    window.close_recovery_modal();
+
+    if (screenshot_mode || headless) {
+#ifdef _WIN32
+        if (window.hwnd()) ShowWindow(window.hwnd(), SW_HIDE);
+#endif
+    }
+
+    if (!import_file_path.empty()) {
+        const std::wstring wide_path = pikdraw::desktop::NativeWindow::utf8_to_wide(import_file_path);
+        std::cout << "Importing file: " << import_file_path << "...\n";
+        window.import_file_to_tab(wide_path, !open_as_import);
+        const auto timeout_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+        while (window.import_job_active() && std::chrono::steady_clock::now() < timeout_deadline) {
+#ifdef _WIN32
+            MSG msg;
+            while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+#endif
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+#ifdef _WIN32
+        MSG msg;
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+#endif
+        std::cout << "Import completed. Status: " << window.status_message() << "\n";
+    }
+
     const auto area = window.shell().canvas_area();
     std::cout << "Shell Initialized:\n"
               << "  Canvas Viewport Area: " << area.width << " x " << area.height
@@ -262,14 +322,6 @@ int main(int argc, char* argv[]) {
 
     if (headless) {
         return 0;
-    }
-
-    const std::string win_title = (initial_lang == pikdraw::desktop::UILanguage::Vietnamese) ?
-        "PikDraw 2026 - Bản vẽ không tên [Vector Workspace]" :
-        "PikDraw 2026 - Untitled Document [Vector Workspace]";
-    if (!window.initialize(win_title)) {
-        std::cerr << "Failed to create native desktop window.\n";
-        return 1;
     }
 
 #ifdef _WIN32

@@ -82,7 +82,8 @@ bool BuildRasterImportRecords(std::span<const uint8_t> source,
         image.dpi_from_source =
             decoded.image.dpi_x != 96.0 || decoded.image.dpi_y != 96.0;
         if (decoded.image.has_embedded_icc_profile &&
-            decoded.image.icc_profile_status == RasterIccProfileStatus::Preserved) {
+            decoded.image.icc_profile_status == RasterIccProfileStatus::Preserved &&
+            decoded.image.embedded_icc_profile.size() <= 64 * 1024) {
             image.icc_profile = decoded.image.embedded_icc_profile;
         }
 

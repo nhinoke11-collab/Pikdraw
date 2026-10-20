@@ -321,9 +321,11 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
         rollback_open_tab();
         const auto message = NativeWindow::utf8_to_wide(result->error_message);
         status_msg_ = language_ == UILanguage::Vietnamese ? "Nhập tệp thất bại" : "Import failed";
-        MessageBoxW(hwnd_, message.c_str(),
-            language_ == UILanguage::Vietnamese ? L"Không thể nhập tệp" : L"Could not import file",
-            MB_OK | MB_ICONWARNING);
+        if (IsWindowVisible(hwnd_)) {
+            MessageBoxW(hwnd_, message.c_str(),
+                language_ == UILanguage::Vietnamese ? L"Không thể nhập tệp" : L"Could not import file",
+                MB_OK | MB_ICONWARNING);
+        }
         close_session();
         return;
     }

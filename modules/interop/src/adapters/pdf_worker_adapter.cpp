@@ -140,21 +140,35 @@ struct PdfiumApi {
     GetMarkName get_mark_name{nullptr};
     GetMarkParamStringValue get_mark_param_string_value{nullptr};
 
+    std::string failure_reason;
+
     PdfiumApi() noexcept {
         wchar_t executable_path[32768]{};
         const DWORD length = GetModuleFileNameW(nullptr, executable_path,
                                                 static_cast<DWORD>(std::size(executable_path)));
-        if (length == 0 || length >= std::size(executable_path)) return;
+        if (length == 0 || length >= std::size(executable_path)) {
+            failure_reason = "executable path error";
+            return;
+        }
         const auto library_path =
             std::filesystem::path(executable_path).parent_path() / L"pdfium.dll";
         module = LoadLibraryExW(library_path.c_str(), nullptr,
                                 LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR |
                                     LOAD_LIBRARY_SEARCH_SYSTEM32);
-        if (!module) return;
+        if (!module) {
+            module = LoadLibraryW(library_path.c_str());
+        }
+        if (!module) {
+            failure_reason = "LoadLibrary error " + std::to_string(GetLastError()) + " for " + library_path.string();
+            return;
+        }
 
 #define PIKDRAW_PDFIUM_LOAD(member, symbol) \
     member = reinterpret_cast<decltype(member)>(GetProcAddress(module, symbol)); \
-    if (!member) return
+    if (!member) { \
+        failure_reason = std::string("missing symbol ") + symbol; \
+        return; \
+    }
         PIKDRAW_PDFIUM_LOAD(init_library, "FPDF_InitLibrary");
         PIKDRAW_PDFIUM_LOAD(destroy_library, "FPDF_DestroyLibrary");
         PIKDRAW_PDFIUM_LOAD(load_mem_document64, "FPDF_LoadMemDocument64");

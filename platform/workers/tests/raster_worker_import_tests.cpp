@@ -124,10 +124,22 @@ struct TemporaryWorkerPackage final {
             ("pikdraw-raster-worker-bin-" + std::to_string(GetCurrentProcessId()) + "-" +
              std::to_string(GetTickCount64()));
         if (!fs::create_directory(root)) return false;
-        const auto source = fs::current_path() / "spike_worker.exe";
-        const auto pdfium = fs::current_path() / "pdfium.dll";
+        wchar_t mod[32768]{};
+        GetModuleFileNameW(nullptr, mod, static_cast<DWORD>(std::size(mod)));
+        const auto self_dir = fs::path(mod).parent_path();
+        auto find_file = [&](const std::string& name) -> fs::path {
+            if (fs::exists(fs::current_path() / name)) return fs::current_path() / name;
+            if (fs::exists(self_dir / name)) return self_dir / name;
+            if (fs::exists(self_dir / "workers" / name)) return self_dir / "workers" / name;
+            if (fs::exists(fs::current_path() / "platform" / "workers" / name))
+                return fs::current_path() / "platform" / "workers" / name;
+            return {};
+        };
+        auto source = find_file("spike_worker_test.exe");
+        if (source.empty()) source = find_file("spike_worker.exe");
+        const auto pdfium = find_file("pdfium.dll");
         executable = root / "spike_worker.exe";
-        return fs::exists(source) && fs::exists(pdfium) &&
+        return !source.empty() && !pdfium.empty() &&
             fs::copy_file(source, executable) && fs::copy_file(pdfium, root / "pdfium.dll");
     }
 };
@@ -233,6 +245,12 @@ RunResult run_import(const SourceSnapshot& source, std::string format_id = "PNG"
     ScopedSid sid(raw_sid);
     Require(AppContainerProfileGuard::GrantDirectoryAccess(package.root.wstring(), sid.Get()),
             "could not grant the AppContainer execute access to its owned worker directory");
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator(package.root, ec)) {
+        if (entry.is_regular_file()) {
+            AppContainerProfileGuard::GrantDirectoryAccess(entry.path().wstring(), sid.Get());
+        }
+    }
 
     WorkerLaunchConfig config;
     config.worker_executable_path = package.executable.wstring();

@@ -338,6 +338,25 @@ private:
     T* value_{nullptr};
 };
 
+struct WicDll {
+    HMODULE module{nullptr};
+    using CreateFn = HRESULT(WINAPI*)(UINT, IWICImagingFactory**);
+    CreateFn create_factory{nullptr};
+
+    static WicDll& get() {
+        static WicDll instance;
+        return instance;
+    }
+
+    WicDll() {
+        module = GetModuleHandleW(L"windowscodecs.dll");
+        if (!module) module = LoadLibraryW(L"windowscodecs.dll");
+        if (module) {
+            create_factory = reinterpret_cast<CreateFn>(GetProcAddress(module, "WICCreateImagingFactory_Proxy"));
+        }
+    }
+};
+
 struct Ole32Dll {
     HMODULE module{nullptr};
     using CoInitFn = HRESULT(WINAPI*)(LPVOID, DWORD);
@@ -356,17 +375,25 @@ struct Ole32Dll {
     }
 
     Ole32Dll() {
-        module = LoadLibraryW(L"ole32.dll");
+        module = GetModuleHandleW(L"ole32.dll");
+        if (!module) module = LoadLibraryW(L"ole32.dll");
         if (module) {
             co_init = reinterpret_cast<CoInitFn>(GetProcAddress(module, "CoInitializeEx"));
             co_uninit = reinterpret_cast<CoUninitFn>(GetProcAddress(module, "CoUninitialize"));
             co_create = reinterpret_cast<CoCreateFn>(GetProcAddress(module, "CoCreateInstance"));
             prop_clear = reinterpret_cast<PropClearFn>(GetProcAddress(module, "PropVariantClear"));
         }
+        if (!prop_clear) {
+            HMODULE propsys = GetModuleHandleW(L"propsys.dll");
+            if (!propsys) propsys = LoadLibraryW(L"propsys.dll");
+            if (propsys) {
+                prop_clear = reinterpret_cast<PropClearFn>(GetProcAddress(propsys, "PropVariantClear"));
+            }
+        }
     }
 
     bool is_available() const noexcept {
-        return module && co_init && co_uninit && co_create && prop_clear;
+        return (module && co_init && co_create) || (WicDll::get().create_factory != nullptr);
     }
 };
 
@@ -576,17 +603,32 @@ RasterImageDecodeResult RasterImageDecoder::decode(
 
 #ifdef _WIN32
     auto& ole = Ole32Dll::get();
-    if (!ole.is_available())
+    auto& wic = WicDll::get();
+    if (!ole.is_available() && !wic.create_factory)
         return failure("RASTER_WIC_UNAVAILABLE", "Windows Imaging Component is unavailable.");
 
     ComApartment apartment;
-    if (!apartment.usable())
+    if (!apartment.usable() && !wic.create_factory)
         return failure("RASTER_COM_INITIALIZATION", "Windows Imaging Component could not initialize COM.");
 
     ComOwner<IWICImagingFactory> factory;
-    if (FAILED(ole.co_create(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
-                             IID_PPV_ARGS(factory.put()))) || !factory)
-        return failure("RASTER_WIC_UNAVAILABLE", "Windows Imaging Component is unavailable.");
+    if (wic.create_factory) {
+        (void)wic.create_factory(0x0237 /* WINCODEC_SDK_VERSION2 */, factory.put());
+        if (!factory) {
+            (void)wic.create_factory(0x0236 /* WINCODEC_SDK_VERSION1 */, factory.put());
+        }
+    }
+    if (!factory) {
+        if (FAILED(ole.co_create(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                 IID_PPV_ARGS(factory.put()))) || !factory) {
+            constexpr GUID kClsidWicImagingFactory2 = {
+                0x317d06e8, 0x5f24, 0x433d, {0xbd, 0xf7, 0x79, 0xce, 0x68, 0xd8, 0xab, 0xc2}};
+            if (FAILED(ole.co_create(kClsidWicImagingFactory2, nullptr, CLSCTX_INPROC_SERVER,
+                                     IID_PPV_ARGS(factory.put()))) || !factory) {
+                return failure("RASTER_WIC_UNAVAILABLE", "Windows Imaging Component is unavailable.");
+            }
+        }
+    }
 
     // WIC's memory stream accepts mutable memory, so use a private bounded copy of the source.
     std::vector<uint8_t> source_copy(source.begin(), source.end());
@@ -597,11 +639,19 @@ RasterImageDecodeResult RasterImageDecoder::decode(
         return failure("RASTER_STREAM_INVALID", "The source bytes could not be staged for WIC.");
 
     ComOwner<IWICBitmapDecoder> decoder;
-    const GUID clsid = decoder_class(format);
-    if (IsEqualGUID(clsid, GUID_NULL) ||
-        FAILED(ole.co_create(clsid, nullptr, CLSCTX_INPROC_SERVER,
-                             IID_PPV_ARGS(decoder.put()))) || !decoder ||
-        FAILED(decoder->Initialize(stream.get(), WICDecodeMetadataCacheOnDemand)))
+    HRESULT hr_dec = factory->CreateDecoderFromStream(
+        stream.get(), nullptr, WICDecodeMetadataCacheOnDemand, decoder.put());
+    if (FAILED(hr_dec) || !decoder) {
+        const GUID clsid = decoder_class(format);
+        if (!IsEqualGUID(clsid, GUID_NULL)) {
+            (void)ole.co_create(clsid, nullptr, CLSCTX_INPROC_SERVER,
+                                 IID_PPV_ARGS(decoder.put()));
+            if (decoder) {
+                (void)decoder->Initialize(stream.get(), WICDecodeMetadataCacheOnDemand);
+            }
+        }
+    }
+    if (!decoder)
         return failure("RASTER_DECODE_FAILED", "The selected Windows raster decoder rejected this file.");
 
     GUID actual_container{};

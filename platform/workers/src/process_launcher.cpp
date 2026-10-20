@@ -126,10 +126,16 @@ bool WorkerProcessHost::Launch(const WorkerLaunchConfig& config) {
         sec_caps.CapabilityCount = 0;
         sec_caps.Reserved = 0;
         if (config.grant_worker_directory_access) {
-            const auto bin_dir = std::filesystem::path(config.worker_executable_path).parent_path().wstring();
-            if (!AppContainerProfileGuard::GrantDirectoryAccess(bin_dir, app_container_.GetSid()) ||
+            const auto bin_path = std::filesystem::path(config.worker_executable_path).parent_path();
+            if (!AppContainerProfileGuard::GrantDirectoryAccess(bin_path.wstring(), app_container_.GetSid()) ||
                 !AppContainerProfileGuard::GrantDirectoryAccess(config.worker_executable_path, app_container_.GetSid())) {
                 return false;
+            }
+            std::error_code ec;
+            for (const auto& entry : std::filesystem::directory_iterator(bin_path, ec)) {
+                if (entry.is_regular_file()) {
+                    AppContainerProfileGuard::GrantDirectoryAccess(entry.path().wstring(), app_container_.GetSid());
+                }
             }
         }
         for (const auto& directory : config.writable_directories) {

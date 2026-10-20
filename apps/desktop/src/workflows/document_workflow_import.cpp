@@ -1123,7 +1123,8 @@ ImportWorkerResult run_import_worker_job(
         const bool rich_import = cdr_import ||
             signature.format == DetectedImportFormat::Pdf ||
             signature.format == DetectedImportFormat::Ai ||
-            signature.format == DetectedImportFormat::Eps;
+            signature.format == DetectedImportFormat::Eps ||
+            IsRaster(signature.format);
         const uint64_t max_response_bytes = rich_import ? std::numeric_limits<uint64_t>::max()
                                                        : kMaxImportResponseBytes;
         const uint64_t max_canonical_bytes = rich_import ? std::numeric_limits<uint64_t>::max()
