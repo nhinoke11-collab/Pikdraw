@@ -329,4 +329,57 @@ bool BatchMovePathNodesCommand::apply_edit(EditablePath& path, PathTopologyMappi
     return true;
 }
 
+BendSegmentCommand::BendSegmentCommand(
+    ObjectId object_id, SubpathId subpath_id, SegmentId segment_id,
+    geometry::Point2D outgoing_handle, geometry::Point2D incoming_handle,
+    std::shared_ptr<PathTopologyMapping> mapping_result) noexcept
+    : PathTopologyCommand(object_id, std::move(mapping_result)),
+      subpath_id_(subpath_id), segment_id_(segment_id),
+      outgoing_handle_(outgoing_handle), incoming_handle_(incoming_handle) {}
+
+bool BendSegmentCommand::apply_edit(EditablePath& path, PathTopologyMapping& mapping,
+                                    std::string& error) {
+    auto* subpath = detail::find_subpath(path, subpath_id_);
+    if (!subpath) {
+        error = "Subpath ID was not found";
+        return false;
+    }
+    auto it = std::find_if(subpath->segments.begin(), subpath->segments.end(),
+        [&](const EditableSegment& s) { return s.id == segment_id_; });
+    if (it == subpath->segments.end()) {
+        error = "Segment ID was not found";
+        return false;
+    }
+    const size_t idx = static_cast<size_t>(it - subpath->segments.begin());
+    const size_t n = subpath->nodes.size();
+    if (n == 0) {
+        error = "Subpath has no nodes";
+        return false;
+    }
+    const size_t next_idx = (idx + 1) % n;
+
+    it->kind = PathSegmentKind::CubicBezier;
+    subpath->nodes[idx].outgoing_handle = outgoing_handle_;
+    subpath->nodes[idx].has_outgoing_handle = true;
+    if (subpath->nodes[idx].mode == PathNodeMode::Corner ||
+        subpath->nodes[idx].mode == PathNodeMode::AutoSmooth) {
+        subpath->nodes[idx].mode = PathNodeMode::Cusp;
+    }
+
+    subpath->nodes[next_idx].incoming_handle = incoming_handle_;
+    subpath->nodes[next_idx].has_incoming_handle = true;
+    if (subpath->nodes[next_idx].mode == PathNodeMode::Corner ||
+        subpath->nodes[next_idx].mode == PathNodeMode::AutoSmooth) {
+        subpath->nodes[next_idx].mode = PathNodeMode::Cusp;
+    }
+
+    detail::add_mapping(mapping, PathElementKind::Segment, segment_id_.value(),
+                        segment_id_.value(), IdMappingRelation::Preserved);
+    detail::add_mapping(mapping, PathElementKind::Node, subpath->nodes[idx].id.value(),
+                        subpath->nodes[idx].id.value(), IdMappingRelation::Preserved);
+    detail::add_mapping(mapping, PathElementKind::Node, subpath->nodes[next_idx].id.value(),
+                        subpath->nodes[next_idx].id.value(), IdMappingRelation::Preserved);
+    return true;
+}
+
 } // namespace pikdraw::document

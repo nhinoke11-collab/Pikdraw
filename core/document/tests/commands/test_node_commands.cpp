@@ -226,6 +226,38 @@ void test_batch_move_path_nodes() {
     assert(std::abs(after_obj.authoring_source->subpaths[0].nodes[0].anchor.x - 0.0) < 1e-6);
 }
 
+void test_bend_segment() {
+    Document doc("doc-bend-segment-test");
+    auto obj = make_test_triangle();
+    const auto obj_id = obj.id;
+    const auto sub_id = obj.authoring_source->subpaths[0].id;
+    const auto seg_id = obj.authoring_source->subpaths[0].segments[0].id;
+    doc.execute_command(std::make_unique<AddObjectCommand>(obj));
+
+    geometry::Point2D c1{30.0, 40.0};
+    geometry::Point2D c2{70.0, 40.0};
+    assert(doc.execute_command(std::make_unique<BendSegmentCommand>(
+        obj_id, sub_id, seg_id, c1, c2)).success);
+
+    auto snap = doc.current_snapshot();
+    auto after_obj = std::get<PathObject>(*snap->get_object(obj_id));
+    const auto& sub = after_obj.authoring_source->subpaths[0];
+    assert(sub.segments[0].kind == PathSegmentKind::CubicBezier);
+    assert(sub.nodes[0].has_outgoing_handle);
+    assert(std::abs(sub.nodes[0].outgoing_handle.x - 30.0) < 1e-6);
+    assert(std::abs(sub.nodes[0].outgoing_handle.y - 40.0) < 1e-6);
+    assert(sub.nodes[1].has_incoming_handle);
+    assert(std::abs(sub.nodes[1].incoming_handle.x - 70.0) < 1e-6);
+    assert(std::abs(sub.nodes[1].incoming_handle.y - 40.0) < 1e-6);
+
+    // Single step undo
+    assert(doc.undo());
+    snap = doc.current_snapshot();
+    after_obj = std::get<PathObject>(*snap->get_object(obj_id));
+    assert(after_obj.authoring_source->subpaths[0].segments[0].kind == PathSegmentKind::Line);
+    assert(!after_obj.authoring_source->subpaths[0].nodes[0].has_outgoing_handle);
+}
+
 int main() {
     std::cout << "[test_node_commands] Running node command tests...\n";
     test_move_node_handle_cusp_smooth_symmetric();
@@ -233,6 +265,7 @@ int main() {
     test_reverse_subpath();
     test_convert_segment_kind();
     test_batch_move_path_nodes();
+    test_bend_segment();
     std::cout << "[test_node_commands] All tests passed!\n";
     return 0;
 }

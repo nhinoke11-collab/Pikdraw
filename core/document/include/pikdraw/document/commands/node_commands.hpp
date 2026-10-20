@@ -104,4 +104,22 @@ private:
     geometry::Point2D delta_{};
 };
 
+class BendSegmentCommand final : public PathTopologyCommand {
+public:
+    BendSegmentCommand(ObjectId object_id, SubpathId subpath_id, SegmentId segment_id,
+                       geometry::Point2D outgoing_handle, geometry::Point2D incoming_handle,
+                       std::shared_ptr<PathTopologyMapping> mapping_result = {}) noexcept;
+    [[nodiscard]] std::string_view name() const noexcept override { return "Bend Segment"; }
+
+protected:
+    bool apply_edit(EditablePath& path, PathTopologyMapping& mapping,
+                    std::string& error) override;
+
+private:
+    SubpathId subpath_id_{};
+    SegmentId segment_id_{};
+    geometry::Point2D outgoing_handle_{};
+    geometry::Point2D incoming_handle_{};
+};
+
 } // namespace pikdraw::document

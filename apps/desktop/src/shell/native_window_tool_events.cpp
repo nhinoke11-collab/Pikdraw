@@ -185,6 +185,27 @@ bool NativeWindow::handle_pen_pointer_move(int x, int y, unsigned modifiers) {
     if (gesture && !pen_pointer_dragged_ && std::hypot(dx, dy) >= 3.0 * scale)
         pen_pointer_dragged_ = true;
     const auto raw_world = canvas_to_world(x, y);
+
+    const auto& draft = pen_tool_->draft();
+    if (!pen_tool_->resuming() && draft.nodes.size() >= 2 && !pen_tool_->pointer_pending()) {
+        const auto area = canvas_rect(width_, height_);
+        const auto first_world = pen_tool_->world_point_from_source(draft.nodes.front().anchor);
+        const auto first_screen = root().renderer().camera().world_to_screen(first_world);
+        const double sx = static_cast<double>(x - area.left) - first_screen.x;
+        const double sy = static_cast<double>(y - area.top) - first_screen.y;
+        if (std::hypot(sx, sy) <= 8.0 * scale) {
+            pen_close_candidate_ = true;
+            pen_last_pointer_world_ = first_world;
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Nhấp điểm đầu để đóng đường cong (Close Path) · Enter để kết thúc mở"
+                : "Click first point to close path · Enter finishes open";
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        } else {
+            pen_close_candidate_ = false;
+        }
+    }
+
     pen_last_pointer_world_ = gesture ? raw_world :
         pen_numeric_buffer_.empty() ? pen_snap_point(raw_world, modifiers) : raw_world;
 
@@ -238,7 +259,7 @@ geometry::Point2D NativeWindow::pen_snap_point(geometry::Point2D raw_world,
                 if (snap_deg >= 360.0) snap_deg -= 360.0;
                 double diff = std::abs(raw_deg - snap_deg);
                 if (diff > 180.0) diff = 360.0 - diff;
-                if (diff <= 3.5 || (modifiers & MK_SHIFT) != 0) {
+                if ((modifiers & MK_SHIFT) != 0) {
                     const double rad = snap_deg * kDegToRad;
                     return geometry::Point2D{
                         base_world.x + dist * std::cos(rad),
@@ -325,17 +346,55 @@ bool NativeWindow::handle_node_pointer_down(int x, int y, unsigned modifiers) {
     if (!is_canvas_point(x, y))
         return false;
     const auto world_pt = canvas_to_world(x, y);
-    const bool shift = (modifiers & MK_SHIFT) != 0;
+    const bool multi_select = ((modifiers & MK_SHIFT) != 0) || ((modifiers & MK_CONTROL) != 0);
     const double zoom = root().renderer().camera().zoom();
     const double tol_mm = (zoom > 1e-4) ? (8.0 / zoom) : 5.0;
-    const bool handled = node_tool_->pointer_down(world_pt, shift, tol_mm);
+
+    const auto snapshot = root().document().current_snapshot();
+    const auto target_id = node_tool_->target_object();
+
+    // Check if the click directly hits an existing handle, corner widget, node, or segment of the active target
+    const bool hit_current = (target_id != document::kInvalidObjectId) &&
+        (node_tool_->tool().hit_test_handle(world_pt, tol_mm).has_value() ||
+         node_tool_->tool().hit_test_corner_widget(world_pt, tol_mm, zoom).has_value() ||
+         node_tool_->tool().hit_test_node(world_pt, tol_mm).has_value() ||
+         node_tool_->tool().hit_test_segment(world_pt, tol_mm).has_value());
+
+    if (!hit_current && snapshot) {
+        auto hit = vector::SelectionModel::hit_test(world_pt, *snapshot, tol_mm);
+        if (hit && *hit != target_id) {
+            auto obj = snapshot->objects().get(*hit);
+            if (obj && std::holds_alternative<document::PathObject>(*obj)) {
+                root().vector_controller().selection().select(*hit);
+                (void)node_tool_->activate(*hit);
+            }
+        } else if (hit && *hit == target_id && !node_tool_->tool().get_editable_path()) {
+            (void)node_tool_->activate(*hit);
+        }
+    }
+
+    const bool handled = node_tool_->pointer_down(world_pt, multi_select, tol_mm, zoom);
     if (handled) {
         if (hwnd_) SetCapture(hwnd_);
-        const size_t count = node_tool_->selected_node_count();
-        if (count > 0) {
+        if (node_tool_->tool().is_rounding_corners()) {
             status_msg_ = language_ == UILanguage::Vietnamese
-                ? "Đang chọn " + std::to_string(count) + " node · Kéo để di chuyển hoặc kéo tiếp tuyến Bézier"
-                : "Selected " + std::to_string(count) + " node(s) · Drag to move or adjust Bézier handles";
+                ? "Đang bo góc (Live Corners) · Kéo vào trong để tăng bán kính bo tròn · Thả chuột để áp dụng"
+                : "Live Corners · Drag inward to adjust fillet radius · Release mouse to apply";
+        } else if (node_tool_->tool().drag_mode() == vector::tools::node::NodeDragMode::MoveHandle) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Đang kéo tay đòn Bézier · Phản hồi uốn cong thời gian thực · Thả chuột để áp dụng"
+                : "Dragging Bézier handle · Real-time curve deformation · Release to apply";
+        } else if (node_tool_->tool().drag_mode() == vector::tools::node::NodeDragMode::Marquee) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Đang quét chọn vùng node · Giữ Shift/Ctrl để chọn thêm"
+                : "Marquee selecting nodes · Hold Shift/Ctrl to add to selection";
+        } else {
+            const size_t count = node_tool_->selected_node_count();
+            if (count > 0) {
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Đang chọn " + std::to_string(count) + " node · Kéo để di chuyển · Shift/Ctrl+Click chọn thêm · Ctrl+A chọn toàn bộ"
+                    : "Selected " + std::to_string(count) + " node(s) · Drag to move · Shift/Ctrl+Click add · Ctrl+A select all";
+            }
         }
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
     }
@@ -346,12 +405,85 @@ bool NativeWindow::handle_node_pointer_move(int x, int y, unsigned modifiers) {
     (void)modifiers;
     if (active_tool_ != 11 || !node_tool_ || !node_tool_->active() || is_panning_)
         return false;
-    if (GetCapture() != hwnd_)
+
+    // Hover guidance when mouse is not captured
+    if (GetCapture() != hwnd_) {
+        if (!is_canvas_point(x, y)) return false;
+        const auto world_pt = canvas_to_world(x, y);
+        const double zoom = root().renderer().camera().zoom();
+        const double tol_mm = (zoom > 1e-4) ? (8.0 / zoom) : 5.0;
+
+        if (node_tool_->tool().hit_test_handle(world_pt, tol_mm)) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Tay đòn Bézier · Kéo chuột để uốn cong tiếp tuyến thời gian thực"
+                : "Bézier Handle · Drag to bend curve tangent in real time";
+            return true;
+        } else if (node_tool_->tool().hit_test_corner_widget(world_pt, tol_mm, zoom)) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Widget Bo góc (Live Corner) · Kéo vào trong để bo tròn góc nhọn"
+                : "Live Corner Widget · Drag inward to round corner";
+            return true;
+        } else if (node_tool_->tool().hit_test_node(world_pt, tol_mm)) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Node neo · Nhấp để chọn · Shift/Ctrl+Click chọn thêm · Kéo để di chuyển · Nhấp đúp để xóa"
+                : "Anchor Node · Click to select · Shift/Ctrl+Click add · Drag to move · Double-click to delete";
+            return true;
+        } else if (node_tool_->tool().hit_test_segment(world_pt, tol_mm)) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Đoạn đường · Kéo trực tiếp để uốn cong · Nhấp đúp để thêm node mới"
+                : "Path Segment · Drag directly to bend curve · Double-click to insert node";
+            return true;
+        }
         return false;
+    }
+
     const auto world_pt = canvas_to_world(x, y);
     const bool handled = node_tool_->pointer_move(world_pt);
-    if (handled && hwnd_) {
-        InvalidateRect(hwnd_, nullptr, FALSE);
+    if (handled) {
+        if (node_tool_->tool().is_rounding_corners()) {
+            const double r = node_tool_->tool().current_corner_radius();
+            const auto active_cw = node_tool_->tool().active_corner_widget();
+            const double max_r = active_cw ? active_cw->max_radius : 0.0;
+            std::ostringstream ss;
+            ss << std::fixed << std::setprecision(1);
+            if (language_ == UILanguage::Vietnamese) {
+                ss << "Bo góc: " << r << " mm (Tối đa: " << max_r << " mm) · Thả chuột để áp dụng";
+            } else {
+                ss << "Corner radius: " << r << " mm (Max: " << max_r << " mm) · Release to apply";
+            }
+            status_msg_ = ss.str();
+        } else if (node_tool_->tool().drag_mode() == vector::tools::node::NodeDragMode::MoveHandle) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Đang kéo tay đòn Bézier · Phản hồi uốn cong thời gian thực · Thả chuột để áp dụng"
+                : "Dragging Bézier handle · Real-time curve deformation · Release to apply";
+        } else if (node_tool_->tool().drag_mode() == vector::tools::node::NodeDragMode::BendSegment) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Đang uốn cong đoạn đường trực tiếp (Bend Segment) · Thả chuột để áp dụng"
+                : "Bending path segment directly · Release to apply";
+        } else if (node_tool_->tool().drag_mode() == vector::tools::node::NodeDragMode::MoveNode) {
+            const auto pos = node_tool_->single_selected_node_position();
+            if (pos && node_tool_->selected_node_count() == 1) {
+                std::ostringstream ss;
+                ss << std::fixed << std::setprecision(2);
+                if (language_ == UILanguage::Vietnamese) {
+                    ss << "Di chuyển node đến X = " << pos->x << " mm, Y = " << pos->y << " mm · Thả chuột để áp dụng";
+                } else {
+                    ss << "Moving node to X = " << pos->x << " mm, Y = " << pos->y << " mm · Release to apply";
+                }
+                status_msg_ = ss.str();
+            } else {
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Đang di chuyển " + std::to_string(node_tool_->selected_node_count()) + " node · Thả chuột để áp dụng"
+                    : "Moving " + std::to_string(node_tool_->selected_node_count()) + " nodes · Release to apply";
+            }
+        } else if (node_tool_->tool().drag_mode() == vector::tools::node::NodeDragMode::Marquee) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Đang quét chọn " + std::to_string(node_tool_->selected_node_count()) + " node"
+                : "Marquee selected " + std::to_string(node_tool_->selected_node_count()) + " nodes";
+        }
+        if (hwnd_) {
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
     }
     return handled;
 }
@@ -364,6 +496,18 @@ bool NativeWindow::handle_node_pointer_up(int x, int y, unsigned modifiers) {
         ReleaseCapture();
     const auto world_pt = canvas_to_world(x, y);
     const bool handled = node_tool_->pointer_up(world_pt);
+    if (handled) {
+        const size_t count = node_tool_->selected_node_count();
+        if (count > 0) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Đã cập nhật (" + std::to_string(count) + " node đang chọn) · Nhấn Ctrl+Z để hoàn tác duy nhất 1 bước"
+                : "Updated (" + std::to_string(count) + " node(s) selected) · Press Ctrl+Z to undo in a single step";
+        } else {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Công cụ Node (F10) · Nhấp chọn node · Quét chọn vùng · Ctrl+A chọn toàn bộ"
+                : "Node Tool (F10) · Click to select · Marquee select · Ctrl+A select all";
+        }
+    }
     if (hwnd_) {
         InvalidateRect(hwnd_, nullptr, FALSE);
     }

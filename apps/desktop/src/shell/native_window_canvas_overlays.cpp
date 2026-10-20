@@ -206,6 +206,16 @@ void NativeWindow::paint_pen_overlay(HDC dc) {
         const POINT point = screen(node.anchor);
         Rectangle(dc, point.x - 3, point.y - 3, point.x + 4, point.y + 4);
     }
+    if (pen_close_candidate_ && !draft.nodes.empty()) {
+        const POINT first_pt = screen(draft.nodes.front().anchor);
+        HPEN halo_pen = CreatePen(PS_SOLID, 2, RGB(0, 242, 195));
+        HGDIOBJ old_hp = SelectObject(dc, halo_pen);
+        HGDIOBJ old_hb = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        Ellipse(dc, first_pt.x - 7, first_pt.y - 7, first_pt.x + 8, first_pt.y + 8);
+        SelectObject(dc, old_hb);
+        SelectObject(dc, old_hp);
+        DeleteObject(halo_pen);
+    }
     if (preview_anchor) {
         const POINT point = preview_world_coordinates ? screen_world(*preview_anchor)
                                                      : screen(*preview_anchor);
@@ -285,44 +295,264 @@ void NativeWindow::paint_node_canvas_overlay(HDC dc, int width, int height) {
     const int saved = SaveDC(dc);
     SetBkMode(dc, TRANSPARENT);
 
-    // 1. Draw handles for selected nodes
-    const COLORREF handle_color = RGB(0, 210, 210);
-    HPEN handle_pen = CreatePen(PS_DOT, 1, handle_color);
-    HBRUSH handle_brush = CreateSolidBrush(handle_color);
-    SelectObject(dc, handle_pen);
-    SelectObject(dc, handle_brush);
+    const auto tr = po.transform;
+    const auto drag_delta = node_tool_->tool().drag_delta();
+    const bool is_dragging_node = (node_tool_->tool().drag_mode() == vector::tools::node::NodeDragMode::MoveNode);
+    const bool is_dragging_handle = (node_tool_->tool().drag_mode() == vector::tools::node::NodeDragMode::MoveHandle);
+    const bool is_dragging_bend = (node_tool_->tool().drag_mode() == vector::tools::node::NodeDragMode::BendSegment &&
+                                   node_tool_->tool().active_segment_drag().has_value());
 
-    for (const auto& sub : po.authoring_source->subpaths) {
-        for (const auto& node : sub.nodes) {
-            if (node_tool_->is_node_selected(sub.id, node.id)) {
-                const POINT a = screen(node.anchor);
-                if (node.has_incoming_handle) {
-                    const POINT h = screen(node.incoming_handle);
-                    MoveToEx(dc, a.x, a.y, nullptr);
-                    LineTo(dc, h.x, h.y);
-                    Ellipse(dc, h.x - 4, h.y - 4, h.x + 5, h.y + 5);
+    // 1b. Live preview for Direct Segment Bending (BendSegment)
+    if (is_dragging_bend) {
+        const auto asd = *node_tool_->tool().active_segment_drag();
+        const auto [c1_w, c2_w] = node_tool_->tool().current_segment_bend_handles();
+        HPEN bend_pen = CreatePen(PS_SOLID, 2, RGB(0, 242, 195));
+        HGDIOBJ old_pen = SelectObject(dc, bend_pen);
+        HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+
+        POINT pts[4]{screen(asd.p0_world), screen(c1_w), screen(c2_w), screen(asd.p3_world)};
+        PolyBezier(dc, pts, 4);
+
+        // Tangent lines and control handle grips
+        HPEN handle_pen = CreatePen(PS_DOT, 1, RGB(0, 210, 210));
+        HBRUSH handle_brush = CreateSolidBrush(RGB(0, 210, 210));
+        SelectObject(dc, handle_pen);
+        SelectObject(dc, handle_brush);
+
+        POINT p0 = screen(asd.p0_world);
+        POINT c1 = screen(c1_w);
+        MoveToEx(dc, p0.x, p0.y, nullptr);
+        LineTo(dc, c1.x, c1.y);
+        Ellipse(dc, c1.x - 3, c1.y - 3, c1.x + 4, c1.y + 4);
+
+        POINT p3 = screen(asd.p3_world);
+        POINT c2 = screen(c2_w);
+        MoveToEx(dc, p3.x, p3.y, nullptr);
+        LineTo(dc, c2.x, c2.y);
+        Ellipse(dc, c2.x - 3, c2.y - 3, c2.x + 4, c2.y + 4);
+
+        SelectObject(dc, old_brush);
+        SelectObject(dc, old_pen);
+        DeleteObject(handle_brush);
+        DeleteObject(handle_pen);
+        DeleteObject(bend_pen);
+    }
+
+    // 1. Live preview for corner rounding (Live Corners)
+    if (node_tool_->tool().is_rounding_corners()) {
+        const auto preview = node_tool_->tool().preview_rounded_path();
+        if (preview) {
+            HPEN preview_pen = CreatePen(PS_SOLID, 2, RGB(0, 242, 195));
+            HGDIOBJ old_pen = SelectObject(dc, preview_pen);
+            HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+
+            for (const auto& sub : preview->subpaths) {
+                const size_t n = sub.nodes.size();
+                if (n == 0) continue;
+                POINT start = screen(tr.map_point(sub.nodes[0].anchor));
+                MoveToEx(dc, start.x, start.y, nullptr);
+                for (size_t i = 0; i < sub.segments.size() && i + 1 < n; ++i) {
+                    const auto& n1 = sub.nodes[i];
+                    const auto& n2 = sub.nodes[i + 1];
+                    const POINT p2 = screen(tr.map_point(n2.anchor));
+                    if (sub.segments[i].kind == document::PathSegmentKind::CubicBezier) {
+                        const POINT c1 = screen(tr.map_point(n1.has_outgoing_handle ? n1.outgoing_handle : n1.anchor));
+                        const POINT c2 = screen(tr.map_point(n2.has_incoming_handle ? n2.incoming_handle : n2.anchor));
+                        POINT pts[4]{screen(tr.map_point(n1.anchor)), c1, c2, p2};
+                        PolyBezier(dc, pts, 4);
+                    } else {
+                        LineTo(dc, p2.x, p2.y);
+                    }
                 }
-                if (node.has_outgoing_handle) {
-                    const POINT h = screen(node.outgoing_handle);
-                    MoveToEx(dc, a.x, a.y, nullptr);
-                    LineTo(dc, h.x, h.y);
-                    Ellipse(dc, h.x - 4, h.y - 4, h.x + 5, h.y + 5);
+                if (sub.closed && !sub.segments.empty() && sub.segments.size() >= n) {
+                    const auto& n1 = sub.nodes[n - 1];
+                    const auto& n2 = sub.nodes[0];
+                    const POINT p2 = screen(tr.map_point(n2.anchor));
+                    if (sub.segments[n - 1].kind == document::PathSegmentKind::CubicBezier) {
+                        const POINT c1 = screen(tr.map_point(n1.has_outgoing_handle ? n1.outgoing_handle : n1.anchor));
+                        const POINT c2 = screen(tr.map_point(n2.has_incoming_handle ? n2.incoming_handle : n2.anchor));
+                        POINT pts[4]{screen(tr.map_point(n1.anchor)), c1, c2, p2};
+                        PolyBezier(dc, pts, 4);
+                    } else {
+                        LineTo(dc, p2.x, p2.y);
+                    }
+                }
+            }
+
+            SelectObject(dc, old_brush);
+            SelectObject(dc, old_pen);
+            DeleteObject(preview_pen);
+        }
+
+        // Floating radius badge near active corner widget
+        const auto active_cw = node_tool_->tool().active_corner_widget();
+        if (active_cw) {
+            const POINT wp = screen(active_cw->widget_position);
+            std::wostringstream ss;
+            ss << L"R: " << std::fixed << std::setprecision(1) << node_tool_->tool().current_corner_radius() << L" mm";
+            const auto str = ss.str();
+            RECT badge_rc{wp.x + 14, wp.y - 12, wp.x + 95, wp.y + 12};
+            HBRUSH badge_bg = CreateSolidBrush(theme_ == ThemeMode::CyberDark ? RGB(15, 23, 42) : RGB(248, 250, 252));
+            HPEN badge_pen = CreatePen(PS_SOLID, 1, RGB(14, 165, 233));
+            HGDIOBJ obg = SelectObject(dc, badge_bg);
+            HGDIOBJ opn = SelectObject(dc, badge_pen);
+            RoundRect(dc, badge_rc.left, badge_rc.top, badge_rc.right, badge_rc.bottom, 4, 4);
+            SelectObject(dc, obg);
+            SelectObject(dc, opn);
+            DeleteObject(badge_bg);
+            DeleteObject(badge_pen);
+
+            HFONT font = font_secondary_ ? font_secondary_ : font_be_vietnam_;
+            HGDIOBJ ofn = SelectObject(dc, font);
+            SetTextColor(dc, theme_ == ThemeMode::CyberDark ? RGB(56, 189, 248) : RGB(14, 165, 233));
+            DrawTextW(dc, str.c_str(), -1, &badge_rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            SelectObject(dc, ofn);
+        }
+    }
+
+    // 2. Visible handles query (includes real-time handle drag position and opposite handle mirroring in world space)
+    const auto handles = node_tool_->tool().visible_handles();
+    auto get_handle_pos_w = [&](document::SubpathId sid, document::NodeId nid, bool is_inc, geometry::Point2D default_local) {
+        for (const auto& h : handles) {
+            if (h.subpath_id == sid && h.node_id == nid && h.is_incoming == is_inc) {
+                return h.position;
+            }
+        }
+        return tr.map_point(default_local);
+    };
+
+    // 3. Draw live preview connecting curves for moving nodes or deforming Bézier handles
+    if ((is_dragging_node && (drag_delta.x != 0.0 || drag_delta.y != 0.0)) || is_dragging_handle) {
+        HPEN move_pen = CreatePen(PS_SOLID, 2, RGB(0, 242, 195));
+        HGDIOBJ old_pen = SelectObject(dc, move_pen);
+        HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+
+        for (const auto& sub : po.authoring_source->subpaths) {
+            const size_t n = sub.nodes.size();
+            if (n == 0) continue;
+            const auto get_anchor_w = [&](size_t idx) {
+                const auto& nd = sub.nodes[idx];
+                const auto base_w = tr.map_point(nd.anchor);
+                return (is_dragging_node && node_tool_->is_node_selected(sub.id, nd.id)) ? (base_w + drag_delta) : base_w;
+            };
+
+            for (size_t i = 0; i < sub.segments.size() && i + 1 < n; ++i) {
+                const auto& n1 = sub.nodes[i];
+                const auto& n2 = sub.nodes[i + 1];
+                const auto p0_w = get_anchor_w(i);
+                const auto p3_w = get_anchor_w(i + 1);
+                const bool is_bezier = (sub.segments[i].kind == document::PathSegmentKind::CubicBezier) ||
+                                       n1.has_outgoing_handle || n2.has_incoming_handle;
+                if (is_bezier) {
+                    const auto c1_w = n1.has_outgoing_handle ? get_handle_pos_w(sub.id, n1.id, false, n1.outgoing_handle) : p0_w;
+                    const auto c2_w = n2.has_incoming_handle ? get_handle_pos_w(sub.id, n2.id, true, n2.incoming_handle) : p3_w;
+                    POINT pts[4]{screen(p0_w), screen(c1_w), screen(c2_w), screen(p3_w)};
+                    PolyBezier(dc, pts, 4);
+                } else {
+                    POINT p0 = screen(p0_w);
+                    POINT p3 = screen(p3_w);
+                    MoveToEx(dc, p0.x, p0.y, nullptr);
+                    LineTo(dc, p3.x, p3.y);
+                }
+            }
+            if (sub.closed && !sub.segments.empty() && sub.segments.size() >= n) {
+                const auto& n1 = sub.nodes[n - 1];
+                const auto& n2 = sub.nodes[0];
+                const auto p0_w = get_anchor_w(n - 1);
+                const auto p3_w = get_anchor_w(0);
+                const bool is_bezier = (sub.segments[n - 1].kind == document::PathSegmentKind::CubicBezier) ||
+                                       n1.has_outgoing_handle || n2.has_incoming_handle;
+                if (is_bezier) {
+                    const auto c1_w = n1.has_outgoing_handle ? get_handle_pos_w(sub.id, n1.id, false, n1.outgoing_handle) : p0_w;
+                    const auto c2_w = n2.has_incoming_handle ? get_handle_pos_w(sub.id, n2.id, true, n2.incoming_handle) : p3_w;
+                    POINT pts[4]{screen(p0_w), screen(c1_w), screen(c2_w), screen(p3_w)};
+                    PolyBezier(dc, pts, 4);
+                } else {
+                    POINT p0 = screen(p0_w);
+                    POINT p3 = screen(p3_w);
+                    MoveToEx(dc, p0.x, p0.y, nullptr);
+                    LineTo(dc, p3.x, p3.y);
                 }
             }
         }
-    }
-    DeleteObject(handle_pen);
-    DeleteObject(handle_brush);
 
-    // 2. Draw nodes
+        SelectObject(dc, old_brush);
+        SelectObject(dc, old_pen);
+        DeleteObject(move_pen);
+    }
+
+    // 4. Draw handles for selected nodes (using tool().visible_handles() which includes drag delta and mirroring)
+    if (!handles.empty()) {
+        const COLORREF handle_color = RGB(0, 210, 210);
+        HPEN handle_pen = CreatePen(PS_DOT, 1, handle_color);
+        HBRUSH handle_brush = CreateSolidBrush(handle_color);
+        SelectObject(dc, handle_pen);
+        SelectObject(dc, handle_brush);
+
+        for (const auto& h : handles) {
+            geometry::Point2D base_anchor_w{};
+            for (const auto& sub : po.authoring_source->subpaths) {
+                if (sub.id != h.subpath_id) continue;
+                for (const auto& node : sub.nodes) {
+                    if (node.id == h.node_id) {
+                        const auto bw = tr.map_point(node.anchor);
+                        base_anchor_w = is_dragging_node && node_tool_->is_node_selected(sub.id, node.id)
+                            ? (bw + drag_delta) : bw;
+                        break;
+                    }
+                }
+            }
+            const POINT a = screen(base_anchor_w);
+            const POINT hp = screen(h.position);
+            MoveToEx(dc, a.x, a.y, nullptr);
+            LineTo(dc, hp.x, hp.y);
+            Ellipse(dc, hp.x - 4, hp.y - 4, hp.x + 5, hp.y + 5);
+        }
+
+        DeleteObject(handle_pen);
+        DeleteObject(handle_brush);
+    }
+
+    // 5. Draw Illustrator-style Live Corner Rounding widgets (transformed to world space)
+    const auto corner_widgets = node_tool_->tool().corner_widgets(camera.zoom());
+    for (const auto& cw : corner_widgets) {
+        const POINT cp = screen(cw.widget_position);
+        const bool is_active_corner = (node_tool_->tool().is_rounding_corners() &&
+            node_tool_->tool().active_corner_widget() &&
+            node_tool_->tool().active_corner_widget()->node_id == cw.node_id);
+
+        COLORREF border_color = RGB(14, 165, 233); // Sky-500 cyan
+        COLORREF fill_color = is_active_corner ? RGB(14, 165, 233) : RGB(255, 255, 255);
+        COLORREF dot_color = is_active_corner ? RGB(255, 255, 255) : RGB(14, 165, 233);
+
+        HPEN cw_pen = CreatePen(PS_SOLID, 1, border_color);
+        HBRUSH cw_brush = CreateSolidBrush(fill_color);
+        HGDIOBJ op = SelectObject(dc, cw_pen);
+        HGDIOBJ ob = SelectObject(dc, cw_brush);
+        Ellipse(dc, cp.x - 5, cp.y - 5, cp.x + 6, cp.y + 6);
+
+        HBRUSH dot_brush = CreateSolidBrush(dot_color);
+        SelectObject(dc, dot_brush);
+        Ellipse(dc, cp.x - 2, cp.y - 2, cp.x + 3, cp.y + 3);
+
+        SelectObject(dc, ob);
+        SelectObject(dc, op);
+        DeleteObject(dot_brush);
+        DeleteObject(cw_brush);
+        DeleteObject(cw_pen);
+    }
+
+    // 6. Draw nodes (anchor points) in world space
     HPEN node_pen = CreatePen(PS_SOLID, 1, RGB(15, 23, 42));
     HBRUSH sel_brush = CreateSolidBrush(RGB(0, 242, 195));
     HBRUSH unsel_brush = CreateSolidBrush(RGB(255, 255, 255));
 
     for (const auto& sub : po.authoring_source->subpaths) {
         for (const auto& node : sub.nodes) {
-            const POINT pt = screen(node.anchor);
             const bool is_sel = node_tool_->is_node_selected(sub.id, node.id);
+            const auto base_w = tr.map_point(node.anchor);
+            const auto pt_world = (is_sel && is_dragging_node) ? (base_w + drag_delta) : base_w;
+            const POINT pt = screen(pt_world);
             SelectObject(dc, node_pen);
             SelectObject(dc, is_sel ? sel_brush : unsel_brush);
             Rectangle(dc, pt.x - 4, pt.y - 4, pt.x + 5, pt.y + 5);
@@ -332,16 +562,18 @@ void NativeWindow::paint_node_canvas_overlay(HDC dc, int width, int height) {
     DeleteObject(sel_brush);
     DeleteObject(unsel_brush);
 
-    // 3. Draw marquee rectangle if active
+    // 7. Draw marquee rectangle if active
     if (node_tool_->is_marquee()) {
         const auto rect = node_tool_->marquee_rect();
-        const POINT p1 = screen({rect.x, rect.y + rect.height});
-        const POINT p2 = screen({rect.x + rect.width, rect.y});
+        const POINT p1 = screen({rect.x, rect.y});
+        const POINT p2 = screen({rect.x + rect.width, rect.y + rect.height});
         HPEN marquee_pen = CreatePen(PS_DOT, 1, RGB(0, 196, 255));
-        SelectObject(dc, marquee_pen);
-        SelectObject(dc, GetStockObject(NULL_BRUSH));
+        HGDIOBJ old_pen = SelectObject(dc, marquee_pen);
+        HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
         Rectangle(dc, std::min(p1.x, p2.x), std::min(p1.y, p2.y),
                       std::max(p1.x, p2.x), std::max(p1.y, p2.y));
+        SelectObject(dc, old_brush);
+        SelectObject(dc, old_pen);
         DeleteObject(marquee_pen);
     }
 

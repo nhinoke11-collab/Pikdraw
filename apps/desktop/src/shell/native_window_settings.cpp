@@ -222,13 +222,16 @@ void NativeWindow::set_active_tool(int tool_index) noexcept {
             return;
     }
     if (active_tool_ == 8 && tool_index != 8 && pen_tool_ && pen_tool_->active()) {
-        status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Hãy nhấn Enter/Esc để kết thúc Pen hoặc Shift+Esc để hủy trước khi đổi công cụ"
-            : "Press Enter/Esc to finish Pen or Shift+Esc to cancel before switching tools";
-#ifdef _WIN32
-        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
-#endif
-        return;
+        if (pen_tool_->anchor_count() >= 2) {
+            const auto result = pen_tool_->finish_open();
+            if (result.committed() && result.object_id) {
+                const auto snapshot = root().document().current_snapshot();
+                if (snapshot)
+                    root().vector_controller().set_selection({*result.object_id}, *snapshot);
+            }
+        } else {
+            pen_tool_->cancel();
+        }
     }
     if (drawing_tool_) drawing_tool_->cancel();
     if (pen_tool_) pen_tool_->cancel();
@@ -329,6 +332,9 @@ void NativeWindow::set_active_tool(int tool_index) noexcept {
         const auto& sel = root().vector_controller().selection().selected_ids();
         const auto target = sel.empty() ? document::kInvalidObjectId : sel.front();
         (void)node_tool_->activate(target);
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Công cụ Node (F10) · Nhấp chọn node · Shift/Ctrl+Click chọn nhiều · Kéo tay đòn Bézier / widget bo góc tròn"
+            : "Node Tool (F10) · Click to select node · Shift/Ctrl+Click multi-select · Drag Bézier handles / Live Corner widgets";
     }
     if (contour_tool) {
         if (!contour_tool_) {

@@ -23,6 +23,7 @@ public:
     [[nodiscard]] constexpr uint64_t value() const noexcept { return value_; }
     [[nodiscard]] constexpr bool valid() const noexcept { return value_ != 0; }
     friend constexpr bool operator==(PathElementId, PathElementId) noexcept = default;
+    friend constexpr auto operator<=>(PathElementId, PathElementId) noexcept = default;
 
 private:
     uint64_t value_{0};
