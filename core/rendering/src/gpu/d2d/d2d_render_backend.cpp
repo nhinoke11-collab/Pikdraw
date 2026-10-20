@@ -1,6 +1,7 @@
 #include "pikdraw/rendering/d2d_backend.hpp"
 #include "d2d_internal.hpp"
 #include "d2d_scene_compositor.hpp"
+#include "pikdraw/document/commands/contour_commands.hpp"
 #include "pikdraw/rendering/spatial_index.hpp"
 #include "pikdraw/typography/layout/glyph_outline.hpp"
 #include "pikdraw/typography/layout/text_layout.hpp"
@@ -219,7 +220,7 @@ struct D2DRenderBackend::Impl {
                 ctx->FillGeometry(geo.Get(), fill_brush.Get());
               }
 
-              if (obj.has_stroke && obj.stroke_width_mm > 0.0) {
+              if (obj.has_stroke) {
                 const float stroke_op = static_cast<float>(
                     obj.appearance.stroke_opacity * obj.appearance.object_opacity);
                 auto stroke_brush = effects_pipeline.create_brush(
@@ -230,6 +231,37 @@ struct D2DRenderBackend::Impl {
                 const float stroke_width_px = std::max(
                     1.0f / zoom, static_cast<float>(obj.stroke_width_mm));
                 ctx->DrawGeometry(geo.Get(), stroke_brush.Get(), stroke_width_px);
+              }
+
+              if (obj.contour_spec.starts_with("contour:v1;")) {
+                const auto feat = document::deserialize_contour_feature(obj.contour_spec);
+                if (feat) {
+                  const auto res = document::evaluate_contour(obj, *feat);
+                  const float zoom = static_cast<float>(camera.zoom());
+                  const float contour_w = std::max(1.0f / zoom,
+                      static_cast<float>(feat->stroke_width_mm > 0.0 ? feat->stroke_width_mm : 0.2));
+                  auto stroke_b = effects_pipeline.create_brush(
+                      ctx, feat->outline_color, 1.0f, color_preview.get());
+                  if (stroke_b) {
+                    for (size_t s = 0; s < res.steps.size(); ++s) {
+                      const auto& step = res.steps[s];
+                      if (step.is_empty) continue;
+                      for (size_t l = 0; l < step.loops.size(); ++l) {
+                        auto loop_geo = geometry_cache.get_or_create_path(
+                            factory, obj.id, snapshot.revision(), step.loops[l],
+                            static_cast<uint8_t>(20 + (s * 4 + l) % 200));
+                        if (loop_geo) {
+                          if (feat->has_fill) {
+                            auto fill_b = effects_pipeline.create_brush(
+                                ctx, feat->fill_color, 1.0f, color_preview.get());
+                            if (fill_b) ctx->FillGeometry(loop_geo.Get(), fill_b.Get());
+                          }
+                          ctx->DrawGeometry(loop_geo.Get(), stroke_b.Get(), contour_w);
+                        }
+                      }
+                    }
+                  }
+                }
               }
               return true;
             };
@@ -284,8 +316,9 @@ struct D2DRenderBackend::Impl {
             return fail("This build does not provide DirectWrite glyph outlines");
 #endif
           } else if constexpr (std::is_same_v<T, document::ImageObject>) {
+            const auto pixels = obj.rgba_pixels();
             if (obj.width_px <= 0 || obj.height_px <= 0 ||
-                obj.pixels_rgba.size() != static_cast<size_t>(obj.width_px) *
+                pixels.size() != static_cast<size_t>(obj.width_px) *
                                               static_cast<size_t>(obj.height_px)) {
               return fail("Image pixel dimensions do not match the stored RGBA pixels");
             }
@@ -323,7 +356,7 @@ struct D2DRenderBackend::Impl {
             }
 
             context->DrawBitmap(d2d_bitmap.Get(), &dst_rect, 1.0f,
-                                D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+                                D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC);
             if (clip_layer)
               context->PopLayer();
             ++rendered_count;
@@ -331,6 +364,84 @@ struct D2DRenderBackend::Impl {
           } else {
             // GroupObject
             const auto child_transform = parent_transform * obj.transform;
+            if (obj.is_clipping_container()) {
+              const auto* mask_child = snapshot.objects().lookup_ref(obj.clip->mask_object_id);
+              if (mask_child && std::holds_alternative<document::PathObject>(*mask_child)) {
+                const auto& mask_obj = std::get<document::PathObject>(*mask_child);
+                const auto mask_effective_transform = child_transform * mask_obj.transform;
+                auto mask_geo = geometry_cache.get_or_create_path(
+                    factory, mask_obj.id, snapshot.revision(), mask_obj.path);
+
+                if (obj.clip->preserve_frame_appearance && mask_obj.has_fill && mask_geo) {
+                  ScopedTransform transform(context, object_projection(mask_effective_transform, camera));
+                  d2d::ComPtr<ID2D1Brush> fill_brush;
+                  const float fill_op = static_cast<float>(
+                      mask_obj.appearance.fill_opacity * mask_obj.appearance.object_opacity);
+                  if (mask_obj.fill_gradient) {
+                    fill_brush = effects_pipeline.create_gradient_brush(
+                        context, *mask_obj.fill_gradient, fill_op, color_preview.get());
+                  } else {
+                    fill_brush = effects_pipeline.create_brush(
+                        context, mask_obj.fill, fill_op, color_preview.get());
+                  }
+                  if (fill_brush) {
+                    context->FillGeometry(mask_geo.Get(), fill_brush.Get());
+                  }
+                }
+
+                d2d::ComPtr<ID2D1Layer> clip_layer;
+                if (mask_geo) {
+                  HRESULT hr = context->CreateLayer(nullptr, clip_layer.ReleaseAndGetAddressOf());
+                  if (SUCCEEDED(hr)) {
+                    D2D1_LAYER_PARAMETERS1 layer_parameters{};
+                    layer_parameters.contentBounds = D2D1::InfiniteRect();
+                    layer_parameters.geometricMask = mask_geo.Get();
+                    layer_parameters.maskAntialiasMode = D2D1_ANTIALIAS_MODE_PER_PRIMITIVE;
+                    layer_parameters.maskTransform = object_projection(mask_effective_transform, camera);
+                    layer_parameters.opacity = 1.0f;
+                    layer_parameters.opacityBrush = nullptr;
+                    layer_parameters.layerOptions = D2D1_LAYER_OPTIONS1_NONE;
+                    context->PushLayer(&layer_parameters, clip_layer.Get());
+                  }
+                }
+
+                for (const auto child_id : obj.children_ids) {
+                  if (child_id == obj.clip->mask_object_id) continue;
+                  const auto *child = snapshot.objects().lookup_ref(child_id);
+                  if (!child) {
+                    diagnostics.push_back({obj.id, true,
+                                           "Group references a missing child object"});
+                    return false;
+                  }
+                  if (!render_object(snapshot, *child, child_transform, camera,
+                                     context, factory, rendered_count, diagnostics,
+                                     scene, depth + 1))
+                    return false;
+                }
+
+                if (clip_layer) {
+                  context->PopLayer();
+                }
+
+                if (obj.clip->preserve_frame_appearance && mask_obj.has_stroke && mask_geo) {
+                  ScopedTransform transform(context, object_projection(mask_effective_transform, camera));
+                  const float stroke_op = static_cast<float>(
+                      mask_obj.appearance.stroke_opacity * mask_obj.appearance.object_opacity);
+                  auto stroke_brush = effects_pipeline.create_brush(
+                      context, mask_obj.stroke, stroke_op, color_preview.get());
+                  if (stroke_brush) {
+                    const float zoom = static_cast<float>(camera.zoom());
+                    const float stroke_width_px = std::max(
+                        1.0f / zoom, static_cast<float>(mask_obj.stroke_width_mm));
+                    context->DrawGeometry(mask_geo.Get(), stroke_brush.Get(), stroke_width_px);
+                  }
+                }
+
+                ++rendered_count;
+                return true;
+              }
+            }
+
             for (const auto child_id : obj.children_ids) {
               const auto *child = snapshot.objects().lookup_ref(child_id);
               if (!child) {

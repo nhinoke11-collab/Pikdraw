@@ -74,6 +74,10 @@ void NativeWindow::open_style_editor(bool stroke) {
 void NativeWindow::choose_stroke_width(int x, int y) {
     constexpr double widths[] = {.1, .25, .5, 1, 2, 5, 10};
     const auto menu = CreatePopupMenu();
+    const bool vi = language_ == UILanguage::Vietnamese;
+    AppendMenuW(menu, MF_STRING, 90, vi ? L"Không viền (None)" : L"None");
+    AppendMenuW(menu, MF_STRING, 99, vi ? L"Hairline (Nét siêu mảnh 1px)" : L"Hairline (1px)");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     for (int i = 0; i < 7; ++i) {
         std::wostringstream text;
         text << widths[i] << L" mm";
@@ -81,16 +85,30 @@ void NativeWindow::choose_stroke_width(int x, int y) {
     }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, 200,
-                language_ == UILanguage::Vietnamese ? L"Nhập kích thước…" : L"Custom width…");
+                vi ? L"Nhập kích thước…" : L"Custom width…");
     POINT point{dip(x), dip(y)};
     ClientToScreen(hwnd_, &point);
     const auto chosen =
         TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, point.x, point.y, 0, hwnd_, nullptr);
     DestroyMenu(menu);
-    if (chosen >= 100 && chosen < 107)
-        (void)set_selection_stroke_width(widths[chosen - 100]);
-    else if (chosen == 200)
+    if (chosen == 90) {
+        vector::StylePatch patch;
+        patch.has_stroke = false;
+        patch.width_mm = 0.0;
+        (void)apply_style_patch(patch);
+    } else if (chosen == 99) {
+        vector::StylePatch patch;
+        patch.has_stroke = true;
+        patch.width_mm = 0.0;
+        (void)apply_style_patch(patch);
+    } else if (chosen >= 100 && chosen < 107) {
+        vector::StylePatch patch;
+        patch.has_stroke = true;
+        patch.width_mm = widths[chosen - 100];
+        (void)apply_style_patch(patch);
+    } else if (chosen == 200) {
         open_style_editor(true);
+    }
 }
 
 int NativeWindow::style_inspector_content_height() const {
@@ -199,10 +217,18 @@ bool NativeWindow::handle_style_click(int x, int y, bool right_click) {
         const int column = (dx - 12) / 28, row = (dy - 424) / 28;
         if ((dx - 12) % 28 < 24 && (dy - 424) % 28 < 24 && column < 9 && row < 2) {
             const bool target_stroke = right_click || palette_stroke_;
+            const bool show_cmyk = palette_show_cmyk_.value_or(snapshot->color_mode() == color::DocumentColorMode::Cmyk);
             (void)apply_selection_color(
-                target_stroke, editor_palette(snapshot->color_mode() == color::DocumentColorMode::Cmyk)
-                    [static_cast<size_t>(row * 9 + column)]);
+                target_stroke, editor_palette(show_cmyk)[static_cast<size_t>(row * 9 + column)]);
         }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return true;
+    }
+    if (dy >= 356 && dy < 380) {
+        if (dx >= 12 && dx < 134)
+            palette_show_cmyk_ = true;
+        else if (dx >= 142 && dx < 268)
+            palette_show_cmyk_ = false;
         InvalidateRect(hwnd_, nullptr, FALSE);
         return true;
     }

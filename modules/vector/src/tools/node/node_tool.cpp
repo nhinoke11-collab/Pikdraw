@@ -185,20 +185,39 @@ std::optional<document::EditablePath> NodeTool::preview_rounded_path() const {
                     auto rcs = deserialize_rect_corner_spec(po.contour_spec);
                     if (rcs) {
                         rcs->type = corner_type_;
-                        if (rcs->locked || selected_nodes_.empty() || selected_nodes_.size() >= 4) {
+                        const bool round_all = (selected_nodes_.empty() || selected_nodes_.size() >= 4) && rcs->locked;
+                        const auto inv_tr = target_inverse_transform();
+                        const auto bounds = po.path.bounds();
+                        const auto cx = bounds.center().x;
+                        const auto cy = bounds.center().y;
+
+                        auto update_corner_at_point = [&](const geometry::Point2D& local_pt, double rad) {
+                            if (local_pt.x < cx && local_pt.y < cy) rcs->tl = rad;
+                            else if (local_pt.x >= cx && local_pt.y < cy) rcs->tr = rad;
+                            else if (local_pt.x >= cx && local_pt.y >= cy) rcs->br = rad;
+                            else rcs->bl = rad;
+                        };
+
+                        if (round_all) {
                             rcs->tl = current_corner_radius_;
                             rcs->tr = current_corner_radius_;
                             rcs->br = current_corner_radius_;
                             rcs->bl = current_corner_radius_;
+                        } else if (!selected_nodes_.empty() && selected_nodes_.size() < 4) {
+                            for (const auto& [sub_id, nid] : selected_nodes_) {
+                                if (po.authoring_source) {
+                                    for (const auto& s : po.authoring_source->subpaths) {
+                                        for (const auto& nd : s.nodes) {
+                                            if (nd.id == nid) {
+                                                update_corner_at_point(nd.anchor, current_corner_radius_);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         } else {
-                            const auto v = active_corner_widget_->corner_anchor;
-                            const auto bounds = po.path.bounds();
-                            const auto cx = bounds.center().x;
-                            const auto cy = bounds.center().y;
-                            if (v.x < cx && v.y < cy) rcs->tl = current_corner_radius_;
-                            else if (v.x >= cx && v.y < cy) rcs->tr = current_corner_radius_;
-                            else if (v.x >= cx && v.y >= cy) rcs->br = current_corner_radius_;
-                            else rcs->bl = current_corner_radius_;
+                            const auto local_v = inv_tr.map_point(active_corner_widget_->corner_anchor);
+                            update_corner_at_point(local_v, current_corner_radius_);
                         }
                         const auto new_path = vector::ShapeFactory::generate_rectangle_path(po.path.bounds(), *rcs);
                         return document::editable_path_from_path2d(new_path, nullptr);
@@ -208,6 +227,7 @@ std::optional<document::EditablePath> NodeTool::preview_rounded_path() const {
         }
     }
     if (!baseline_path_) return std::nullopt;
+    if (current_corner_radius_ <= 0.05) return *baseline_path_;
     std::vector<document::NodeId> target_ids;
     if (selected_nodes_.size() == 1 && selected_nodes_[0].second == active_corner_widget_->node_id) {
         target_ids.push_back(active_corner_widget_->node_id);
@@ -215,6 +235,8 @@ std::optional<document::EditablePath> NodeTool::preview_rounded_path() const {
         for (const auto& [sub_id, nid] : selected_nodes_) {
             target_ids.push_back(nid);
         }
+    } else {
+        target_ids.push_back(active_corner_widget_->node_id);
     }
     return create_rounded_corners_path(*baseline_path_, target_ids, current_corner_radius_, target_transform(), corner_type_);
 }
@@ -233,8 +255,10 @@ std::vector<FilletPreviewSegment> NodeTool::fillet_preview_segments() const {
                     auto rcs = deserialize_rect_corner_spec(po.contour_spec);
                     if (rcs) {
                         const auto bounds = po.path.bounds();
+                        const bool round_all = (selected_nodes_.empty() || selected_nodes_.size() >= 4) && rcs->locked;
                         return generate_rectangle_fillet_preview_segments(
                             bounds, *rcs, current_corner_radius_, target_transform(), corner_type_,
+                            round_all,
                             active_corner_widget_->corner_anchor);
                     }
                 }
@@ -248,6 +272,8 @@ std::vector<FilletPreviewSegment> NodeTool::fillet_preview_segments() const {
         for (const auto& [sub_id, nid] : selected_nodes_) {
             target_ids.push_back(nid);
         }
+    } else {
+        target_ids.push_back(active_corner_widget_->node_id);
     }
     if (!baseline_path_) return {};
     return generate_fillet_preview_segments(*baseline_path_, target_ids, current_corner_radius_, target_transform(), corner_type_);
@@ -353,7 +379,12 @@ bool NodeTool::pointer_down(geometry::Point2D world_pos, bool shift, double tol,
         current_corner_radius_ = corner->current_radius;
         has_dragged_ = false;
         const auto* ep = get_editable_path();
-        if (ep) baseline_path_ = *ep;
+        if (ep) {
+            baseline_path_ = *ep;
+            if (corner->current_radius > 0.05) {
+                restore_sharp_corner_in_baseline(*baseline_path_, *corner, target_inverse_transform());
+            }
+        }
         return true;
     }
 
@@ -539,20 +570,42 @@ bool NodeTool::pointer_up(geometry::Point2D world_pos) {
                         auto rcs = deserialize_rect_corner_spec(po.contour_spec);
                         if (rcs) {
                             rcs->type = corner_type_;
-                            if (rcs->locked || selected_nodes_.empty() || selected_nodes_.size() >= 4) {
+                            const bool round_all = (selected_nodes_.empty() || selected_nodes_.size() >= 4) && rcs->locked;
+                            const auto inv_tr = target_inverse_transform();
+                            const auto bounds = po.path.bounds();
+                            const auto cx = bounds.center().x;
+                            const auto cy = bounds.center().y;
+
+                            auto update_corner_at_point = [&](const geometry::Point2D& local_pt, double rad) {
+                                if (local_pt.x < cx && local_pt.y < cy) rcs->tl = rad;
+                                else if (local_pt.x >= cx && local_pt.y < cy) rcs->tr = rad;
+                                else if (local_pt.x >= cx && local_pt.y >= cy) rcs->br = rad;
+                                else rcs->bl = rad;
+                            };
+
+                            if (round_all) {
                                 rcs->tl = current_corner_radius_;
                                 rcs->tr = current_corner_radius_;
                                 rcs->br = current_corner_radius_;
                                 rcs->bl = current_corner_radius_;
+                            } else if (!selected_nodes_.empty() && selected_nodes_.size() < 4) {
+                                for (const auto& [sub_id, nid] : selected_nodes_) {
+                                    if (po.authoring_source) {
+                                        for (const auto& s : po.authoring_source->subpaths) {
+                                            for (const auto& nd : s.nodes) {
+                                                if (nd.id == nid) {
+                                                    update_corner_at_point(nd.anchor, current_corner_radius_);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             } else {
-                                const auto v = active_corner_widget_->corner_anchor;
-                                const auto bounds = po.path.bounds();
-                                const auto cx = bounds.center().x;
-                                const auto cy = bounds.center().y;
-                                if (v.x < cx && v.y < cy) rcs->tl = current_corner_radius_;
-                                else if (v.x >= cx && v.y < cy) rcs->tr = current_corner_radius_;
-                                else if (v.x >= cx && v.y >= cy) rcs->br = current_corner_radius_;
-                                else rcs->bl = current_corner_radius_;
+                                const auto local_v = inv_tr.map_point(active_corner_widget_->corner_anchor);
+                                update_corner_at_point(local_v, current_corner_radius_);
+                            }
+                            if (!round_all) {
+                                rcs->locked = false;
                             }
                             auto new_spec = serialize_rect_corner_spec(*rcs);
                             const auto new_path = vector::ShapeFactory::generate_rectangle_path(po.path.bounds(), *rcs);
@@ -568,19 +621,27 @@ bool NodeTool::pointer_up(geometry::Point2D world_pos) {
                 }
             }
         }
-        if (!committed && baseline_path_ && current_corner_radius_ > 0.05) {
-            std::vector<document::NodeId> target_ids;
-            if (selected_nodes_.size() == 1 && selected_nodes_[0].second == active_corner_widget_->node_id) {
-                target_ids.push_back(active_corner_widget_->node_id);
-            } else if (selected_nodes_.size() > 1) {
-                for (const auto& [sub_id, nid] : selected_nodes_) {
-                    target_ids.push_back(nid);
+        if (!committed && baseline_path_) {
+            if (current_corner_radius_ > 0.05) {
+                std::vector<document::NodeId> target_ids;
+                if (selected_nodes_.size() == 1 && selected_nodes_[0].second == active_corner_widget_->node_id) {
+                    target_ids.push_back(active_corner_widget_->node_id);
+                } else if (selected_nodes_.size() > 1) {
+                    for (const auto& [sub_id, nid] : selected_nodes_) {
+                        target_ids.push_back(nid);
+                    }
+                } else {
+                    target_ids.push_back(active_corner_widget_->node_id);
                 }
+                auto rounded = create_rounded_corners_path(*baseline_path_, target_ids, current_corner_radius_, target_transform(), corner_type_);
+                auto cmd = std::make_unique<document::SetAuthoringSourceCommand>(
+                    target_object_id_, std::move(rounded), std::nullopt);
+                (void)document_.execute_command(std::move(cmd));
+            } else {
+                auto cmd = std::make_unique<document::SetAuthoringSourceCommand>(
+                    target_object_id_, *baseline_path_, std::nullopt);
+                (void)document_.execute_command(std::move(cmd));
             }
-            auto rounded = create_rounded_corners_path(*baseline_path_, target_ids, current_corner_radius_, target_transform(), corner_type_);
-            auto cmd = std::make_unique<document::SetAuthoringSourceCommand>(
-                target_object_id_, std::move(rounded), std::nullopt);
-            (void)document_.execute_command(std::move(cmd));
         }
     } else if (mode == NodeDragMode::BendSegment && active_segment_drag_) {
         const auto delta_w = world_pos - drag_start_world_;

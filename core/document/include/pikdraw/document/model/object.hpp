@@ -12,9 +12,11 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <limits>
 #include <variant>
 #include <stdexcept>
 #include <algorithm>
+#include <span>
 
 namespace pikdraw::document {
 
@@ -35,7 +37,7 @@ struct PathObject {
     geometry::Transform2D transform{geometry::Transform2D::identity()};
     color::ColorValue fill{color::RGBColor{0.2, 0.4, 0.8, 1.0}};
     color::ColorValue stroke{color::RGBColor{0.0, 0.0, 0.0, 1.0}};
-    double stroke_width_mm{1.0};
+    double stroke_width_mm{0.0};
     bool has_fill{true};
     bool has_stroke{true};
     std::shared_ptr<const GradientPaint> fill_gradient{nullptr};
@@ -107,23 +109,47 @@ struct TextObject {
     }
 };
 
+enum class ClipContentFitMode : uint8_t {
+    CurrentPosition = 0,
+    CenterContents,
+    FitProportionally,
+    FillProportionally,
+    StretchToFill
+};
+
+struct ClipProperties {
+    ObjectId mask_object_id{kInvalidObjectId};
+    bool lock_contents_to_frame{true};
+    bool preserve_frame_appearance{true};
+    ClipContentFitMode fit_mode{ClipContentFitMode::CurrentPosition};
+    bool is_empty_frame{false};
+};
+
 struct GroupObject {
     ObjectId id{kInvalidObjectId};
     std::string name;
     std::vector<ObjectId> children_ids;
     geometry::Transform2D transform{geometry::Transform2D::identity()};
+    std::optional<ClipProperties> clip;
     bool visible{true};
     bool locked{false};
+
+    [[nodiscard]] bool is_clipping_container() const noexcept {
+        return clip.has_value() && clip->mask_object_id != kInvalidObjectId;
+    }
 };
 
 /// Raster source identity and metadata kept beside the editable RGBA preview.
 /// The original bytes remain embedded so a later export can preserve the source.
 struct RasterSourceMetadata {
-    static constexpr size_t kMaxSourceBytes = 64u * 1024u * 1024u;
+    // Native storage currently uses a U32 blob length; this is a format bound,
+    // not an import quota. Import workers stop at the system RAM pressure gate.
+    static constexpr size_t kMaxSourceBytes = std::numeric_limits<uint32_t>::max();
     static constexpr size_t kMaxIccProfileBytes = 1u * 1024u * 1024u;
 
     std::string media_type;
     std::vector<uint8_t> original_bytes;
+    std::shared_ptr<const std::vector<uint8_t>> shared_original_bytes;
     double dpi_x{96.0};
     double dpi_y{96.0};
     bool dpi_from_source{false};
@@ -133,6 +159,10 @@ struct RasterSourceMetadata {
     uint16_t exif_orientation{1};
     bool orientation_applied{false};
     std::vector<uint8_t> icc_profile;
+
+    [[nodiscard]] const std::vector<uint8_t>& original_data() const noexcept {
+        return shared_original_bytes ? *shared_original_bytes : original_bytes;
+    }
 };
 
 struct ImageObject {
@@ -143,6 +173,9 @@ struct ImageObject {
     int32_t width_px{160};
     int32_t height_px{120};
     std::vector<uint32_t> pixels_rgba;
+    // Imported placements may share immutable decoded pixels while retaining
+    // independent bounds, transforms, names, and selection IDs.
+    std::shared_ptr<const std::vector<uint32_t>> shared_pixels_rgba;
     RasterSourceMetadata source;
     std::optional<geometry::Path2D> clip_path;
     bool visible{true};
@@ -150,6 +183,11 @@ struct ImageObject {
 
     [[nodiscard]] geometry::Rect2D bounds() const {
         return transform.map_rect(bounds_rect);
+    }
+
+    [[nodiscard]] std::span<const uint32_t> rgba_pixels() const noexcept {
+        if (shared_pixels_rgba) return *shared_pixels_rgba;
+        return pixels_rgba;
     }
 
     static ImageObject make_procedural_photo(ObjectId id, double x, double y, double w, double h, const std::string& name = "Photo Asset") {

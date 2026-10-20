@@ -9,7 +9,7 @@ namespace pikdraw::desktop {
 struct EditorStyle {
     color::ColorValue fill{color::RGBColor{0.0, 0.65, 0.8, 1.0}};
     color::ColorValue stroke{color::RGBColor{0.0, 0.0, 0.0, 1.0}};
-    double width_mm{.5};
+    double width_mm{0.0};
     bool has_fill{true};
     bool has_stroke{false};
 };

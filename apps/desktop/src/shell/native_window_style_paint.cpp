@@ -369,6 +369,10 @@ void NativeWindow::paint_style_inspector(HDC dc, int left, int top, int bottom) 
     std::wostringstream width;
     if (style.mixed_width)
         width << (vi ? L"Nhiều giá trị" : L"Mixed values");
+    else if (!style.values.has_stroke)
+        width << (vi ? L"Không viền (None)" : L"None");
+    else if (style.values.width_mm <= 0.0001)
+        width << (vi ? L"Hairline (Nét mảnh)" : L"Hairline");
     else
         width << std::fixed << std::setprecision(3) << style.values.width_mm << L" mm";
     button({12, 236, 268, 266}, width.str() + L"   ▾", false, style.all_paths);
@@ -443,13 +447,13 @@ void NativeWindow::paint_style_inspector(HDC dc, int left, int top, int bottom) 
                 : (vi ? L"Enter áp dụng · Esc hủy"
                       : L"Enter apply · Esc cancel");
     label(opacity_hint, 12, 332, 256, muted);
-    const bool cmyk = snapshot->color_mode() == color::DocumentColorMode::Cmyk;
-    label(vi ? (cmyk ? L"BẢNG MÀU TÀI LIỆU · CMYK" : L"BẢNG MÀU TÀI LIỆU · RGB")
-             : (cmyk ? L"DOCUMENT PALETTE · CMYK" : L"DOCUMENT PALETTE · RGB"), 12, 360, 256, accent);
+    const bool show_cmyk = palette_show_cmyk_.value_or(snapshot->color_mode() == color::DocumentColorMode::Cmyk);
+    button({12, 356, 134, 380}, vi ? L"Bảng CMYK" : L"CMYK Palette", show_cmyk);
+    button({142, 356, 268, 380}, vi ? L"Bảng RGB" : L"RGB Palette", !show_cmyk);
     label(snapshot->page().color_mode_explicit ? L"ICC: " + utf8_to_wide(snapshot->color_profile_name())
         : (vi ? L"File cũ · giữ màu nguồn" : L"Legacy file · source colors retained"), 12, 386, 256, muted);
     label(vi ? L"Đổi hệ màu / DPI: menu Edit" : L"Color mode / DPI: Edit menu", 12, 404, 256, muted);
-    const auto &palette = editor_palette(cmyk);
+    const auto &palette = editor_palette(show_cmyk);
     for (size_t i = 0; i < palette.size(); ++i) {
         const auto rgba = convert(palette[i]);
         const LONG x = left + 12 + static_cast<int>(i % 9) * 28;

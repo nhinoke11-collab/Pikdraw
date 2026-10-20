@@ -8,6 +8,7 @@ using namespace pikdraw;
 using namespace pikdraw::document;
 using namespace pikdraw::vector::tools::node;
 using pikdraw::vector::RectCornerType;
+using pikdraw::vector::deserialize_rect_corner_spec;
 
 static PathObject make_test_quad() {
     PathObject obj;
@@ -560,6 +561,103 @@ void test_corner_types_round_scallop_chamfer() {
     assert(cur_obj.authoring_source->subpaths[0].nodes.size() == 4);
 }
 
+void test_single_corner_selection_and_drag() {
+    Document doc("doc-single-corner-test");
+    auto obj = make_test_quad();
+    obj.contour_spec = "rect_corner:round:0.0:0.0:0.0:0.0:1:0";
+    const auto obj_id = obj.id;
+    doc.execute_command(std::make_unique<AddObjectCommand>(obj));
+    NodeTool tool(doc);
+    tool.set_target_object(obj_id);
+
+    // Select ONLY top-left node (at 0,0)
+    assert(tool.pointer_down({0.5, 0.5}, false, 2.0));
+    tool.pointer_up({0.5, 0.5});
+    assert(tool.selected_node_count() == 1);
+
+    const auto widgets = tool.corner_widgets(1.0);
+    assert(widgets.size() == 4);
+    const auto w0 = widgets[0]; // Top-left widget
+
+    // Drag top-left corner widget inward
+    assert(tool.pointer_down(w0.widget_position, false, 2.0));
+    assert(tool.is_rounding_corners());
+    const auto drag_pt = w0.widget_position + w0.bisector * 10.0;
+    assert(tool.pointer_move(drag_pt));
+    assert(tool.current_corner_radius() > 9.0);
+
+    // Live preview must only fillet the single selected corner
+    const auto fillets = tool.fillet_preview_segments();
+    assert(fillets.size() == 1);
+
+    tool.pointer_up(drag_pt);
+    assert(!tool.is_rounding_corners());
+
+    // Verify committed spec: ONLY tl is rounded, tr, br, bl remain 0.0, and lock is unlocked
+    auto snap = doc.current_snapshot();
+    auto cur_obj = std::get<PathObject>(*snap->get_object(obj_id));
+    auto rcs = deserialize_rect_corner_spec(cur_obj.contour_spec);
+    assert(rcs.has_value());
+    assert(rcs->tl > 9.0);
+    assert(rcs->tr == 0.0);
+    assert(rcs->br == 0.0);
+    assert(rcs->bl == 0.0);
+    assert(!rcs->locked); // Padlock unlocked automatically
+}
+
+void test_polygon_corner_drag_in_and_drag_back_out() {
+    Document doc("doc-polygon-fillet-test");
+    auto obj = make_test_quad(); // Plain polygon, no rect_corner spec
+    const auto obj_id = obj.id;
+    doc.execute_command(std::make_unique<AddObjectCommand>(obj));
+    NodeTool tool(doc);
+    tool.set_target_object(obj_id);
+
+    auto widgets = tool.corner_widgets(1.0);
+    assert(widgets.size() == 4);
+    const auto w0 = widgets[0];
+
+    // Drag corner 0 inward by 10 mm
+    assert(tool.pointer_down(w0.widget_position, false, 2.0));
+    assert(tool.is_rounding_corners());
+    const auto drag_in = w0.widget_position + w0.bisector * 10.0;
+    assert(tool.pointer_move(drag_in));
+    tool.pointer_up(drag_in);
+
+    // Verify polygon now has a rounded corner (cubic bezier)
+    auto snap = doc.current_snapshot();
+    auto cur_obj = std::get<PathObject>(*snap->get_object(obj_id));
+    bool has_cubic = false;
+    for (const auto& seg : cur_obj.authoring_source->subpaths[0].segments) {
+        if (seg.kind == PathSegmentKind::CubicBezier) { has_cubic = true; break; }
+    }
+    assert(has_cubic);
+
+    // EVEN AFTER ROUNDING, corner widget MUST still be detected so the user can drag it back!
+    widgets = tool.corner_widgets(1.0);
+    assert(!widgets.empty());
+    assert(widgets[0].current_radius > 9.0);
+
+    // Drag the widget back outward towards sharp corner (negative along bisector)
+    const auto w_cur = widgets[0];
+    assert(tool.pointer_down(w_cur.widget_position, false, 2.0));
+    assert(tool.is_rounding_corners());
+    const auto drag_out = w_cur.widget_position - w_cur.bisector * 20.0;
+    assert(tool.pointer_move(drag_out));
+    assert(tool.current_corner_radius() <= 0.05); // Radius reduced back to 0!
+    tool.pointer_up(drag_out);
+
+    // Sharp corner restored!
+    snap = doc.current_snapshot();
+    cur_obj = std::get<PathObject>(*snap->get_object(obj_id));
+    bool all_lines = true;
+    for (const auto& seg : cur_obj.authoring_source->subpaths[0].segments) {
+        if (seg.kind != PathSegmentKind::Line) { all_lines = false; break; }
+    }
+    assert(all_lines);
+    assert(cur_obj.authoring_source->subpaths[0].nodes.size() == 4);
+}
+
 int main() {
     std::cout << "[test_node_tool] Running NodeTool vector tests...\n";
     test_node_tool_selection_and_drag();
@@ -572,6 +670,8 @@ int main() {
     test_bend_segment_and_node_to_curve_batch();
     test_anisotropic_corner_rounding_uniformity();
     test_corner_types_round_scallop_chamfer();
+    test_single_corner_selection_and_drag();
+    test_polygon_corner_drag_in_and_drag_back_out();
     std::cout << "[test_node_tool] All tests passed!\n";
     return 0;
 }

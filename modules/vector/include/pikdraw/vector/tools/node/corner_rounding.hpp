@@ -51,66 +51,151 @@ struct FilletPreviewSegment {
             const auto& prev_node = sub.nodes[prev_i];
             const auto& next_node = sub.nodes[next_i];
 
-            // Must not have active Bézier handles
-            if (curr_node.has_incoming_handle || curr_node.has_outgoing_handle)
-                continue;
+            // 1. Check if curr_node is a sharp corner between two straight Line segments
+            if (!curr_node.has_incoming_handle && !curr_node.has_outgoing_handle &&
+                prev_i < sub.segments.size() && sub.segments[prev_i].kind == document::PathSegmentKind::Line &&
+                i < sub.segments.size() && sub.segments[i].kind == document::PathSegmentKind::Line) {
+                const auto v = transform.map_point(curr_node.anchor);
+                const auto a = transform.map_point(prev_node.anchor);
+                const auto b_pt = transform.map_point(next_node.anchor);
 
-            // Segments connecting to this corner must be straight lines
-            if (prev_i < sub.segments.size() && sub.segments[prev_i].kind != document::PathSegmentKind::Line)
-                continue;
-            if (i < sub.segments.size() && sub.segments[i].kind != document::PathSegmentKind::Line)
-                continue;
+                const auto d1 = a - v;
+                const auto d2 = b_pt - v;
+                const double l1 = std::hypot(d1.x, d1.y);
+                const double l2 = std::hypot(d2.x, d2.y);
+                if (l1 < 0.5 || l2 < 0.5) continue;
 
-            const auto v = transform.map_point(curr_node.anchor);
-            const auto a = transform.map_point(prev_node.anchor);
-            const auto b_pt = transform.map_point(next_node.anchor);
+                const auto u = geometry::Point2D{d1.x / l1, d1.y / l1};
+                const auto w = geometry::Point2D{d2.x / l2, d2.y / l2};
 
-            const auto d1 = a - v;
-            const auto d2 = b_pt - v;
-            const double l1 = std::hypot(d1.x, d1.y);
-            const double l2 = std::hypot(d2.x, d2.y);
-            if (l1 < 0.5 || l2 < 0.5) continue;
+                const double dot = std::clamp(u.x * w.x + u.y * w.y, -1.0, 1.0);
+                const double angle = std::acos(dot);
 
-            const auto u = geometry::Point2D{d1.x / l1, d1.y / l1};
-            const auto w = geometry::Point2D{d2.x / l2, d2.y / l2};
+                // Angle must be between 15° and 165°
+                constexpr double kMinAngle = 15.0 * std::numbers::pi / 180.0;
+                constexpr double kMaxAngle = 165.0 * std::numbers::pi / 180.0;
+                if (angle < kMinAngle || angle > kMaxAngle) continue;
 
-            const double dot = std::clamp(u.x * w.x + u.y * w.y, -1.0, 1.0);
-            const double angle = std::acos(dot);
+                auto bisector = geometry::Point2D{u.x + w.x, u.y + w.y};
+                const double blen = std::hypot(bisector.x, bisector.y);
+                if (blen < 1e-4) continue;
+                bisector = geometry::Point2D{bisector.x / blen, bisector.y / blen};
 
-            // Angle must be between 15° and 165°
-            constexpr double kMinAngle = 15.0 * std::numbers::pi / 180.0;
-            constexpr double kMaxAngle = 165.0 * std::numbers::pi / 180.0;
-            if (angle < kMinAngle || angle > kMaxAngle) continue;
+                const double half_angle = angle * 0.5;
+                const double tan_half = std::tan(half_angle);
+                if (tan_half < 1e-4) continue;
 
-            auto bisector = geometry::Point2D{u.x + w.x, u.y + w.y};
-            const double blen = std::hypot(bisector.x, bisector.y);
-            if (blen < 1e-4) continue;
-            bisector = geometry::Point2D{bisector.x / blen, bisector.y / blen};
+                const double max_edge = std::min(l1, l2) * 0.49;
+                const double max_r = max_edge * tan_half;
 
-            const double half_angle = angle * 0.5;
-            const double tan_half = std::tan(half_angle);
-            if (tan_half < 1e-4) continue;
+                // Screen distance: ~16 pixels into the corner along the bisector
+                const double preferred_dist = 16.0 / zoom;
+                const double widget_dist = std::clamp(preferred_dist, 2.0 / zoom, std::min(l1, l2) * 0.38);
+                const auto widget_pos = v + bisector * widget_dist;
 
-            const double max_edge = std::min(l1, l2) * 0.49;
-            const double max_r = max_edge * tan_half;
+                widgets.push_back(CornerWidget{
+                    sub.id,
+                    curr_node.id,
+                    v,
+                    widget_pos,
+                    bisector,
+                    max_r,
+                    0.0
+                });
+            } else if (!curr_node.has_incoming_handle && !next_node.has_outgoing_handle &&
+                       prev_i < sub.segments.size() && sub.segments[prev_i].kind == document::PathSegmentKind::Line &&
+                       next_i < sub.segments.size() && sub.segments[next_i].kind == document::PathSegmentKind::Line &&
+                       n >= 4) {
+                // 2. Check if segment i between curr_node and next_node is an existing filleted corner
+                const size_t next2_i = (next_i + 1) % n;
+                const auto& node_a = prev_node;
+                const auto& node_b = sub.nodes[next2_i];
+                const auto a_w = transform.map_point(node_a.anchor);
+                const auto t1_w = transform.map_point(curr_node.anchor);
+                const auto t2_w = transform.map_point(next_node.anchor);
+                const auto b_w = transform.map_point(node_b.anchor);
 
-            // Screen distance: ~16 pixels into the corner along the bisector
-            const double preferred_dist = 16.0 / zoom;
-            const double widget_dist = std::clamp(preferred_dist, 2.0 / zoom, std::min(l1, l2) * 0.38);
-            const auto widget_pos = v + bisector * widget_dist;
-
-            widgets.push_back(CornerWidget{
-                sub.id,
-                curr_node.id,
-                v,
-                widget_pos,
-                bisector,
-                max_r,
-                0.0
-            });
+                const auto d1 = t1_w - a_w;
+                const auto d2 = b_w - t2_w;
+                const double l1 = std::hypot(d1.x, d1.y);
+                const double l2 = std::hypot(d2.x, d2.y);
+                if (l1 > 0.5 && l2 > 0.5) {
+                    const auto u1 = geometry::Point2D{d1.x / l1, d1.y / l1};
+                    const auto u2 = geometry::Point2D{d2.x / l2, d2.y / l2};
+                    const double det = u1.x * u2.y - u1.y * u2.x;
+                    if (std::abs(det) > 1e-3) {
+                        const auto delta = t2_w - t1_w;
+                        const double s = (delta.x * u2.y - delta.y * u2.x) / det;
+                        const double t = (u1.x * delta.y - u1.y * delta.x) / det;
+                        if (s > 0.1 && t > 0.1 && s / t >= 0.2 && s / t <= 5.0) {
+                            const auto v = t1_w + u1 * s;
+                            const auto dir_a = geometry::Point2D{-u1.x, -u1.y};
+                            const auto dir_b = u2;
+                            const double dot = std::clamp(dir_a.x * dir_b.x + dir_a.y * dir_b.y, -1.0, 1.0);
+                            const double angle = std::acos(dot);
+                            constexpr double kMinAngle = 15.0 * std::numbers::pi / 180.0;
+                            constexpr double kMaxAngle = 165.0 * std::numbers::pi / 180.0;
+                            if (angle >= kMinAngle && angle <= kMaxAngle) {
+                                auto bisector = geometry::Point2D{dir_a.x + dir_b.x, dir_a.y + dir_b.y};
+                                const double blen = std::hypot(bisector.x, bisector.y);
+                                if (blen > 1e-4) {
+                                    bisector = geometry::Point2D{bisector.x / blen, bisector.y / blen};
+                                    const double half_angle = angle * 0.5;
+                                    const double tan_half = std::tan(half_angle);
+                                    if (tan_half > 1e-4) {
+                                        const double cur_r = s * tan_half;
+                                        const double max_edge = std::min(l1 + s, l2 + t) * 0.49;
+                                        const double max_r = max_edge * tan_half;
+                                        const double preferred_dist = 14.0 / zoom;
+                                        const double widget_dist = std::clamp(preferred_dist + cur_r * 0.75, 2.0 / zoom, max_edge * 0.95);
+                                        const auto widget_pos = v + bisector * widget_dist;
+                                        widgets.push_back(CornerWidget{
+                                            sub.id,
+                                            curr_node.id,
+                                            v,
+                                            widget_pos,
+                                            bisector,
+                                            max_r,
+                                            cur_r
+                                        });
+                                        ++i; // skip next_node since it forms this fillet arc
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
     return widgets;
+}
+
+/// Restores the sharp unfilleted corner vertex V in the baseline path when dragging an existing filleted corner.
+inline void restore_sharp_corner_in_baseline(
+    document::EditablePath& path,
+    const CornerWidget& widget,
+    const geometry::Transform2D& inv_transform) {
+    for (auto& sub : path.subpaths) {
+        if (sub.id != widget.subpath_id) continue;
+        const size_t n = sub.nodes.size();
+        for (size_t i = 0; i < n; ++i) {
+            if (sub.nodes[i].id == widget.node_id) {
+                const size_t next_i = (i + 1) % n;
+                sub.nodes[i].anchor = inv_transform.map_point(widget.corner_anchor);
+                sub.nodes[i].has_incoming_handle = false;
+                sub.nodes[i].has_outgoing_handle = false;
+                sub.nodes[i].mode = document::PathNodeMode::Corner;
+                if (n > 3) {
+                    if (i < sub.segments.size()) {
+                        sub.segments.erase(sub.segments.begin() + i);
+                    }
+                    sub.nodes.erase(sub.nodes.begin() + next_i);
+                }
+                return;
+            }
+        }
+    }
 }
 
 /// Constructs a new EditablePath where specified corner nodes are rounded with fillet curves (Round, Scallop, Chamfer).
@@ -443,7 +528,9 @@ struct FilletPreviewSegment {
     double radius,
     const geometry::Transform2D& transform,
     RectCornerType corner_type,
+    bool round_all = true,
     const std::optional<geometry::Point2D>& active_corner_vertex = std::nullopt) {
+    (void)settings;
     if (!rect.is_finite() || rect.width <= 0.0 || rect.height <= 0.0 || radius <= 0.05) return {};
 
     const double r = std::min(radius, std::min(rect.width, rect.height) * 0.499);
@@ -465,7 +552,7 @@ struct FilletPreviewSegment {
 
     for (const auto& c : corners) {
         const auto v_w = transform.map_point(c.v);
-        if (active_corner_vertex && !settings.locked) {
+        if (active_corner_vertex && !round_all) {
             if (v_w.distance_to(*active_corner_vertex) > 1.0) continue;
         }
 

@@ -282,15 +282,15 @@ bool stroke(const std::vector<Contour> &contours,
     transform_scale = std::max(std::hypot(t.a, t.b), std::hypot(t.c, t.d));
   }
   const double raw_screen_radius = radius * camera.zoom() * transform_scale;
-  if (!std::isfinite(raw_screen_radius) || raw_screen_radius <= 0.0)
+  if (!std::isfinite(raw_screen_radius) || raw_screen_radius < 0.0)
     return false;
 
   // Hairline minimum threshold (CorelDRAW / Illustrator fidelity):
   // Regardless of camera zoom level (thu phóng) or object scale,
   // a visible stroke never collapses below a 1.0px hairline (0.5px screen radius).
   const double screen_radius = std::max(0.5, raw_screen_radius);
-  const double effective_radius = (raw_screen_radius < 0.5 && raw_screen_radius > 0.0)
-                                      ? (radius * (0.5 / raw_screen_radius))
+  const double effective_radius = (raw_screen_radius < 0.5)
+                                      ? (0.5 / std::max(camera.zoom() * transform_scale, 1e-9))
                                       : radius;
 
   Coverage coverage{contours, screen_radius, target};
