@@ -168,6 +168,10 @@ void ensure_shortcuts_initialized(NativeWindow& win) {
           [&win] { win.workflow().group_selected(); InvalidateRect(win.hwnd(), nullptr, FALSE); } },
         { ActionId::kObjectUngroup, "Rã nhóm (Ungroup)", "Ungroup Objects", "Ctrl+U", ShortcutCategory::Edit,
           [&win] { win.workflow().ungroup_selected(); InvalidateRect(win.hwnd(), nullptr, FALSE); } },
+        { ActionId::kFileImport, "Nhập tệp (Import)", "Import...", "Ctrl+I", ShortcutCategory::Edit,
+          [&win] { win.open_import_dialog(); } },
+        { ActionId::kFileExport, "Xuất tệp (Export)", "Export...", "Ctrl+E", ShortcutCategory::Edit,
+          [&win] { win.trigger_export(); } },
 
         // Tools
         { ActionId::kToolSelect, "Công cụ Chọn (Pick Tool)", "Pick Tool", "V", ShortcutCategory::Tools,

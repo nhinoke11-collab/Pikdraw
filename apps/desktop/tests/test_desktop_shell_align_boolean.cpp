@@ -716,6 +716,22 @@ void test_powerclip_and_clipping_mask_suite() {
     assert(std::abs(stretched_bounds->height - mask_bounds->height) < 1e-4);
     assert(workflow.fit_powerclip_contents(clip_id, pikdraw::document::ClipContentFitMode::CurrentPosition));
 
+    std::vector<uint8_t> px(400 * 400 * 4, 0);
+    pikdraw::rendering::PixelBufferTarget tgt{px.data(), 400, 400, 400 * 4};
+    win.root().renderer().camera().set_viewport_size(400, 400);
+    win.root().renderer().camera().set_center({100.0, 100.0});
+    win.root().renderer().camera().set_zoom(1.0);
+    pikdraw::rendering::RenderMetric met;
+    bool rend_ok = win.root().renderer().render_frame(*win.root().document().current_snapshot(), tgt, &met);
+    assert(rend_ok);
+    assert(met.rendered_objects >= 2);
+    size_t center_idx = (200 * 400 + 200) * 4;
+    // Inside frame: child content (Orange RGB: 245, 158, 11) is rendered!
+    assert(px[center_idx + 2] == 245 && px[center_idx + 1] == 158 && px[center_idx] == 11);
+    // Outside frame: background (White RGB: 255, 255, 255)
+    size_t outside_idx = (50 * 400 + 50) * 4;
+    assert(px[outside_idx + 2] == 255 && px[outside_idx + 1] == 255 && px[outside_idx] == 255);
+
     // 5. Test Group Isolation Mode for PowerClip editing
     assert(!win.is_in_isolation_mode());
     win.enter_group_isolation(clip_id);

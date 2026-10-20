@@ -47,6 +47,7 @@ add_library(pikdraw_desktop STATIC
     src/shell/native_window_text_align.cpp
     src/shell/native_font_picker.cpp
     src/shell/native_window_text_property_bar_paint.cpp
+    src/shell/native_window_dimension_property_bar.cpp
     src/shell/native_window_text_editor.cpp
     src/shell/native_window_text_input.cpp
     src/shell/native_window_text_overlay.cpp

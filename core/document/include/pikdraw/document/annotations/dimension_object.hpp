@@ -66,4 +66,7 @@ struct DimensionObject {
     [[nodiscard]] geometry::Rect2D bounds() const;
 };
 
+[[nodiscard]] std::string serialize_dimension_spec(const DimensionObject& dim);
+[[nodiscard]] std::optional<DimensionObject> deserialize_dimension_spec(std::string_view spec);
+
 } // namespace pikdraw::document

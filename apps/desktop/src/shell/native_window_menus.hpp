@@ -557,7 +557,7 @@ inline constexpr std::array<MenuItem, 19> kTextMenuItems{{
     {MenuActionId::TextFont, L"Font Picker…", L"Chọn phông chữ…", L""},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::TextBold, L"Bold Font", L"Chữ đậm", L"Ctrl+B"},
-    {MenuActionId::TextItalic, L"Italic Font", L"Chữ nghiêng", L"Ctrl+I"},
+    {MenuActionId::TextItalic, L"Italic Font", L"Chữ nghiêng", L"Ctrl+Shift+I"},
     {MenuActionId::TextUnderline, L"Underline Font", L"Gạch chân chữ", L"Ctrl+U"},
     {MenuActionId::TextStrikethrough, L"Strikethrough", L"Gạch ngang chữ", L""},
     {MenuActionId::Separator, L"", L"", L"", true},

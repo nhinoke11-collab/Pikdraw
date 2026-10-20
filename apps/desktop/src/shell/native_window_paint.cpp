@@ -540,6 +540,8 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
                 is_vi ? L"3–256 cạnh · Shift khóa góc 15° · Ctrl tạo từ tâm · Properties có thiết lập nâng cao"
                       : L"3–256 sides · Shift snaps angle to 15° · Ctrl draws from center · see Properties for advanced settings",
                 -1, &hint, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        } else if (active_tool_ == 10 || is_dimension_object_selected()) {
+            paint_dimension_property_bar(mem_dc, w, content_top, topbar_h, tabbar_h);
         } else if (is_text_mode) {
             paint_text_property_bar(mem_dc, w, content_top, topbar_h, tabbar_h);
         } else if (selection.empty()) {

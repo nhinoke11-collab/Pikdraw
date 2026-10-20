@@ -6,7 +6,6 @@
 #include <unordered_map>
 
 namespace pikdraw::document {
-namespace {
 
 std::string serialize_dimension_spec(const DimensionObject& dim) {
     std::ostringstream ss;
@@ -171,10 +170,10 @@ PathObject dimension_to_path_object(const DimensionObject& dim, const DimensionL
     obj.name = dim.name;
     obj.transform = dim.transform;
     obj.stroke = dim.style.line_color;
-    obj.stroke_width_mm = dim.style.line_width_mm;
+    obj.stroke_width_mm = dim.style.line_width_mm > 0.0 ? dim.style.line_width_mm : 0.15;
     obj.fill = dim.style.line_color;
     obj.has_stroke = true;
-    obj.has_fill = (dim.style.arrow_type == geometry::ArrowType::ClosedFilled);
+    obj.has_fill = false; // Open stroke paths must never be filled!
     obj.contour_spec = serialize_dimension_spec(dim);
 
     for (const auto& line : layout.lines) {
@@ -205,8 +204,6 @@ PathObject dimension_to_path_object(const DimensionObject& dim, const DimensionL
 
     return obj;
 }
-
-} // namespace
 
 DimensionRegistry& DimensionRegistry::instance() {
     static DimensionRegistry s_instance;

@@ -108,6 +108,7 @@ public:
     void fit_page_to_canvas() noexcept;
     bool fit_document_content_to_canvas(bool* content_outside_page = nullptr) noexcept;
     void trigger_export() noexcept;
+    void open_import_dialog();
     bool export_svg_to(const std::string& file_path, bool selected_objects = false,
                        bool allow_replace_existing = false,
                        bool all_pages = false);
@@ -289,7 +290,17 @@ public:
     void paint_inline_text_overlay(HDC dc);
     bool handle_inline_text_ime(LPARAM flags);
     void paint_text_property_bar(HDC mem_dc, int w, int content_top, int topbar_h, int tabbar_h);
+    void paint_dimension_property_bar(HDC mem_dc, int w, int content_top, int topbar_h, int tabbar_h);
+    bool handle_dimension_property_bar_click(int x, int y);
 #endif
+    void execute_quick_dimension();
+    void execute_perimeter_dimension();
+    void cycle_dimension_unit();
+    void cycle_dimension_decimals();
+    void cycle_dimension_arrow_type();
+    void cycle_dimension_line_width();
+    void cycle_dimension_text_size();
+    [[nodiscard]] bool is_dimension_object_selected() const;
     void cycle_font_family();
     void adjust_font_size(double delta_pt);
     void toggle_font_bold(); void toggle_font_italic(); void toggle_font_underline(); void toggle_font_strikethrough();
@@ -492,7 +503,6 @@ private:
     static constexpr int kAppearanceEffectListTop = 794;
 #ifdef _WIN32
     static LRESULT CALLBACK window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
-    void open_import_dialog();
     bool import_file_to_tab(const std::wstring& path, bool is_open_action = false);
     void request_cancel_import_job();
     void cancel_import_job();

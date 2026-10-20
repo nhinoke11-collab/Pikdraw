@@ -91,6 +91,40 @@ int main() {
     bool esc3 = controller.handle_escape();
     assert(!esc3);
 
+    // 5. Test Smart Snap & Ortho
+    controller.activate(document::DimensionKind::Aligned);
+    // Near box corner (0, 0)
+    controller.update_snap({2.0, 1.0}, 1.0, false);
+    assert(controller.snap_active());
+    assert(std::abs(controller.snap_point().x - 0.0) < 1e-4);
+    assert(std::abs(controller.snap_point().y - 0.0) < 1e-4);
+
+    // Near midpoint of top edge (40, 0)
+    controller.update_snap({39.5, 1.5}, 1.0, false);
+    assert(controller.snap_active());
+    assert(controller.snap_type() == DimensionSnapType::Midpoint);
+    assert(std::abs(controller.snap_point().x - 40.0) < 1e-4);
+    assert(std::abs(controller.snap_point().y - 0.0) < 1e-4);
+
+    // Near center (40, 25)
+    controller.update_snap({41.0, 24.5}, 1.0, false);
+    assert(controller.snap_active());
+    assert(controller.snap_type() == DimensionSnapType::Center);
+    assert(std::abs(controller.snap_point().x - 40.0) < 1e-4);
+    assert(std::abs(controller.snap_point().y - 25.0) < 1e-4);
+
+    // Ortho constraint
+    controller.update_snap({60.0, 10.0}, 1.0, true);
+    assert(controller.ortho_active());
+
+    // 6. Test Snap-assisted pointer press
+    controller.update_snap({1.5, 0.5}, 1.0, false);
+    assert(controller.snap_active());
+    controller.handle_pointer_press({1.5, 0.5});
+    assert(controller.state() == DimensionSessionState::PickSecond);
+    assert(std::abs(controller.first_point().x - 0.0) < 1e-4);
+    assert(std::abs(controller.first_point().y - 0.0) < 1e-4);
+
     controller.deactivate();
     assert(!controller.active());
 

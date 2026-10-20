@@ -253,7 +253,10 @@ void NativeWindow::handle_canvas_mouse_down(int x, int y, unsigned modifiers) {
         if (!dimension_tool_->active()) {
             dimension_tool_->activate(document::DimensionKind::Aligned, false);
         }
-        const double tolerance = 6.0 / root().renderer().camera().zoom();
+        const double zoom = root().renderer().camera().zoom();
+        const bool ortho = (GetKeyState(VK_SHIFT) < 0 || GetKeyState(VK_CONTROL) < 0);
+        dimension_tool_->update_snap(pointer_down_world_, zoom, ortho);
+        const double tolerance = 6.0 / zoom;
         auto hit = vector::SelectionModel::hit_test(pointer_down_world_, *snapshot, tolerance);
         dimension_tool_->handle_pointer_press(pointer_down_world_, hit);
         InvalidateRect(hwnd_, nullptr, FALSE);
@@ -438,6 +441,9 @@ void NativeWindow::handle_canvas_mouse_move(int x, int y, unsigned modifiers) {
     pointer_current_world_.y = std::clamp(pointer_current_world_.y,
         page.height_mm * 0.5 - half_canvas, page.height_mm * 0.5 + half_canvas);
     if (active_tool_ == 10 && dimension_tool_ && dimension_tool_->active()) {
+        const double zoom = root().renderer().camera().zoom();
+        const bool ortho = (GetKeyState(VK_SHIFT) < 0 || GetKeyState(VK_CONTROL) < 0);
+        dimension_tool_->update_snap(pointer_current_world_, zoom, ortho);
         dimension_tool_->handle_pointer_move(pointer_current_world_);
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;

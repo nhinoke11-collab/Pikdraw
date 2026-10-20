@@ -158,6 +158,10 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
             }
             commit_numeric_field();
             return true;
+        } else if (active_tool_ == 10 || is_dimension_object_selected()) {
+            if (handle_dimension_property_bar_click(x, y)) {
+                return true;
+            }
         } else if (is_text_mode) {
             // CONTEXTUAL TEXT PROPERTY BAR CLICKS (CorelDRAW / Word Reference)
             if (x >= 52 && x <= 192) {

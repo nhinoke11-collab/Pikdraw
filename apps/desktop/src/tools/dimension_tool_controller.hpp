@@ -19,6 +19,14 @@ enum class DimensionSessionState : uint8_t {
     Placement
 };
 
+enum class DimensionSnapType : uint8_t {
+    None = 0,
+    Node,
+    Midpoint,
+    Center,
+    BoundingBoxCorner
+};
+
 class DimensionToolController {
 public:
     explicit DimensionToolController(document::Document& doc);
@@ -32,6 +40,12 @@ public:
     [[nodiscard]] bool is_smart_mode() const noexcept { return smart_mode_; }
     [[nodiscard]] geometry::Point2D first_point() const noexcept { return first_point_; }
     [[nodiscard]] geometry::Point2D second_point() const noexcept { return second_point_; }
+
+    [[nodiscard]] bool snap_active() const noexcept;
+    [[nodiscard]] DimensionSnapType snap_type() const noexcept;
+    [[nodiscard]] geometry::Point2D snap_point() const noexcept;
+    [[nodiscard]] bool ortho_active() const noexcept;
+    void update_snap(geometry::Point2D world_pos, double zoom, bool ortho_constraint = false);
 
     void set_linear_orientation(geometry::LinearOrientation orientation) noexcept;
     [[nodiscard]] geometry::LinearOrientation linear_orientation() const noexcept { return orientation_; }
@@ -77,6 +91,18 @@ private:
     geometry::Point2D first_point_{};
     geometry::Point2D second_point_{};
     std::vector<document::SourceReference> references_;
+
+    bool snap_active_{false};
+    DimensionSnapType snap_type_{DimensionSnapType::None};
+    geometry::Point2D snap_point_{};
+    document::ObjectId snapped_object_id_{document::kInvalidObjectId};
+    std::optional<uint64_t> snapped_element_id_{std::nullopt};
+    bool ortho_active_{false};
 };
+
+inline bool DimensionToolController::snap_active() const noexcept { return snap_active_; }
+inline DimensionSnapType DimensionToolController::snap_type() const noexcept { return snap_type_; }
+inline geometry::Point2D DimensionToolController::snap_point() const noexcept { return snap_point_; }
+inline bool DimensionToolController::ortho_active() const noexcept { return ortho_active_; }
 
 } // namespace pikdraw::desktop::tools

@@ -727,7 +727,7 @@ void NativeWindow::paint_dimension_canvas_overlay(HDC dc, const RECT& area) {
     // If picking second point, show start marker and dashed rubberband
     if (dimension_tool_->state() == tools::DimensionSessionState::PickSecond) {
         const auto p1 = screen(dimension_tool_->first_point());
-        const auto p2 = screen(pointer_current_world_);
+        const auto p2 = screen(dimension_tool_->snap_active() ? dimension_tool_->snap_point() : pointer_current_world_);
 
         HPEN dash_pen = CreatePen(PS_DOT, 1, col_cyan);
         HGDIOBJ old_pen = SelectObject(dc, dash_pen);
@@ -745,6 +745,65 @@ void NativeWindow::paint_dimension_canvas_overlay(HDC dc, const RECT& area) {
         SelectObject(dc, old_pen);
         DeleteObject(mark_brush);
         DeleteObject(mark_pen);
+    }
+
+    // Smart Snap Indicator badge
+    if (dimension_tool_->snap_active()) {
+        const auto sp = screen(dimension_tool_->snap_point());
+        HPEN snap_pen = CreatePen(PS_SOLID, 2, col_cyan);
+        HGDIOBJ old_p = SelectObject(dc, snap_pen);
+        HBRUSH null_br = (HBRUSH)GetStockObject(NULL_BRUSH);
+        HGDIOBJ old_b = SelectObject(dc, null_br);
+
+        const int sz = 6;
+        const auto st = dimension_tool_->snap_type();
+        if (st == tools::DimensionSnapType::Node || st == tools::DimensionSnapType::BoundingBoxCorner) {
+            Rectangle(dc, sp.x - sz, sp.y - sz, sp.x + sz + 1, sp.y + sz + 1);
+        } else if (st == tools::DimensionSnapType::Midpoint) {
+            POINT pts[3] = { {sp.x, sp.y - sz}, {sp.x + sz, sp.y + sz}, {sp.x - sz, sp.y + sz} };
+            Polygon(dc, pts, 3);
+        } else if (st == tools::DimensionSnapType::Center) {
+            Ellipse(dc, sp.x - sz, sp.y - sz, sp.x + sz + 1, sp.y + sz + 1);
+            MoveToEx(dc, sp.x - sz - 2, sp.y, nullptr);
+            LineTo(dc, sp.x + sz + 3, sp.y);
+            MoveToEx(dc, sp.x, sp.y - sz - 2, nullptr);
+            LineTo(dc, sp.x, sp.y + sz + 3);
+        }
+        SelectObject(dc, old_b);
+        SelectObject(dc, old_p);
+        DeleteObject(snap_pen);
+
+        const wchar_t* snap_lbl = L"Snap";
+        if (st == tools::DimensionSnapType::Node) snap_lbl = L"Node";
+        else if (st == tools::DimensionSnapType::Midpoint) snap_lbl = L"Midpoint";
+        else if (st == tools::DimensionSnapType::Center) snap_lbl = L"Center";
+        else if (st == tools::DimensionSnapType::BoundingBoxCorner) snap_lbl = L"Góc / Box";
+
+        ensure_ui_fonts();
+        SelectObject(dc, font_secondary_);
+        SetTextColor(dc, col_text);
+        RECT rc_lbl{sp.x + 10, sp.y - 8, sp.x + 100, sp.y + 12};
+        DrawTextW(dc, snap_lbl, -1, &rc_lbl, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    }
+
+    // ORTHO mode indicator badge
+    if (dimension_tool_->ortho_active()) {
+        const auto cp = screen(pointer_current_world_);
+        RECT rc_ortho{cp.x + 14, cp.y + 14, cp.x + 72, cp.y + 32};
+        HBRUSH o_br = CreateSolidBrush(col_cyan);
+        HPEN o_pn = CreatePen(PS_SOLID, 1, col_cyan);
+        HGDIOBJ old_b = SelectObject(dc, o_br);
+        HGDIOBJ old_p = SelectObject(dc, o_pn);
+        RoundRect(dc, rc_ortho.left, rc_ortho.top, rc_ortho.right, rc_ortho.bottom, 4, 4);
+        SelectObject(dc, old_b);
+        SelectObject(dc, old_p);
+        DeleteObject(o_br);
+        DeleteObject(o_pn);
+
+        ensure_ui_fonts();
+        SelectObject(dc, font_secondary_);
+        SetTextColor(dc, RGB(15, 23, 42));
+        DrawTextW(dc, L"ORTHO", -1, &rc_ortho, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
 
     // If preview layout is valid, render lines, arrows, and measurement text

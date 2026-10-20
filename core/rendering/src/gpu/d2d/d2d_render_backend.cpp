@@ -2,6 +2,8 @@
 #include "d2d_internal.hpp"
 #include "d2d_scene_compositor.hpp"
 #include "pikdraw/document/commands/contour_commands.hpp"
+#include "pikdraw/document/annotations/dimension_layout.hpp"
+#include "pikdraw/document/annotations/dimension_object.hpp"
 #include "pikdraw/rendering/spatial_index.hpp"
 #include "pikdraw/typography/layout/glyph_outline.hpp"
 #include "pikdraw/typography/layout/text_layout.hpp"
@@ -263,6 +265,63 @@ struct D2DRenderBackend::Impl {
                   }
                 }
               }
+
+              if (obj.contour_spec.starts_with("dimension:v1")) {
+                const auto dim = document::deserialize_dimension_spec(obj.contour_spec);
+                if (dim) {
+                  const auto dim_layout = document::evaluate_dimension_layout(*dim, snapshot);
+                  if (dim_layout.valid) {
+                    if (dim->style.arrow_type == geometry::ArrowType::ClosedFilled ||
+                        dim->style.arrow_type == geometry::ArrowType::Dot) {
+                      auto arr_brush = effects_pipeline.create_brush(
+                          ctx, dim->style.line_color, 1.0f, color_preview.get());
+                      if (arr_brush) {
+                        for (size_t a_idx = 0; a_idx < dim_layout.arrows.size(); ++a_idx) {
+                          auto arr_geo = geometry_cache.get_or_create_path(
+                              factory, obj.id, snapshot.revision(), dim_layout.arrows[a_idx],
+                              static_cast<uint8_t>(210 + a_idx));
+                          if (arr_geo) {
+                            ctx->FillGeometry(arr_geo.Get(), arr_brush.Get());
+                          }
+                        }
+                      }
+                    }
+                    if (!dim_layout.formatted_text.empty()) {
+#ifdef PIKDRAW_TYPOGRAPHY_REAL_OUTLINES
+                      try {
+                        typography::FontIdentity font{typography::FontIdentity::make_default()};
+                        font.size_pt = (dim->style.text_size_mm > 0.5 ? dim->style.text_size_mm : 3.0) * (72.0 / 25.4);
+                        typography::LayoutOptions opts;
+                        opts.alignment = typography::TextAlignment::Center;
+                        const auto t_layout = typography::TextLayout::layout_text(dim_layout.formatted_text, font, opts);
+                        const auto t_path = typography::text_to_path_outlines(t_layout, false);
+                        const auto tb = t_path.bounds();
+
+                        const double tw2 = tb.width * 0.5;
+                        const double th2 = tb.height * 0.5;
+
+                        geometry::Transform2D t_xform =
+                            geometry::Transform2D::translation(dim_layout.text_position.x, dim_layout.text_position.y) *
+                            geometry::Transform2D::rotation_radians(dim_layout.text_rotation_rad) *
+                            geometry::Transform2D::translation(-tw2, th2) *
+                            geometry::Transform2D::scale(1.0, -1.0);
+
+                        const auto final_t_path = t_path.transformed(t_xform);
+                        auto text_geo = geometry_cache.get_or_create_path(
+                            factory, obj.id, snapshot.revision(), final_t_path, 254);
+                        if (text_geo) {
+                          auto text_b = effects_pipeline.create_brush(
+                              ctx, dim->style.text_color, 1.0f, color_preview.get());
+                          if (text_b) {
+                            ctx->FillGeometry(text_geo.Get(), text_b.Get());
+                          }
+                        }
+                      } catch (...) {}
+#endif
+                    }
+                  }
+                }
+              }
               return true;
             };
 
@@ -389,19 +448,26 @@ struct D2DRenderBackend::Impl {
                   }
                 }
 
-                d2d::ComPtr<ID2D1Layer> clip_layer;
+                bool pushed_layer = false;
+                D2D1_MATRIX_3X2_F prev_layer_xform{};
                 if (mask_geo) {
-                  HRESULT hr = context->CreateLayer(nullptr, clip_layer.ReleaseAndGetAddressOf());
-                  if (SUCCEEDED(hr)) {
-                    D2D1_LAYER_PARAMETERS1 layer_parameters{};
-                    layer_parameters.contentBounds = D2D1::InfiniteRect();
-                    layer_parameters.geometricMask = mask_geo.Get();
-                    layer_parameters.maskAntialiasMode = D2D1_ANTIALIAS_MODE_PER_PRIMITIVE;
-                    layer_parameters.maskTransform = object_projection(mask_effective_transform, camera);
-                    layer_parameters.opacity = 1.0f;
-                    layer_parameters.opacityBrush = nullptr;
-                    layer_parameters.layerOptions = D2D1_LAYER_OPTIONS1_NONE;
-                    context->PushLayer(&layer_parameters, clip_layer.Get());
+                  d2d::ComPtr<ID2D1TransformedGeometry> transformed_mask;
+                  const auto mask_xform = object_projection(mask_effective_transform, camera);
+                  HRESULT hr_geo = factory->CreateTransformedGeometry(mask_geo.Get(), &mask_xform, transformed_mask.ReleaseAndGetAddressOf());
+                  if (SUCCEEDED(hr_geo)) {
+                    context->GetTransform(&prev_layer_xform);
+                    context->SetTransform(D2D1::Matrix3x2F::Identity());
+                    context->PushLayer(
+                        D2D1::LayerParameters(
+                            D2D1::InfiniteRect(),
+                            transformed_mask.Get(),
+                            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                            D2D1::Matrix3x2F::Identity(),
+                            1.0f,
+                            nullptr,
+                            D2D1_LAYER_OPTIONS_NONE),
+                        nullptr);
+                    pushed_layer = true;
                   }
                 }
 
@@ -411,16 +477,26 @@ struct D2DRenderBackend::Impl {
                   if (!child) {
                     diagnostics.push_back({obj.id, true,
                                            "Group references a missing child object"});
+                    if (pushed_layer) {
+                      context->PopLayer();
+                      context->SetTransform(prev_layer_xform);
+                    }
                     return false;
                   }
                   if (!render_object(snapshot, *child, child_transform, camera,
                                      context, factory, rendered_count, diagnostics,
-                                     scene, depth + 1))
+                                     scene, depth + 1)) {
+                    if (pushed_layer) {
+                      context->PopLayer();
+                      context->SetTransform(prev_layer_xform);
+                    }
                     return false;
+                  }
                 }
 
-                if (clip_layer) {
+                if (pushed_layer) {
                   context->PopLayer();
+                  context->SetTransform(prev_layer_xform);
                 }
 
                 if (obj.clip->preserve_frame_appearance && mask_obj.has_stroke && mask_geo) {

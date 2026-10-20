@@ -112,10 +112,30 @@ DimensionLayout evaluate_dimension_layout(const DimensionObject& dim, const Docu
         layout.text_position = geom.text_position;
         layout.text_rotation_rad = geom.text_rotation_rad;
 
+        const double char_w = dim.style.text_size_mm * 0.55;
+        const double tw = std::max(6.0, layout.formatted_text.size() * char_w);
+        const double th = dim.style.text_size_mm;
+        layout.text_bounds = geometry::Rect2D{geom.text_position.x - tw * 0.5,
+                                              geom.text_position.y - th * 0.5,
+                                              tw, th};
+
         // Lines: dimension line + two extension lines
+        // In AutoCAD/CorelDRAW, the dimension line is split to leave a gap for centered text
+        const double half_gap = (tw * 0.5) + dim.style.text_gap_mm;
+        const double line_len = std::hypot(geom.dim_line_end.x - geom.dim_line_start.x,
+                                           geom.dim_line_end.y - geom.dim_line_start.y);
         geometry::Path2D dim_line;
-        dim_line.move_to(geom.dim_line_start);
-        dim_line.line_to(geom.dim_line_end);
+        if (line_len > half_gap * 2.2) {
+            const geometry::Point2D dir{(geom.dim_line_end.x - geom.dim_line_start.x) / line_len,
+                                        (geom.dim_line_end.y - geom.dim_line_start.y) / line_len};
+            dim_line.move_to(geom.dim_line_start);
+            dim_line.line_to(geom.text_position - dir * half_gap);
+            dim_line.move_to(geom.text_position + dir * half_gap);
+            dim_line.line_to(geom.dim_line_end);
+        } else {
+            dim_line.move_to(geom.dim_line_start);
+            dim_line.line_to(geom.dim_line_end);
+        }
         layout.lines.push_back(dim_line);
 
         geometry::Path2D ext1;
@@ -138,12 +158,6 @@ DimensionLayout evaluate_dimension_layout(const DimensionObject& dim, const Docu
         layout.arrows.push_back(geometry::make_arrow_path(arr1, dim.style.arrow_type, dim.style.arrow_size_mm));
         layout.arrows.push_back(geometry::make_arrow_path(arr2, dim.style.arrow_type, dim.style.arrow_size_mm));
 
-        const double char_w = dim.style.text_size_mm * 0.55;
-        const double tw = std::max(5.0, layout.formatted_text.size() * char_w);
-        const double th = dim.style.text_size_mm;
-        layout.text_bounds = geometry::Rect2D{geom.text_position.x - tw * 0.5,
-                                              geom.text_position.y - th * 0.5,
-                                              tw, th};
         layout.overall_bounds = dim.bounds();
         layout.valid = true;
     } else if (dim.kind == DimensionKind::Angular) {

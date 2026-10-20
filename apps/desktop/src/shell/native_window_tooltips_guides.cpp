@@ -151,7 +151,7 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
             } else if (mouse_x >= 322 && mouse_x <= 350) {
                 tip_text = is_vi ? L"In đậm chữ (Bold · Ctrl+B)" : L"Bold text (Ctrl+B)";
             } else if (mouse_x >= 354 && mouse_x <= 382) {
-                tip_text = is_vi ? L"In nghiêng chữ (Italic · Ctrl+I)" : L"Italic text (Ctrl+I)";
+                tip_text = is_vi ? L"In nghiêng chữ (Italic · Ctrl+I)" : L"Italic text (Ctrl+Shift+I)";
             } else if (mouse_x >= 386 && mouse_x <= 414) {
                 tip_text = is_vi ? L"Gạch chân chữ (Underline · Ctrl+U)" : L"Underline text (Ctrl+U)";
             } else if (mouse_x >= 422 && mouse_x <= 462) {

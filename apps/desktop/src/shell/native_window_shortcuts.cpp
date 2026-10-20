@@ -429,7 +429,7 @@ bool NativeWindow::handle_key_down(WPARAM key) {
             }
             return true;
         }
-        if (key == 'I') {
+        if (shift && key == 'I') {
             toggle_font_italic();
             return true;
         }
