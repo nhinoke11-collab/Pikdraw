@@ -1,10 +1,12 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "pikdraw/typography/layout/case_conversion.hpp"
 #include "pikdraw/desktop/shell/native_font_picker.hpp"
 #include "native_window_text_properties.hpp"
 #include "../automation/native_window_automation.hpp"
 #include "pikdraw/desktop/actions/action_id.hpp"
 #include "native_window_menus.hpp"
 #include "native_window_page_presets.hpp"
+#include "native_window_length_input.hpp"
 #include "native_canvas_frame.hpp"
 #ifdef _WIN32
 #include "../clipboard/native_clipboard.hpp"
@@ -26,21 +28,26 @@
 
 namespace pikdraw::desktop {
 
-namespace {
-const char* kFontFamilies[] = {
-    "Be Vietnam Pro",
-    "Segoe UI",
-    "Arial",
-    "Times New Roman",
-    "JetBrains Mono"
-};
-const int kNumFontFamilies = 5;
-}
-
 void NativeWindow::cycle_font_family() {
-    font_family_index_ = (font_family_index_ + 1) % kNumFontFamilies;
-    const std::string fam = kFontFamilies[font_family_index_];
-    apply_text_style_controls(true);
+    const auto view = text_properties_view(*this);
+    const std::string current = is_inline_text_editing_ && text_editor_
+        ? text_editor_->draft.font.family_name
+        : view.context ? view.family : text_font_family_at(font_family_index_);
+    const int current_index = remember_text_font_family(current);
+    const auto& families = text_font_registry();
+    if (families.empty()) return;
+    font_family_index_ = (current_index + 1) % static_cast<int>(families.size());
+    const std::string fam = families[static_cast<size_t>(font_family_index_)];
+    if (is_inline_text_editing_ && text_editor_) {
+        text_editor_->remember();
+        text_editor_->draft.font.family_name = fam;
+        text_editor_->draft.font.postscript_name.clear();
+        refresh_inline_text_preview();
+    } else {
+        vector::TextPropertiesDelta delta;
+        delta.family = fam;
+        workflow().update_selected_text_properties(delta);
+    }
     status_msg_ = std::string("Phông chữ / Font: ") + fam;
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
@@ -53,8 +60,13 @@ void NativeWindow::open_font_picker(int anchor_x, int anchor_y) {
         close_font_picker();
         return;
     }
+    const auto view = text_properties_view(*this);
     const std::string curr = is_inline_text_editing_ && text_editor_
-        ? text_editor_->draft.font.family_name : text_font_family_at(font_family_index_);
+        ? text_editor_->draft.font.family_name
+        : view.context ? view.family : text_font_family_at(font_family_index_);
+    const std::optional<typography::FontIdentity> inline_font_baseline =
+        is_inline_text_editing_ && text_editor_
+            ? std::optional<typography::FontIdentity>{text_editor_->draft.font} : std::nullopt;
     const std::string sample = is_inline_text_editing_ && text_editor_ && !text_editor_->draft.text.empty()
         ? text_editor_->draft.text.substr(0, std::min<size_t>(60, text_editor_->draft.text.size()))
         : "PikDraw Tiếng Việt Ánh Sáng 123";
@@ -62,6 +74,7 @@ void NativeWindow::open_font_picker(int anchor_x, int anchor_y) {
     font_picker_->set_on_preview([this](const std::string& fam) {
         if (is_inline_text_editing_ && text_editor_) {
             text_editor_->draft.font.family_name = fam;
+            text_editor_->draft.font.postscript_name.clear();
             refresh_inline_text_preview();
         }
         status_msg_ = (language_ == UILanguage::Vietnamese ? "Xem thử: " : "Preview: ") + fam;
@@ -70,18 +83,28 @@ void NativeWindow::open_font_picker(int anchor_x, int anchor_y) {
 #endif
     });
 
-    font_picker_->set_on_select([this](const std::string& fam) {
+    font_picker_->set_on_select([this, inline_font_baseline](const std::string& fam) {
         font_family_index_ = remember_text_font_family(fam);
-        apply_text_style_controls(true);
+        if (is_inline_text_editing_ && text_editor_) {
+            if (inline_font_baseline) text_editor_->draft.font = *inline_font_baseline;
+            text_editor_->remember();
+            text_editor_->draft.font.family_name = fam;
+            text_editor_->draft.font.postscript_name.clear();
+            refresh_inline_text_preview();
+        } else {
+            vector::TextPropertiesDelta delta;
+            delta.family = fam;
+            workflow().update_selected_text_properties(delta);
+        }
         status_msg_ = (language_ == UILanguage::Vietnamese ? "Đã chọn: " : "Selected: ") + fam;
 #ifdef _WIN32
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 #endif
     });
 
-    font_picker_->set_on_cancel([this]() {
-        if (is_inline_text_editing_ && text_editor_ && font_picker_) {
-            text_editor_->draft.font.family_name = font_picker_->baseline_font();
+    font_picker_->set_on_cancel([this, inline_font_baseline]() {
+        if (is_inline_text_editing_ && text_editor_ && inline_font_baseline) {
+            text_editor_->draft.font = *inline_font_baseline;
             refresh_inline_text_preview();
         }
 #ifdef _WIN32
@@ -109,8 +132,23 @@ bool NativeWindow::is_font_picker_open() const noexcept {
 }
 
 void NativeWindow::adjust_font_size(double delta_pt) {
-    font_size_pt_ = std::clamp(font_size_pt_ + delta_pt, 1.0, 2880.0);
-    apply_text_style_controls();
+    if (is_inline_text_editing_ && text_editor_) {
+        text_editor_->remember();
+        text_editor_->draft.font.size_pt = std::clamp(text_editor_->draft.font.size_pt + delta_pt, 1.0, 2880.0);
+        font_size_pt_ = text_editor_->draft.font.size_pt;
+        refresh_inline_text_preview();
+    } else {
+        const auto view = text_properties_view(*this);
+        if (view.context) {
+            double new_size = std::clamp(view.size_pt + delta_pt, 1.0, 2880.0);
+            font_size_pt_ = new_size;
+            vector::TextPropertiesDelta delta;
+            delta.size_pt = new_size;
+            workflow().update_selected_text_properties(delta);
+        } else {
+            font_size_pt_ = std::clamp(font_size_pt_ + delta_pt, 1.0, 2880.0);
+        }
+    }
     status_msg_ = std::string("Cỡ chữ / Font Size: ") + std::to_string(static_cast<int>(font_size_pt_)) + " pt";
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
@@ -118,8 +156,22 @@ void NativeWindow::adjust_font_size(double delta_pt) {
 }
 
 void NativeWindow::toggle_font_bold() {
-    font_bold_ = !font_bold_;
-    apply_text_style_controls();
+    if (is_inline_text_editing_ && text_editor_) {
+        text_editor_->remember();
+        bool new_val = !(text_editor_->draft.font.weight >= 700);
+        text_editor_->draft.font.weight = static_cast<uint16_t>(new_val ? 700 : 400);
+        font_bold_ = new_val;
+        refresh_inline_text_preview();
+    } else {
+        const auto view = text_properties_view(*this);
+        bool new_val = view.context ? (view.mixed_bold || !view.bold) : !font_bold_;
+        font_bold_ = new_val;
+        if (view.context) {
+            vector::TextPropertiesDelta delta;
+            delta.weight = new_val ? 700 : 400;
+            workflow().update_selected_text_properties(delta);
+        }
+    }
     status_msg_ = font_bold_ ? "In đậm: Bật (Bold: ON)" : "In đậm: Tắt (Bold: OFF)";
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
@@ -127,8 +179,21 @@ void NativeWindow::toggle_font_bold() {
 }
 
 void NativeWindow::toggle_font_italic() {
-    font_italic_ = !font_italic_;
-    apply_text_style_controls();
+    if (is_inline_text_editing_ && text_editor_) {
+        text_editor_->remember();
+        text_editor_->draft.font.italic = !text_editor_->draft.font.italic;
+        font_italic_ = text_editor_->draft.font.italic;
+        refresh_inline_text_preview();
+    } else {
+        const auto view = text_properties_view(*this);
+        bool new_val = view.context ? (view.mixed_italic || !view.italic) : !font_italic_;
+        font_italic_ = new_val;
+        if (view.context) {
+            vector::TextPropertiesDelta delta;
+            delta.italic = new_val;
+            workflow().update_selected_text_properties(delta);
+        }
+    }
     status_msg_ = font_italic_ ? "In nghiêng: Bật (Italic: ON)" : "In nghiêng: Tắt (Italic: OFF)";
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
@@ -136,8 +201,21 @@ void NativeWindow::toggle_font_italic() {
 }
 
 void NativeWindow::toggle_font_underline() {
-    font_underline_ = !font_underline_;
-    apply_text_style_controls();
+    if (is_inline_text_editing_ && text_editor_) {
+        text_editor_->remember();
+        text_editor_->draft.underline = !text_editor_->draft.underline;
+        font_underline_ = text_editor_->draft.underline;
+        refresh_inline_text_preview();
+    } else {
+        const auto view = text_properties_view(*this);
+        bool new_val = view.context ? (view.mixed_underline || !view.underline) : !font_underline_;
+        font_underline_ = new_val;
+        if (view.context) {
+            vector::TextPropertiesDelta delta;
+            delta.underline = new_val;
+            workflow().update_selected_text_properties(delta);
+        }
+    }
     status_msg_ = font_underline_ ? "Gạch chân: Bật (Underline: ON)" : "Gạch chân: Tắt (Underline: OFF)";
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
@@ -145,8 +223,21 @@ void NativeWindow::toggle_font_underline() {
 }
 
 void NativeWindow::toggle_font_strikethrough() {
-    font_strikethrough_ = !font_strikethrough_;
-    apply_text_style_controls();
+    if (is_inline_text_editing_ && text_editor_) {
+        text_editor_->remember();
+        text_editor_->draft.strikethrough = !text_editor_->draft.strikethrough;
+        font_strikethrough_ = text_editor_->draft.strikethrough;
+        refresh_inline_text_preview();
+    } else {
+        const auto view = text_properties_view(*this);
+        bool new_val = view.context ? (view.mixed_strikethrough || !view.strikethrough) : !font_strikethrough_;
+        font_strikethrough_ = new_val;
+        if (view.context) {
+            vector::TextPropertiesDelta delta;
+            delta.strikethrough = new_val;
+            workflow().update_selected_text_properties(delta);
+        }
+    }
     status_msg_ = font_strikethrough_ ? "Gạch ngang: Bật (Strikethrough: ON)" : "Gạch ngang: Tắt (Strikethrough: OFF)";
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
@@ -302,14 +393,95 @@ void NativeWindow::toggle_convert_artistic_paragraph() {
 }
 
 void NativeWindow::set_font_alignment(typography::TextAlignment align) {
-    font_alignment_ = align;
-    apply_text_style_controls();
+    if (is_inline_text_editing_ && text_editor_) {
+        text_editor_->remember();
+        text_editor_->draft.alignment = align;
+        font_alignment_ = align;
+        refresh_inline_text_preview();
+    } else {
+        const auto view = text_properties_view(*this);
+        font_alignment_ = align;
+        if (view.context) {
+            vector::TextPropertiesDelta delta;
+            delta.alignment = align;
+            workflow().update_selected_text_properties(delta);
+        }
+    }
     status_msg_ = (align == typography::TextAlignment::Center) ? "Căn giữa (Center Align)"
                 : (align == typography::TextAlignment::Right) ? "Căn phải (Right Align)"
+                : (align == typography::TextAlignment::Justify) ? "Căn đều (Justify Align · Ctrl+J)"
                 : "Căn trái (Left Align)";
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 #endif
+}
+
+void NativeWindow::apply_change_case(typography::ChangeCaseMode mode) {
+    if (is_inline_text_editing_ && text_editor_) {
+        auto& editor = *text_editor_;
+        if (editor.has_selection()) {
+            const std::string selected = editor.selected_text();
+            std::string converted = typography::convert_case_utf8(selected, mode);
+            if (converted != selected) editor.replace(std::move(converted));
+        } else {
+            const std::string original = editor.draft.text;
+            std::string converted = typography::convert_case_utf8(original, mode);
+            if (converted != original) {
+                const size_t caret = std::min(editor.caret, original.size());
+                const size_t converted_caret = typography::convert_case_utf8(
+                    std::string_view(original).substr(0, caret), mode).size();
+                editor.remember();
+                editor.draft.text = std::move(converted);
+                editor.caret = editor.anchor = std::min(converted_caret, editor.draft.text.size());
+            }
+        }
+        refresh_inline_text_preview();
+    } else {
+        workflow().change_case_selected_text(mode);
+    }
+    std::string mode_str = (mode == typography::ChangeCaseMode::Uppercase) ? "CHỮ HOA"
+        : (mode == typography::ChangeCaseMode::Lowercase) ? "chữ thường"
+        : (mode == typography::ChangeCaseMode::TitleCase) ? "Viết Hoa Từng Từ"
+        : (mode == typography::ChangeCaseMode::SentenceCase) ? "Viết hoa đầu câu"
+        : "Đảo ngược hoa/thường";
+    status_msg_ = (language_ == UILanguage::Vietnamese)
+        ? "Đã đổi kiểu chữ: " + mode_str + " (Change Case · Shift+F3)"
+        : "Changed text case: " + mode_str + " (Shift+F3)";
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::cycle_change_case() {
+    std::string sample;
+    if (is_inline_text_editing_ && text_editor_) {
+        sample = text_editor_->has_selection() ? text_editor_->selected_text() : text_editor_->draft.text;
+    } else {
+        const auto snap = root().document().current_snapshot();
+        for (auto id : root().vector_controller().selection().selected_ids()) {
+            auto opt = snap->objects().get(id);
+            if (opt && std::holds_alternative<document::TextObject>(*opt)) {
+                sample = std::get<document::TextObject>(*opt).text;
+                break;
+            }
+        }
+    }
+    auto next_mode = typography::next_cycled_case_mode(sample);
+    apply_change_case(next_mode);
+}
+
+void NativeWindow::sync_selected_text_controls() {
+    const auto view = text_properties_view(*this);
+    if (!view.context) return;
+    font_size_pt_ = view.size_pt;
+    font_bold_ = view.bold;
+    font_italic_ = view.italic;
+    font_underline_ = view.underline;
+    font_strikethrough_ = view.strikethrough;
+    font_alignment_ = view.alignment;
+    if (!view.family.empty()) {
+        font_family_index_ = remember_text_font_family(view.family);
+    }
 }
 
 void NativeWindow::convert_selected_text_to_curves() {
@@ -395,8 +567,8 @@ void NativeWindow::apply_specified_spacing(bool horizontal) {
     bool ok = workflow().distribute_selected(mode, distribute_spacing_mm_);
     if (ok) {
         status_msg_ = (language_ == UILanguage::Vietnamese)
-            ? "Đã phân bổ khoảng hở đều: " + std::to_string(static_cast<int>(distribute_spacing_mm_)) + " mm"
-            : "Applied fixed spacing gap: " + std::to_string(static_cast<int>(distribute_spacing_mm_)) + " mm";
+            ? "Đã phân bổ khoảng hở đều: " + format_mm_display_utf8(distribute_spacing_mm_, display_length_unit_, 5)
+            : "Applied fixed spacing gap: " + format_mm_display_utf8(distribute_spacing_mm_, display_length_unit_, 5);
     }
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
@@ -435,6 +607,102 @@ void NativeWindow::open_align_distribute_panel() noexcept {
     status_msg_ = language_ == UILanguage::Vietnamese
         ? "Bảng Căn chỉnh & Phân bổ · chọn mốc rồi chọn lệnh · Ctrl+Z để hoàn tác"
         : "Align & Distribute · choose a reference and operation · Ctrl+Z to undo";
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::link_selected_text_frames() {
+    bool ok = workflow().link_selected_text_frames();
+    if (ok) {
+        status_msg_ = (language_ == UILanguage::Vietnamese)
+            ? "Đã nối luồng văn bản tràn (Linked Text Frames) · Ctrl+Z để hoàn tác"
+            : "Linked text frames · Ctrl+Z to undo";
+    } else {
+        status_msg_ = (language_ == UILanguage::Vietnamese)
+            ? "Vui lòng chọn đúng 2 khung văn bản để nối luồng"
+            : "Please select exactly two text frames to link";
+    }
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::unlink_selected_text_frames() {
+    bool ok = workflow().unlink_selected_text_frame();
+    if (ok) {
+        status_msg_ = (language_ == UILanguage::Vietnamese)
+            ? "Đã ngắt liên kết khung văn bản (Unlinked Frame)"
+            : "Unlinked text frame";
+    }
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::combine_selected_text_objects() {
+    bool ok = workflow().combine_selected_text_objects();
+    if (ok) {
+        status_msg_ = (language_ == UILanguage::Vietnamese)
+            ? "Đã gộp các đối tượng văn bản thành 1 đoạn (Combine Text)"
+            : "Combined text objects";
+    } else {
+        status_msg_ = (language_ == UILanguage::Vietnamese)
+            ? "Cần chọn từ 2 đối tượng văn bản trở lên để gộp"
+            : "Select at least two text objects to combine";
+    }
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::split_selected_text_lines() {
+    bool ok = workflow().split_selected_text_lines();
+    if (ok) {
+        status_msg_ = (language_ == UILanguage::Vietnamese)
+            ? "Đã tách văn bản nhiều dòng thành các đối tượng độc lập (Split by Lines)"
+            : "Split multiline text into separate lines";
+    }
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::fit_text_to_path() {
+    bool ok = workflow().attach_selected_text_to_path();
+    if (ok) {
+        status_msg_ = (language_ == UILanguage::Vietnamese)
+            ? "Đã uốn chữ men theo đường cong (Fit Text to Path · CorelDRAW)"
+            : "Fitted text along path";
+    } else {
+        status_msg_ = (language_ == UILanguage::Vietnamese)
+            ? "Vui lòng chọn 1 đoạn Text và 1 đường cong Path để uốn chữ"
+            : "Please select 1 Text object and 1 Path curve";
+    }
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::straighten_text_from_path() {
+    bool ok = workflow().detach_selected_text_from_path();
+    if (ok) {
+        status_msg_ = (language_ == UILanguage::Vietnamese)
+            ? "Đã đưa chữ về dạng ngang thông thường (Straighten Text)"
+            : "Straightened text";
+    }
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::reverse_text_on_path() {
+    bool ok = workflow().toggle_selected_text_path_reverse();
+    if (ok) {
+        status_msg_ = (language_ == UILanguage::Vietnamese)
+            ? "Đã lật/đảo chiều chữ men theo đường cong"
+            : "Reversed text on path";
+    }
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 #endif

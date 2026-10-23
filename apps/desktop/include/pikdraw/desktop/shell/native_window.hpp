@@ -7,6 +7,7 @@
 #include "pikdraw/color/preview/color_transform.hpp"
 #include "pikdraw/document/storage/save_recovery.hpp"
 #include "pikdraw/desktop/tools/canvas_text_editor.hpp"
+#include "pikdraw/typography/layout/case_conversion.hpp"
 #include "pikdraw/desktop/shell/native_window_layers_dock.hpp"
 #include "pikdraw/vector/tools/shape_tools.hpp"
 
@@ -286,7 +287,7 @@ public:
     bool handle_inline_text_mouse(int x, int y, int phase, bool shift = false);
     void refresh_inline_text_preview();
     void sync_inline_text_controls();
-    void apply_text_style_controls(bool change_family = false);
+    void apply_text_style_controls(const vector::TextPropertiesDelta& delta);
 #ifdef _WIN32
     void paint_inline_text_overlay(HDC dc);
     bool handle_inline_text_ime(LPARAM flags);
@@ -308,6 +309,16 @@ public:
     void toggle_text_bullets(); void toggle_text_numbering(); void toggle_non_printing_characters(); void toggle_convert_artistic_paragraph();
     void set_font_alignment(typography::TextAlignment align);
     void convert_selected_text_to_curves();
+    void cycle_change_case();
+    void apply_change_case(typography::ChangeCaseMode mode);
+    void link_selected_text_frames();
+    void unlink_selected_text_frames();
+    void combine_selected_text_objects();
+    void split_selected_text_lines();
+    void fit_text_to_path();
+    void straighten_text_from_path();
+    void reverse_text_on_path();
+    void sync_selected_text_controls();
     void insert_table(int rows = 3, int cols = 3);
     void open_font_picker(int anchor_x, int anchor_y);
     void close_font_picker();

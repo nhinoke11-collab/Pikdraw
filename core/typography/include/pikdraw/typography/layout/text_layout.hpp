@@ -12,6 +12,7 @@ enum class TextAlignment { Left, Center, Right, Justify };
 struct LayoutOptions {
     double max_width_mm{0.0}; // 0 = single unbounded line
     double line_spacing_ratio{1.2};
+    double letter_spacing_mm{0.0};
     TextAlignment alignment{TextAlignment::Left};
 };
 

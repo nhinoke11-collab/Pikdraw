@@ -13,6 +13,7 @@ add_library(pikdraw_vector STATIC
     src/gestures/style_tool.cpp
     src/gestures/selection_resize.cpp
     src/gestures/text_tool.cpp
+    src/gestures/text_operations.cpp
     src/interaction/tool_session.cpp
     src/interaction/draft_history.cpp
     src/interaction/draft_recovery.cpp

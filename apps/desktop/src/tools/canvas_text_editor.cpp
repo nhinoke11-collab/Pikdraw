@@ -5,24 +5,8 @@
 namespace pikdraw::desktop::tools {
 std::optional<geometry::Transform2D> editable_text_parent(
     const document::DocumentSnapshot& snapshot, document::ObjectId target) {
-    std::function<std::optional<geometry::Transform2D>(document::ObjectId, geometry::Transform2D)> visit;
-    visit = [&](document::ObjectId id, geometry::Transform2D parent)
-        -> std::optional<geometry::Transform2D> {
-        const auto value = snapshot.objects().get(id);
-        if (!value || std::visit([](const auto& o) { return !o.visible || o.locked; }, *value))
-            return std::nullopt;
-        if (id == target) return parent;
-        if (const auto* group = std::get_if<document::GroupObject>(&*value))
-            for (auto child : group->children_ids)
-                if (auto result = visit(child, parent * group->transform)) return result;
-        return std::nullopt;
-    };
-    for (const auto& layer : snapshot.page().layers) {
-        if (!layer.visible || layer.locked) continue;
-        for (auto id : layer.object_ids)
-            if (auto result = visit(id, {})) return result;
-    }
-    return std::nullopt;
+    const auto* entry=snapshot.hierarchy().find(target);
+    return entry&&snapshot.hierarchy().editable(target)?std::optional(entry->parent_world):std::nullopt;
 }
 typography::CaretHitResult text_caret_metrics(const typography::TextLayout& layout, size_t offset) {
     if (layout.lines().empty()) return {};

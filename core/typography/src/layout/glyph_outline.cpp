@@ -74,7 +74,7 @@ class OutlineSink final : public IDWriteGeometrySink {
     bool failed_{};
 };
 } // namespace
-geometry::Path2D text_to_path_outlines(const TextLayout &layout, bool underline) {
+geometry::Path2D text_to_path_outlines(const TextLayout &layout, bool underline, bool strikethrough) {
     using namespace system_font;
     geometry::Path2D result;
     for (const auto &line : layout.lines()) {
@@ -123,13 +123,24 @@ geometry::Path2D text_to_path_outlines(const TextLayout &layout, bool underline)
             result.line_to(x, y + h);
             result.close();
         }
+        if (strikethrough && line.run.total_advance_mm > 0) {
+            const double x = line.baseline_origin.x;
+            const double y = line.baseline_origin.y - line.run.font.size_mm() * 0.28;
+            const double w = line.run.total_advance_mm;
+            const double h = std::max(0.04, line.run.font.size_mm() * 0.055);
+            result.move_to(x, y);
+            result.line_to(x + w, y);
+            result.line_to(x + w, y + h);
+            result.line_to(x, y + h);
+            result.close();
+        }
     }
     return result;
 }
 } // namespace pikdraw::typography
 #else
 namespace pikdraw::typography {
-geometry::Path2D text_to_path_outlines(const TextLayout &, bool) {
+geometry::Path2D text_to_path_outlines(const TextLayout &, bool, bool) {
     throw std::runtime_error("Typography outlines unavailable");
 }
 } // namespace pikdraw::typography

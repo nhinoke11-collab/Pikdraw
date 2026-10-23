@@ -1,6 +1,9 @@
 #include "desktop_shell_test_helpers.hpp"
 #include "../src/shell/native_window_selection_geometry.hpp"
 #include "pikdraw/desktop/shell/native_font_picker.hpp"
+#include "pikdraw/typography/layout/case_conversion.hpp"
+#include "pikdraw/vector/gestures/text_tool.hpp"
+#include <string_view>
 
 void test_typography_inline_editing_ribbon_and_table() {
     NativeWindow win(1440, 900);
@@ -406,8 +409,13 @@ void test_typography_inline_editing_ribbon_and_table() {
         40, 50, "Property font size", "Be Vietnam Pro", 24, "#102030");
     auto& property_selection = text_properties.root().vector_controller().selection();
     property_selection.select(property_text_id);
-    assert(text_properties.workflow().style_selected_text("", 24, true, true, true,
-        pikdraw::typography::TextAlignment::Center));
+    pikdraw::vector::TextPropertiesDelta initial_text_style;
+    initial_text_style.size_pt = 24;
+    initial_text_style.weight = 700;
+    initial_text_style.italic = true;
+    initial_text_style.underline = true;
+    initial_text_style.alignment = pikdraw::typography::TextAlignment::Center;
+    assert(text_properties.workflow().style_selected_text(initial_text_style));
     text_properties.start_numeric_input(NativeWindow::NumericFieldId::TextFontSize);
     text_properties.handle_numeric_char_input('3');
     text_properties.handle_numeric_char_input('6');
@@ -416,6 +424,8 @@ void test_typography_inline_editing_ribbon_and_table() {
         *text_properties.root().document().current_snapshot()->objects().get(property_text_id));
     assert(property_text.font.size_pt == 36);
     assert(property_text.font.weight >= 700 && property_text.font.italic);
+    assert(property_text.underline &&
+           property_text.alignment == pikdraw::typography::TextAlignment::Center);
     assert(property_text.underline);
     assert(property_text.alignment == pikdraw::typography::TextAlignment::Center);
     assert(text_properties.workflow().undo());
@@ -424,6 +434,24 @@ void test_typography_inline_editing_ribbon_and_table() {
     assert(property_text_undone.font.size_pt == 24);
     assert(property_text_undone.underline &&
            property_text_undone.alignment == pikdraw::typography::TextAlignment::Center);
+
+    text_properties.start_numeric_input(NativeWindow::NumericFieldId::TextFrameWidth);
+    assert(text_properties.active_numeric_field() == NativeWindow::NumericFieldId::TextFrameWidth);
+    for (const wchar_t ch : std::wstring_view(L"25.4mm")) text_properties.handle_numeric_char_input(ch);
+    text_properties.commit_numeric_field();
+    auto paragraph_fields = std::get<pikdraw::document::TextObject>(
+        *text_properties.root().document().current_snapshot()->objects().get(property_text_id));
+    assert(paragraph_fields.frame_width_mm == 25.4);
+    assert(paragraph_fields.line_spacing_ratio == 1.2);
+    assert(text_properties.workflow().undo());
+
+    text_properties.start_numeric_input(NativeWindow::NumericFieldId::TextLineSpacing);
+    assert(text_properties.active_numeric_field() == NativeWindow::NumericFieldId::TextLineSpacing);
+    for (const wchar_t ch : std::wstring_view(L"150")) text_properties.handle_numeric_char_input(ch);
+    text_properties.commit_numeric_field();
+    paragraph_fields = std::get<pikdraw::document::TextObject>(
+        *text_properties.root().document().current_snapshot()->objects().get(property_text_id));
+    assert(paragraph_fields.line_spacing_ratio == 1.5);
 
     // Real pointer path: dragging with Text selected creates a wrapping text frame.
     NativeWindow frame(1440, 900);
@@ -558,6 +586,20 @@ void test_typography_inline_editing_ribbon_and_table() {
     assert(p_after);
     assert(p_after->frame_width_mm > initial_frame_w);
     assert(std::abs(p_after->font.size_pt - initial_font_pt) < 1e-4);
+
+    // Mouse click on empty canvas finishes text editing and returns to Select Tool
+    assert(para_win.is_inline_editing());
+    para_win.handle_mouse_down(500, 500);
+    assert(!para_win.is_inline_editing());
+    assert(para_win.active_tool() == 0);
+
+    // Double-click on existing TextObject activates inline text editing without manual tool selection
+    const auto [text_click_x, text_click_y] = p_canvas_point({35, 75});
+    assert(para_win.active_tool() == 0);
+    para_win.handle_double_click(text_click_x, text_click_y);
+    assert(para_win.is_inline_editing());
+    assert(para_win.active_tool() == 4);
+    para_win.commit_inline_text_editing();
 
     // ----------------------------------------------------
     // Item 6: Native Font Picker Overlay Verification
@@ -714,6 +756,274 @@ void test_typography_inline_editing_ribbon_and_table() {
         menu_win.execute_menu_action(static_cast<int>(MenuActionId::TextDocker));
         assert(menu_win.status_message().find("thuộc tính") != std::string::npos ||
                menu_win.status_message().find("Properties") != std::string::npos);
+    }
+
+    // ----------------------------------------------------
+    // Item 9: Case conversion, Justify, Strikethrough & Non-destructive property mutation
+    // ----------------------------------------------------
+    {
+        using namespace pikdraw::typography;
+        // 1. Unicode Vietnamese case conversion tests
+        const std::string vi_lower = "cộng hòa xã hội chủ nghĩa việt nam";
+        const std::string vi_upper = convert_case_utf8(vi_lower, ChangeCaseMode::Uppercase);
+        assert(vi_upper == "CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM");
+        assert(convert_case_utf8(vi_upper, ChangeCaseMode::Lowercase) == vi_lower);
+
+        const std::string vi_title = convert_case_utf8(vi_lower, ChangeCaseMode::TitleCase);
+        assert(vi_title == "Cộng Hòa Xã Hội Chủ Nghĩa Việt Nam");
+
+        const std::string vi_sent = convert_case_utf8(vi_lower, ChangeCaseMode::SentenceCase);
+        assert(vi_sent.starts_with("Cộng"));
+
+        const std::string vi_toggle = convert_case_utf8("Cộng Hòa", ChangeCaseMode::ToggleCase);
+        assert(vi_toggle == "cỘNG hÒA");
+        const std::string vi_nfd = std::string("Tie") + "\xCC\x82\xCC\x81" + "ng";
+        const std::string vi_nfd_upper = std::string("TIE") + "\xCC\x82\xCC\x81" + "NG";
+        assert(convert_case_utf8(vi_nfd, ChangeCaseMode::Uppercase) == vi_nfd_upper);
+        assert(convert_case_utf8("hello, world", ChangeCaseMode::TitleCase) == "Hello, World");
+        assert(convert_case_utf8("đường phố", ChangeCaseMode::TitleCase) == "Đường Phố");
+        assert(convert_case_utf8("đường", ChangeCaseMode::SentenceCase) == "Đường");
+        assert(convert_case_utf8("Đường", ChangeCaseMode::ToggleCase) == "đƯỜNG");
+        assert(convert_case_utf8("đây là câu. đây là câu!", ChangeCaseMode::SentenceCase) ==
+               "Đây là câu. Đây là câu!");
+
+        // 2. Shell Text Object Non-Destructive Mutations & Sync
+        NativeWindow text_win(1440, 900);
+        auto& twf = text_win.workflow();
+        auto& tsel = text_win.root().vector_controller().selection();
+
+        const auto tid = twf.add_vietnamese_text(
+            30.0, 40.0, "cộng hòa xã hội chủ nghĩa", "Arial", 20.0, "#000000"
+        );
+        assert(tid != pikdraw::document::kInvalidObjectId);
+        tsel.select(tid);
+
+        // Turn bold and underline ON
+        text_win.toggle_font_bold();
+        text_win.toggle_font_underline();
+
+        // Check current text object properties
+        auto snap = text_win.root().document().current_snapshot();
+        auto txt_obj = std::get<pikdraw::document::TextObject>(*snap->objects().get(tid));
+        assert(txt_obj.font.weight >= 700);
+        assert(txt_obj.underline == true);
+        assert(txt_obj.strikethrough == false);
+        assert(txt_obj.alignment == TextAlignment::Left);
+        assert(std::abs(txt_obj.font.size_pt - 20.0) < 1e-6);
+
+        // Now adjust font size - bold and underline MUST remain unchanged (no clobbering!)
+        text_win.adjust_font_size(6.0);
+        snap = text_win.root().document().current_snapshot();
+        txt_obj = std::get<pikdraw::document::TextObject>(*snap->objects().get(tid));
+        assert(std::abs(txt_obj.font.size_pt - 26.0) < 1e-6);
+        assert(txt_obj.font.weight >= 700);
+        assert(txt_obj.underline == true);
+
+        // Toggle strikethrough - font size and weight must remain unchanged
+        text_win.toggle_font_strikethrough();
+        snap = text_win.root().document().current_snapshot();
+        txt_obj = std::get<pikdraw::document::TextObject>(*snap->objects().get(tid));
+        assert(txt_obj.strikethrough == true);
+        assert(std::abs(txt_obj.font.size_pt - 26.0) < 1e-6);
+        assert(txt_obj.font.weight >= 700);
+
+        pikdraw::vector::TextPropertiesDelta tracking_delta;
+        tracking_delta.letter_spacing_mm = 0.375;
+        assert(twf.update_selected_text_properties(tracking_delta));
+        snap = text_win.root().document().current_snapshot();
+        txt_obj = std::get<pikdraw::document::TextObject>(*snap->objects().get(tid));
+        assert(txt_obj.letter_spacing_mm == 0.375);
+        assert(twf.undo());
+
+        // Justify Alignment (Ctrl+J / Menu / Action)
+        text_win.set_font_alignment(TextAlignment::Justify);
+        snap = text_win.root().document().current_snapshot();
+        txt_obj = std::get<pikdraw::document::TextObject>(*snap->objects().get(tid));
+        assert(txt_obj.alignment == TextAlignment::Justify);
+
+        // Case Conversion on Selected Object
+        text_win.apply_change_case(ChangeCaseMode::Uppercase);
+        snap = text_win.root().document().current_snapshot();
+        txt_obj = std::get<pikdraw::document::TextObject>(*snap->objects().get(tid));
+        assert(txt_obj.text == "CỘNG HÒA XÃ HỘI CHỦ NGHĨA");
+
+        // Cycle Change Case (Shift+F3 behavior)
+        text_win.cycle_change_case();
+        snap = text_win.root().document().current_snapshot();
+        txt_obj = std::get<pikdraw::document::TextObject>(*snap->objects().get(tid));
+        assert(txt_obj.text == "cộng hòa xã hội chủ nghĩa");
+
+        // Mixed-size selection applies Bold to every text while preserving each object's other values.
+        NativeWindow multi_text_win(1440, 900);
+        auto& multi_workflow = multi_text_win.workflow();
+        auto& multi_selection = multi_text_win.root().vector_controller().selection();
+        const auto headline_id = multi_workflow.add_vietnamese_text(
+            25.0, 30.0, "Headline", "Arial", 48.0, "#000000");
+        const auto body_id = multi_workflow.add_vietnamese_text(
+            25.0, 90.0, "Body copy", "Arial", 12.0, "#000000");
+        multi_selection.select(headline_id);
+        multi_text_win.set_font_alignment(TextAlignment::Center);
+        multi_text_win.toggle_font_underline();
+        multi_selection.select(body_id, pikdraw::vector::SelectionMode::Add);
+        multi_text_win.toggle_font_bold();
+        const auto multi_snapshot = multi_text_win.root().document().current_snapshot();
+        const auto headline = std::get<pikdraw::document::TextObject>(*multi_snapshot->objects().get(headline_id));
+        const auto body = std::get<pikdraw::document::TextObject>(*multi_snapshot->objects().get(body_id));
+        assert(headline.font.weight >= 700 && body.font.weight >= 700);
+        assert(headline.font.size_pt == 48.0 && body.font.size_pt == 12.0);
+        assert(headline.alignment == TextAlignment::Center && body.alignment == TextAlignment::Left);
+        assert(headline.underline && !body.underline);
+
+        text_win.cycle_change_case();
+        snap = text_win.root().document().current_snapshot();
+        txt_obj = std::get<pikdraw::document::TextObject>(*snap->objects().get(tid));
+        assert(txt_obj.text == "Cộng Hòa Xã Hội Chủ Nghĩa");
+
+        // Verify Undo restores previous state correctly
+        assert(twf.undo());
+        snap = text_win.root().document().current_snapshot();
+        txt_obj = std::get<pikdraw::document::TextObject>(*snap->objects().get(tid));
+        assert(txt_obj.text == "cộng hòa xã hội chủ nghĩa");
+
+        // Item 10: Linked Frames, Combine/Split Text, and Text on Path
+        {
+            // 10.1: Linked Text Frames (Threading)
+            const auto f1_id = twf.add_vietnamese_text(
+                10.0, 10.0,
+                "Dòng 1: Tiêu đề thiết kế hồ sơ năng lực.\nDòng 2: Nội dung đoạn văn bản hồ sơ.\nDòng 3: Bảng thông số kỹ thuật chi tiết.\nDòng 4: Kết luận và địa chỉ công ty.",
+                "Arial", 12.0, "#000000");
+            const auto f2_id = twf.add_vietnamese_text(100.0, 10.0, "", "Arial", 12.0, "#000000");
+
+            auto& sel = text_win.root().vector_controller().selection();
+            sel.clear();
+            sel.select(f1_id);
+
+            pikdraw::vector::TextPropertiesDelta f1_delta;
+            f1_delta.frame_width_mm = 80.0;
+            f1_delta.frame_height_mm = 12.0; // Restrict height to cause overflow
+            assert(twf.update_selected_text_properties(f1_delta));
+
+            sel.select(f2_id, pikdraw::vector::SelectionMode::Add);
+            text_win.link_selected_text_frames();
+            auto l_snap = text_win.root().document().current_snapshot();
+            auto l_f1 = std::get<pikdraw::document::TextObject>(*l_snap->objects().get(f1_id));
+            auto l_f2 = std::get<pikdraw::document::TextObject>(*l_snap->objects().get(f2_id));
+
+            assert(l_f1.next_frame_id == f2_id);
+            assert(l_f2.prev_frame_id == f1_id);
+            assert(l_f1.is_linked());
+            assert(l_f2.is_linked());
+
+            // Test Unlink
+            sel.clear();
+            sel.select(f1_id);
+            text_win.unlink_selected_text_frames();
+            l_snap = text_win.root().document().current_snapshot();
+            l_f1 = std::get<pikdraw::document::TextObject>(*l_snap->objects().get(f1_id));
+            l_f2 = std::get<pikdraw::document::TextObject>(*l_snap->objects().get(f2_id));
+            assert(!l_f1.is_linked());
+            assert(!l_f2.is_linked());
+
+            // 10.2: Combine Text Objects (Ctrl+Shift+C)
+            const auto t_a = twf.add_vietnamese_text(10.0, 50.0, "Họ và tên: Nguyễn Văn A", "Arial", 14.0, "#000000");
+            const auto t_b = twf.add_vietnamese_text(10.0, 60.0, "Chức vụ: Kỹ sư trưởng", "Arial", 14.0, "#000000");
+            const auto t_c = twf.add_vietnamese_text(10.0, 70.0, "Công ty: PikDraw Vietnam", "Arial", 14.0, "#000000");
+
+            sel.clear();
+            sel.select(t_a);
+            sel.select(t_b, pikdraw::vector::SelectionMode::Add);
+            sel.select(t_c, pikdraw::vector::SelectionMode::Add);
+
+            text_win.combine_selected_text_objects();
+            auto c_snap = text_win.root().document().current_snapshot();
+            assert(!c_snap->objects().contains(t_a));
+            assert(!c_snap->objects().contains(t_b));
+            assert(!c_snap->objects().contains(t_c));
+            assert(sel.count() == 1);
+            auto combined_id = sel.selected_ids().front();
+            auto combined_obj = std::get<pikdraw::document::TextObject>(*c_snap->objects().get(combined_id));
+            assert(combined_obj.text.find("Họ và tên") != std::string::npos);
+            assert(combined_obj.text.find("Chức vụ") != std::string::npos);
+            assert(combined_obj.text.find("PikDraw Vietnam") != std::string::npos);
+
+            // Undo Combine
+            assert(twf.undo());
+            c_snap = text_win.root().document().current_snapshot();
+            assert(c_snap->objects().contains(t_a));
+            assert(c_snap->objects().contains(t_b));
+            assert(c_snap->objects().contains(t_c));
+
+            // 10.3: Split Text Lines (Ctrl+Shift+S)
+            const auto multiline_id = twf.add_vietnamese_text(
+                10.0, 100.0,
+                "Tem mã hàng: PK-901\nSố lượng: 500 cái\nXuất xứ: Việt Nam",
+                "Arial", 12.0, "#000000");
+            sel.clear();
+            sel.select(multiline_id);
+
+            text_win.split_selected_text_lines();
+            auto s_snap = text_win.root().document().current_snapshot();
+            assert(!s_snap->objects().contains(multiline_id));
+            assert(sel.count() == 3);
+            auto s1 = std::get<pikdraw::document::TextObject>(*s_snap->objects().get(sel.selected_ids()[0]));
+            auto s2 = std::get<pikdraw::document::TextObject>(*s_snap->objects().get(sel.selected_ids()[1]));
+            auto s3 = std::get<pikdraw::document::TextObject>(*s_snap->objects().get(sel.selected_ids()[2]));
+            assert(s1.text == "Tem mã hàng: PK-901");
+            assert(s2.text == "Số lượng: 500 cái");
+            assert(s3.text == "Xuất xứ: Việt Nam");
+
+            // Undo Split
+            assert(twf.undo());
+            s_snap = text_win.root().document().current_snapshot();
+            assert(s_snap->objects().contains(multiline_id));
+
+            // 10.4: Text on Path (Fit Text to Path & Detach)
+            const auto curve_id = twf.add_ellipse(50.0, 150.0, 100.0, 100.0, "", "#0ea5e9", 1.0);
+            const auto path_text_id = twf.add_vietnamese_text(
+                0.0, 0.0, "CÔNG TY CỔ PHẦN CÔNG NGHỆ PIKDRAW VIỆT NAM", "Arial", 14.0, "#000000");
+
+            sel.clear();
+            sel.select(curve_id);
+            sel.select(path_text_id, pikdraw::vector::SelectionMode::Add);
+
+            text_win.fit_text_to_path();
+            auto p_snap = text_win.root().document().current_snapshot();
+            auto top_obj = std::get<pikdraw::document::TextObject>(*p_snap->objects().get(path_text_id));
+            assert(top_obj.is_text_on_path());
+            assert(top_obj.path_binding_id == curve_id);
+
+            // Reverse path
+            sel.clear();
+            sel.select(path_text_id);
+            text_win.reverse_text_on_path();
+            p_snap = text_win.root().document().current_snapshot();
+            top_obj = std::get<pikdraw::document::TextObject>(*p_snap->objects().get(path_text_id));
+            assert(top_obj.path_reversed == true);
+
+            // Convert Text on Path to Curves (Ctrl+Q)
+            assert(twf.convert_text_to_curves(path_text_id));
+            p_snap = text_win.root().document().current_snapshot();
+            assert(!p_snap->objects().contains(path_text_id));
+            assert(sel.count() == 1);
+            auto curves_id = sel.selected_ids().front();
+            assert(std::holds_alternative<pikdraw::document::PathObject>(*p_snap->objects().get(curves_id)));
+
+            // Undo Convert to Curves
+            assert(twf.undo());
+            p_snap = text_win.root().document().current_snapshot();
+            assert(p_snap->objects().contains(path_text_id));
+            top_obj = std::get<pikdraw::document::TextObject>(*p_snap->objects().get(path_text_id));
+            assert(top_obj.is_text_on_path());
+
+            // Straighten text
+            sel.clear();
+            sel.select(path_text_id);
+            text_win.straighten_text_from_path();
+            p_snap = text_win.root().document().current_snapshot();
+            top_obj = std::get<pikdraw::document::TextObject>(*p_snap->objects().get(path_text_id));
+            assert(!top_obj.is_text_on_path());
+            assert(top_obj.path_binding_id == pikdraw::document::kInvalidObjectId);
+        }
     }
 
     std::cout << "[PASS] test_typography_inline_editing_ribbon_and_table\n";

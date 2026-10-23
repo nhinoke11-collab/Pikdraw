@@ -13,6 +13,9 @@ add_library(pikdraw_typography STATIC
     src/layout/text_layout.cpp
     src/layout/caret_navigation.cpp
     src/layout/glyph_outline.cpp
+    src/layout/case_conversion.cpp
+    src/layout/text_flow.cpp
+    src/layout/text_on_path.cpp
 )
 
 target_include_directories(pikdraw_typography PUBLIC

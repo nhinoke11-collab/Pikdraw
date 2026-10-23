@@ -4,7 +4,9 @@
 #include "pikdraw/vector/gestures/text_tool.hpp"
 #include "pikdraw/typography/layout/glyph_outline.hpp"
 #include "pikdraw/typography/layout/text_layout.hpp"
+#include "pikdraw/typography/layout/text_on_path.hpp"
 #include "pikdraw/document/commands/command.hpp"
+#include "pikdraw/document/commands/unit_commands.hpp"
 #include "pikdraw/document/commands/appearance_commands.hpp"
 #include "pikdraw/document/commands/transaction_writer.hpp"
 #include "pikdraw/color/values/color_value.hpp"
@@ -89,7 +91,7 @@ document::ObjectId DocumentWorkflow::add_rectangle(
     );
 
     const auto id = rect_obj.id;
-    root_.document().execute_command(std::make_unique<document::AddObjectCommand>(std::move(rect_obj)));
+    root_.document().execute_command(std::make_unique<document::AddObjectCommand>(std::move(rect_obj), active_layer_index()));
     sync_status_bar();
     return id;
 }
@@ -111,7 +113,7 @@ document::ObjectId DocumentWorkflow::add_ellipse(
     );
 
     const auto id = ellipse_obj.id;
-    root_.document().execute_command(std::make_unique<document::AddObjectCommand>(std::move(ellipse_obj)));
+    root_.document().execute_command(std::make_unique<document::AddObjectCommand>(std::move(ellipse_obj), active_layer_index()));
     sync_status_bar();
     return id;
 }
@@ -132,7 +134,7 @@ document::ObjectId DocumentWorkflow::add_vietnamese_text(
     text_obj.position = geometry::Point2D{x_mm, y_mm};
 
     const auto id = text_obj.id;
-    root_.document().execute_command(std::make_unique<document::AddObjectCommand>(std::move(text_obj)));
+    root_.document().execute_command(std::make_unique<document::AddObjectCommand>(std::move(text_obj), active_layer_index()));
     sync_status_bar();
     return id;
 }
@@ -153,9 +155,16 @@ bool DocumentWorkflow::update_text_style(
     bool underline,
     typography::TextAlignment alignment
 ) {
-    auto cmd = std::make_unique<vector::UpdateTextStyleCommand>(
-        text_id, font_family, font_size_pt, bold ? 700 : 400, italic, underline, alignment
-    );
+    vector::TextPropertiesDelta delta;
+    if (!font_family.empty()) delta.family = font_family;
+    delta.size_pt = font_size_pt;
+    delta.weight = bold ? 700 : 400;
+    delta.italic = italic;
+    delta.underline = underline;
+    delta.alignment = alignment;
+    auto cmd = std::make_unique<vector::UpdateTextPropertiesCommand>(text_id, std::move(delta));
+
+
     auto res = root_.document().execute_command(std::move(cmd));
     sync_status_bar();
     return res.success;
@@ -169,11 +178,27 @@ bool DocumentWorkflow::convert_text_to_curves(document::ObjectId text_id) {
         return false;
     }
     const auto& text_obj = std::get<document::TextObject>(*opt);
-    auto layout = text_obj.layout();
-    auto outline_path = typography::text_to_path_outlines(layout, text_obj.underline);
-    if (outline_path.empty()) return false;
-    geometry::Transform2D pos_tx = geometry::Transform2D::translation(text_obj.position.x, text_obj.position.y);
-    outline_path = outline_path.transformed(text_obj.transform * pos_tx * geometry::Transform2D::scale(1, -1));
+    geometry::Path2D outline_path;
+    if (text_obj.is_text_on_path()) {
+        auto path_opt = snapshot->objects().get(text_obj.path_binding_id);
+        if (path_opt && std::holds_alternative<document::PathObject>(*path_opt)) {
+            const auto& host_path = std::get<document::PathObject>(*path_opt);
+            typography::TextOnPathOptions top_opts;
+            top_opts.start_offset_mm = text_obj.path_offset_mm;
+            top_opts.baseline_offset_mm = text_obj.path_baseline_offset_mm;
+            top_opts.reversed = text_obj.path_reversed;
+            top_opts.alignment = text_obj.alignment;
+            auto top_res = typography::layout_text_on_path(host_path.path, text_obj.text, text_obj.font, top_opts);
+            outline_path = top_res.combined_outlines.transformed(host_path.transform * geometry::Transform2D::scale(1, -1));
+        }
+    }
+    if (outline_path.empty()) {
+        auto layout = text_obj.layout();
+        outline_path = typography::text_to_path_outlines(layout, text_obj.underline, text_obj.strikethrough);
+        if (outline_path.empty()) return false;
+        geometry::Transform2D pos_tx = geometry::Transform2D::translation(text_obj.position.x, text_obj.position.y);
+        outline_path = outline_path.transformed(text_obj.transform * pos_tx * geometry::Transform2D::scale(1, -1));
+    }
 
     document::PathObject path_obj;
     path_obj.id = document::generate_object_id();
@@ -194,7 +219,7 @@ bool DocumentWorkflow::convert_text_to_curves(document::ObjectId text_id) {
     auto composite = std::make_unique<document::CompositeCommand>("Convert Text to Curves");
     composite->add_command(std::make_unique<document::RemoveObjectCommand>(text_id));
     const auto new_id = path_obj.id;
-    composite->add_command(std::make_unique<document::AddObjectCommand>(std::move(path_obj)));
+    composite->add_command(std::make_unique<document::AddObjectCommand>(std::move(path_obj), active_layer_index()));
     auto res = doc.execute_command(std::move(composite));
     if (res.success) {
         root_.vector_controller().selection().select(new_id);
@@ -250,7 +275,7 @@ document::ObjectId DocumentWorkflow::create_table(
 
             const auto rect_id = cell_rect.id;
             cell_ids.push_back(rect_id);
-            composite->add_command(std::make_unique<document::AddObjectCommand>(std::move(cell_rect)));
+            composite->add_command(std::make_unique<document::AddObjectCommand>(std::move(cell_rect), active_layer_index()));
 
             // 2. Cell text
             document::TextObject cell_text;
@@ -270,7 +295,7 @@ document::ObjectId DocumentWorkflow::create_table(
 
             const auto text_id = cell_text.id;
             cell_ids.push_back(text_id);
-            composite->add_command(std::make_unique<document::AddObjectCommand>(std::move(cell_text)));
+            composite->add_command(std::make_unique<document::AddObjectCommand>(std::move(cell_text), active_layer_index()));
         }
     }
 
@@ -303,19 +328,7 @@ void DocumentWorkflow::select_object(document::ObjectId id, bool toggle) {
 bool DocumentWorkflow::transform_object(document::ObjectId id, double dx_mm, double dy_mm) {
     const auto snapshot = root_.document().current_snapshot();
     const auto delta = geometry::Transform2D::translation(dx_mm, dy_mm);
-    if (is_group(id)) {
-        std::vector<document::ObjectId> all_targets = { id };
-        collect_all_descendants(id, snapshot->objects(), all_targets);
-        auto composite = std::make_unique<document::CompositeCommand>("Transform Group");
-        for (auto tid : all_targets) {
-            composite->add_command(std::make_unique<document::TransformObjectCommand>(tid, delta));
-        }
-        const auto res = root_.document().execute_command(std::move(composite));
-        sync_status_bar();
-        return res.success;
-    }
-
-    auto cmd = std::make_unique<document::TransformObjectCommand>(id, delta);
+    auto cmd = vector::make_transformed_object_command(id, *snapshot, delta);
     auto res = root_.document().execute_command(std::move(cmd));
     sync_status_bar();
     return res.success;
@@ -351,7 +364,7 @@ bool DocumentWorkflow::align_selected(
     if (!can_align_selected(mode, reference, key_object_id)) return false;
 
     std::vector<geometry::ObjectAlignmentItem> items;
-    for (auto id : sel) {
+    for (auto id : root_.document().current_snapshot()->hierarchy().roots(sel)) {
         auto bounds_opt = get_object_bounds(id);
         if (!bounds_opt) return false;
         items.push_back({id, *bounds_opt});
@@ -369,8 +382,8 @@ bool DocumentWorkflow::align_selected(
     size_t moved_count = 0;
     for (const auto& delta : deltas) {
         if (std::abs(delta.dx_mm) > 1e-6 || std::abs(delta.dy_mm) > 1e-6) {
-            composite->add_command(std::make_unique<document::TransformObjectCommand>(
-                delta.id, geometry::Transform2D::translation(delta.dx_mm, delta.dy_mm)
+            composite->add_command(vector::make_transformed_object_command(
+                delta.id, *root_.document().current_snapshot(), geometry::Transform2D::translation(delta.dx_mm, delta.dy_mm)
             ));
             moved_count++;
         }
@@ -406,7 +419,7 @@ bool DocumentWorkflow::distribute_selected(
     if (!can_distribute_selected(mode, specified_spacing_mm)) return false;
 
     std::vector<geometry::ObjectAlignmentItem> items;
-    for (auto id : sel) {
+    for (auto id : root_.document().current_snapshot()->hierarchy().roots(sel)) {
         auto bounds_opt = get_object_bounds(id);
         if (!bounds_opt) return false;
         items.push_back({id, *bounds_opt});
@@ -420,8 +433,8 @@ bool DocumentWorkflow::distribute_selected(
     size_t moved_count = 0;
     for (const auto& delta : deltas) {
         if (std::abs(delta.dx_mm) > 1e-6 || std::abs(delta.dy_mm) > 1e-6) {
-            composite->add_command(std::make_unique<document::TransformObjectCommand>(
-                delta.id, geometry::Transform2D::translation(delta.dx_mm, delta.dy_mm)
+            composite->add_command(vector::make_transformed_object_command(
+                delta.id, *root_.document().current_snapshot(), geometry::Transform2D::translation(delta.dx_mm, delta.dy_mm)
             ));
             moved_count++;
         }
@@ -446,9 +459,11 @@ bool DocumentWorkflow::redo() {
 }
 
 void DocumentWorkflow::new_document(double page_width_mm, double page_height_mm,
-                                   color::DocumentColorMode mode, int32_t dpi) {
+                                   color::DocumentColorMode mode, int32_t dpi,
+                                   geometry::units::LengthUnit display_unit) {
     if (!std::isfinite(page_width_mm) || !std::isfinite(page_height_mm) ||
-        page_width_mm <= 0.0 || page_height_mm <= 0.0)
+        page_width_mm <= 0.0 || page_height_mm <= 0.0 ||
+        !geometry::units::is_physical_length_unit(display_unit))
         return;
 
     auto& doc = root_.document();
@@ -459,6 +474,8 @@ void DocumentWorkflow::new_document(double page_width_mm, double page_height_mm,
     page.color_profile_name = color::default_document_profile(mode);
     page.raster_dpi = dpi == 0 ? (mode == color::DocumentColorMode::Cmyk ? 300 : 72) : dpi;
     page.color_mode_explicit = true;
+    page.display_length_unit = display_unit;
+    page.display_length_unit_explicit = true;
     if (!color::valid_document_color_mode(mode) ||
         (page.raster_dpi != 72 && page.raster_dpi != 150 && page.raster_dpi != 300)) return;
     auto snapshot = std::make_shared<const document::DocumentSnapshot>(

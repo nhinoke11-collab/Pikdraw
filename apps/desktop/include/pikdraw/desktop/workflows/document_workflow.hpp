@@ -2,6 +2,8 @@
 
 #include "pikdraw/desktop/runtime/composition_root.hpp"
 #include "pikdraw/color/preview/icc_preview.hpp"
+#include "pikdraw/color/preview/profile_color_transform.hpp"
+#include "pikdraw/geometry/units/length_unit.hpp"
 #include "pikdraw/interop/writers/svg_exporter.hpp"
 #include "pikdraw/rendering/frame_target.hpp"
 #include "pikdraw/geometry/primitives/transform.hpp"
@@ -21,15 +23,26 @@
 #include <stop_token>
 #include <vector>
 
+namespace pikdraw::vector {
+struct TextPropertiesDelta;
+}
+namespace pikdraw::typography {
+enum class ChangeCaseMode;
+}
+
 namespace pikdraw::desktop {
 
 enum class ImportFormat : uint8_t { Svg, Dxf };
-enum class ImportProgressStage : uint8_t { Snapshotting, StartingWorker, Reading, Validating, Complete };
+enum class PdfOpenIntent : uint8_t { EditableObjects, LockedSourceForPrint };
+enum class ImportProgressStage : uint8_t {
+    Snapshotting, StartingWorker, Reading, Validating, WaitingForMemory, Complete
+};
 
 enum class SelectSameCriterion : uint8_t {
     FillColor,
     StrokeColor,
     FillAndStroke,
+    AnyPaintColor,
     ColorSpace,
     CmykOnly,
     RgbOnly,
@@ -42,6 +55,10 @@ struct ImportProgress {
 };
 
 struct ImportIssueSummary {
+    enum class Severity : uint8_t { Info, Warning, Unsupported };
+
+    Severity severity{Severity::Warning};
+    std::string source_locator;
     std::string feature_code;
     std::string diagnostic_code;
 };
@@ -60,6 +77,8 @@ struct ImportedContentProposal {
     // Populated by page-set profiles; legacy single-page profiles keep using
     // the flat layer/object fields below.
     std::vector<document::ImportedPageContent> pages;
+    document::DocumentContentMode content_mode{document::DocumentContentMode::Editable};
+    std::shared_ptr<const document::PdfSourceAsset> pdf_source_asset;
     std::vector<document::Layer> layers;
     std::vector<document::ObjectVariant> objects;
 };
@@ -76,7 +95,9 @@ struct ImportWorkerResult {
     ImportFormat format,
     const document::AsyncProposalMetadata& job,
     std::stop_token cancellation,
-    const std::function<void(ImportProgress)>& on_progress = {});
+    const std::function<void(ImportProgress)>& on_progress = {},
+    PdfOpenIntent pdf_open_intent = PdfOpenIntent::EditableObjects,
+    uint32_t raster_frame_index = 0);
 
 /// High-level user workflows implementing the M1 end-to-end vector pipeline
 class DocumentWorkflow {
@@ -188,17 +209,37 @@ public:
 
     /// Reset to an empty page and begin a new document epoch. New documents default to A4 landscape.
     void new_document(double page_width_mm = 297.0, double page_height_mm = 210.0,
-        color::DocumentColorMode mode = color::DocumentColorMode::Rgb, int32_t dpi = 0);
+        color::DocumentColorMode mode = color::DocumentColorMode::Rgb, int32_t dpi = 0,
+        geometry::units::LengthUnit display_unit = geometry::units::LengthUnit::Millimeter);
+    bool set_page_display_length_unit(document::PageId page_id,
+        geometry::units::LengthUnit unit);
     bool convert_document_color_mode(color::DocumentColorMode mode,
         std::shared_ptr<const color::IccPreview> icc = {});
     bool set_document_raster_dpi(int32_t dpi);
     bool set_page_color_mode(document::PageId page_id, color::DocumentColorMode mode,
         std::shared_ptr<const color::IccPreview> icc = {});
+    bool convert_page_color_profile(document::PageId page_id,
+        std::shared_ptr<const color::ProfileColorTransform> transform);
+    bool assign_selected_objects_color_profile(
+        std::shared_ptr<const color::ProfileResource> resource);
+    bool convert_selected_objects_color_profile(document::PageId page_id,
+        std::shared_ptr<const color::ProfileColorTransform> transform);
+    bool convert_selected_objects_color_profile(document::PageId page_id,
+        std::shared_ptr<const color::ProfileResource> destination,
+        std::vector<std::shared_ptr<const color::ProfileColorTransform>> transforms);
+    bool convert_document_color_profile(
+        std::shared_ptr<const color::ProfileResource> destination,
+        std::vector<std::shared_ptr<const color::ProfileColorTransform>> transforms);
     bool set_page_raster_dpi(document::PageId page_id, int32_t dpi);
     bool convert_selected_objects_color_mode(color::DocumentColorMode mode,
         std::shared_ptr<const color::IccPreview> icc = {});
     bool convert_active_page_color_mode(color::DocumentColorMode mode,
         std::shared_ptr<const color::IccPreview> icc = {});
+    [[nodiscard]] const std::optional<color::ColorConversionSummary>&
+    last_color_conversion_summary() const noexcept { return last_color_conversion_summary_; }
+    [[nodiscard]] const std::string& last_color_conversion_error() const noexcept {
+        return last_color_conversion_error_;
+    }
 
     /// Find objects matching color / Select Same
     [[nodiscard]] std::vector<document::ObjectId> find_objects_matching_color(
@@ -278,6 +319,10 @@ public:
     [[nodiscard]] bool can_make_clipping_mask_selected() const;
     document::ObjectId make_clipping_mask_selected(bool preserve_appearance = true);
     bool release_clipping_mask_selected();
+    bool extract_powerclip_contents(document::ObjectId frame_id);
+    document::ObjectId create_empty_powerclip(document::ObjectId frame_id);
+    bool copy_powerclip_contents(document::ObjectId source_id, document::ObjectId target_id);
+    bool set_powerclip_preserve_appearance(document::ObjectId frame_id, bool preserve);
     [[nodiscard]] bool is_clipping_container(document::ObjectId id) const;
     document::ObjectId place_inside_powerclip(
         document::ObjectId content_id,
@@ -396,12 +441,21 @@ public:
     bool commit_text_edit(const document::TextObject& text, document::SnapshotPtr base,
                           bool existing, document::ObjectId parent = document::kInvalidObjectId);
     void clear_text_preview() noexcept { text_preview_.reset(); text_preview_base_.reset(); }
-    bool style_selected_text(const std::string& family, double size, bool bold,
-                             bool italic, bool underline, typography::TextAlignment alignment);
-    bool set_selected_text_font(const std::string& family, double size_pt,
-                                bool bold, bool italic);
+    bool style_selected_text(const vector::TextPropertiesDelta& delta);
+    bool set_selected_text_font(const vector::TextPropertiesDelta& delta);
     bool set_selected_text_layout(std::optional<double> frame_width_mm,
                                   std::optional<double> line_spacing_ratio);
+    bool update_selected_text_properties(const vector::TextPropertiesDelta& delta);
+    bool change_case_selected_text(typography::ChangeCaseMode mode);
+    bool link_selected_text_frames();
+    bool unlink_selected_text_frame();
+    bool combine_selected_text_objects();
+    bool split_selected_text_lines();
+    bool attach_selected_text_to_path();
+    bool detach_selected_text_from_path();
+    bool set_selected_text_path_offset(double offset_mm);
+    bool toggle_selected_text_path_reverse();
+    bool set_selected_text_path_baseline_offset(double offset_mm);
     [[nodiscard]] bool can_clear_selected_effects() const;
     [[nodiscard]] bool can_edit_selected_effect(size_t effect_index) const;
     bool set_selected_blend_mode(document::BlendMode mode);
@@ -483,6 +537,9 @@ public:
     /// Synchronize shell status bar with active document metrics
     void sync_status_bar();
 
+    [[nodiscard]] size_t active_layer_index() const noexcept { return active_layer_index_; }
+    void set_active_layer_index(size_t index) noexcept { active_layer_index_ = index; }
+
 private:
     struct EffectDraftState {
         document::EffectParameters parameters;
@@ -501,11 +558,14 @@ private:
     bool rebuild_effect_draft_preview();
     bool set_effect_draft_numeric_value(EffectDraftField field, double value);
     std::vector<EffectDraftField> effect_draft_numeric_fields() const;
+    size_t active_layer_index_{0};
     CompositionRoot& root_;
     interop::SvgExporter svg_exporter_;
     std::optional<EffectDraftState> effect_draft_;
     document::SnapshotPtr text_preview_, text_preview_base_;
     ArraySession array_session_{};
+    std::optional<color::ColorConversionSummary> last_color_conversion_summary_;
+    std::string last_color_conversion_error_;
 };
 
 } // namespace pikdraw::desktop

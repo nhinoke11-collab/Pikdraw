@@ -3,6 +3,7 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
 #include "pikdraw/desktop/tools/canvas_text_editor.hpp"
 #include "pikdraw/typography/shaping/font_resolver.hpp"
+#include "native_window_length_input.hpp"
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
@@ -48,18 +49,18 @@ enum class TextPropertyField { FontSize, FrameWidth, LineSpacing };
 inline NativeWindow::NumericFieldId text_numeric_field(TextPropertyField field) {
     switch (field) {
         case TextPropertyField::FontSize: return NativeWindow::NumericFieldId::TextFontSize;
-        case TextPropertyField::FrameWidth: return NativeWindow::NumericFieldId::EffectSigmaX;
-        case TextPropertyField::LineSpacing: return NativeWindow::NumericFieldId::EffectSigmaY;
+        case TextPropertyField::FrameWidth: return NativeWindow::NumericFieldId::TextFrameWidth;
+        case TextPropertyField::LineSpacing: return NativeWindow::NumericFieldId::TextLineSpacing;
     }
     return NativeWindow::NumericFieldId::None;
 }
 
 struct TextPropertiesView {
-    bool context{}, editable{}, mixed_frame_width{}, mixed_line_spacing{}, mixed_font{};
-    bool mixed_size{}, mixed_bold{}, mixed_italic{}, mixed_underline{}, mixed_alignment{};
+    bool context{}, editable{}, mixed_frame_width{}, mixed_line_spacing{}, mixed_letter_spacing{}, mixed_font{}, mixed_family{};
+    bool mixed_size{}, mixed_bold{}, mixed_italic{}, mixed_underline{}, mixed_strikethrough{}, mixed_alignment{};
     size_t count{};
-    double frame_width_mm{}, line_spacing_ratio{1.2}, size_pt{24.0};
-    bool bold{}, italic{}, underline{};
+    double frame_width_mm{}, line_spacing_ratio{1.2}, letter_spacing_mm{}, size_pt{24.0};
+    bool bold{}, italic{}, underline{}, strikethrough{};
     typography::TextAlignment alignment{typography::TextAlignment::Left};
     std::string family;
 };
@@ -133,24 +134,30 @@ inline TextPropertiesView text_properties_view(NativeWindow& window) {
     const auto& first = texts.front();
     view.frame_width_mm = first.frame_width_mm;
     view.line_spacing_ratio = first.line_spacing_ratio;
+    view.letter_spacing_mm = first.letter_spacing_mm;
     view.family = first.font.family_name;
     view.size_pt = first.font.size_pt;
     view.bold = first.font.weight >= 700;
     view.italic = first.font.italic;
     view.underline = first.underline;
+    view.strikethrough = first.strikethrough;
     view.alignment = first.alignment;
     for (size_t i = 1; i < texts.size(); ++i) {
         const auto& text = texts[i];
         view.mixed_frame_width |= !close_text_property_value(first.frame_width_mm, text.frame_width_mm);
         view.mixed_line_spacing |= !close_text_property_value(first.line_spacing_ratio, text.line_spacing_ratio);
-        view.mixed_font |= first.font.family_name != text.font.family_name ||
+        view.mixed_letter_spacing |= !close_text_property_value(first.letter_spacing_mm, text.letter_spacing_mm);
+        view.mixed_family |= first.font.family_name != text.font.family_name;
+        view.mixed_font |= view.mixed_family ||
             !close_text_property_value(first.font.size_pt, text.font.size_pt) ||
             first.font.weight != text.font.weight || first.font.italic != text.font.italic ||
-            first.underline != text.underline || first.alignment != text.alignment;
+            first.underline != text.underline || first.strikethrough != text.strikethrough ||
+            first.alignment != text.alignment;
         view.mixed_size |= !close_text_property_value(first.font.size_pt, text.font.size_pt);
         view.mixed_bold |= (first.font.weight >= 700) != (text.font.weight >= 700);
         view.mixed_italic |= first.font.italic != text.font.italic;
         view.mixed_underline |= first.underline != text.underline;
+        view.mixed_strikethrough |= first.strikethrough != text.strikethrough;
         view.mixed_alignment |= first.alignment != text.alignment;
     }
     return view;
@@ -316,7 +323,6 @@ inline std::optional<std::string> choose_installed_text_font(HWND owner,
 inline std::optional<std::string> choose_and_store_installed_text_font(HWND owner, POINT screen_point,
     const TextPropertiesView& view, int& family_index, double& size_pt, bool& bold, bool& italic,
     bool& underline, typography::TextAlignment& alignment) {
-    if (view.context && view.mixed_font) return std::nullopt;
     const auto family = choose_installed_text_font(owner, screen_point, view.context ? view.family
         : text_font_family_at(family_index));
     if (!family) return std::nullopt;
@@ -375,7 +381,8 @@ inline std::optional<TextFontChoice> choose_and_store_text_font(HWND owner,
 
 inline void paint_text_properties_panel(HDC dc, int inspector_x, int width, int top,
     int bottom, ThemeMode theme, UILanguage language, const TextPropertiesView& view,
-    NativeWindow::NumericFieldId active_field, const std::string& numeric_buffer) {
+    NativeWindow::NumericFieldId active_field, const std::string& numeric_buffer,
+    geometry::units::LengthUnit display_unit) {
     namespace Layout = TextPropertiesLayout;
     const bool vi = language == UILanguage::Vietnamese;
     const bool dark = theme == ThemeMode::CyberDark;
@@ -396,12 +403,13 @@ inline void paint_text_properties_panel(HDC dc, int inspector_x, int width, int 
             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
     };
     auto button = [&](int x, int offset, int button_width, int button_height,
-                      const std::wstring& caption, bool enabled, bool selected = false) {
+                      const std::wstring& caption, bool enabled, bool selected = false,
+                      bool mixed = false) {
         RECT rect{x, top + offset, x + button_width, top + offset + button_height};
         HBRUSH brush = CreateSolidBrush(!enabled ? (dark ? RGB(15, 23, 34) : RGB(247, 249, 251))
             : selected ? active : surface);
-        HPEN pen = CreatePen(PS_SOLID, selected ? 2 : 1,
-            !enabled ? disabled : selected ? accent : border);
+        HPEN pen = CreatePen(PS_SOLID, selected || mixed ? 2 : 1,
+            !enabled ? disabled : selected ? accent : mixed ? muted : border);
         const auto old_pen = SelectObject(dc, pen);
         const auto old_brush = SelectObject(dc, brush);
         RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, 5, 5);
@@ -412,6 +420,14 @@ inline void paint_text_properties_panel(HDC dc, int inspector_x, int width, int 
         DrawTextW(dc, caption.c_str(), -1, &caption_rect,
             (button_width < 100 ? DT_CENTER : DT_LEFT) | DT_VCENTER | DT_SINGLELINE |
             DT_END_ELLIPSIS | DT_NOPREFIX);
+        if (mixed && enabled) {
+            HPEN mark = CreatePen(PS_SOLID, 2, dark ? RGB(251, 191, 36) : RGB(180, 83, 9));
+            const auto old_mark = SelectObject(dc, mark);
+            MoveToEx(dc, rect.left + button_width / 2 - 5, rect.top + 4, nullptr);
+            LineTo(dc, rect.left + button_width / 2 + 5, rect.top + 4);
+            SelectObject(dc, old_mark);
+            DeleteObject(mark);
+        }
     };
     auto field = [&](int offset, TextPropertyField property, const wchar_t* name,
                      std::wstring value, bool enabled) {
@@ -448,12 +464,12 @@ inline void paint_text_properties_panel(HDC dc, int inspector_x, int width, int 
     DrawTextW(dc, summary.c_str(), -1, &summary_rect,
         DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
     label(vi ? L"KÝ TỰ" : L"CHARACTER", Layout::character_top, accent);
-    const bool can_edit_character = view.editable && !view.mixed_font;
-    const std::wstring family = view.mixed_font
-        ? (vi ? L"Kiểu chữ hỗn hợp" : L"Mixed font settings")
+    const bool can_edit_character = view.editable;
+    const std::wstring family = view.mixed_family
+        ? (vi ? L"Họ phông hỗn hợp" : L"Mixed font families")
         : NativeWindow::utf8_to_wide(view.family) + L"  ▾";
     const int font_row_width = right - left;
-    const int style_row_width = 3 * Layout::style_button_width + 2 * Layout::font_row_gap;
+    const int style_row_width = 4 * Layout::style_button_width + 3 * Layout::font_row_gap;
     const int family_width = std::max(72, font_row_width - Layout::font_size_width - style_row_width -
                                            2 * Layout::font_row_gap);
     button(left, Layout::font_button_top, family_width, Layout::font_button_height,
@@ -482,13 +498,15 @@ inline void paint_text_properties_panel(HDC dc, int inspector_x, int width, int 
     DrawTextW(dc, size_text.c_str(), -1, &size_rect,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
     const int style_left = size_input.right + Layout::font_row_gap;
-    const wchar_t* style_labels[] = {L"B", L"I", L"U"};
-    const bool style_selected[] = {view.bold, view.italic, view.underline};
-    for (int i = 0; i < 3; ++i)
+    const wchar_t* style_labels[] = {L"B", L"I", L"U", L"S"};
+    const bool style_selected[] = {view.bold, view.italic, view.underline, view.strikethrough};
+    const bool style_mixed[] = {view.mixed_bold, view.mixed_italic,
+                                view.mixed_underline, view.mixed_strikethrough};
+    for (int i = 0; i < 4; ++i)
         button(style_left + i * (Layout::style_button_width + Layout::font_row_gap), Layout::style_buttons_top,
             Layout::style_button_width, Layout::style_buttons_height, style_labels[i],
-            can_edit_character, style_selected[i]);
-    const int triple_width = std::max(1, (right - left - 12) / 3);
+            can_edit_character, style_selected[i] && !style_mixed[i], style_mixed[i]);
+    const int quad_width = std::max(1, (right - left - 18) / 4);
     label(vi ? L"ĐOẠN VĂN VÀ KHUNG CHỮ" : L"PARAGRAPH & TEXT FRAME", Layout::paragraph_top, accent);
     std::wostringstream spacing;
     if (view.mixed_line_spacing) spacing << (vi ? L"Hỗn hợp" : L"Mixed");
@@ -497,31 +515,40 @@ inline void paint_text_properties_panel(HDC dc, int inspector_x, int width, int 
           vi ? L"Giãn dòng" : L"Line spacing", spacing.str(), view.editable);
     std::wostringstream frame;
     if (view.mixed_frame_width) frame << (vi ? L"Hỗn hợp" : L"Mixed");
-    else frame << std::fixed << std::setprecision(3) << view.frame_width_mm << L" mm";
+    else frame << format_mm_display(view.frame_width_mm, display_unit, 5);
+    const std::wstring frame_label = vi
+        ? L"Khung chữ (" + display_length_unit_suffix_wide(display_unit) + L")"
+        : L"Text frame (" + display_length_unit_suffix_wide(display_unit) + L")";
     field(Layout::frame_field_top, TextPropertyField::FrameWidth,
-          vi ? L"Khung chữ (mm)" : L"Text frame (mm)", frame.str(), view.editable);
-    const wchar_t* alignment_labels[] = {L"Left", L"Center", L"Right"};
+          frame_label.c_str(),
+          frame.str(), view.editable);
+    const wchar_t* alignment_labels[] = {L"Left", L"Center", L"Right", L"Justify"};
     if (vi) {
         alignment_labels[0] = L"Trái";
         alignment_labels[1] = L"Giữa";
         alignment_labels[2] = L"Phải";
+        alignment_labels[3] = L"Đều";
     }
     const bool alignment_selected[] = {
         view.alignment == typography::TextAlignment::Left,
         view.alignment == typography::TextAlignment::Center,
-        view.alignment == typography::TextAlignment::Right};
-    for (int i = 0; i < 3; ++i)
-        button(left + i * (triple_width + 6), Layout::alignment_buttons_top,
-            triple_width, Layout::alignment_buttons_height, alignment_labels[i],
-            can_edit_character, alignment_selected[i] && !view.mixed_font);
+        view.alignment == typography::TextAlignment::Right,
+        view.alignment == typography::TextAlignment::Justify};
+    for (int i = 0; i < 4; ++i)
+        button(left + i * (quad_width + 6), Layout::alignment_buttons_top,
+            quad_width, Layout::alignment_buttons_height, alignment_labels[i],
+            can_edit_character, alignment_selected[i] && !view.mixed_alignment,
+            view.mixed_alignment);
     button(left, Layout::image_search_top, right - left, Layout::image_search_height,
         vi ? L"Tìm font bằng ảnh · Sắp có" : L"Find font from image · Coming soon", true);
     RECT hint{left, top + Layout::hint_top, right, top + Layout::hint_top + 58};
     SetTextColor(dc, muted);
-    DrawTextW(dc, vi
-        ? L"0 mm = chữ tự do; khung dương tự xuống dòng. Giãn dòng 25–1000%. Font hỗn hợp cần thống nhất trước khi đổi style."
-        : L"0 mm = point text; positive width wraps. Line spacing is 25–1000%. Mixed font styles must be unified before editing.",
-        -1, &hint, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+    const auto hint_text = vi
+        ? L"0 " + display_length_unit_suffix_wide(display_unit) +
+            L" = chữ tự do; khung dương tự xuống dòng. Giãn dòng 25–1000%. Dấu gạch cho biết giá trị hỗn hợp; mỗi lệnh chỉ đổi thuộc tính tương ứng."
+        : L"0 " + display_length_unit_suffix_wide(display_unit) +
+            L" = point text; positive width wraps. Line spacing is 25–1000%. A dash marks mixed values; each action changes only its property.";
+    DrawTextW(dc, hint_text.c_str(), -1, &hint, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
     RestoreDC(dc, saved);
 }
 #endif

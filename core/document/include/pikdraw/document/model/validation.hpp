@@ -12,6 +12,16 @@ inline void validate_page(const Page& page) {
         page.color_profile_name.empty() || page.color_profile_name.size() > 256 ||
         (page.raster_dpi != 72 && page.raster_dpi != 150 && page.raster_dpi != 300))
         throw std::invalid_argument("Invalid document color settings or raster effects DPI");
+    if (page.color_profile_resource) {
+        const auto& identity = page.color_profile_resource->identity();
+        const auto expected_space = page.color_mode == color::DocumentColorMode::Cmyk
+            ? color::ColorSpace::Cmyk : color::ColorSpace::Rgb;
+        if (identity.color_space != expected_space ||
+            identity.checksum_sha256.size() != 64)
+            throw std::invalid_argument("Page ICC resource does not match its color mode");
+    }
+    if (!geometry::units::is_physical_length_unit(page.display_length_unit))
+        throw std::invalid_argument("Page display unit must be a physical length unit");
     if (!std::isfinite(page.width_mm) || !std::isfinite(page.height_mm) ||
         page.width_mm <= 0 || page.height_mm <= 0 ||
         page.width_mm > geometry::limits::kCanvasMaxMm ||
@@ -62,12 +72,20 @@ inline void validate_path_source(const PathObject& object) {
 inline void validate_text_source(const TextObject& object) {
     if (!std::isfinite(object.frame_width_mm) || object.frame_width_mm < 0 ||
         object.frame_width_mm > geometry::limits::kCanvasMaxMm ||
+        !std::isfinite(object.frame_height_mm) || object.frame_height_mm < 0 ||
+        object.frame_height_mm > geometry::limits::kCanvasMaxMm ||
         !std::isfinite(object.line_spacing_ratio) || object.line_spacing_ratio < 0.25 ||
-        object.line_spacing_ratio > 10 ||
+        object.line_spacing_ratio > 10 || !std::isfinite(object.letter_spacing_mm) ||
+        std::abs(object.letter_spacing_mm) > geometry::limits::kCanvasMaxMm ||
+        !std::isfinite(object.path_offset_mm) ||
+        std::abs(object.path_offset_mm) > geometry::limits::kCanvasMaxMm ||
+        !std::isfinite(object.path_baseline_offset_mm) ||
+        std::abs(object.path_baseline_offset_mm) > geometry::limits::kCanvasMaxMm ||
         (object.alignment != typography::TextAlignment::Left &&
          object.alignment != typography::TextAlignment::Center &&
-         object.alignment != typography::TextAlignment::Right))
-        throw std::invalid_argument("Invalid paragraph width, spacing or alignment");
+         object.alignment != typography::TextAlignment::Right &&
+         object.alignment != typography::TextAlignment::Justify))
+        throw std::invalid_argument("Invalid paragraph width, line/letter spacing or alignment");
     if (!object.fill.is_valid() || object.font.family_name.empty() ||
         !std::isfinite(object.font.size_pt) || object.font.size_pt <= 0 ||
         object.font.size_mm() > geometry::limits::kCanvasMaxMm ||
@@ -158,14 +176,59 @@ inline void validate_image_source(const ImageObject& object) {
         !std::isfinite(source.dpi_x) || !std::isfinite(source.dpi_y) ||
         source.dpi_x <= 0.0 || source.dpi_y <= 0.0 ||
         source.dpi_x > 1000000.0 || source.dpi_y > 1000000.0 ||
-        source.frame_count == 0 || source.frame_count > 256 ||
+        source.frame_count == 0 ||
         source.frame_index >= source.frame_count ||
         source.source_bits_per_pixel > 128 ||
         source.exif_orientation == 0 || source.exif_orientation > 8 ||
+        static_cast<uint8_t>(source.preview_pixel_color_basis) >
+            static_cast<uint8_t>(RasterPixelColorBasis::EmbeddedProfileUnapplied) ||
         (!source.original_data().empty() && source.media_type.empty()))
         throw std::invalid_argument("Invalid raster source metadata or embedded asset budget");
     if (object.clip_path)
         validate_geometry_path(*object.clip_path);
+    if (object.asset_source) {
+        const auto& asset = *object.asset_source;
+        const bool fingerprint_valid = asset.fingerprint_sha256.empty() ||
+            (asset.fingerprint_sha256.size() == 64 &&
+             std::all_of(asset.fingerprint_sha256.begin(), asset.fingerprint_sha256.end(),
+                [](unsigned char c) { return (c >= '0' && c <= '9') ||
+                    (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }));
+        if (!asset.asset_id.valid() || asset.revision == 0 ||
+            asset.encoded_byte_length == 0 || asset.media_type.empty() ||
+            asset.media_type.size() > 256 ||
+            (asset.media_type != "image/png" && asset.media_type != "image/jpeg" &&
+             asset.media_type != "image/tiff" && asset.media_type != "image/bmp") ||
+            static_cast<uint8_t>(asset.mode) > static_cast<uint8_t>(RasterStorageMode::Linked) ||
+            (asset.mode == RasterStorageMode::Linked && asset.locator.empty()) ||
+            asset.locator.size() > 32768 || !fingerprint_valid)
+            throw std::invalid_argument("Invalid raster asset identity or source descriptor");
+    }
+    if (object.edit_graph.schema_version != RasterEditGraph::kSchemaVersion ||
+        object.edit_graph.nodes.size() > RasterEditGraph::kMaxNodes)
+        throw std::invalid_argument("Invalid raster edit graph schema or node count");
+    std::unordered_set<uint64_t> node_ids;
+    node_ids.reserve(object.edit_graph.nodes.size());
+    for (const auto& node : object.edit_graph.nodes) {
+        if (!node.id.valid() || !node_ids.insert(node.id.value).second)
+            throw std::invalid_argument("Raster edit node IDs must be nonzero and unique");
+        std::visit([](const auto& params) {
+            using T = std::decay_t<decltype(params)>;
+            if constexpr (std::is_same_v<T, RasterCropParams>) {
+                if (!std::isfinite(params.x) || !std::isfinite(params.y) ||
+                    !std::isfinite(params.width) || !std::isfinite(params.height) ||
+                    params.x < 0.0 || params.y < 0.0 || params.width <= 0.0 ||
+                    params.height <= 0.0 || params.x + params.width > 1.0 ||
+                    params.y + params.height > 1.0)
+                    throw std::invalid_argument("Raster crop must be a finite normalized source rectangle");
+            } else if constexpr (std::is_same_v<T, RasterRotateParams>) {
+                if (!std::isfinite(params.degrees) || std::abs(params.degrees) > 360000.0)
+                    throw std::invalid_argument("Raster rotation must be finite and within supported range");
+            } else if constexpr (std::is_same_v<T, RasterExposureParams>) {
+                if (!std::isfinite(params.exposure_ev) || std::abs(params.exposure_ev) > 10.0)
+                    throw std::invalid_argument("Raster exposure must be finite and within +/-10 EV");
+            }
+        }, node.parameters);
+    }
 }
 
 inline void validate_object_source(ObjectId key, const ObjectVariant& value) {
@@ -177,6 +240,13 @@ inline void validate_object_source(ObjectId key, const ObjectVariant& value) {
         using T = std::decay_t<decltype(object)>;
         if constexpr (std::is_same_v<T, PathObject>) {
             validate_path_source(object);
+            if (object.contour_paints) {
+                if (!object.contour_spec.starts_with("contour:"))
+                    throw std::invalid_argument("Contour paints require a contour feature specification");
+                if (!object.contour_paints->outline.is_valid() ||
+                    !object.contour_paints->fill.is_valid())
+                    throw std::invalid_argument("Invalid live contour source paint");
+            }
             validate_appearance(object.appearance);
         }
         else if constexpr (std::is_same_v<T, TextObject>) {

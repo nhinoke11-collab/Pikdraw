@@ -1,6 +1,10 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
 #include "native_window_text_properties.hpp"
 #include "pikdraw/typography/shaping/font_resolver.hpp"
+#include "pikdraw/vector/gestures/text_tool.hpp"
+#ifdef _WIN32
+#include <imm.h>
+#endif
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -13,6 +17,7 @@ void NativeWindow::sync_inline_text_controls() {
     font_bold_ = text.font.weight >= 700;
     font_italic_ = text.font.italic;
     font_underline_ = text.underline;
+    font_strikethrough_ = text.strikethrough;
     font_alignment_ = text.alignment;
     font_family_index_ = remember_text_font_family(text.font.family_name);
     inline_text_buffer_ = text.text;
@@ -38,8 +43,8 @@ void NativeWindow::start_inline_text_editing(geometry::Point2D position, documen
         editor.draft.name = "Text";
         editor.draft.font = {text_font_family_at(font_family_index_), "",
             static_cast<uint16_t>(font_bold_ ? 700 : 400), font_italic_, font_size_pt_};
-        editor.draft.font.postscript_name = editor.draft.font.family_name + "-Regular";
         editor.draft.underline = font_underline_;
+        editor.draft.strikethrough = font_strikethrough_;
         editor.draft.alignment = font_alignment_;
         editor.draft.fill = default_style_.fill;
         if (const auto parent = current_isolated_group_id()) {
@@ -102,6 +107,21 @@ void NativeWindow::refresh_inline_text_preview() {
 }
 void NativeWindow::commit_inline_text_editing() {
     if (!text_editor_ || !is_inline_text_editing_) return;
+#ifdef _WIN32
+    if (hwnd_) {
+        if (auto context = ImmGetContext(hwnd_)) {
+            ImmNotifyIME(context, NI_COMPOSITIONSTR, CPS_COMPLETE, 0);
+            ImmReleaseContext(hwnd_, context);
+        }
+    }
+#endif
+    if (!text_editor_->composition.empty()) {
+        text_editor_->draft.text.replace(
+            text_editor_->first(),
+            text_editor_->last() - text_editor_->first(),
+            text_editor_->composition);
+        text_editor_->composition.clear();
+    }
     const auto id = text_editor_->draft.id;
     const bool retain = text_editor_->existing || !text_editor_->draft.text.empty();
     const bool saved = workflow().commit_text_edit(text_editor_->draft, text_editor_->base,
@@ -129,28 +149,28 @@ void NativeWindow::cancel_inline_text_editing() {
     if (hwnd_ && GetCapture() == hwnd_) ReleaseCapture();
 #endif
 }
-void NativeWindow::apply_text_style_controls(bool change_family) {
+void NativeWindow::apply_text_style_controls(const vector::TextPropertiesDelta& delta) {
+    if (!vector::valid_text_properties_delta(delta)) return;
     if (text_editor_ && is_inline_text_editing_) {
         auto& editor = *text_editor_;
         editor.remember();
         auto& text = editor.draft;
-        if (change_family) {
-            text.font.family_name = text_font_family_at(font_family_index_);
-            text.font.postscript_name = text.font.family_name + "-Regular";
+        if (delta.family) {
+            text.font.family_name = *delta.family;
+            text.font.postscript_name.clear();
         }
-        text.font.size_pt = font_size_pt_;
-        text.font.weight = static_cast<uint16_t>(font_bold_ ? 700 : 400);
-        text.font.italic = font_italic_;
-        text.underline = font_underline_;
-        text.alignment = font_alignment_;
+        if (delta.size_pt) text.font.size_pt = *delta.size_pt;
+        if (delta.weight) text.font.weight = static_cast<uint16_t>(*delta.weight);
+        if (delta.italic) text.font.italic = *delta.italic;
+        if (delta.underline) text.underline = *delta.underline;
+        if (delta.strikethrough) text.strikethrough = *delta.strikethrough;
+        if (delta.alignment) text.alignment = *delta.alignment;
+        if (delta.frame_width_mm) text.frame_width_mm = *delta.frame_width_mm;
+        if (delta.line_spacing_ratio) text.line_spacing_ratio = *delta.line_spacing_ratio;
+        if (delta.letter_spacing_mm) text.letter_spacing_mm = *delta.letter_spacing_mm;
         refresh_inline_text_preview();
     } else {
-        if (change_family)
-            workflow().set_selected_text_font(text_font_family_at(font_family_index_), font_size_pt_,
-                                              font_bold_, font_italic_);
-        else
-            workflow().style_selected_text("", font_size_pt_, font_bold_, font_italic_,
-                                           font_underline_, font_alignment_);
+        workflow().update_selected_text_properties(delta);
     }
 }
 } // namespace pikdraw::desktop

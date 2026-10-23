@@ -1,10 +1,12 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
 #include "native_window_menus.hpp"
+#include "native_window_length_input.hpp"
 #include "../tools/drawing_tool_controller.hpp"
 #include "../tools/pen_tool_controller.hpp"
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/dimension_tool_controller.hpp"
+#include <algorithm>
 
 namespace pikdraw::desktop {
 #ifdef _WIN32
@@ -55,7 +57,8 @@ bool NativeWindow::handle_pen_key_down(WPARAM key) {
             if (pen_numeric_buffer_.empty())
                 (void)pen_tool_->pointer_move(pen_last_pointer_world_, false);
             else {
-                const auto result = pen_tool_->update_numeric_candidate(pen_numeric_buffer_);
+                const auto result = pen_tool_->update_numeric_candidate(pen_numeric_buffer_,
+                    vector::precision::numeric::ParseOptions{'.', display_length_unit_});
                 if (result.code == ResultCode::InvalidInput) status_msg_ = result.message;
             }
         } else {
@@ -109,9 +112,10 @@ bool NativeWindow::handle_pen_key_down(WPARAM key) {
         pen_numeric_angle_.clear();
         num_input_buffer_.clear();
         start_numeric_input(NumericFieldId::PenLength);
+        const std::string unit(display_length_unit_suffix(display_length_unit_));
         status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Nhập chiều dài (mm) · Enter tạo đoạn thẳng · Tab nhập góc"
-            : "Enter length (mm) · Enter creates line · Tab enters angle";
+            ? "Nhập chiều dài (mặc định " + unit + "; hậu tố ghi đè) · Enter tạo đoạn · Tab nhập góc"
+            : "Enter length (default " + unit + "; suffix overrides) · Enter creates line · Tab enters angle";
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
         return true;
     }
@@ -145,9 +149,10 @@ bool NativeWindow::handle_drawing_key_down(WPARAM key) {
             pen_numeric_angle_.clear();
             num_input_buffer_.clear();
             start_numeric_input(NumericFieldId::PenLength);
+            const std::string unit(display_length_unit_suffix(display_length_unit_));
             status_msg_ = language_ == UILanguage::Vietnamese
-                ? "Nhập chiều dài (mm) · Enter tạo đoạn thẳng · Tab nhập góc"
-                : "Enter length (mm) · Enter creates line · Tab enters angle";
+                ? "Nhập chiều dài (mặc định " + unit + "; hậu tố ghi đè) · Enter tạo đoạn · Tab nhập góc"
+                : "Enter length (default " + unit + "; suffix overrides) · Enter creates line · Tab enters angle";
             if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
             return true;
         }
@@ -220,6 +225,34 @@ bool NativeWindow::handle_key_down(WPARAM key) {
             return false;
         }
         return true;
+    }
+
+    if (show_page_units_flyout_) {
+        if (key == VK_ESCAPE) {
+            show_page_units_flyout_ = false;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
+        if (key == VK_UP || key == VK_DOWN) {
+            page_units_flyout_focus_index_ = (page_units_flyout_focus_index_ +
+                (key == VK_DOWN ? 1 : 7)) % 8;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
+        if (key == VK_RETURN) {
+            constexpr MenuActionId unit_actions[] = {
+                MenuActionId::LayoutUnitMillimeter, MenuActionId::LayoutUnitCentimeter,
+                MenuActionId::LayoutUnitMeter, MenuActionId::LayoutUnitInch,
+                MenuActionId::LayoutUnitFoot, MenuActionId::LayoutUnitYard,
+                MenuActionId::LayoutUnitPoint, MenuActionId::LayoutUnitPica};
+            const int index = std::clamp(page_units_flyout_focus_index_, 0, 7);
+            show_page_units_flyout_ = false;
+            execute_menu_action(static_cast<int>(unit_actions[index]));
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
+        show_page_units_flyout_ = false;
+        InvalidateRect(hwnd_, nullptr, FALSE);
     }
 
     if (quick_dimension_active_) {
@@ -311,7 +344,14 @@ bool NativeWindow::handle_key_down(WPARAM key) {
         if (key == 'I') { open_import_dialog(); return true; }
         if (key == 'S') { save_document_dialog(shift); return true; }
         if (key == 'E') { trigger_export(); return true; }
-        if (key == 'J') { open_settings_modal(); return true; }
+        if (key == 'J') {
+            if (is_text_object_selected()) {
+                set_font_alignment(typography::TextAlignment::Justify);
+                return true;
+            }
+            open_settings_modal();
+            return true;
+        }
         if (key == 'A') {
             if (shift) {
                 open_align_distribute_panel();
@@ -323,9 +363,7 @@ bool NativeWindow::handle_key_down(WPARAM key) {
                 InvalidateRect(hwnd_, nullptr, FALSE);
             } else {
                 const auto snapshot = root().document().current_snapshot();
-                std::vector<document::ObjectId> ids;
-                for (const auto& layer : snapshot->page().layers)
-                    ids.insert(ids.end(), layer.object_ids.begin(), layer.object_ids.end());
+                const auto ids=vector::SelectionModel::scope_roots(*snapshot,current_isolated_group_id().value_or(0),isolation_frame_);
                 root().vector_controller().set_selection(ids, *snapshot);
                 InvalidateRect(hwnd_, nullptr, FALSE);
             }
@@ -335,6 +373,7 @@ bool NativeWindow::handle_key_down(WPARAM key) {
             workflow().undo();
             root().vector_controller().selection().clear();
             status_msg_ = language_ == UILanguage::Vietnamese ? "Đã hoàn tác" : "Undo complete";
+            update_color_preview_options();
             InvalidateRect(hwnd_, nullptr, FALSE);
             return true;
         }
@@ -342,6 +381,7 @@ bool NativeWindow::handle_key_down(WPARAM key) {
             workflow().redo();
             root().vector_controller().selection().clear();
             status_msg_ = language_ == UILanguage::Vietnamese ? "Đã làm lại" : "Redo complete";
+            update_color_preview_options();
             InvalidateRect(hwnd_, nullptr, FALSE);
             return true;
         }
@@ -361,6 +401,7 @@ bool NativeWindow::handle_key_down(WPARAM key) {
             workflow().redo();
             root().vector_controller().selection().clear();
             status_msg_ = language_ == UILanguage::Vietnamese ? "Đã làm lại" : "Redo complete";
+            update_color_preview_options();
             InvalidateRect(hwnd_, nullptr, FALSE);
             return true;
         }
@@ -396,6 +437,18 @@ bool NativeWindow::handle_key_down(WPARAM key) {
         }
         if (key == 'Q') {
             convert_selected_text_to_curves();
+            return true;
+        }
+        if (key == 'C' && shift) {
+            combine_selected_text_objects();
+            return true;
+        }
+        if (key == 'S' && shift) {
+            split_selected_text_lines();
+            return true;
+        }
+        if (key == VK_F8) {
+            fit_text_to_path();
             return true;
         }
         if (key == 'K') {
@@ -495,7 +548,10 @@ bool NativeWindow::handle_key_down(WPARAM key) {
     }
     if (key == VK_RETURN) {
         if (is_inline_text_editing_) {
-            commit_inline_text_editing();
+            return false;
+        }
+        if (active_tool_ == 12 && contour_tool_ && contour_tool_->active()) {
+            apply_contour_effect();
             return true;
         }
         const auto& sel = root().vector_controller().selection().selected_ids();
@@ -528,6 +584,10 @@ bool NativeWindow::handle_key_down(WPARAM key) {
         if (is_inline_text_editing_) {
             cancel_inline_text_editing();
             return true;
+        }
+        if (powerclip_target_pick_) { powerclip_target_pick_=0; powerclip_pick_stamp_.reset(); return true; }
+        if (is_in_isolation_mode() && (pointer_active_ || root().vector_controller().gesture().is_active())) {
+            cancel_canvas_interaction(); return true;
         }
         if (is_in_isolation_mode()) {
             exit_group_isolation();
@@ -565,6 +625,7 @@ bool NativeWindow::handle_key_down(WPARAM key) {
             InvalidateRect(hwnd_, nullptr, FALSE);
         } else {
             root().vector_controller().selection().clear();
+            selected_guideline_index_ = -1;
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
         return true;
@@ -581,6 +642,9 @@ bool NativeWindow::handle_key_down(WPARAM key) {
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return true;
             }
+        }
+        if (delete_selected_guideline()) {
+            return true;
         }
         cancel_canvas_interaction();
         if (workflow().delete_selected()) {
@@ -614,6 +678,10 @@ bool NativeWindow::handle_key_down(WPARAM key) {
         return true;
     }
     if (key == VK_F3) {
+        if (shift) {
+            cycle_change_case();
+            return true;
+        }
         root().window().action_dispatcher().dispatch_shortcut("F3");
         InvalidateRect(hwnd_, nullptr, FALSE);
         return true;

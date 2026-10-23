@@ -17,6 +17,7 @@
 namespace pikdraw::desktop {
 
 void NativeWindow::paint_text_property_bar(HDC mem_dc, int w, int content_top, int topbar_h, int tabbar_h) {
+    sync_selected_text_controls();
     ensure_ui_fonts();
     const bool is_dark = (theme_ == ThemeMode::CyberDark);
     const bool is_vi = (language_ == UILanguage::Vietnamese);
@@ -32,7 +33,8 @@ void NativeWindow::paint_text_property_bar(HDC mem_dc, int w, int content_top, i
     const auto snapshot = root().document().current_snapshot();
     const auto& selection = root().vector_controller().selection().selected_ids();
 
-    auto draw_rib_btn = [&](int left, int right, const wchar_t* label, bool active, COLORREF text_col) {
+    auto draw_rib_btn = [&](int left, int right, const wchar_t* label, bool active, COLORREF text_col,
+                            bool mixed = false) {
         RECT rect{left, topbar_h + tabbar_h + 4, right, content_top - 4};
         HBRUSH brush = CreateSolidBrush(active ? col_active_tab : col_btn_bg);
         HPEN pen = CreatePen(PS_SOLID, 1, active ? col_teal : col_btn_bdr);
@@ -46,6 +48,14 @@ void NativeWindow::paint_text_property_bar(HDC mem_dc, int w, int content_top, i
         SetTextColor(mem_dc, text_col);
         SelectObject(mem_dc, active ? font_be_vietnam_bold_ : font_be_vietnam_);
         DrawTextW(mem_dc, label, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        if (mixed) {
+            HPEN mark = CreatePen(PS_SOLID, 2, is_dark ? RGB(251, 191, 36) : RGB(180, 83, 9));
+            const auto old_mark = SelectObject(mem_dc, mark);
+            MoveToEx(mem_dc, (rect.left + rect.right) / 2 - 5, rect.top + 3, nullptr);
+            LineTo(mem_dc, (rect.left + rect.right) / 2 + 5, rect.top + 3);
+            SelectObject(mem_dc, old_mark);
+            DeleteObject(mark);
+        }
     };
 
     auto draw_num_input = [&](int left, int right, const wchar_t* prefix,
@@ -89,7 +99,7 @@ void NativeWindow::paint_text_property_bar(HDC mem_dc, int w, int content_top, i
     // 1. Font Family Selector Button
     const auto text_view = text_properties_view(*this);
     const auto family = text_view.context
-        ? (text_view.mixed_font ? std::string{"Mixed fonts"} : text_view.family)
+        ? (text_view.mixed_family ? std::string{"Mixed fonts"} : text_view.family)
         : text_font_family_at(font_family_index_);
     const auto actual_font = utf8_to_wide(family) + L" ▾";
     draw_rib_btn(52, 192, actual_font.c_str(), false, col_text_white);
@@ -100,30 +110,47 @@ void NativeWindow::paint_text_property_bar(HDC mem_dc, int w, int content_top, i
     DrawTextW(mem_dc, L"Pt:", -1, &rc_sz_lbl, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     draw_rib_btn(220, 240, L"-", false, col_teal);
     std::wstring sz_str = text_view.context
-        ? (text_view.mixed_font ? L"Mixed" : std::to_wstring(static_cast<int>(std::round(text_view.size_pt))) + L" pt")
+        ? (text_view.mixed_size ? L"Mixed" : std::to_wstring(static_cast<int>(std::round(text_view.size_pt))) + L" pt")
         : std::to_wstring(static_cast<int>(std::round(font_size_pt_))) + L" pt";
     draw_num_input(242, 292, L"", NativeWindow::wide_to_utf8(sz_str), text_numeric_field(TextPropertyField::FontSize));
     draw_rib_btn(294, 314, L"+", false, col_teal);
 
     // 3. Styles: B, I, U
-    draw_rib_btn(322, 350, L"B", font_bold_, font_bold_ ? col_teal : col_text_white);
-    draw_rib_btn(354, 382, L"I", font_italic_, font_italic_ ? col_teal : col_text_white);
-    draw_rib_btn(386, 414, L"U", font_underline_, font_underline_ ? col_teal : col_text_white);
+    const bool is_bold = text_view.context ? text_view.bold : font_bold_;
+    const bool is_italic = text_view.context ? text_view.italic : font_italic_;
+    const bool is_underline = text_view.context ? text_view.underline : font_underline_;
+    const bool is_strikethrough = text_view.context ? text_view.strikethrough : font_strikethrough_;
+    const auto align = text_view.context ? text_view.alignment : font_alignment_;
 
-    // 4. Alignment: Left, Center, Right
-    draw_rib_btn(422, 462, L"|◀ L", font_alignment_ == typography::TextAlignment::Left,
-                 font_alignment_ == typography::TextAlignment::Left ? col_teal : col_text_white);
-    draw_rib_btn(466, 506, L"▶|◀ C", font_alignment_ == typography::TextAlignment::Center,
-                 font_alignment_ == typography::TextAlignment::Center ? col_teal : col_text_white);
-    draw_rib_btn(510, 550, L"▶| R", font_alignment_ == typography::TextAlignment::Right,
-                 font_alignment_ == typography::TextAlignment::Right ? col_teal : col_text_white);
+    draw_rib_btn(322, 350, L"B", is_bold && !text_view.mixed_bold,
+                 is_bold && !text_view.mixed_bold ? col_teal : col_text_white, text_view.mixed_bold);
+    draw_rib_btn(354, 382, L"I", is_italic && !text_view.mixed_italic,
+                 is_italic && !text_view.mixed_italic ? col_teal : col_text_white, text_view.mixed_italic);
+    draw_rib_btn(386, 414, L"U", is_underline && !text_view.mixed_underline,
+                 is_underline && !text_view.mixed_underline ? col_teal : col_text_white, text_view.mixed_underline);
+
+    // 4. Alignment: Left, Center, Right, Justify
+    draw_rib_btn(422, 462, L"|◀ L", align == typography::TextAlignment::Left && !text_view.mixed_alignment,
+                 align == typography::TextAlignment::Left && !text_view.mixed_alignment ? col_teal : col_text_white,
+                 text_view.mixed_alignment);
+    draw_rib_btn(466, 506, L"▶|◀ C", align == typography::TextAlignment::Center && !text_view.mixed_alignment,
+                 align == typography::TextAlignment::Center && !text_view.mixed_alignment ? col_teal : col_text_white,
+                 text_view.mixed_alignment);
+    const bool is_right = align == typography::TextAlignment::Right;
+    const bool is_justify = align == typography::TextAlignment::Justify;
+    draw_rib_btn(510, 550, is_justify ? L"|◀▶| J" : L"▶| R",
+                 (is_right || is_justify) && !text_view.mixed_alignment,
+                 (is_right || is_justify) && !text_view.mixed_alignment ? col_teal : col_text_white,
+                 text_view.mixed_alignment);
 
     // 5. Convert to Curves & Table (Maintained for full test compatibility)
     draw_rib_btn(556, 616, L"⤹ Q", false, col_teal);
     draw_rib_btn(622, 692, L"▦ Table", false, col_teal);
 
     // 6. Extended Typography Controls (CorelDRAW / Word Reference)
-    draw_rib_btn(698, 728, L"S", font_strikethrough_, font_strikethrough_ ? col_teal : col_text_white);
+    draw_rib_btn(698, 728, L"S", is_strikethrough && !text_view.mixed_strikethrough,
+                 is_strikethrough && !text_view.mixed_strikethrough ? col_teal : col_text_white,
+                 text_view.mixed_strikethrough);
     draw_rib_btn(732, 762, L"•=", false, col_text_white);
     draw_rib_btn(766, 796, L"1.", false, col_text_white);
     draw_rib_btn(800, 826, L"¶", show_non_printing_characters_,

@@ -9,6 +9,9 @@
 #include "pikdraw/color/values/color_value.hpp"
 #include "pikdraw/typography/shaping/font_identity.hpp"
 #include "pikdraw/typography/layout/text_layout.hpp"
+#include "pikdraw/color/profiles/profile_resource.hpp"
+#include "pikdraw/geometry/units/length_unit.hpp"
+#include "pikdraw/document/model/raster_edit_graph.hpp"
 #include <string>
 #include <vector>
 #include <memory>
@@ -25,6 +28,18 @@ enum class ObjectType {
     Text,
     Group,
     Image
+};
+
+enum class RasterPixelColorBasis : uint8_t {
+    LegacyUnknown = 0,
+    AssumedSRgb = 1,
+    ConvertedToSRgb = 2,
+    EmbeddedProfileUnapplied = 3
+};
+
+struct PathContourPaints {
+    color::ColorValue outline;
+    color::ColorValue fill;
 };
 
 struct PathObject {
@@ -45,6 +60,7 @@ struct PathObject {
     bool visible{true};
     bool locked{false};
     std::string contour_spec;
+    std::optional<PathContourPaints> contour_paints;
 
     [[nodiscard]] EffectiveFillPaint effective_fill_paint() const {
         if (!has_fill) {
@@ -83,24 +99,44 @@ struct TextObject {
     Appearance appearance;
     typography::TextAlignment alignment{typography::TextAlignment::Left};
     bool underline{false};
+    bool strikethrough{false};
     double frame_width_mm{0.0}; // 0: point text; >0: editable wrapping paragraph.
+    double frame_height_mm{0.0}; // 0: auto height; >0: fixed frame height with text flow overflow.
+    ObjectId next_frame_id{kInvalidObjectId}; // Linked frame receiving overflow text
+    ObjectId prev_frame_id{kInvalidObjectId}; // Linked frame feeding text into this frame
+    bool has_overflow{false}; // Overflow indicator (text truncated in chain)
+    ObjectId path_binding_id{kInvalidObjectId}; // Text on Path binding
+    double path_offset_mm{0.0}; // Offset along curve
+    bool path_reversed{false}; // Invert curve direction / flip across curve
+    double path_baseline_offset_mm{0.0}; // Distance offset perpendicular to curve
     double line_spacing_ratio{1.2};
+    double letter_spacing_mm{0.0};
     geometry::Point2D position{0.0, 0.0};
     geometry::Transform2D transform{geometry::Transform2D::identity()};
     bool visible{true};
     bool locked{false};
+
+    [[nodiscard]] bool is_linked() const noexcept {
+        return next_frame_id != kInvalidObjectId || prev_frame_id != kInvalidObjectId;
+    }
+
+    [[nodiscard]] bool is_text_on_path() const noexcept {
+        return path_binding_id != kInvalidObjectId;
+    }
 
     [[nodiscard]] typography::TextLayout layout() const {
         typography::LayoutOptions options;
         options.alignment = alignment;
         options.max_width_mm = frame_width_mm;
         options.line_spacing_ratio = line_spacing_ratio;
+        options.letter_spacing_mm = letter_spacing_mm;
         return typography::TextLayout::layout_text(text, font, options);
     }
 
     [[nodiscard]] geometry::Rect2D bounds() const {
         auto box = layout().bounds();
         if (frame_width_mm > 0) { box.x = 0; box.width = frame_width_mm; }
+        if (frame_height_mm > 0) { box.height = std::max(box.height, frame_height_mm); }
         // Keep an empty line selectable without a fake width based on UTF-8 bytes.
         box.width = std::max(box.width, font.size_mm() * 0.2);
         if (underline) box.height += font.size_mm() * 0.12;
@@ -159,6 +195,7 @@ struct RasterSourceMetadata {
     uint16_t exif_orientation{1};
     bool orientation_applied{false};
     std::vector<uint8_t> icc_profile;
+    RasterPixelColorBasis preview_pixel_color_basis{RasterPixelColorBasis::AssumedSRgb};
 
     [[nodiscard]] const std::vector<uint8_t>& original_data() const noexcept {
         return shared_original_bytes ? *shared_original_bytes : original_bytes;
@@ -177,6 +214,8 @@ struct ImageObject {
     // independent bounds, transforms, names, and selection IDs.
     std::shared_ptr<const std::vector<uint32_t>> shared_pixels_rgba;
     RasterSourceMetadata source;
+    std::optional<RasterSourceDescriptor> asset_source;
+    RasterEditGraph edit_graph;
     std::optional<geometry::Path2D> clip_path;
     bool visible{true};
     bool locked{false};
@@ -257,11 +296,37 @@ struct ImageObject {
 
 using ObjectVariant = std::variant<PathObject, TextObject, GroupObject, ImageObject>;
 
+inline constexpr uint32_t kDefaultLayerPalette[8] = {
+    0x00F2C3FF, // Cyan / Teal
+    0xEF4444FF, // Coral Red
+    0x3B82F6FF, // Royal Blue
+    0xF59E0BFF, // Amber Orange
+    0x8B5CF6FF, // Purple / Violet
+    0x10B981FF, // Emerald Green
+    0xEC4899FF, // Pink
+    0xF97316FF  // Deep Orange
+};
+
+inline uint32_t default_layer_color(size_t index) noexcept {
+    return kDefaultLayerPalette[index % 8];
+}
+
 struct Layer {
     std::string name{"Layer 1"};
     bool visible{true};
     bool locked{false};
+    bool printable{true};
+    uint32_t color_rgba{0x00F2C3FF};
     std::vector<ObjectId> object_ids;
+
+    Layer() = default;
+    Layer(std::string name_in, bool visible_in, bool locked_in, std::vector<ObjectId> ids_in)
+        : name(std::move(name_in)), visible(visible_in), locked(locked_in),
+          printable(true), color_rgba(0x00F2C3FF), object_ids(std::move(ids_in)) {}
+    Layer(std::string name_in, bool visible_in, bool locked_in, bool printable_in,
+          uint32_t color_in, std::vector<ObjectId> ids_in)
+        : name(std::move(name_in)), visible(visible_in), locked(locked_in),
+          printable(printable_in), color_rgba(color_in), object_ids(std::move(ids_in)) {}
 };
 
 struct Page {
@@ -275,6 +340,9 @@ struct Page {
     // explicit conversion; new desktop documents enable normalization immediately.
     bool color_mode_explicit{false};
     bool raster_dpi_explicit{false};
+    std::shared_ptr<const color::ProfileResource> color_profile_resource;
+    geometry::units::LengthUnit display_length_unit{geometry::units::LengthUnit::Millimeter};
+    bool display_length_unit_explicit{false};
 
     static Page make_default() {
         Page p;

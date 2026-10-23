@@ -20,6 +20,8 @@ HMENU NativeWindow::build_context_menu(const std::vector<document::ObjectId>& se
     // CASE 1: Empty Canvas (Canvas / Workspace Context Menu)
     // =========================================================================
     if (selection.empty()) {
+        if(is_in_isolation_mode()) AppendMenuW(root_menu, MF_STRING, static_cast<UINT_PTR>(MenuActionId::ObjectIsolationExit),
+            is_vi?L"Kết thúc sửa\tEsc":L"Finish Editing\tEsc");
         AppendMenuW(root_menu, MF_STRING, static_cast<UINT_PTR>(MenuActionId::EditPaste),
                     is_vi ? L"Dán (Paste)\tCtrl+V" : L"Paste\tCtrl+V");
         AppendMenuW(root_menu, MF_STRING, static_cast<UINT_PTR>(MenuActionId::EditPasteInPlace),
@@ -134,6 +136,37 @@ HMENU NativeWindow::build_context_menu(const std::vector<document::ObjectId>& se
         AppendMenuW(root_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(hOrder),
                     is_vi ? L"Thứ tự lớp (Order)" : L"Order");
 
+        // Multi-selection Text Actions
+        if (selection.size() >= 2) {
+            bool all_text = true;
+            for (auto sel_id : selection) {
+                auto o = snapshot->objects().get(sel_id);
+                if (!o || !std::holds_alternative<document::TextObject>(*o)) {
+                    all_text = false;
+                    break;
+                }
+            }
+            if (all_text) {
+                AppendMenuW(root_menu, MF_STRING, static_cast<UINT_PTR>(MenuActionId::TextCombine),
+                            is_vi ? L"Gộp các đoạn văn bản (Combine Text)\tCtrl+Shift+C" : L"Combine Text Objects\tCtrl+Shift+C");
+                AppendMenuW(root_menu, MF_STRING, static_cast<UINT_PTR>(MenuActionId::TextLinkFrames),
+                            is_vi ? L"Nối luồng văn bản tràn (Link Text Frames)" : L"Link Text Frames");
+                AppendMenuW(root_menu, MF_SEPARATOR, 0, nullptr);
+            } else if (selection.size() == 2) {
+                auto opt0 = snapshot->objects().get(selection[0]);
+                auto opt1 = snapshot->objects().get(selection[1]);
+                if (opt0 && opt1) {
+                    bool has_t = std::holds_alternative<document::TextObject>(*opt0) || std::holds_alternative<document::TextObject>(*opt1);
+                    bool has_p = std::holds_alternative<document::PathObject>(*opt0) || std::holds_alternative<document::PathObject>(*opt1);
+                    if (has_t && has_p) {
+                        AppendMenuW(root_menu, MF_STRING, static_cast<UINT_PTR>(MenuActionId::TextFitToPath),
+                                    is_vi ? L"Uốn chữ men theo đường cong (Fit Text to Path)\tCtrl+F8" : L"Fit Text to Path\tCtrl+F8");
+                        AppendMenuW(root_menu, MF_SEPARATOR, 0, nullptr);
+                    }
+                }
+            }
+        }
+
         // Transform Submenu (SketchUp & Corel Flip / Rotate)
         HMENU hTrans = CreatePopupMenu();
         AppendMenuW(hTrans, MF_STRING, static_cast<UINT_PTR>(MenuActionId::ObjectFlipHorizontal),
@@ -171,6 +204,8 @@ HMENU NativeWindow::build_context_menu(const std::vector<document::ObjectId>& se
                     is_vi ? L"Cùng màu viền (Same Stroke Color)" : L"Same Stroke Color");
         AppendMenuW(hSelectSame, MF_STRING, static_cast<UINT_PTR>(MenuActionId::EditSelectSameFillAndStroke),
                     is_vi ? L"Cùng màu tô & viền (Same Fill & Stroke)" : L"Same Fill & Stroke");
+        AppendMenuW(hSelectSame, MF_STRING, static_cast<UINT_PTR>(MenuActionId::EditSelectSameAnyPaintColor),
+                    is_vi ? L"Cùng màu tô hoặc viền (Same Fill or Stroke Color)" : L"Same Fill or Stroke Color");
         AppendMenuW(hSelectSame, MF_STRING, static_cast<UINT_PTR>(MenuActionId::EditSelectSameColorSpace),
                     is_vi ? L"Cùng hệ màu (Same Color Space)" : L"Same Color Space");
         AppendMenuW(root_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(hSelectSame),
@@ -234,7 +269,7 @@ HMENU NativeWindow::build_context_menu(const std::vector<document::ObjectId>& se
     if (is_powerclip) {
         AppendMenuW(root_menu, MF_STRING, static_cast<UINT_PTR>(MenuActionId::ObjectIsolationEnter),
                     is_vi ? L"Chỉnh sửa nội dung PowerClip (Edit Contents)\tEnter" : L"Edit PowerClip Contents\tEnter");
-        AppendMenuW(root_menu, MF_STRING, static_cast<UINT_PTR>(MenuActionId::ObjectPowerClipRelease),
+        AppendMenuW(root_menu, MF_STRING, static_cast<UINT_PTR>(MenuActionId::ObjectPowerClipExtract),
                     is_vi ? L"Trích xuất nội dung (Extract Contents)\tCtrl+Alt+7" : L"Extract Contents / Release\tCtrl+Alt+7");
 
         HMENU hFit = CreatePopupMenu();
@@ -257,7 +292,8 @@ HMENU NativeWindow::build_context_menu(const std::vector<document::ObjectId>& se
         AppendMenuW(root_menu, MF_STRING, static_cast<UINT_PTR>(MenuActionId::ObjectUngroup),
                     is_vi ? L"Rã nhóm (Ungroup)\tCtrl+Shift+G" : L"Ungroup\tCtrl+Shift+G");
         AppendMenuW(root_menu, MF_SEPARATOR, 0, nullptr);
-    } else if (is_in_isolation_mode()) {
+    }
+    if (is_in_isolation_mode()) {
         AppendMenuW(root_menu, MF_STRING, static_cast<UINT_PTR>(MenuActionId::ObjectIsolationExit),
                     is_vi ? L"Thoát chế độ cô lập (Exit Isolation Mode)\tEsc" : L"Exit Isolation Mode\tEsc");
         AppendMenuW(root_menu, MF_SEPARATOR, 0, nullptr);
@@ -272,6 +308,27 @@ HMENU NativeWindow::build_context_menu(const std::vector<document::ObjectId>& se
     if (is_text) {
         AppendMenuW(root_menu, MF_STRING, static_cast<UINT_PTR>(MenuActionId::TextEdit),
                     is_vi ? L"Soạn thảo văn bản (Edit Text)\tF8" : L"Edit Text\tF8");
+        AppendMenuW(root_menu, MF_STRING, static_cast<UINT_PTR>(MenuActionId::TextChangeCase),
+                    is_vi ? L"Đổi chữ hoa / thường… (Change Case…)\tShift+F3" : L"Change Case…\tShift+F3");
+        AppendMenuW(root_menu, MF_STRING, static_cast<UINT_PTR>(MenuActionId::TextSplitLines),
+                    is_vi ? L"Tách văn bản theo dòng (Split by Lines)\tCtrl+Shift+S" : L"Split Text by Lines\tCtrl+Shift+S");
+
+        // Text on Path context options
+        auto target_obj = snapshot->objects().get(id);
+        if (target_obj && std::holds_alternative<document::TextObject>(*target_obj)) {
+            const auto& to = std::get<document::TextObject>(*target_obj);
+            if (to.is_text_on_path()) {
+                AppendMenuW(root_menu, MF_STRING, static_cast<UINT_PTR>(MenuActionId::TextReversePath),
+                            is_vi ? L"Đảo chiều uốn chữ (Reverse Text Direction)" : L"Reverse Text Direction");
+                AppendMenuW(root_menu, MF_STRING, static_cast<UINT_PTR>(MenuActionId::TextStraighten),
+                            is_vi ? L"Hủy uốn chữ (Straighten Text)" : L"Straighten Text");
+            }
+            if (to.is_linked()) {
+                AppendMenuW(root_menu, MF_STRING, static_cast<UINT_PTR>(MenuActionId::TextUnlinkFrames),
+                            is_vi ? L"Ngắt liên kết luồng văn bản (Unlink Frame)" : L"Unlink Text Frame");
+            }
+        }
+
         AppendMenuW(root_menu, MF_STRING, static_cast<UINT_PTR>(MenuActionId::ObjectConvertToCurves),
                     is_vi ? L"Chuyển thành đường cong (Convert to Curves)\tCtrl+Q" : L"Convert to Curves\tCtrl+Q");
         AppendMenuW(root_menu, MF_SEPARATOR, 0, nullptr);
@@ -342,6 +399,8 @@ HMENU NativeWindow::build_context_menu(const std::vector<document::ObjectId>& se
                 is_vi ? L"Cùng màu viền (Same Stroke Color)" : L"Same Stroke Color");
     AppendMenuW(hSelectSame, MF_STRING, static_cast<UINT_PTR>(MenuActionId::EditSelectSameFillAndStroke),
                 is_vi ? L"Cùng màu tô & viền (Same Fill & Stroke)" : L"Same Fill & Stroke");
+    AppendMenuW(hSelectSame, MF_STRING, static_cast<UINT_PTR>(MenuActionId::EditSelectSameAnyPaintColor),
+                is_vi ? L"Cùng màu tô hoặc viền (Same Fill or Stroke Color)" : L"Same Fill or Stroke Color");
     AppendMenuW(hSelectSame, MF_STRING, static_cast<UINT_PTR>(MenuActionId::EditSelectSameColorSpace),
                 is_vi ? L"Cùng hệ màu (Same Color Space)" : L"Same Color Space");
     AppendMenuW(root_menu, MF_POPUP, reinterpret_cast<UINT_PTR>(hSelectSame),

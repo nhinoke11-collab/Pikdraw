@@ -94,9 +94,14 @@ bool NativeWindow::handle_inline_text_key(uint32_t key, bool control, bool shift
     else if (control && key == 'B') toggle_font_bold();
     else if (control && key == 'I') { toggle_font_italic(); editor.suppress_character = 9; }
     else if (control && key == 'U') toggle_font_underline();
-    else if (control && (key == 'L' || key == 'E' || key == 'R'))
+    else if (control && (key == 'L' || key == 'E' || key == 'R' || key == 'J'))
         set_font_alignment(key == 'L' ? typography::TextAlignment::Left : key == 'E'
-            ? typography::TextAlignment::Center : typography::TextAlignment::Right);
+            ? typography::TextAlignment::Center : key == 'J'
+            ? typography::TextAlignment::Justify : typography::TextAlignment::Right);
+    else if (shift && key == VK_F3) {
+        cycle_change_case();
+        return true;
+    }
     else if (control && key == VK_F8) {
         editor.remember();
         editor.draft.frame_width_mm = editor.draft.frame_width_mm > 0 ? 0

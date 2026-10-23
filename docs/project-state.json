@@ -1,57 +1,59 @@
 {
-  "schema_version": 1,
-  "product": "PikDraw",
-  "updated_at": "2026-10-20",
-  "stage": "M1 single-source native desktop integration",
-  "workflow": {
-    "mode": "single-source",
-    "agent_system": "codex",
-    "source_root": "C:/Users/CK ART STAGE/Downloads/PikDraw",
-    "build_directory": "build/win-dev",
-    "app_executable": "build/win-dev/apps/desktop/pikdraw.exe",
-    "build_runner": "tooling/native/build.ps1",
-    "logging_policy": "Snapshot-only: keep docs/project-state.json <= 8000 bytes, task summaries <= 320 chars, and <= 6 evidence items (<= 240 chars each). Never append historical daily benchmark logs."
-  },
-  "modules_summary": {
-    "total": 18,
-    "implemented": [
-      "geometry",
-      "color",
-      "typography",
-      "document",
-      "rendering",
-      "vector",
-      "automation",
-      "mcp-server",
-      "com-server",
-      "interop",
-      "workers",
-      "desktop",
-      "tooling"
-    ],
-    "specification": [
-      "contracts"
-    ],
-    "planned": [
-      "raster",
-      "production",
-      "scene3d",
-      "plugin-sdk"
-    ]
-  },
-  "current_capabilities": {
-    "geometry_and_vector": "Analytical curves/arcs, adaptive flattening, cubic/quadratic intersections, dynamic offset/contour, OSnap & inference engine, Pen tracing with Shift-only angle snapping and auto-commit to Node tool, direct segment bending (BendSegment) & multi-node curve conversion, Live Corners with compact 2x2 property bar, interactive direct canvas dragging for Round/Scallop/Chamfer corner types with single-step undo batching, Contour and Dimension controllers.",
-    "document_and_color": "Immutable snapshots, single-writer transactions, Undo/Redo, per-document and per-page independent CMYK/RGB color modes, mixed-color objects on single page, batch color conversion (convert entire file, active page, or selected objects to CMYK/RGB with full Undo/Redo), Select Same color picking (Select Same Fill Color, Stroke Color, Fill & Stroke, Color Space, CMYK/RGB-only, or by color value; integrated into Edit menu and right-click context menu), Soft-Proofing (Ctrl+Alt+Y), Gamut Warning (Ctrl+Shift+Y), Overprint Preview (Alt+Shift+Ctrl+Y), Black Generation (Pure K100 text/line art vs Rich Black C40 M30 Y30 K100), TAC limit clamping (ISO 12647-2 <= 320%), RGB/CMYK/Spot + Linear/Radial Gradient paint, appearance effect graph.",
-    "rendering": "Windows ViewportRenderer uses Direct2D 1.1 / D3D11 hardware or WARP; full-frame staging/readback writes BGRA directly for GDI. Target/staging bitmaps are reused by size; object-local geometry survives pan/zoom, image uploads are bounded to 64 images/256 MiB. ICC preview and white page rendering are connected. SpatialIndex culls snapshots; DamageTracker limits GDI dirty copies. SoftwareRasterizer supports BGRA as CPU fallback/oracle; viewport guard is 32 MP.",
-    "desktop_shell": "Win32 Native Shell uses a shared DIP coordinate space for painting and hit testing, physical-resolution canvas targets, and WM_DPICHANGED font/cache/window updates. Page resizing preserves Undo/Redo; tool previews and per-tab save paths have regression coverage. Dirty tabs checkpoint every 60s under LOCALAPPDATA/PikDraw/Recovery with isolated per-session paths; successful save cleans only that tab.",
-    "automation_ecosystem": "Shared typed AutomationService; MCP Streamable HTTP hosted in the desktop process. Current NativeWindow E2E verifies AC01 600x300 mm Vietnamese layout/font/margins/colors/icons, stable IDs, edit/undo after reopen, 5x2m design, Settings revoke/stale-endpoint, read-only denial and AC05 traversal save/open denial with no document mutation. AC02 RPC verifies atomic undo/redo IDs; AC07 RPC verifies 1,000-object stable-ID paging and stale continuation rejection. AC03 stale-write, active text-draft rejection and queued close/reopen write rejection preserve local edits, draft, revision and replacement document; Pen/effect drafts remain open. AC09 verifies dirty-tab create/open preservation, fallback warning and saved R vs dirty R+1; simultaneous save/edit remains open. COM registered STA/MTA GetTools/CallTool smoke and HKCU cleanup pass. Copy URL/key check is conditional on safe clipboard restore; packaged canonical-process client remains open. Stdio MCP sidecar and Windows COM IDispatch local server. Release ZIP: 25 entries, all three binaries match canonical outputs. Async jobs, measured query budgets and remaining AC03-09 resilience gates are open.",
-    "external_vector_import": "Real corpus verification: 4 CDR, 3 PDF, 1 PDF-compatible AI, and 2 EPS files imported to native objects, committed, and undone in test_pikdraw_desktop_import. Raster import upgraded: PNG, JPEG, TIFF, BMP support up to 16/32-bit channels via WIC conversion, auto-applied EXIF orientation, graceful ICC fallback, and 144-record limit lifted to IPC_MAX_OBJECTS. Shortcut Ctrl+I natively triggers import dialog. CDR maps recognized layer IDs/transforms, shares raster previews, and carries each embedded image's original encoded bytes into shared source metadata. PDF/AI profile v2 preserves PDFium font family and PostScript base name into native TextObject; missing identity rejects instead of pretending Arial. PDF maps one tested OCG name and object marks when available; EPS imports path subset and converted DOS EPS. Import stops at 90% whole-system physical RAM; U32 protocol/storage bounds remain. Focused raster adapter, CDR adapter corpus, worker integrity, shared-source native storage, and desktop corpus tests pass."
-  },
-  "known_limitations": [
-    "Qt 6 and Skia backends are future architectural targets pending unified MinGW/MSVC toolchain ABI; runtime currently standardizes on Win32 Native Shell + Direct2D 1.1 / D3D11 + WARP.",
-    "Interactive dragging reuses the cached native canvas and updates a small dirty copy when object bounds change; each changed snapshot is still fully rendered/read back by Direct2D. No GPU partial render, tile cache or direct swap-chain presentation is implemented.",
-    "DPI coverage uses synthetic 120/144/192/96 DPI events and native captures; physical monitor switching, reference-device latency and production fidelity remain unverified.",
-    "Autosave checkpoints use the UI writer synchronously; startup recovery selection UI is not implemented. Job Object memory/process/UI limits do not by themselves prove filesystem/network containment.",
-    "CDR uses pinned libcdr-to-SVG subset; PDF/AI are limited to first-page PDFium mapping and EPS uses eps-path-v1 or isolated Ghostscript conversion. PDF pages with nonzero rotation are rejected; effects/clipping, multiple OCG membership, Corel live effects, ICC fidelity, visual/coordinate oracle, all CDR versions, source round-trip, UI runtime, and production are not verified. Import monitors total physical RAM at a 90% stop threshold; structural/wire/time limits remain."
-  ]
+    "schema_version":  1,
+    "product":  "PikDraw",
+    "updated_at":  "2026-10-23",
+    "stage":  "M1 single-source native desktop integration",
+    "workflow":  {
+                     "mode":  "single-source",
+                     "agent_system":  "codex",
+                     "source_root":  "C:/Users/CK ART STAGE/Downloads/PikDraw",
+                     "build_directory":  "build/win-dev",
+                     "app_executable":  "build/win-dev/apps/desktop/pikdraw.exe",
+                     "build_runner":  "tooling/native/build.ps1",
+                     "logging_policy":  "Snapshot-only: keep docs/project-state.json \u003c= 8000 bytes, task summaries \u003c= 320 chars, and \u003c= 6 evidence items (\u003c= 240 chars each). Never append historical daily benchmark logs."
+                 },
+    "modules_summary":  {
+                            "total":  18,
+                            "implemented":  [
+                                                "geometry",
+                                                "color",
+                                                "typography",
+                                                "document",
+                                                "rendering",
+                                                "vector",
+                                                "automation",
+                                                "mcp-server",
+                                                "com-server",
+                                                "interop",
+                                                "workers",
+                                                "desktop",
+                                                "tooling"
+                                            ],
+                            "specification":  [
+                                                  "contracts"
+                                              ],
+                            "planned":  [
+                                            "raster",
+                                            "production",
+                                            "scene3d",
+                                            "plugin-sdk"
+                                        ]
+                        },
+    "current_capabilities":  {
+                                 "geometry_and_vector":  "Analytical curves/arcs, adaptive flattening, intersections, dynamic offset/contour, OSnap inference engine, Pen tracing with Shift-only angle snapping and auto-commit to Node tool, direct segment bending (BendSegment) \u0026 multi-node curve conversion, Live Corners with 2x2 property bar, interactive dragging for Round/Scallop/Chamfer with single-step undo batching, Contour floor 0.02 mm; NumericFieldDescriptor maps semantic keys. General filled-path Boolean uses pinned Clipper2 2.0.1 with bounded flattening, checked integer quantization, fill-rule/hole preservation. Layout and Properties page-unit controls route semantic ActionIds; page units drive parser, coordinates, HUD, rulers, fields, tooltips, Snap Grid, presets and import/recovery size labels.",
+                                 "document_and_color":  "Native v17 page/raster/paint ICC; v18 Dimension/Contour + typed Contour CMYK/Spot/alpha/overprint/ICC; reads v2–v17. Contour storage/D2D pixel tests pass. Assign/Convert+Undo cover paint/page/document/selection; SVG/TIFF/JPEG RGB ICC. WIC transform conditional; bound-paint preview passes CPU/D2D.",
+                                 "rendering":  "Windows ViewportRenderer uses Direct2D 1.1 / D3D11 hardware or WARP; full-frame staging/readback writes BGRA directly for GDI. Target/staging bitmaps reused by size; object-local geometry survives pan/zoom, image uploads use 1024-entry/256 MiB LRU. ICC preview and white page rendering connected. AABB BVH culls by page/revision; DamageTracker limits GDI dirty copies. SoftwareRasterizer supports BGRA as CPU fallback/oracle.",
+                                 "desktop_shell":  "Win32 Native Shell shares DIP paint/hit geometry and updates on DPI changes. Typography \u0026 Text subsystem: granular delta mutations eliminate property overwrite regressions (family, size, bold, italic, underline, strikethrough, justify alignment); Shift+F3 Vietnamese Unicode NFC/NFD case cycling; linked text frames (overflow threading through frame_height_mm); Combine Text (Ctrl+Shift+C) and Split Lines (Ctrl+Shift+S); Text on Path (Ctrl+F8 Bézier fitting, reverse, straighten, Ctrl+Q curves conversion). PowerClip geometric editing supports nested scopes, lock/fit/extract/release and CPU/D2D/WARP views.",
+                                 "automation_ecosystem":  "Shared typed AutomationService; MCP Streamable HTTP hosted in desktop process. NativeWindow E2E verifies AC01 600x300 mm Vietnamese layout/font/margins/colors/icons, stable IDs, edit/undo after reopen, 5x2m design, Settings revoke/stale-endpoint. AC02 RPC verifies atomic undo/redo IDs; AC07 RPC verifies 1,000-object paging. AC03 stale-write and active text-draft rejection preserve local edits; AC09 dirty-tab preservation passes. COM registered STA/MTA smoke passes. Stdio MCP sidecar and Windows COM IDispatch local server.",
+                                 "external_vector_import":  "Corpus 4 CDR/3 PDF/AI-PDF/2 EPS imports commit/undo; DXF LINE/LWPOLYLINE/ARC/CIRCLE import preserves editable topology. Raster PNG Release x6 passes (Pillow 6/6, CPU/D2D error 0). RAM waiter 95%, resume, cumulative 5 min. Raster export shares 95%/5 min waiter. BigTIFF Release decoder reads uncompressed RGB(A) strip \u003e4 GiB. ICC SWOP lifecycle and Pillow/LittleCMS assertion pass in Release desktop import corpus; WIC within 1/255 on 3 samples."
+                             },
+    "known_limitations":  [
+                              "Qt 6 and Skia backends are future architectural targets pending unified MinGW/MSVC toolchain ABI; runtime currently standardizes on Win32 Native Shell + Direct2D 1.1 / D3D11 + WARP.",
+                              "Interactive dragging reuses the cached native canvas and updates a small dirty copy when object bounds change; each changed snapshot is still fully rendered/read back by Direct2D. No GPU partial render, tile cache or direct swap-chain presentation is implemented.",
+                              "DPI coverage uses synthetic 120/144/192/96 DPI events and native captures; physical monitor switching, reference-device latency and production fidelity remain unverified.",
+                              "Autosave checkpoints use the UI writer synchronously; startup recovery selection UI is not implemented. Job Object memory/process/UI limits do not by themselves prove filesystem/network containment.",
+                              "CDR uses pinned libcdr-to-SVG subset; PDF/AI use PDFium mapping and EPS uses eps-path-v1 or isolated Ghostscript conversion. PDF page rotations 0/90/180/270 are mapped; object-level rotated/sheared text, effects/clipping, multiple OCG membership, Corel live effects, ICC fidelity, visual/coordinate oracle, all CDR versions, source round-trip, UI runtime, and production remain unverified. Import pauses at 95% RAM and resumes after headroom returns; structural/wire/time limits remain.",
+                              "TAC is not auto-limited during color conversion. Backend and Settings preflight cover process CMYK paints only; output-condition linkage, spot/raster separation, true overprint separations, and proof/gamut oracles remain unimplemented.",
+                              "General path Boolean is a bounded polygon approximation: curve flattening and grid quantization produce an explicit error bound, but near-contact topology and manufacturing acceptance are not proven. General Boundary/Simplify and cooperative cancellation remain unsupported."
+                          ]
 }

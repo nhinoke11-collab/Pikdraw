@@ -1,3 +1,4 @@
+#include "native_window_powerclip_ui.hpp"
 #include "pikdraw/desktop/shell/native_window.hpp"
 #include "pikdraw/desktop/actions/action_id.hpp"
 #include "pikdraw/desktop/actions/action_dispatcher.hpp"
@@ -6,6 +7,7 @@
 #include "native_window_document_color.hpp"
 #include "native_window_text_properties.hpp"
 #include "native_window_page_presets.hpp"
+#include "native_window_length_input.hpp"
 #include "pikdraw/document/commands/page_commands.hpp"
 #include "pikdraw/document/commands/layer_commands.hpp"
 #include "pikdraw/desktop/shell/native_window_shortcuts_settings.hpp"
@@ -27,12 +29,51 @@
 #endif
 
 namespace pikdraw::desktop {
+namespace {
+std::string color_conversion_summary_text(
+    const std::optional<color::ColorConversionSummary>& report, bool vietnamese) {
+    if (!report)
+        return vietnamese ? "không có màu process cần chuyển" : "no process colors needed conversion";
+    std::string text;
+    if (report->icc_managed > 0) text = "ICC " + std::to_string(report->icc_managed);
+    if (report->approximate > 0) {
+        if (!text.empty()) text += " · ";
+        text += (vietnamese ? "gần đúng " : "fallback ") + std::to_string(report->approximate);
+    }
+    if (report->preset_policy > 0) {
+        if (!text.empty()) text += " · ";
+        text += (vietnamese ? "chính sách đen " : "black policy ") +
+            std::to_string(report->preset_policy);
+    }
+    if (report->tac_limited > 0) {
+        if (!text.empty()) text += " · ";
+        text += "TAC " + std::to_string(report->tac_limited);
+    }
+    if (text.empty())
+        text = vietnamese ? "không có màu process cần chuyển" : "no process colors needed conversion";
+    return text;
+}
+} // namespace
 
 #ifdef _WIN32
 
 bool NativeWindow::is_menu_action_enabled(MenuActionId action) const {
+    if(const auto id=powerclip_ui::action_for(action); !id.empty())
+        return root().window().action_dispatcher().is_action_enabled(id);
     const auto& selected = root().vector_controller().selection().selected_ids();
     switch (action) {
+    case MenuActionId::ColorConvertActivePageProfile:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kColorConvertProfile);
+    case MenuActionId::ColorAssignSelectionProfile:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kColorAssignSelectionProfile);
+    case MenuActionId::ColorConvertSelectionProfile:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kColorConvertSelectionProfile);
+    case MenuActionId::ColorConvertDocumentProfile:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kColorConvertDocumentProfile);
     case MenuActionId::ObjectGroup:
         return workflow().can_group_selected();
     case MenuActionId::ObjectUngroup:
@@ -140,6 +181,15 @@ bool NativeWindow::is_menu_action_enabled(MenuActionId action) const {
         if (action == MenuActionId::LayoutPageNext) return index + 1 < pages.size();
         return pages.size() > 1;
     }
+    case MenuActionId::LayoutUnitMillimeter:
+    case MenuActionId::LayoutUnitCentimeter:
+    case MenuActionId::LayoutUnitMeter:
+    case MenuActionId::LayoutUnitInch:
+    case MenuActionId::LayoutUnitFoot:
+    case MenuActionId::LayoutUnitYard:
+    case MenuActionId::LayoutUnitPoint:
+    case MenuActionId::LayoutUnitPica:
+        return !root().document().is_content_locked();
     case MenuActionId::None:
     case MenuActionId::Separator:
         return false;
@@ -159,10 +209,27 @@ bool NativeWindow::is_menu_action_checked(MenuActionId action) const noexcept {
     case MenuActionId::TextAlignLeft: return font_alignment_ == typography::TextAlignment::Left;
     case MenuActionId::TextAlignCenter: return font_alignment_ == typography::TextAlignment::Center;
     case MenuActionId::TextAlignRight: return font_alignment_ == typography::TextAlignment::Right;
+    case MenuActionId::TextAlignJustify: return font_alignment_ == typography::TextAlignment::Justify;
     case MenuActionId::TextNonPrinting: return show_non_printing_characters_;
     case MenuActionId::ViewProofColors: return proof_colors_enabled_;
     case MenuActionId::ViewGamutWarning: return gamut_warning_enabled_;
     case MenuActionId::ViewOverprintPreview: return overprint_preview_enabled_;
+    case MenuActionId::LayoutUnitMillimeter:
+        return root().document().page().display_length_unit == geometry::units::LengthUnit::Millimeter;
+    case MenuActionId::LayoutUnitCentimeter:
+        return root().document().page().display_length_unit == geometry::units::LengthUnit::Centimeter;
+    case MenuActionId::LayoutUnitMeter:
+        return root().document().page().display_length_unit == geometry::units::LengthUnit::Meter;
+    case MenuActionId::LayoutUnitInch:
+        return root().document().page().display_length_unit == geometry::units::LengthUnit::Inch;
+    case MenuActionId::LayoutUnitFoot:
+        return root().document().page().display_length_unit == geometry::units::LengthUnit::Foot;
+    case MenuActionId::LayoutUnitYard:
+        return root().document().page().display_length_unit == geometry::units::LengthUnit::Yard;
+    case MenuActionId::LayoutUnitPoint:
+        return root().document().page().display_length_unit == geometry::units::LengthUnit::Point;
+    case MenuActionId::LayoutUnitPica:
+        return root().document().page().display_length_unit == geometry::units::LengthUnit::Pica;
     default: return false;
     }
 }
@@ -178,6 +245,9 @@ void NativeWindow::execute_menu_action(int action_id) {
     }
     const auto action = static_cast<MenuActionId>(action_id);
     if (!is_menu_action_enabled(action)) return;
+    if(const auto id=powerclip_ui::action_for(action); !id.empty()) {
+        root().window().action_dispatcher().dispatch(id); return;
+    }
     const auto& selected_items = root().vector_controller().selection().selected_ids();
     const auto activate_effect = [this](document::EffectParameters parameters,
                                         const char* name_en, const char* name_vi) {
@@ -212,6 +282,7 @@ void NativeWindow::execute_menu_action(int action_id) {
         if (!snapshot) return;
         const auto* page = snapshot->find_page(snapshot->active_page_id());
         if (!page) return;
+        sync_display_unit_from_active_page();
         active_tab().page_width_mm = page->layout.width_mm;
         active_tab().page_height_mm = page->layout.height_mm;
         root().vector_controller().selection().clear();
@@ -222,14 +293,25 @@ void NativeWindow::execute_menu_action(int action_id) {
         std::ostringstream hint;
         if (language_ == UILanguage::Vietnamese)
             hint << action_name << " · Trang " << page_number << '/' << snapshot->page_count()
-                 << " · " << page->layout.width_mm << " × " << page->layout.height_mm << " mm";
+                 << " · " << format_mm_display_utf8(page->layout.width_mm, display_length_unit_)
+                 << " × " << format_mm_display_utf8(page->layout.height_mm, display_length_unit_);
         else
             hint << action_name << " · Page " << page_number << '/' << snapshot->page_count()
-                 << " · " << page->layout.width_mm << " × " << page->layout.height_mm << " mm";
+                 << " · " << format_mm_display_utf8(page->layout.width_mm, display_length_unit_)
+                 << " × " << format_mm_display_utf8(page->layout.height_mm, display_length_unit_);
         status_msg_ = hint.str();
+        update_color_preview_options();
         InvalidateRect(hwnd_, nullptr, FALSE);
     };
     switch (action) {
+    case MenuActionId::ObjectPowerClipEditFrame:
+    case MenuActionId::ObjectPowerClipExtract:
+    case MenuActionId::ObjectPowerClipCopyFrom:
+    case MenuActionId::ObjectPowerClipEmpty:
+    case MenuActionId::ObjectPowerClipRemoveFrame:
+    case MenuActionId::ObjectPowerClipAppearance:
+        return; // Dispatched through the shared semantic action above.
+
     case MenuActionId::FileNew: open_new_doc_modal(); return;
     case MenuActionId::FileOpen: open_document_dialog(); return;
     case MenuActionId::FileImport: {
@@ -248,7 +330,10 @@ void NativeWindow::execute_menu_action(int action_id) {
         auto& dispatcher = root().window().action_dispatcher();
         if (!dispatcher.get_action(id)) {
             dispatcher.register_action({id, "Phục hồi bản tự lưu", "Recover Autosave", "",
-                [this] { scan_recovery_checkpoints(true); }, nullptr});
+                [this] {
+                    scan_recovery_checkpoints(true);
+                    if (recovery_candidates_.empty()) show_recovery_modal_ = true;
+                }, nullptr});
         }
         (void)dispatcher.dispatch(id);
         return;
@@ -266,6 +351,17 @@ void NativeWindow::execute_menu_action(int action_id) {
         (void)dispatcher.dispatch(id);
         return;
     }
+    case MenuActionId::FileExportRaster: {
+        const std::string id(actions::ActionId::kFileExportRaster);
+        auto& dispatcher = root().window().action_dispatcher();
+        const auto* action = dispatcher.get_action(id);
+        if (!action || !action->handler) {
+            dispatcher.register_action({id, "Xuất Raster…", "Export Raster…", "",
+                [this] { export_raster_dialog(); }, nullptr});
+        }
+        (void)dispatcher.dispatch(id);
+        return;
+    }
     case MenuActionId::FileToggleGuidelines: toggle_guidelines(); return;
     case MenuActionId::FileClearGuidelines: clear_guidelines(); return;
     case MenuActionId::FileExit: DestroyWindow(hwnd_); return;
@@ -273,6 +369,7 @@ void NativeWindow::execute_menu_action(int action_id) {
         workflow().undo();
         root().vector_controller().selection().clear();
         status_msg_ = language_ == UILanguage::Vietnamese ? "Đã hoàn tác" : "Undo complete";
+        update_color_preview_options();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     case MenuActionId::ObjectProperties:
@@ -282,6 +379,7 @@ void NativeWindow::execute_menu_action(int action_id) {
         workflow().redo();
         root().vector_controller().selection().clear();
         status_msg_ = language_ == UILanguage::Vietnamese ? "Đã làm lại" : "Redo complete";
+        update_color_preview_options();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     case MenuActionId::EditCut:
@@ -321,6 +419,9 @@ void NativeWindow::execute_menu_action(int action_id) {
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     case MenuActionId::EditDelete:
+        if (delete_selected_guideline()) {
+            return;
+        }
         if (workflow().delete_selected())
             status_msg_ = language_ == UILanguage::Vietnamese ? "Đã xóa vùng chọn · Ctrl+Z để hoàn tác"
                                                                : "Deleted selection · Ctrl+Z to undo";
@@ -371,6 +472,18 @@ void NativeWindow::execute_menu_action(int action_id) {
         }
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
+    case MenuActionId::EditSelectSameAnyPaintColor:
+        if (workflow().select_same(SelectSameCriterion::AnyPaintColor)) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Đã chọn đối tượng có màu tô hoặc viền trùng khớp"
+                : "Selected objects with a matching fill or stroke color";
+        } else {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Chọn một đối tượng có màu tô hoặc viền trước"
+                : "Select an object with a fill or stroke color first";
+        }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
     case MenuActionId::EditSelectSameColorSpace:
         if (workflow().select_same(SelectSameCriterion::ColorSpace)) {
             status_msg_ = language_ == UILanguage::Vietnamese ? "Đã chọn các đối tượng cùng hệ màu" : "Selected objects with same color space";
@@ -390,38 +503,97 @@ void NativeWindow::execute_menu_action(int action_id) {
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     case MenuActionId::ColorConvertSelectionToCmyk:
-        if (workflow().convert_selected_objects_color_mode(color::DocumentColorMode::Cmyk)) {
-            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã chuyển các đối tượng chọn sang CMYK" : "Converted selected objects to CMYK";
+        if (workflow().convert_selected_objects_color_mode(
+                color::DocumentColorMode::Cmyk, effective_color_preview_owner())) {
+            const bool vi = language_ == UILanguage::Vietnamese;
+            status_msg_ = (vi ? "Đã chuyển các đối tượng chọn sang CMYK · " : "Converted selected objects to CMYK · ") +
+                color_conversion_summary_text(workflow().last_color_conversion_summary(), vi) +
+                (vi ? " · Ctrl+Z hoàn tác" : " · Ctrl+Z to undo");
+        } else {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Không thể chuyển màu vùng chọn" : "Could not convert selection colors";
         }
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     case MenuActionId::ColorConvertSelectionToRgb:
-        if (workflow().convert_selected_objects_color_mode(color::DocumentColorMode::Rgb)) {
-            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã chuyển các đối tượng chọn sang RGB" : "Converted selected objects to RGB";
+        if (workflow().convert_selected_objects_color_mode(
+                color::DocumentColorMode::Rgb, effective_color_preview_owner())) {
+            const bool vi = language_ == UILanguage::Vietnamese;
+            status_msg_ = (vi ? "Đã chuyển các đối tượng chọn sang RGB · " : "Converted selected objects to RGB · ") +
+                color_conversion_summary_text(workflow().last_color_conversion_summary(), vi) +
+                (vi ? " · Ctrl+Z hoàn tác" : " · Ctrl+Z to undo");
+        } else {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Không thể chuyển màu vùng chọn" : "Could not convert selection colors";
         }
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
+    case MenuActionId::ColorAssignSelectionProfile:
+        (void)root().window().action_dispatcher().dispatch(
+            actions::ActionId::kColorAssignSelectionProfile);
+        return;
+    case MenuActionId::ColorConvertSelectionProfile:
+        (void)root().window().action_dispatcher().dispatch(
+            actions::ActionId::kColorConvertSelectionProfile);
+        return;
     case MenuActionId::ColorConvertActivePageToCmyk:
-        if (workflow().convert_active_page_color_mode(color::DocumentColorMode::Cmyk)) {
-            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã chuyển trang hiện tại sang CMYK" : "Converted active page to CMYK";
+        if (workflow().convert_active_page_color_mode(
+                color::DocumentColorMode::Cmyk, effective_color_preview_owner())) {
+            update_color_preview_options();
+            const bool vi = language_ == UILanguage::Vietnamese;
+            status_msg_ = (vi ? "Đã chuyển trang hiện tại sang CMYK · " : "Converted active page to CMYK · ") +
+                color_conversion_summary_text(workflow().last_color_conversion_summary(), vi) +
+                (vi ? " · Ctrl+Z hoàn tác" : " · Ctrl+Z to undo");
+        } else {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Không thể chuyển màu trang hiện tại" : "Could not convert active page colors";
         }
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     case MenuActionId::ColorConvertActivePageToRgb:
-        if (workflow().convert_active_page_color_mode(color::DocumentColorMode::Rgb)) {
-            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã chuyển trang hiện tại sang RGB" : "Converted active page to RGB";
+        if (workflow().convert_active_page_color_mode(
+                color::DocumentColorMode::Rgb, effective_color_preview_owner())) {
+            update_color_preview_options();
+            const bool vi = language_ == UILanguage::Vietnamese;
+            status_msg_ = (vi ? "Đã chuyển trang hiện tại sang RGB · " : "Converted active page to RGB · ") +
+                color_conversion_summary_text(workflow().last_color_conversion_summary(), vi) +
+                (vi ? " · Ctrl+Z hoàn tác" : " · Ctrl+Z to undo");
+        } else {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Không thể chuyển màu trang hiện tại" : "Could not convert active page colors";
         }
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
+    case MenuActionId::ColorConvertActivePageProfile:
+        (void)root().window().action_dispatcher().dispatch(actions::ActionId::kColorConvertProfile);
+        return;
+    case MenuActionId::ColorConvertDocumentProfile:
+        (void)root().window().action_dispatcher().dispatch(
+            actions::ActionId::kColorConvertDocumentProfile);
+        return;
     case MenuActionId::ColorConvertDocumentToCmyk:
-        if (workflow().convert_document_color_mode(color::DocumentColorMode::Cmyk)) {
-            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã chuyển toàn bộ tài liệu sang CMYK" : "Converted document to CMYK";
+        if (workflow().convert_document_color_mode(color::DocumentColorMode::Cmyk, color_preview_)) {
+            update_color_preview_options();
+            const bool vi = language_ == UILanguage::Vietnamese;
+            status_msg_ = (vi ? "Đã chuyển toàn bộ tài liệu sang CMYK · " : "Converted document to CMYK · ") +
+                color_conversion_summary_text(workflow().last_color_conversion_summary(), vi) +
+                (vi ? " · Ctrl+Z hoàn tác" : " · Ctrl+Z to undo");
+        } else {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Không thể chuyển màu toàn tài liệu" : "Could not convert document colors";
         }
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     case MenuActionId::ColorConvertDocumentToRgb:
-        if (workflow().convert_document_color_mode(color::DocumentColorMode::Rgb)) {
-            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã chuyển toàn bộ tài liệu sang RGB" : "Converted document to RGB";
+        if (workflow().convert_document_color_mode(color::DocumentColorMode::Rgb, color_preview_)) {
+            update_color_preview_options();
+            const bool vi = language_ == UILanguage::Vietnamese;
+            status_msg_ = (vi ? "Đã chuyển toàn bộ tài liệu sang RGB · " : "Converted document to RGB · ") +
+                color_conversion_summary_text(workflow().last_color_conversion_summary(), vi) +
+                (vi ? " · Ctrl+Z hoàn tác" : " · Ctrl+Z to undo");
+        } else {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Không thể chuyển màu toàn tài liệu" : "Could not convert document colors";
         }
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
@@ -439,28 +611,50 @@ void NativeWindow::execute_menu_action(int action_id) {
     case MenuActionId::ViewFitPage: fit_page_to_canvas(); return;
     case MenuActionId::ViewToggleGuidelines: toggle_guidelines(); return;
     case MenuActionId::ViewClearGuidelines: clear_guidelines(); return;
-    case MenuActionId::ViewProofColors:
+    case MenuActionId::ViewProofColors: {
         proof_colors_enabled_ = !proof_colors_enabled_;
         update_color_preview_options();
+        const auto* preview = effective_color_preview();
+        if (proof_colors_enabled_ && (!preview || !preview->has_cmyk_transform())) {
+            proof_colors_enabled_ = false;
+            update_color_preview_options();
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Proof preview cần profile CMYK ICC khả dụng; hiện tại màu vẫn dùng preview gần đúng."
+                : "Proof preview needs an available CMYK ICC profile; colors currently use approximate preview.";
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
         status_msg_ = language_ == UILanguage::Vietnamese
-            ? (proof_colors_enabled_ ? "Mô phỏng màu in (Proof Colors): BẬT" : "Mô phỏng màu in: TẮT")
-            : (proof_colors_enabled_ ? "Proof Colors: ON" : "Proof Colors: OFF");
+            ? (proof_colors_enabled_ ? "Proof Colors: BẬT · ICC preview trên máy" : "Proof Colors: TẮT")
+            : (proof_colors_enabled_ ? "Proof Colors: ON · machine ICC preview" : "Proof Colors: OFF");
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
-    case MenuActionId::ViewGamutWarning:
+    }
+    case MenuActionId::ViewGamutWarning: {
         gamut_warning_enabled_ = !gamut_warning_enabled_;
         update_color_preview_options();
+        const auto* preview = effective_color_preview();
+        if (gamut_warning_enabled_ && (!preview || !preview->has_cmyk_transform())) {
+            gamut_warning_enabled_ = false;
+            update_color_preview_options();
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Cảnh báo sai khác RGB cần profile CMYK ICC khả dụng; chưa có kết quả đo."
+                : "RGB difference warning needs an available CMYK ICC profile; no measurement is available.";
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
         status_msg_ = language_ == UILanguage::Vietnamese
-            ? (gamut_warning_enabled_ ? "Cảnh báo vượt dải màu (Gamut Warning): BẬT" : "Cảnh báo dải màu: TẮT")
-            : (gamut_warning_enabled_ ? "Gamut Warning: ON" : "Gamut Warning: OFF");
+            ? (gamut_warning_enabled_ ? "Cảnh báo sai khác RGB sau proof: BẬT (gần đúng, không phải Delta E)" : "Cảnh báo sai khác RGB: TẮT")
+            : (gamut_warning_enabled_ ? "Proof RGB difference warning: ON (approximate, not Delta E)" : "Proof RGB difference warning: OFF");
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
+    }
     case MenuActionId::ViewOverprintPreview:
-        overprint_preview_enabled_ = !overprint_preview_enabled_;
+        overprint_preview_enabled_ = false;
         update_color_preview_options();
         status_msg_ = language_ == UILanguage::Vietnamese
-            ? (overprint_preview_enabled_ ? "Xem trước in đè (Overprint Preview): BẬT" : "Xem trước in đè: TẮT")
-            : (overprint_preview_enabled_ ? "Overprint Preview: ON" : "Overprint Preview: OFF");
+            ? "Overprint Preview chưa khả dụng: renderer chưa ghép các kênh mực; dữ liệu overprint vẫn được giữ."
+            : "Overprint Preview is unavailable: the renderer does not composite ink separations; overprint data is preserved.";
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     case MenuActionId::LayoutOrientationLandscape:
@@ -479,24 +673,31 @@ void NativeWindow::execute_menu_action(int action_id) {
         });
         if (found == pages.end()) return;
         const auto index = static_cast<size_t>(std::distance(pages.begin(), found));
-        if (action == MenuActionId::LayoutPagePrevious && index > 0)
+        if (action == MenuActionId::LayoutPagePrevious && index > 0) {
+            if (active_num_field_ != NumericFieldId::None) cancel_numeric_field();
             (void)root().document().set_active_page(pages[index - 1].id);
-        else if (action == MenuActionId::LayoutPageNext && index + 1 < pages.size())
+        } else if (action == MenuActionId::LayoutPageNext && index + 1 < pages.size()) {
+            if (active_num_field_ != NumericFieldId::None) cancel_numeric_field();
             (void)root().document().set_active_page(pages[index + 1].id);
-        else return;
+        } else return;
         finish_page_action(language_ == UILanguage::Vietnamese ? "Đã chuyển trang" : "Page changed");
         return;
     }
     case MenuActionId::LayoutPageAdd: {
+        if (active_num_field_ != NumericFieldId::None) cancel_numeric_field();
         auto& doc = root().document();
         const auto name = "Page " + std::to_string(doc.pages().size() + 1);
+        auto page_layout = document::Page::make_default();
+        page_layout.display_length_unit = doc.page().display_length_unit;
+        page_layout.display_length_unit_explicit = doc.page().display_length_unit_explicit;
         const auto result = doc.execute_command(std::make_unique<document::AddPageCommand>(
-            document::make_document_page(name, document::Page::make_default())));
+            document::make_document_page(name, std::move(page_layout))));
         if (!result.success) status_msg_ = result.error_message;
         else finish_page_action(language_ == UILanguage::Vietnamese ? "Đã thêm trang" : "Page added");
         return;
     }
     case MenuActionId::LayoutPageDuplicate: {
+        if (active_num_field_ != NumericFieldId::None) cancel_numeric_field();
         auto& doc = root().document();
         const auto result = doc.execute_command(std::make_unique<document::DuplicatePageCommand>(
             doc.active_page_id()));
@@ -505,6 +706,7 @@ void NativeWindow::execute_menu_action(int action_id) {
         return;
     }
     case MenuActionId::LayoutPageDelete: {
+        if (active_num_field_ != NumericFieldId::None) cancel_numeric_field();
         auto& doc = root().document();
         const auto result = doc.execute_command(std::make_unique<document::RemovePageCommand>(
             doc.active_page_id()));
@@ -516,6 +718,25 @@ void NativeWindow::execute_menu_action(int action_id) {
     case MenuActionId::LayoutPageA4: select_page_preset(0); return;
     case MenuActionId::LayoutPageA3: select_page_preset(1); return;
     case MenuActionId::LayoutPageBanner: select_page_preset(6); return;
+    case MenuActionId::LayoutUnitMillimeter:
+    case MenuActionId::LayoutUnitCentimeter:
+    case MenuActionId::LayoutUnitMeter:
+    case MenuActionId::LayoutUnitInch:
+    case MenuActionId::LayoutUnitFoot:
+    case MenuActionId::LayoutUnitYard:
+    case MenuActionId::LayoutUnitPoint:
+    case MenuActionId::LayoutUnitPica: {
+        const auto id = action == MenuActionId::LayoutUnitMillimeter ? actions::ActionId::kPageUnitsMillimeter
+            : action == MenuActionId::LayoutUnitCentimeter ? actions::ActionId::kPageUnitsCentimeter
+            : action == MenuActionId::LayoutUnitMeter ? actions::ActionId::kPageUnitsMeter
+            : action == MenuActionId::LayoutUnitInch ? actions::ActionId::kPageUnitsInch
+            : action == MenuActionId::LayoutUnitFoot ? actions::ActionId::kPageUnitsFoot
+            : action == MenuActionId::LayoutUnitYard ? actions::ActionId::kPageUnitsYard
+            : action == MenuActionId::LayoutUnitPoint ? actions::ActionId::kPageUnitsPoint
+            : actions::ActionId::kPageUnitsPica;
+        (void)root().window().action_dispatcher().dispatch(id);
+        return;
+    }
     case MenuActionId::ObjectGroup:
         if (workflow().group_selected() == document::kInvalidObjectId)
             status_msg_ = language_ == UILanguage::Vietnamese ? "Chọn ít nhất hai đối tượng để nhóm"
@@ -529,6 +750,7 @@ void NativeWindow::execute_menu_action(int action_id) {
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     case MenuActionId::ObjectPowerClipPlaceInside:
+        begin_powerclip_target_pick(); return;
     case MenuActionId::ObjectPowerClipMake: {
         auto gid = workflow().make_clipping_mask_selected(true);
         if (gid != document::kInvalidObjectId) {
@@ -566,7 +788,7 @@ void NativeWindow::execute_menu_action(int action_id) {
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     case MenuActionId::ObjectPowerClipSelectContents:
-        if (selected_items.size() == 1) enter_group_isolation(selected_items.front());
+        if (selected_items.size() == 1) select_powerclip_contents(selected_items.front());
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     case MenuActionId::ObjectConvertToCurves: convert_selected_text_to_curves(); return;
@@ -785,12 +1007,26 @@ void NativeWindow::execute_menu_action(int action_id) {
     case MenuActionId::TextAlignLeft: set_font_alignment(typography::TextAlignment::Left); return;
     case MenuActionId::TextAlignCenter: set_font_alignment(typography::TextAlignment::Center); return;
     case MenuActionId::TextAlignRight: set_font_alignment(typography::TextAlignment::Right); return;
+    case MenuActionId::TextAlignJustify: set_font_alignment(typography::TextAlignment::Justify); return;
+    case MenuActionId::TextChangeCase: cycle_change_case(); return;
+    case MenuActionId::TextCaseSentence: apply_change_case(typography::ChangeCaseMode::SentenceCase); return;
+    case MenuActionId::TextCaseLower: apply_change_case(typography::ChangeCaseMode::Lowercase); return;
+    case MenuActionId::TextCaseUpper: apply_change_case(typography::ChangeCaseMode::Uppercase); return;
+    case MenuActionId::TextCaseTitle: apply_change_case(typography::ChangeCaseMode::TitleCase); return;
+    case MenuActionId::TextCaseToggle: apply_change_case(typography::ChangeCaseMode::ToggleCase); return;
     case MenuActionId::TextBullets: toggle_text_bullets(); return;
     case MenuActionId::TextNumbering: toggle_text_numbering(); return;
     case MenuActionId::TextNonPrinting: toggle_non_printing_characters(); return;
     case MenuActionId::TextConvertArtisticParagraph: toggle_convert_artistic_paragraph(); return;
     case MenuActionId::TextDocker: open_inspector_properties_panel(); return;
     case MenuActionId::TextConvertToCurves: convert_selected_text_to_curves(); return;
+    case MenuActionId::TextLinkFrames: link_selected_text_frames(); return;
+    case MenuActionId::TextUnlinkFrames: unlink_selected_text_frames(); return;
+    case MenuActionId::TextCombine: combine_selected_text_objects(); return;
+    case MenuActionId::TextSplitLines: split_selected_text_lines(); return;
+    case MenuActionId::TextFitToPath: fit_text_to_path(); return;
+    case MenuActionId::TextStraighten: straighten_text_from_path(); return;
+    case MenuActionId::TextReversePath: reverse_text_on_path(); return;
     case MenuActionId::ToolPick: workflow().cancel_effect_draft(); set_active_tool(0); return;
     case MenuActionId::ToolNode: workflow().cancel_effect_draft(); set_active_tool(11); return;
     case MenuActionId::ToolRectangle: workflow().cancel_effect_draft(); set_active_tool(1); return;

@@ -40,6 +40,7 @@ enum class MenuActionId {
     FileSave,
     FileSaveAs,
     FileExport,
+    FileExportRaster,
     FileToggleGuidelines,
     FileClearGuidelines,
     FileProperties,
@@ -67,10 +68,14 @@ enum class MenuActionId {
     EditSelectAllRgb,
     ColorConvertSelectionToCmyk,
     ColorConvertSelectionToRgb,
+    ColorAssignSelectionProfile,
+    ColorConvertSelectionProfile,
     ColorConvertActivePageToCmyk,
     ColorConvertActivePageToRgb,
     ColorConvertDocumentToCmyk,
     ColorConvertDocumentToRgb,
+    ColorConvertActivePageProfile,
+    ColorConvertDocumentProfile,
     // View
     ViewZoomIn,
     ViewZoomOut,
@@ -106,6 +111,8 @@ enum class MenuActionId {
     ObjectPowerClipFillProp,
     ObjectPowerClipStretch,
     ObjectPowerClipSelectContents,
+    ObjectPowerClipEditFrame, ObjectPowerClipExtract, ObjectPowerClipCopyFrom,
+    ObjectPowerClipEmpty, ObjectPowerClipRemoveFrame, ObjectPowerClipAppearance,
     ObjectProperties,
     ObjectConvertToCurves,
     ObjectAlignLeft,
@@ -170,11 +177,25 @@ enum class MenuActionId {
     TextAlignLeft,
     TextAlignCenter,
     TextAlignRight,
+    TextAlignJustify,
+    TextChangeCase,
+    TextCaseSentence,
+    TextCaseLower,
+    TextCaseUpper,
+    TextCaseTitle,
+    TextCaseToggle,
     TextBullets,
     TextNumbering,
     TextNonPrinting,
     TextConvertArtisticParagraph,
     TextConvertToCurves,
+    TextLinkFrames,
+    TextUnlinkFrames,
+    TextCombine,
+    TextSplitLines,
+    TextFitToPath,
+    TextStraighten,
+    TextReversePath,
     TextDocker,
     // Tools
     ToolPick,
@@ -208,7 +229,16 @@ enum class MenuActionId {
     HelpAiAutomation,
     HelpAbout,
     // Separator placeholder
-    Separator
+    Separator,
+    LayoutUnitMillimeter,
+    LayoutUnitCentimeter,
+    LayoutUnitMeter,
+    LayoutUnitInch,
+    LayoutUnitFoot,
+    LayoutUnitYard,
+    LayoutUnitPoint,
+    LayoutUnitPica,
+    EditSelectSameAnyPaintColor
 };
 
 struct MenuItem {
@@ -389,22 +419,32 @@ struct AlignPanelMetrics {
     static constexpr int apply_height = 26;
 };
 
+struct PageUnitPropertiesMetrics {
+    static constexpr int row_top_in_content = 28;
+    static constexpr int row_height = 28;
+    static constexpr int menu_gap = 4;
+    static constexpr int item_height = 24;
+    static constexpr int menu_width = AlignPanelMetrics::content_width;
+    static constexpr int field_left_in_content = 118;
+};
+
 // 1. File Menu
-inline constexpr std::array<MenuItem, 10> kFileMenuItems{{
+inline constexpr std::array<MenuItem, 11> kFileMenuItems{{
     {MenuActionId::FileNew, L"New Document", L"Bản vẽ mới", L"Ctrl+N"},
     {MenuActionId::FileOpen, L"Open…", L"Mở…", L"Ctrl+O"},
     {MenuActionId::FileImport, L"Import…", L"Nhập…", L"Ctrl+I"},
     {MenuActionId::FileRecoverAutosave, L"Recover Autosave…", L"Phục hồi bản tự lưu…", L""},
     {MenuActionId::FileSave, L"Save", L"Lưu", L"Ctrl+S"},
     {MenuActionId::FileSaveAs, L"Save As…", L"Lưu thành…", L"Ctrl+Shift+S"},
-    {MenuActionId::FileExport, L"Export…", L"Xuất…", L"Ctrl+E"},
+    {MenuActionId::FileExport, L"Export SVG…", L"Xuất SVG…", L"Ctrl+E"},
+    {MenuActionId::FileExportRaster, L"Export Raster…", L"Xuất Raster…", L""},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::FileProperties, L"Document Properties…", L"Thuộc tính tài liệu…", L"", false, true},
     {MenuActionId::FileExit, L"Exit PikDraw", L"Thoát PikDraw", L"Alt+F4"}
 }};
 
 // 2. Edit Menu
-inline constexpr std::array<MenuItem, 34> kEditMenuItems{{
+inline constexpr std::array<MenuItem, 39> kEditMenuItems{{
     {MenuActionId::EditUndo, L"Undo", L"Hoàn tác", L"Ctrl+Z"},
     {MenuActionId::EditRedo, L"Redo", L"Làm lại", L"Ctrl+Y"},
     {MenuActionId::Separator, L"", L"", L"", true},
@@ -426,14 +466,19 @@ inline constexpr std::array<MenuItem, 34> kEditMenuItems{{
     {MenuActionId::EditSelectSameFillColor, L"Select Same Fill Color", L"Chọn cùng màu tô", L""},
     {MenuActionId::EditSelectSameStrokeColor, L"Select Same Stroke Color", L"Chọn cùng màu viền", L""},
     {MenuActionId::EditSelectSameFillAndStroke, L"Select Same Fill & Stroke", L"Chọn cùng màu tô & viền", L""},
+    {MenuActionId::EditSelectSameAnyPaintColor, L"Select Same Fill or Stroke Color", L"Chọn cùng màu tô hoặc viền", L""},
     {MenuActionId::EditSelectSameColorSpace, L"Select Same Color Space", L"Chọn cùng hệ màu", L""},
     {MenuActionId::EditSelectAllCmyk, L"Select All CMYK Objects", L"Chọn tất cả đối tượng CMYK", L""},
     {MenuActionId::EditSelectAllRgb, L"Select All RGB Objects", L"Chọn tất cả đối tượng RGB", L""},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::ColorConvertSelectionToCmyk, L"Convert Selection to CMYK", L"Chuyển đối tượng chọn sang CMYK", L""},
     {MenuActionId::ColorConvertSelectionToRgb, L"Convert Selection to RGB", L"Chuyển đối tượng chọn sang RGB", L""},
+    {MenuActionId::ColorAssignSelectionProfile, L"Assign ICC to Selection…", L"Gán ICC cho đối tượng chọn…", L""},
+    {MenuActionId::ColorConvertSelectionProfile, L"Convert Selection ICC…", L"Chuyển ICC màu đối tượng chọn…", L""},
     {MenuActionId::ColorConvertActivePageToCmyk, L"Convert Active Page to CMYK", L"Chuyển trang hiện tại sang CMYK", L""},
     {MenuActionId::ColorConvertActivePageToRgb, L"Convert Active Page to RGB", L"Chuyển trang hiện tại sang RGB", L""},
+    {MenuActionId::ColorConvertActivePageProfile, L"Convert Active Page ICC Profile…", L"Chuyển profile ICC trang hiện tại…", L""},
+    {MenuActionId::ColorConvertDocumentProfile, L"Convert Document ICC Profile…", L"Chuyển profile ICC toàn tài liệu…", L""},
     {MenuActionId::ColorConvertDocumentToCmyk, L"Convert Document to CMYK", L"Chuyển toàn bộ file sang CMYK", L""},
     {MenuActionId::ColorConvertDocumentToRgb, L"Convert Document to RGB", L"Chuyển toàn bộ file sang RGB", L""},
     {MenuActionId::Separator, L"", L"", L"", true},
@@ -455,12 +500,12 @@ inline constexpr std::array<MenuItem, 14> kViewMenuItems{{
     {MenuActionId::ViewSnapObjects, L"Snap to Objects", L"Hít vào đối tượng", L"", false, true},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::ViewProofColors, L"Proof Colors", L"Mô phỏng màu in", L"Ctrl+Alt+Y", false, false, false, true},
-    {MenuActionId::ViewGamutWarning, L"Gamut Warning", L"Cảnh báo vượt dải màu", L"Ctrl+Shift+Y", false, false, false, true},
-    {MenuActionId::ViewOverprintPreview, L"Overprint Preview", L"Xem trước in đè (Overprint)", L"Alt+Shift+Ctrl+Y", false, false, false, true}
+    {MenuActionId::ViewGamutWarning, L"Proof RGB Difference (Approx.)", L"Sai khác RGB sau proof (gần đúng)", L"Ctrl+Shift+Y", false, false, false, true},
+    {MenuActionId::ViewOverprintPreview, L"Overprint Preview (Unavailable)", L"Xem trước in đè (chưa khả dụng)", L"Alt+Shift+Ctrl+Y", false, false, false, true}
 }};
 
 // 4. Layout Menu
-inline constexpr std::array<MenuItem, 14> kLayoutMenuItems{{
+inline constexpr std::array<MenuItem, 24> kLayoutMenuItems{{
     {MenuActionId::LayoutPageSetup, L"Page Setup…", L"Thiết lập trang…", L"", false, true},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::LayoutPagePrevious, L"Previous Page", L"Trang trước", L"Alt+PageUp"},
@@ -474,15 +519,34 @@ inline constexpr std::array<MenuItem, 14> kLayoutMenuItems{{
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::LayoutPageA4, L"A4 (210 × 297 mm)", L"Khổ A4 (210 × 297 mm)", L""},
     {MenuActionId::LayoutPageA3, L"A3 (297 × 420 mm)", L"Khổ A3 (297 × 420 mm)", L""},
-    {MenuActionId::LayoutPageBanner, L"Banner 3 × 1 m", L"Băng rôn 3 × 1 m", L""}
+    {MenuActionId::LayoutPageBanner, L"Banner 3 × 1 m", L"Băng rôn 3 × 1 m", L""},
+    {MenuActionId::Separator, L"", L"", L"", true},
+    {MenuActionId::None, L"PAGE DISPLAY UNITS", L"ĐƠN VỊ HIỂN THỊ TRANG", L"", false, true, true},
+    {MenuActionId::LayoutUnitMillimeter, L"Millimeters (mm)", L"Milimét (mm)", L"", false, false, false, true},
+    {MenuActionId::LayoutUnitCentimeter, L"Centimeters (cm)", L"Xentimét (cm)", L"", false, false, false, true},
+    {MenuActionId::LayoutUnitMeter, L"Meters (m)", L"Mét (m)", L"", false, false, false, true},
+    {MenuActionId::LayoutUnitInch, L"Inches (in)", L"Inch (in)", L"", false, false, false, true},
+    {MenuActionId::LayoutUnitFoot, L"Feet (ft)", L"Feet (ft)", L"", false, false, false, true},
+    {MenuActionId::LayoutUnitYard, L"Yards (yd)", L"Yard (yd)", L"", false, false, false, true},
+    {MenuActionId::LayoutUnitPoint, L"Points (pt)", L"Điểm in (pt)", L"", false, false, false, true},
+    {MenuActionId::LayoutUnitPica, L"Picas (pc)", L"Pica (pc)", L"", false, false, false, true}
 }};
 
 // 5. Object Menu
-inline constexpr std::array<MenuItem, 49> kObjectMenuItems{{
+inline constexpr std::array<MenuItem, 58> kObjectMenuItems{{
     {MenuActionId::ObjectGroup, L"Group Objects", L"Nhóm đối tượng", L"Ctrl+G"},
     {MenuActionId::ObjectUngroup, L"Ungroup", L"Rã nhóm", L"Ctrl+Shift+G"},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::None, L"POWERCLIP / CLIPPING MASK", L"LỒNG KHUNG / MẶT NẠ CẮT", L"", false, true, true},
+    {MenuActionId::ObjectIsolationEnter, L"Edit Contents", L"Sửa nội dung", L"Enter"},
+    {MenuActionId::ObjectIsolationExit, L"Finish Editing", L"Kết thúc sửa", L"Esc"},
+    {MenuActionId::ObjectPowerClipSelectContents, L"Select Contents", L"Chọn nội dung", L""},
+    {MenuActionId::ObjectPowerClipEditFrame, L"Edit Frame", L"Sửa khung", L""},
+    {MenuActionId::ObjectPowerClipExtract, L"Extract Contents", L"Trích nội dung", L""},
+    {MenuActionId::ObjectPowerClipCopyFrom, L"Copy Contents From...", L"Chép nội dung từ...", L""},
+    {MenuActionId::ObjectPowerClipEmpty, L"Create Empty Frame", L"Tạo khung rỗng", L""},
+    {MenuActionId::ObjectPowerClipRemoveFrame, L"Convert to Regular Object", L"Chuyển thành đối tượng thường", L""},
+    {MenuActionId::ObjectPowerClipAppearance, L"Keep Frame Fill/Stroke", L"Giữ màu/nét khung", L""},
     {MenuActionId::ObjectPowerClipMake, L"Make Clipping Mask", L"Tạo mặt nạ cắt", L"Ctrl+7"},
     {MenuActionId::ObjectPowerClipRelease, L"Release Clipping Mask", L"Hủy mặt nạ cắt", L"Ctrl+Alt+7"},
     {MenuActionId::ObjectPowerClipPlaceInside, L"Place Inside Frame…", L"Đặt vào trong khung…", L""},
@@ -552,23 +616,33 @@ inline constexpr std::array<MenuItem, 5> kBitmapsMenuItems{{
 }};
 
 // 8. Text Menu (CorelDRAW / Word Reference)
-inline constexpr std::array<MenuItem, 19> kTextMenuItems{{
+inline constexpr std::array<MenuItem, 30> kTextMenuItems{{
     {MenuActionId::TextEdit, L"Edit Text…", L"Sửa văn bản…", L"Ctrl+Shift+T"},
     {MenuActionId::TextFont, L"Font Picker…", L"Chọn phông chữ…", L""},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::TextBold, L"Bold Font", L"Chữ đậm", L"Ctrl+B"},
-    {MenuActionId::TextItalic, L"Italic Font", L"Chữ nghiêng", L"Ctrl+Shift+I"},
+    {MenuActionId::TextItalic, L"Italic Font", L"Chữ nghiêng", L"Ctrl+I"},
     {MenuActionId::TextUnderline, L"Underline Font", L"Gạch chân chữ", L"Ctrl+U"},
     {MenuActionId::TextStrikethrough, L"Strikethrough", L"Gạch ngang chữ", L""},
+    {MenuActionId::TextChangeCase, L"Change Case…", L"Đổi chữ hoa / thường…", L"Shift+F3"},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::TextAlignLeft, L"Align Left", L"Căn lề trái", L""},
     {MenuActionId::TextAlignCenter, L"Align Center", L"Căn giữa", L""},
     {MenuActionId::TextAlignRight, L"Align Right", L"Căn phải", L""},
+    {MenuActionId::TextAlignJustify, L"Align Justify", L"Căn đều hai bên", L"Ctrl+J"},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::TextBullets, L"Bullets", L"Đầu dòng dấu chấm", L""},
     {MenuActionId::TextNumbering, L"Numbering", L"Đầu dòng số thứ tự", L""},
     {MenuActionId::TextNonPrinting, L"Show Non-Printing Characters", L"Hiện ký tự ẩn", L"Ctrl+Shift+8"},
-    {MenuActionId::TextConvertArtisticParagraph, L"Convert to Paragraph / Artistic Text", L"Đổi Văn bản Khung / Tự do", L"Ctrl+F8"},
+    {MenuActionId::TextConvertArtisticParagraph, L"Convert to Paragraph / Artistic Text", L"Đổi Văn bản Khung / Tự do", L""},
+    {MenuActionId::Separator, L"", L"", L"", true},
+    {MenuActionId::TextLinkFrames, L"Link Text Frames", L"Nối luồng văn bản tràn", L""},
+    {MenuActionId::TextUnlinkFrames, L"Unlink Text Frame", L"Ngắt liên kết luồng văn bản", L""},
+    {MenuActionId::TextCombine, L"Combine Text Objects", L"Gộp các đoạn văn bản", L"Ctrl+Shift+C"},
+    {MenuActionId::TextSplitLines, L"Split Text by Lines", L"Tách văn bản theo từng dòng", L"Ctrl+Shift+S"},
+    {MenuActionId::TextFitToPath, L"Fit Text to Path", L"Uốn chữ men theo đường cong", L"Ctrl+F8"},
+    {MenuActionId::TextStraighten, L"Straighten Text", L"Hủy uốn chữ (Thẳng hàng)", L""},
+    {MenuActionId::TextReversePath, L"Reverse Text Direction", L"Đảo chiều uốn chữ", L""},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::TextConvertToCurves, L"Convert Text to Curves", L"Chuyển chữ thành đường cong", L"Ctrl+Q"},
     {MenuActionId::TextDocker, L"Text Docker / Properties", L"Bảng điều khiển chữ (Docker)", L"Ctrl+T"}
