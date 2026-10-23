@@ -349,6 +349,27 @@ void NativeWindow::handle_mouse_move(int x, int y, unsigned modifiers) {
                     tooltip_.text = language_ == UILanguage::Vietnamese
                         ? L"Chưa có trong phiên bản này"
                         : L"Not available in this version";
+                } else if (item->action == MenuActionId::TextFitToPath) {
+                    tooltip_.text = language_ == UILanguage::Vietnamese
+                        ? L"Chọn 1 Text và 1 Path chưa khóa; giữ Shift+click để thêm đối tượng thứ hai."
+                        : L"Select one unlocked Text and one unlocked Path; Shift-click to add the second object.";
+                } else if (item->action == MenuActionId::TextConvertArtisticParagraph) {
+                    tooltip_.text = language_ == UILanguage::Vietnamese
+                        ? L"Chọn một đối tượng Text để đổi giữa chữ tự do và khung đoạn văn. Ctrl+F8."
+                        : L"Select one Text object to switch between point text and a paragraph frame. Ctrl+F8.";
+                } else if (item->action == MenuActionId::TextStraighten ||
+                           item->action == MenuActionId::TextReversePath) {
+                    tooltip_.text = language_ == UILanguage::Vietnamese
+                        ? L"Chọn một đối tượng chữ đã uốn theo đường dẫn trước."
+                        : L"Select a text object already fitted to a path.";
+                } else if (item->action == MenuActionId::TextCaseSentence ||
+                           item->action == MenuActionId::TextCaseLower ||
+                           item->action == MenuActionId::TextCaseUpper ||
+                           item->action == MenuActionId::TextCaseTitle ||
+                           item->action == MenuActionId::TextCaseToggle) {
+                    tooltip_.text = language_ == UILanguage::Vietnamese
+                        ? L"Chọn đối tượng Text chưa khóa; khi soạn, áp dụng lên vùng bôi đen hoặc toàn bộ chữ."
+                        : L"Select unlocked text objects; while editing, applies to the selection or all text.";
                 } else {
                     tooltip_.text = language_ == UILanguage::Vietnamese
                         ? L"Chọn đủ đối tượng phù hợp để bật lệnh này"

@@ -190,6 +190,59 @@ bool NativeWindow::is_menu_action_enabled(MenuActionId action) const {
     case MenuActionId::LayoutUnitPoint:
     case MenuActionId::LayoutUnitPica:
         return !root().document().is_content_locked();
+    case MenuActionId::TextCaseSentence:
+    case MenuActionId::TextCaseLower:
+    case MenuActionId::TextCaseUpper:
+    case MenuActionId::TextCaseTitle:
+    case MenuActionId::TextCaseToggle: {
+        if (is_inline_text_editing_ && text_editor_) return true;
+        if (selected.empty()) return false;
+        const auto snapshot = root().document().current_snapshot();
+        return snapshot && std::all_of(selected.begin(), selected.end(), [&](document::ObjectId id) {
+            const auto object = snapshot->objects().get(id);
+            return object && std::holds_alternative<document::TextObject>(*object) &&
+                !std::get<document::TextObject>(*object).locked;
+        });
+    }
+    case MenuActionId::TextConvertArtisticParagraph:
+        if (is_inline_text_editing_ && text_editor_) return true;
+        if (selected.size() != 1) return false;
+        if (const auto snapshot = root().document().current_snapshot()) {
+            const auto object = snapshot->objects().get(selected.front());
+            return object && std::holds_alternative<document::TextObject>(*object) &&
+                !std::get<document::TextObject>(*object).locked;
+        }
+        return false;
+    case MenuActionId::TextFitToPath: {
+        if (selected.size() != 2) return false;
+        const auto snapshot = root().document().current_snapshot();
+        if (!snapshot) return false;
+        bool has_text = false;
+        bool has_path = false;
+        for (const auto id : selected) {
+            const auto object = snapshot->objects().get(id);
+            if (!object) return false;
+            if (const auto* text = std::get_if<document::TextObject>(&*object)) {
+                if (text->locked) return false;
+                has_text = true;
+            } else if (const auto* path = std::get_if<document::PathObject>(&*object)) {
+                if (path->locked) return false;
+                has_path = true;
+            }
+        }
+        return has_text && has_path;
+    }
+    case MenuActionId::TextStraighten:
+    case MenuActionId::TextReversePath: {
+        const auto snapshot = root().document().current_snapshot();
+        if (!snapshot) return false;
+        return std::any_of(selected.begin(), selected.end(), [&](document::ObjectId id) {
+            const auto object = snapshot->objects().get(id);
+            return object && std::holds_alternative<document::TextObject>(*object) &&
+                !std::get<document::TextObject>(*object).locked &&
+                std::get<document::TextObject>(*object).is_text_on_path();
+        });
+    }
     case MenuActionId::None:
     case MenuActionId::Separator:
         return false;

@@ -615,32 +615,27 @@ inline constexpr std::array<MenuItem, 5> kBitmapsMenuItems{{
     {MenuActionId::BitmapsColorMask, L"Bitmap Color Mask…", L"Mặt nạ màu ảnh…", L"", false, true}
 }};
 
-// 8. Text Menu (CorelDRAW / Word Reference)
-inline constexpr std::array<MenuItem, 30> kTextMenuItems{{
+// Character and paragraph values live in the contextual bar and Properties.
+inline constexpr std::array<MenuItem, 26> kTextMenuItems{{
     {MenuActionId::TextEdit, L"Edit Text…", L"Sửa văn bản…", L"Ctrl+Shift+T"},
-    {MenuActionId::TextFont, L"Font Picker…", L"Chọn phông chữ…", L""},
     {MenuActionId::Separator, L"", L"", L"", true},
-    {MenuActionId::TextBold, L"Bold Font", L"Chữ đậm", L"Ctrl+B"},
-    {MenuActionId::TextItalic, L"Italic Font", L"Chữ nghiêng", L"Ctrl+I"},
-    {MenuActionId::TextUnderline, L"Underline Font", L"Gạch chân chữ", L"Ctrl+U"},
-    {MenuActionId::TextStrikethrough, L"Strikethrough", L"Gạch ngang chữ", L""},
-    {MenuActionId::TextChangeCase, L"Change Case…", L"Đổi chữ hoa / thường…", L"Shift+F3"},
-    {MenuActionId::Separator, L"", L"", L"", true},
-    {MenuActionId::TextAlignLeft, L"Align Left", L"Căn lề trái", L""},
-    {MenuActionId::TextAlignCenter, L"Align Center", L"Căn giữa", L""},
-    {MenuActionId::TextAlignRight, L"Align Right", L"Căn phải", L""},
-    {MenuActionId::TextAlignJustify, L"Align Justify", L"Căn đều hai bên", L"Ctrl+J"},
+    {MenuActionId::Separator, L"Change Case", L"Đổi kiểu hoa / thường", L"Shift+F3", false, true, true},
+    {MenuActionId::TextCaseSentence, L"Sentence case", L"Viết hoa đầu câu", L""},
+    {MenuActionId::TextCaseLower, L"lowercase", L"Chữ thường", L""},
+    {MenuActionId::TextCaseUpper, L"UPPERCASE", L"CHỮ HOA", L""},
+    {MenuActionId::TextCaseTitle, L"Title Case", L"Viết Hoa Từng Từ", L""},
+    {MenuActionId::TextCaseToggle, L"tOGGLE cASE", L"Đảo hoa / thường", L""},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::TextBullets, L"Bullets", L"Đầu dòng dấu chấm", L""},
     {MenuActionId::TextNumbering, L"Numbering", L"Đầu dòng số thứ tự", L""},
     {MenuActionId::TextNonPrinting, L"Show Non-Printing Characters", L"Hiện ký tự ẩn", L"Ctrl+Shift+8"},
-    {MenuActionId::TextConvertArtisticParagraph, L"Convert to Paragraph / Artistic Text", L"Đổi Văn bản Khung / Tự do", L""},
+    {MenuActionId::TextConvertArtisticParagraph, L"Convert to Paragraph / Artistic Text", L"Đổi Văn bản Khung / Tự do", L"Ctrl+F8"},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::TextLinkFrames, L"Link Text Frames", L"Nối luồng văn bản tràn", L""},
     {MenuActionId::TextUnlinkFrames, L"Unlink Text Frame", L"Ngắt liên kết luồng văn bản", L""},
     {MenuActionId::TextCombine, L"Combine Text Objects", L"Gộp các đoạn văn bản", L"Ctrl+Shift+C"},
     {MenuActionId::TextSplitLines, L"Split Text by Lines", L"Tách văn bản theo từng dòng", L"Ctrl+Shift+S"},
-    {MenuActionId::TextFitToPath, L"Fit Text to Path", L"Uốn chữ men theo đường cong", L"Ctrl+F8"},
+    {MenuActionId::TextFitToPath, L"Fit Text to Path", L"Uốn chữ theo đường dẫn", L""},
     {MenuActionId::TextStraighten, L"Straighten Text", L"Hủy uốn chữ (Thẳng hàng)", L""},
     {MenuActionId::TextReversePath, L"Reverse Text Direction", L"Đảo chiều uốn chữ", L""},
     {MenuActionId::Separator, L"", L"", L"", true},

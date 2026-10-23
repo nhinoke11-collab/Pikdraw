@@ -365,7 +365,9 @@ void NativeWindow::toggle_convert_artistic_paragraph() {
                 ? "Chuyển thành Văn bản Tự do (Artistic Text)"
                 : "Converted to Artistic Text";
         } else {
-            text_editor_->draft.frame_width_mm = 100.0;
+            const auto layout_width = text_editor_->draft.layout().bounds().width;
+            text_editor_->draft.frame_width_mm = std::max(
+                layout_width, text_editor_->draft.font.size_mm() * 12.0);
             status_msg_ = (language_ == UILanguage::Vietnamese)
                 ? "Chuyển thành Văn bản Khung (Paragraph Text)"
                 : "Converted to Paragraph Text";
@@ -373,18 +375,28 @@ void NativeWindow::toggle_convert_artistic_paragraph() {
         refresh_inline_text_preview();
     } else {
         const auto& sel = root().vector_controller().selection().selected_ids();
-        auto snap = root().document().current_snapshot();
-        for (auto id : sel) {
-            const auto obj = snap->objects().get(id);
-            if (obj && std::holds_alternative<document::TextObject>(*obj)) {
-                const auto& t = std::get<document::TextObject>(*obj);
-                double target_width = (t.frame_width_mm > 0.0) ? 0.0 : 100.0;
-                workflow().set_selected_text_layout(target_width, std::nullopt);
-                status_msg_ = (target_width == 0.0)
-                    ? (language_ == UILanguage::Vietnamese ? "Đã chuyển thành Văn bản Tự do (Artistic Text · Ctrl+F8)" : "Converted to Artistic Text (Ctrl+F8)")
-                    : (language_ == UILanguage::Vietnamese ? "Đã chuyển thành Văn bản Khung (Paragraph Text · Ctrl+F8)" : "Converted to Paragraph Text (Ctrl+F8)");
-                break;
-            }
+        const auto snapshot = root().document().current_snapshot();
+        if (sel.size() != 1 || !snapshot) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Chọn đúng một đối tượng Text để đổi giữa chữ tự do và khung đoạn văn"
+                : "Select exactly one Text object to switch between point text and a paragraph frame";
+        } else if (const auto object = snapshot->objects().get(sel.front());
+                   object && std::holds_alternative<document::TextObject>(*object)) {
+            const auto& text = std::get<document::TextObject>(*object);
+            const double target_width = text.frame_width_mm > 0.0 ? 0.0
+                : std::max(text.layout().bounds().width, text.font.size_mm() * 12.0);
+            const bool changed = workflow().set_selected_text_layout(target_width, std::nullopt);
+            status_msg_ = changed
+                ? (target_width == 0.0
+                    ? (language_ == UILanguage::Vietnamese ? "Đã chuyển thành Văn bản Tự do (Artistic Text · Ctrl+F8) · Ctrl+Z hoàn tác" : "Converted to Artistic Text (Ctrl+F8) · Ctrl+Z undoes")
+                    : (language_ == UILanguage::Vietnamese ? "Đã chuyển thành Văn bản Khung (Paragraph Text · Ctrl+F8) · Ctrl+Z hoàn tác" : "Converted to Paragraph Text (Ctrl+F8) · Ctrl+Z undoes"))
+                : (language_ == UILanguage::Vietnamese
+                    ? "Không thể đổi kiểu khung; kiểm tra đối tượng có bị khóa hay không"
+                    : "Could not change text frame; check whether the object is locked");
+        } else {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Lệnh này chỉ áp dụng cho đối tượng Text"
+                : "This command applies only to Text objects";
         }
     }
 #ifdef _WIN32
@@ -417,12 +429,16 @@ void NativeWindow::set_font_alignment(typography::TextAlignment align) {
 }
 
 void NativeWindow::apply_change_case(typography::ChangeCaseMode mode) {
+    bool applied = false;
     if (is_inline_text_editing_ && text_editor_) {
         auto& editor = *text_editor_;
         if (editor.has_selection()) {
             const std::string selected = editor.selected_text();
             std::string converted = typography::convert_case_utf8(selected, mode);
-            if (converted != selected) editor.replace(std::move(converted));
+            if (converted != selected) {
+                editor.replace(std::move(converted));
+                applied = true;
+            }
         } else {
             const std::string original = editor.draft.text;
             std::string converted = typography::convert_case_utf8(original, mode);
@@ -433,20 +449,74 @@ void NativeWindow::apply_change_case(typography::ChangeCaseMode mode) {
                 editor.remember();
                 editor.draft.text = std::move(converted);
                 editor.caret = editor.anchor = std::min(converted_caret, editor.draft.text.size());
+                applied = true;
             }
         }
         refresh_inline_text_preview();
     } else {
-        workflow().change_case_selected_text(mode);
+        const auto& selected = root().vector_controller().selection().selected_ids();
+        const auto snapshot = root().document().current_snapshot();
+        if (!snapshot || selected.empty()) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Chọn văn bản hoặc vào chế độ soạn chữ để đổi hoa / thường"
+                : "Select text or enter text editing to change case";
+#ifdef _WIN32
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+            return;
+        }
+        bool all_text = true;
+        bool any_change = false;
+        for (const auto id : selected) {
+            const auto object = snapshot->objects().get(id);
+            if (!object || !std::holds_alternative<document::TextObject>(*object)) {
+                all_text = false;
+                break;
+            }
+            const auto& text = std::get<document::TextObject>(*object).text;
+            any_change = any_change || typography::convert_case_utf8(text, mode) != text;
+        }
+        if (!all_text) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Chọn riêng các đối tượng văn bản có thể sửa rồi thử lại"
+                : "Select only editable text objects, then try again";
+#ifdef _WIN32
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+            return;
+        }
+        if (!any_change) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Văn bản đã ở kiểu hoa / thường này; không có gì thay đổi"
+                : "Text already uses this case; nothing changed";
+#ifdef _WIN32
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+            return;
+        }
+        applied = workflow().change_case_selected_text(mode);
+        if (!applied) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Không thể đổi chữ; kiểm tra khóa đối tượng và quyền sửa"
+                : "Could not change case; check whether the text is locked or editable";
+#ifdef _WIN32
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+            return;
+        }
     }
     std::string mode_str = (mode == typography::ChangeCaseMode::Uppercase) ? "CHỮ HOA"
         : (mode == typography::ChangeCaseMode::Lowercase) ? "chữ thường"
         : (mode == typography::ChangeCaseMode::TitleCase) ? "Viết Hoa Từng Từ"
         : (mode == typography::ChangeCaseMode::SentenceCase) ? "Viết hoa đầu câu"
         : "Đảo ngược hoa/thường";
-    status_msg_ = (language_ == UILanguage::Vietnamese)
-        ? "Đã đổi kiểu chữ: " + mode_str + " (Change Case · Shift+F3)"
-        : "Changed text case: " + mode_str + " (Shift+F3)";
+    status_msg_ = applied
+        ? (language_ == UILanguage::Vietnamese
+            ? "Đã đổi kiểu chữ: " + mode_str + " · Shift+F3 xoay lowercase → Title Case → UPPERCASE"
+            : "Changed text case: " + mode_str + " · Shift+F3 cycles lowercase → Title Case → UPPERCASE")
+        : (language_ == UILanguage::Vietnamese
+            ? "Văn bản đã ở kiểu hoa / thường này; không có gì thay đổi"
+            : "Text already uses this case; nothing changed");
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 #endif
@@ -672,12 +742,12 @@ void NativeWindow::fit_text_to_path() {
     bool ok = workflow().attach_selected_text_to_path();
     if (ok) {
         status_msg_ = (language_ == UILanguage::Vietnamese)
-            ? "Đã uốn chữ men theo đường cong (Fit Text to Path · CorelDRAW)"
-            : "Fitted text along path";
+            ? "Đã uốn chữ theo Path · Nhấp phải chữ để Đảo chiều hoặc Hủy uốn · Ctrl+Z hoàn tác"
+            : "Fitted text to path · Right-click the text to reverse or straighten it · Ctrl+Z undoes";
     } else {
         status_msg_ = (language_ == UILanguage::Vietnamese)
-            ? "Vui lòng chọn 1 đoạn Text và 1 đường cong Path để uốn chữ"
-            : "Please select 1 Text object and 1 Path curve";
+            ? "Cách dùng: chọn 1 Text và 1 Path chưa khóa (Shift+click để chọn thêm), rồi chọn Text > Fit Text to Path"
+            : "How to use: select one unlocked Text and one unlocked Path (Shift-click to add one), then choose Text > Fit Text to Path";
     }
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);

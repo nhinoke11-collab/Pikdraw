@@ -33,7 +33,7 @@ khung, text-on-path, bullets/columns hoặc bộ kiểm tra chính tả. Không 
 
 | Bề mặt | Quyết định |
 | --- | --- |
-| Menu | Giữ `Text > Edit Text` (`TextEdit`), Font/Bold/Italic/Underline/Alignment hiện có. |
+| Menu | Giữ `Text > Edit Text` (`TextEdit`) và các lệnh chuyển đổi/chỉnh nội dung. Font, B/I/U/S và alignment chỉ ở Property Bar/Properties; không lặp trong menu. |
 | Toolbox | Giữ công cụ Text (index 4), icon SVG Text hiện có; F8 chọn Text. |
 | Standard toolbar | Không thêm nút; dùng thanh thuộc tính Text hiện có. |
 | Property bar / Properties | Font, size (pt), B/I/U, Left/Center/Right; tái dùng giá trị và command hiện có; khi nhập chỉ sửa draft. Properties hiện có không mở hộp nhập nội dung. Độ rộng khung đặt bằng cách kéo khung trên canvas. |

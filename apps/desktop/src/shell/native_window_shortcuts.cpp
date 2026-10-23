@@ -448,7 +448,7 @@ bool NativeWindow::handle_key_down(WPARAM key) {
             return true;
         }
         if (key == VK_F8) {
-            fit_text_to_path();
+            toggle_convert_artistic_paragraph();
             return true;
         }
         if (key == 'K') {

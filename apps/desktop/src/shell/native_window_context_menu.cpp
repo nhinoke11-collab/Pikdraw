@@ -160,7 +160,7 @@ HMENU NativeWindow::build_context_menu(const std::vector<document::ObjectId>& se
                     bool has_p = std::holds_alternative<document::PathObject>(*opt0) || std::holds_alternative<document::PathObject>(*opt1);
                     if (has_t && has_p) {
                         AppendMenuW(root_menu, MF_STRING, static_cast<UINT_PTR>(MenuActionId::TextFitToPath),
-                                    is_vi ? L"Uốn chữ men theo đường cong (Fit Text to Path)\tCtrl+F8" : L"Fit Text to Path\tCtrl+F8");
+                                    is_vi ? L"Uốn chữ theo đường dẫn (Fit Text to Path)" : L"Fit Text to Path");
                         AppendMenuW(root_menu, MF_SEPARATOR, 0, nullptr);
                     }
                 }
@@ -309,7 +309,7 @@ HMENU NativeWindow::build_context_menu(const std::vector<document::ObjectId>& se
         AppendMenuW(root_menu, MF_STRING, static_cast<UINT_PTR>(MenuActionId::TextEdit),
                     is_vi ? L"Soạn thảo văn bản (Edit Text)\tF8" : L"Edit Text\tF8");
         AppendMenuW(root_menu, MF_STRING, static_cast<UINT_PTR>(MenuActionId::TextChangeCase),
-                    is_vi ? L"Đổi chữ hoa / thường… (Change Case…)\tShift+F3" : L"Change Case…\tShift+F3");
+                    is_vi ? L"Xoay kiểu hoa / thường (Change Case)\tShift+F3" : L"Cycle Change Case\tShift+F3");
         AppendMenuW(root_menu, MF_STRING, static_cast<UINT_PTR>(MenuActionId::TextSplitLines),
                     is_vi ? L"Tách văn bản theo dòng (Split by Lines)\tCtrl+Shift+S" : L"Split Text by Lines\tCtrl+Shift+S");
 
