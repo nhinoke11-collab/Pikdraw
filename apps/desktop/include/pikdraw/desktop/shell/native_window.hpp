@@ -5,6 +5,7 @@
 #include "pikdraw/desktop/workflows/document_workflow.hpp"
 #include "pikdraw/desktop/presenters/object_style.hpp"
 #include "pikdraw/color/preview/color_transform.hpp"
+#include "pikdraw/color/profiles/profile_resource.hpp"
 #include "pikdraw/document/storage/save_recovery.hpp"
 #include "pikdraw/desktop/tools/canvas_text_editor.hpp"
 #include "pikdraw/typography/layout/case_conversion.hpp"
@@ -19,6 +20,7 @@
 #include <cmath>
 #include <unordered_set>
 #include "pikdraw/geometry/primitives/point.hpp"
+#include "pikdraw/geometry/units/length_unit.hpp"
 #include "pikdraw/geometry/primitives/bounds.hpp"
 #include "pikdraw/rendering/damage_tracker.hpp"
 
@@ -36,9 +38,29 @@ struct NativeWindowAutomationRuntime;
 #ifdef _WIN32
 inline constexpr UINT kImportWorkerMessage = WM_APP + 0x37;
 inline constexpr UINT kExportWorkerMessage = WM_APP + 0x38;
+inline constexpr UINT kRasterExportWorkerMessage = WM_APP + 0x39;
 #endif
 struct ImportJobSession;
+struct ImportPlacementSession {
+    document::AsyncProposalMetadata metadata;
+    ImportedContentProposal proposal;
+    std::string target_tab_id;
+    std::string source_filename;
+    geometry::Point2D pointer_world{};
+    bool pointer_valid{false};
+#ifdef _WIN32
+    HBITMAP preview_bitmap{nullptr};
+    uint32_t* preview_bitmap_pixels{nullptr};
+    int preview_width_px{0};
+    int preview_height_px{0};
+
+    ~ImportPlacementSession() {
+        if (preview_bitmap) DeleteObject(preview_bitmap);
+    }
+#endif
+};
 struct ExportJobSession;
+struct RasterExportJobSession;
 enum class MenuActionId;
 class NativeFontPicker;
 namespace tools { class DrawingToolController; class PenToolController; class NodeToolController; class ContourToolController; class GradientToolController; class DimensionToolController; }
@@ -84,6 +106,11 @@ public:
     void set_theme(ThemeMode mode) noexcept;
     void toggle_theme() noexcept;
     [[nodiscard]] color::DeviceRGBA canvas_background_color() const noexcept;
+    [[nodiscard]] color::PreviewRGBA preview_color_for_ui(
+        const color::ColorValue& value) const noexcept {
+        const auto* preview = effective_color_preview();
+        return preview ? preview->convert(value) : color::to_preview_rgba(value);
+    }
 #ifdef _WIN32
     [[nodiscard]] COLORREF canvas_background_colorref() const noexcept;
 #endif
@@ -99,9 +126,15 @@ public:
     void set_active_workspace(int ws_index) noexcept;
 
     [[nodiscard]] int active_dock_tab() const noexcept { return active_dock_tab_; }
+    [[nodiscard]] bool page_units_flyout_open() const noexcept { return show_page_units_flyout_; }
     void set_active_dock_tab(int tab_index) noexcept;
     [[nodiscard]] LayersDockState& layers_dock_state() noexcept { return layers_state_; }
     [[nodiscard]] const LayersDockState& layers_dock_state() const noexcept { return layers_state_; }
+    [[nodiscard]] size_t active_layer_index() const noexcept { return layers_state_.active_layer_index; }
+    void set_active_layer_index(size_t index);
+    [[nodiscard]] bool is_dock_text_editing() const noexcept {
+        return active_dock_tab_ == 1 && (layers_state_.search_active || layers_state_.rename_layer_idx.has_value() || layers_state_.rename_object_id.has_value());
+    }
     [[nodiscard]] bool align_distribute_panel_visible() const noexcept { return show_align_panel_; }
 
     void zoom_in() noexcept;
@@ -156,12 +189,27 @@ public:
     [[nodiscard]] int ai_connections_focus_index() const noexcept { return settings_ai_focus_index_; }
     [[nodiscard]] bool ai_connections_read_choice() const noexcept { return settings_mcp_enabled_choice_; }
     [[nodiscard]] bool ai_connections_edit_choice() const noexcept { return settings_mcp_edit_choice_; }
+    [[nodiscard]] int settings_tac_scope_choice() const noexcept { return settings_tac_scope_choice_; }
+    [[nodiscard]] double settings_tac_limit_percent() const noexcept { return settings_tac_limit_percent_; }
+    [[nodiscard]] const std::optional<color::TACSummary>& settings_tac_summary() const noexcept {
+        return settings_tac_summary_;
+    }
+    [[nodiscard]] const std::string& settings_tac_error() const noexcept { return settings_tac_error_; }
+    [[nodiscard]] int settings_tac_focus_index() const noexcept { return settings_tac_focus_index_; }
+    void set_settings_tac_scope_choice(int scope) noexcept;
+    void move_settings_tac_focus(int direction) noexcept;
+    void activate_settings_tac_focus() noexcept;
+    void validate_settings_tac() noexcept;
+    void fix_settings_tac() noexcept;
     [[nodiscard]] int settings_theme_choice() const noexcept { return settings_theme_choice_; }
     void set_settings_theme_choice(int theme) noexcept;
     [[nodiscard]] int settings_accent_choice() const noexcept { return settings_accent_choice_; }
     void set_settings_accent_choice(int accent) noexcept;
     [[nodiscard]] int settings_unit_choice() const noexcept { return settings_unit_choice_; }
-    void set_settings_unit_choice(int unit) noexcept;
+    [[nodiscard]] geometry::units::LengthUnit display_length_unit() const noexcept;
+    void apply_preferred_dimension_unit() noexcept;
+    void set_settings_unit_choice(int unit);
+    void sync_display_unit_from_active_page() noexcept;
     [[nodiscard]] DesktopWindow& shell() noexcept { return shell_; }
     [[nodiscard]] const DesktopWindow& shell() const noexcept { return shell_; }
 
@@ -246,12 +294,23 @@ public:
     void reset_pivot() noexcept { custom_pivot_world_.reset(); }
 
     // Group Isolation Mode (Chế độ cô lập nhóm - Corel & Illustrator style)
-    [[nodiscard]] bool is_in_isolation_mode() const noexcept { return !isolation_stack_.empty(); }
+    [[nodiscard]] bool is_in_isolation_mode() const noexcept;
     [[nodiscard]] std::optional<document::ObjectId> current_isolated_group_id() const noexcept {
-        return isolation_stack_.empty() ? std::nullopt : std::optional{isolation_stack_.back()};
+        return is_in_isolation_mode() ? std::optional{isolation_stack_.back()} : std::nullopt;
     }
     [[nodiscard]] const std::vector<document::ObjectId>& isolation_stack() const noexcept { return isolation_stack_; }
     void enter_group_isolation(document::ObjectId group_id);
+    void select_powerclip_contents(document::ObjectId group_id);
+    void edit_powerclip_frame(document::ObjectId group_id);
+    void synchronize_powerclip_view();
+    void begin_powerclip_target_pick(bool copy_contents = false);
+    bool handle_powerclip_target_pick(geometry::Point2D point);
+    void register_powerclip_actions(CompositionRoot& document_root);
+    std::optional<document::ObjectId> powerclip_properties_target() const;
+#ifdef _WIN32
+    bool paint_powerclip_controls(HDC dc, int left, int top, int right, bool vertical);
+    bool handle_powerclip_controls(int x, int y, int left, int top, int right, bool vertical);
+#endif
     void exit_group_isolation();
     void exit_all_isolation();
     void handle_double_click(int x, int y);
@@ -294,7 +353,18 @@ public:
     void paint_text_property_bar(HDC mem_dc, int w, int content_top, int topbar_h, int tabbar_h);
     void paint_dimension_property_bar(HDC mem_dc, int w, int content_top, int topbar_h, int tabbar_h);
     bool handle_dimension_property_bar_click(int x, int y);
+    void paint_dimension_properties_panel(HDC mem_dc, int insp_x, int inspect_w, int content_y, int max_h);
+    bool handle_dimension_dock_click(int x, int y);
+    void show_dimension_decimals_menu(int screen_x, int screen_y);
+    void show_dimension_unit_menu(int screen_x, int screen_y);
+    void show_dimension_arrow_type_menu(int screen_x, int screen_y);
+    void show_dimension_line_width_menu(int screen_x, int screen_y);
+    void show_dimension_text_size_menu(int screen_x, int screen_y);
+    void show_dimension_text_position_menu(int screen_x, int screen_y);
 #endif
+    void toggle_all_dimensions_visibility();
+    void toggle_all_dimensions_lock();
+    void apply_dimension_style_to_all();
     void execute_quick_dimension();
     void execute_perimeter_dimension();
     void cycle_dimension_unit();
@@ -332,6 +402,10 @@ public:
     void set_status_message(std::string message) { status_msg_ = std::move(message); }
     bool import_file_to_tab(const std::wstring& path, bool is_open_action = false);
     [[nodiscard]] bool import_job_active() const noexcept;
+    [[nodiscard]] bool last_import_succeeded() const noexcept { return last_import_succeeded_; }
+    void set_auto_accept_import_review(bool enabled) noexcept {
+        auto_accept_import_review_ = enabled;
+    }
     [[nodiscard]] int shortcut_profile() const noexcept { return shortcut_profile_; }
     void set_shortcut_profile(int p) noexcept { shortcut_profile_ = std::clamp(p, 0, 2); }
 
@@ -366,6 +440,7 @@ public:
     [[nodiscard]] int previous_drawing_tool() const noexcept { return previous_drawing_tool_; }
     void set_previous_drawing_tool(int tool) noexcept { previous_drawing_tool_ = tool; }
     void execute_menu_action(int action_id);
+    [[nodiscard]] bool is_menu_action_checked(MenuActionId action) const noexcept;
 #ifdef _WIN32
     [[nodiscard]] HMENU build_context_menu(const std::vector<document::ObjectId>& selection, bool is_canvas_hit = true) const;
     bool show_context_menu(int screen_x, int screen_y, int canvas_x, int canvas_y);
@@ -393,6 +468,7 @@ public:
     [[nodiscard]] int guideline_at(int x, int y) const;
     [[nodiscard]] int selected_guideline_index() const noexcept { return selected_guideline_index_; }
     void set_selected_guideline_index(int idx) noexcept { selected_guideline_index_ = idx; }
+    bool delete_selected_guideline() noexcept;
 
     // Numeric Keyboard Input System (Direct typing on Property Bar)
     enum class NumericFieldId {
@@ -404,10 +480,15 @@ public:
         ObjectX,
         ObjectY,
         ObjectWidth, ObjectHeight, ObjectRotation, ObjectOpacity,
-        FillOpacity, StrokeOpacity, EffectSigmaX, EffectSigmaY, TextFontSize,
-        EffectOffsetX, EffectOffsetY, EffectOpacity, DistributeSpacing,
+        FillOpacity, StrokeOpacity, BlurSigmaX, BlurSigmaY, ShadowFeatherX, ShadowFeatherY,
+        TextFontSize, TextFrameWidth, TextLineSpacing,
+        ShadowOffsetX, ShadowOffsetY, ShadowOpacity, DistributeSpacing,
+        ContourSpacing, ContourSteps, ContourTolerance, ContourMiterLimit,
+        GradientStopOffset, GradientStopOpacity, GradientStopMidpoint,
+        GradientAngle, GradientLength, GradientCenterX, GradientCenterY,
         PenExpression, PenLength, PenAngle, ModalWidth, ModalHeight,
-        RectCornerRadiusTL, RectCornerRadiusTR, RectCornerRadiusBR, RectCornerRadiusBL
+        RectCornerRadiusTL, RectCornerRadiusTR, RectCornerRadiusBR, RectCornerRadiusBL,
+        TacLimitPercent, GridSpacing
     };
 
     [[nodiscard]] NumericFieldId active_numeric_field() const noexcept { return active_num_field_; }
@@ -442,6 +523,7 @@ public:
     [[nodiscard]] const tools::ContourToolController* contour_tool() const noexcept { return contour_tool_.get(); }
     void trigger_effects_contour();
     void trigger_break_contour_apart();
+    bool apply_contour_effect();
     bool handle_contour_property_click(int x, int y);
     void paint_contour_canvas_overlay(HDC hdc, const RECT& canvas);
     [[nodiscard]] tools::GradientToolController* gradient_tool() noexcept { return gradient_tool_.get(); }
@@ -493,12 +575,21 @@ public:
     [[nodiscard]] int selection_handle_at(int x, int y) const;
     bool handle_chrome_click(int x, int y) { return handle_workspace_chrome_mouse_down(x, y, 0); }
     bool handle_layers_dock_mouse_wheel(int delta);
+    bool handle_layers_dock_click(int x, int y, bool is_double_click = false);
+
+    bool handle_layers_dock_mouse_down(int x, int y);
+    bool handle_layers_dock_mouse_move(int x, int y);
+    bool handle_layers_dock_mouse_up(int x, int y);
+    bool handle_layers_dock_key(WPARAM key);
+    bool handle_layers_dock_char(wchar_t ch);
+    bool handle_layers_dock_context_menu(int screen_x, int screen_y, int x, int y);
     bool apply_style_patch(const vector::StylePatch &patch);
 #endif
 
 private:
     // Narrow test seam for the in-process MCP E2E; credentials stay out of the public API.
     friend struct NativeWindowMcpE2eAccess;
+    friend struct NativeWindowImportE2eAccess;
     friend struct NativeWindowExportE2eAccess;
     friend struct DropShadowRibbon;
 
@@ -519,6 +610,11 @@ private:
     void request_cancel_import_job();
     void cancel_import_job();
     void handle_import_worker_message(WPARAM kind);
+    [[nodiscard]] bool import_placement_active() const noexcept;
+    void cancel_import_placement();
+    [[nodiscard]] bool handle_import_placement_escape(WPARAM key);
+    [[nodiscard]] bool place_pending_import_at(int x, int y);
+    void paint_import_placement_overlay(HDC dc);
     void export_svg_dialog(bool selected_objects, bool all_pages);
     [[nodiscard]] bool start_svg_export(const std::string& file_path, bool selected_objects,
                                         bool allow_replace_existing, bool all_pages);
@@ -526,6 +622,11 @@ private:
     void cancel_export_job();
     void handle_export_worker_message(WPARAM kind);
     [[nodiscard]] bool export_job_active() const noexcept;
+    void export_raster_dialog();
+    void request_cancel_raster_export_job();
+    void cancel_raster_export_job();
+    void handle_raster_export_worker_message(WPARAM kind);
+    [[nodiscard]] bool raster_export_job_active() const noexcept;
     void paint(HDC hdc, int width, int height);
     void paint_settings_modal(HDC mem_dc, int width, int height);
     void paint_new_document_modal(HDC mem_dc, int width, int height);
@@ -535,13 +636,12 @@ private:
     void paint_left_toolbox(HDC mem_dc, int w, int h);
     void paint_right_inspector_dock(HDC mem_dc, int w, int h);
     void paint_layers_dock(HDC mem_dc, int insp_x, int content_y, int w, int h, int status_h);
-    bool handle_layers_dock_click(int x, int y, bool is_double_click = false);
+
     void paint_main_menu_bar(HDC mem_dc, int w, int topbar_h);
     void paint_dropdown_menu(HDC mem_dc, int menu_id, int x, int y);
     RECT get_menu_bar_item_rect(int menu_index, int topbar_h) const noexcept;
     int get_menu_bar_item_at(int mouse_x, int mouse_y, int topbar_h) const noexcept;
     [[nodiscard]] bool is_menu_action_enabled(MenuActionId action) const;
-    [[nodiscard]] bool is_menu_action_checked(MenuActionId action) const noexcept;
     void activate_toolbox_effect_item(int item);
     void paint_file_menu(HDC mem_dc, int x, int y, int w, int h);
     void paint_home_screen(HDC mem_dc, int w, int h);
@@ -564,6 +664,11 @@ private:
     void open_style_editor(bool stroke);
     void choose_stroke_width(int x, int y);
     void show_color_profiles();
+    void assign_active_page_color_profile();
+    void convert_active_page_color_profile();
+    void assign_selected_paint_color_profile();
+    void convert_selected_paint_color_profile();
+    void convert_document_color_profile();
     void load_color_preferences();
     void open_document_dialog();
     void save_document_dialog(bool force_save_as = false);
@@ -642,6 +747,8 @@ private:
     int active_dock_tab_{0}; // 0: Inspector, 1: Layers, 2: History
     bool show_style_inspector_{false};
     bool show_align_panel_{false};
+    bool show_page_units_flyout_{false};
+    int page_units_flyout_focus_index_{0};
     int style_inspector_scroll_{0};
     LayersDockState layers_state_{};
     int zoom_level_{100}; // 50, 75, 100, 125, 150, 200
@@ -701,6 +808,7 @@ private:
     // Interactive Contour Dragging State (CorelDRAW / Adobe Reference)
     bool is_contour_dragging_{false};
     geometry::Point2D contour_drag_start_world_{};
+    bool contour_applied_{false};
 
     // Inline Text Editing & Typography State (Corel / Word Reference)
     bool is_inline_text_editing_{false};
@@ -741,13 +849,34 @@ private:
     int settings_active_tab_{0}; // 0: Giao diện, 1: Đơn vị & Lưới, 2: Quản lý màu & ICC, 3: Thi công & CNC, 4: Hiệu năng, 5: Phím tắt
     int settings_theme_choice_{1}; // 0: Dark Mode, 1: Light Mode, 2: Auto OS
     int settings_accent_choice_{0}; // 0: Cyber Mint, 1: Sky Blue, 2: Purple Tech, 3: Amber CAD
-    int settings_unit_choice_{0}; // 0: mm, 1: cm, 2: inch, 3: pt
+    int settings_unit_choice_{0}; // mm, cm, in, pt, m, ft, yd, pc
+    int settings_tac_scope_choice_{0}; // 0: document, 1: active page, 2: selection
+    int settings_tac_focus_index_{0}; // Document, page, selection, limit, check, fix
+    double settings_tac_limit_percent_{300.0};
+    std::optional<color::TACSummary> settings_tac_summary_;
+    std::string settings_tac_error_;
+    uint64_t settings_tac_report_epoch_{0};
+    uint64_t settings_tac_report_revision_{0};
+    std::string settings_tac_report_document_id_;
+    document::PageId settings_tac_report_active_page_{0};
+    std::vector<document::ObjectId> settings_tac_report_selection_;
+    double settings_tac_report_limit_percent_{0.0};
+    int settings_tac_report_scope_{-1};
+    geometry::units::LengthUnit display_length_unit_{geometry::units::LengthUnit::Millimeter};
     bool settings_mcp_enabled_choice_{false};
     bool settings_mcp_edit_choice_{false};
     int settings_ai_focus_index_{0}; // Read, edit, copy URL, copy key, reset, cancel, apply
 
     // Group Isolation Mode Stack
     std::vector<document::ObjectId> isolation_stack_;
+    std::string isolation_document_id_;
+    uint64_t isolation_epoch_{0}, isolation_page_{0}, isolation_generation_{0};
+    bool isolation_reveal_{true}, isolation_frame_{false};
+    std::vector<document::ObjectId> isolation_restore_selection_;
+    int powerclip_target_pick_{0};
+    std::vector<document::ObjectId> powerclip_pick_selection_;
+    std::optional<vector::GestureStamp> powerclip_pick_stamp_;
+    rendering::RenderViewContext cached_clip_view_;
 
     // Canvas object geometry (mm)
     double shape_x_{100.0};
@@ -788,10 +917,21 @@ private:
     bool palette_stroke_{false};
     std::optional<bool> palette_show_cmyk_;
     std::shared_ptr<const color::IccPreview> color_preview_;
+    std::shared_ptr<const color::IccPreview> render_color_preview_;
+    std::shared_ptr<const color::ProfileResource> rgb_preview_resource_;
+    std::shared_ptr<const color::ProfileResource> cmyk_preview_resource_;
     std::filesystem::path rgb_preview_profile_, cmyk_preview_profile_;
     bool proof_colors_enabled_{false};
     bool gamut_warning_enabled_{false};
     bool overprint_preview_enabled_{false};
+    bool page_color_preview_available_{true};
+    [[nodiscard]] const std::shared_ptr<const color::IccPreview>&
+    effective_color_preview_owner() const noexcept {
+        return render_color_preview_ ? render_color_preview_ : color_preview_;
+    }
+    [[nodiscard]] const color::IccPreview* effective_color_preview() const noexcept {
+        return effective_color_preview_owner().get();
+    }
     void update_color_preview_options() noexcept;
     std::unique_ptr<CanvasFrameCache> canvas_frame_;
     std::string document_path_;
@@ -803,7 +943,10 @@ private:
     std::unique_ptr<tools::DimensionToolController> dimension_tool_;
 #ifdef _WIN32
     std::shared_ptr<ImportJobSession> import_job_;
+    std::unique_ptr<ImportPlacementSession> import_placement_;
+    bool last_import_succeeded_{false};
     std::shared_ptr<ExportJobSession> export_job_;
+    std::shared_ptr<RasterExportJobSession> raster_export_job_;
 #endif
     std::string pen_numeric_buffer_;
     std::string pen_numeric_length_;
@@ -817,6 +960,7 @@ private:
     int last_canvas_pointer_y_{0};
 
     std::string status_msg_{"Ready | Click canvas or tools to start vector editing"};
+    bool auto_accept_import_review_{false};
 
     // Hover Tooltip State
     TooltipInfo tooltip_{};
@@ -831,8 +975,20 @@ private:
     int previous_drawing_tool_{1};
 
     // Numeric Input State (Direct typing on Property Bar & Modals)
+    struct NumericInputContext {
+        const void* root_identity{};
+        uint64_t page_id{};
+        uint64_t document_revision{};
+        uint64_t view_generation{};
+        int active_tool{};
+        std::vector<document::ObjectId> selection_ids;
+        document::ObjectId contour_target{document::kInvalidObjectId};
+        uint64_t gradient_stop_id{};
+        bool valid{};
+    };
     NumericFieldId active_num_field_{NumericFieldId::None};
     std::string num_input_buffer_;
+    NumericInputContext numeric_input_context_{};
     std::vector<document::ObjectId> numeric_object_opacity_targets_;
     std::vector<document::ObjectId> numeric_paint_opacity_targets_;
     std::vector<document::ObjectId> numeric_effect_targets_;

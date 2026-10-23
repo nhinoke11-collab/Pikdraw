@@ -104,12 +104,24 @@ std::vector<GradientHandleHit> GradientTool::get_handles() const {
     for (size_t i = 0; i < draft_paint_->stops.size(); ++i) {
       handles.push_back({GradientHandleKind::Stop, i, mat.map_point({draft_paint_->stops[i].offset, 0.0})});
     }
+    for (size_t i = 0; i + 1 < draft_paint_->stops.size(); ++i) {
+      const double s0 = draft_paint_->stops[i].offset;
+      const double s1 = draft_paint_->stops[i + 1].offset;
+      const double mid_t = s0 + (s1 - s0) * draft_paint_->stops[i].midpoint_to_next;
+      handles.push_back({GradientHandleKind::Midpoint, i, mat.map_point({mid_t, 0.0})});
+    }
   } else {
     handles.push_back({GradientHandleKind::RadialCenter, 0, mat.map_point({0.0, 0.0})});
     handles.push_back({GradientHandleKind::RadialRadius, 0, mat.map_point({1.0, 0.0})});
     handles.push_back({GradientHandleKind::RadialAspect, 0, mat.map_point({0.0, 1.0})});
     for (size_t i = 0; i < draft_paint_->stops.size(); ++i) {
       handles.push_back({GradientHandleKind::Stop, i, mat.map_point({draft_paint_->stops[i].offset, 0.0})});
+    }
+    for (size_t i = 0; i + 1 < draft_paint_->stops.size(); ++i) {
+      const double s0 = draft_paint_->stops[i].offset;
+      const double s1 = draft_paint_->stops[i + 1].offset;
+      const double mid_t = s0 + (s1 - s0) * draft_paint_->stops[i].midpoint_to_next;
+      handles.push_back({GradientHandleKind::Midpoint, i, mat.map_point({mid_t, 0.0})});
     }
   }
   return handles;
@@ -132,10 +144,10 @@ GradientHandleHit GradientTool::hit_test_handles(geometry::Point2D object_pos, d
   return best_hit;
 }
 
-void GradientTool::on_pointer_down(geometry::Point2D object_pos, bool shift, bool ctrl) {
+void GradientTool::on_pointer_down(geometry::Point2D object_pos, bool shift, bool ctrl, double hit_tolerance_mm) {
   (void)shift;
   (void)ctrl;
-  const auto hit = hit_test_handles(object_pos, 3.0);
+  const auto hit = hit_test_handles(object_pos, hit_tolerance_mm);
   if (hit.kind != GradientHandleKind::None) {
     state_ = GradientToolState::DraggingHandle;
     active_handle_ = hit;
@@ -250,6 +262,20 @@ void GradientTool::update_handle_drag(geometry::Point2D current, bool shift) {
       // Keep sorted by offset while preserving stable IDs
       std::stable_sort(draft_paint_->stops.begin(), draft_paint_->stops.end(),
                        [](const auto &a, const auto &b) { return a.offset < b.offset; });
+    }
+    break;
+  }
+  case GradientHandleKind::Midpoint: {
+    const auto inv = mat.inverted();
+    if (inv && active_handle_.stop_index + 1 < draft_paint_->stops.size()) {
+      const auto q = inv->map_point(current);
+      const double s0 = draft_paint_->stops[active_handle_.stop_index].offset;
+      const double s1 = draft_paint_->stops[active_handle_.stop_index + 1].offset;
+      const double seg_len = s1 - s0;
+      if (seg_len > 1e-6) {
+        const double t = (q.x - s0) / seg_len;
+        draft_paint_->stops[active_handle_.stop_index].midpoint_to_next = std::clamp(t, 0.05, 0.95);
+      }
     }
     break;
   }

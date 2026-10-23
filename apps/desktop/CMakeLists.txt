@@ -23,9 +23,11 @@ add_library(pikdraw_desktop STATIC
     src/runtime/composition_root.cpp
     src/workflows/document_workflow.cpp
     src/workflows/document_workflow_color.cpp
+    src/workflows/document_workflow_units.cpp
     src/shell/native_window_document_color.cpp
     src/workflows/document_workflow_clipboard_transform.cpp
     src/workflows/document_workflow_group_transform.cpp
+    src/workflows/document_workflow_powerclip.cpp
     src/workflows/document_workflow_appearance.cpp
     src/workflows/document_workflow_effect_draft.cpp
     src/workflows/document_workflow_io_shaping.cpp
@@ -43,11 +45,13 @@ add_library(pikdraw_desktop STATIC
     src/tools/dimension_tool_controller.cpp
     src/shell/native_window.cpp
     src/shell/native_window_isolation_menus.cpp
+    src/shell/native_window_powerclip.cpp
     src/shell/native_window_settings.cpp
     src/shell/native_window_text_align.cpp
     src/shell/native_font_picker.cpp
     src/shell/native_window_text_property_bar_paint.cpp
     src/shell/native_window_dimension_property_bar.cpp
+    src/shell/native_window_dimension_panel.cpp
     src/shell/native_window_text_editor.cpp
     src/shell/native_window_text_input.cpp
     src/shell/native_window_text_overlay.cpp
@@ -76,11 +80,13 @@ add_library(pikdraw_desktop STATIC
     src/shell/native_window_style.cpp
     src/shell/native_window_style_events.cpp
     src/shell/native_window_style_paint.cpp
+    src/shell/native_window_gradient_ramp.cpp
     src/shell/native_window_spot_palette.cpp
     src/shell/native_window_color_profiles.cpp
     src/shell/native_style_dialog.cpp
     src/shell/native_window_files.cpp
     src/shell/native_window_svg_export.cpp
+    src/shell/native_window_raster_export.cpp
     src/shell/native_window_import.cpp
     src/shell/native_window_recovery.cpp
     src/shell/native_window_paint_icons.cpp
@@ -111,6 +117,7 @@ target_link_libraries(pikdraw_desktop PUBLIC
     pikdraw_vector
     pikdraw_interop
     pikdraw_automation
+    pikdraw_raster
 )
 
 if(WIN32)
@@ -153,6 +160,9 @@ endif()
 target_link_libraries(pikdraw PRIVATE
     pikdraw_desktop
 )
+if(WIN32)
+    target_link_libraries(pikdraw PRIVATE shell32)
+endif()
 
 # Native unit and lifecycle tests
 if(PIKDRAW_BUILD_TESTS)
@@ -181,6 +191,14 @@ if(PIKDRAW_BUILD_TESTS)
         pikdraw_desktop
     )
     add_test(NAME test_pikdraw_desktop_shell COMMAND test_pikdraw_desktop_shell)
+    add_test(NAME test_pikdraw_desktop_powerclip COMMAND test_pikdraw_desktop_shell --powerclip-only)
+    set_tests_properties(test_pikdraw_desktop_powerclip PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+    add_test(NAME test_pikdraw_tac_settings_ui COMMAND test_pikdraw_desktop_shell --tac-only)
+    set_tests_properties(test_pikdraw_tac_settings_ui PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+    add_test(NAME test_pikdraw_units_settings_ui COMMAND test_pikdraw_desktop_shell --units-settings-only)
+    set_tests_properties(test_pikdraw_units_settings_ui PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+    add_test(NAME test_pikdraw_clipboard_color_ui COMMAND test_pikdraw_desktop_shell --clipboard-color-only)
+    set_tests_properties(test_pikdraw_clipboard_color_ui PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
 
     add_executable(test_pikdraw_style_dialog
         tests/test_desktop_shell_style_dialog.cpp

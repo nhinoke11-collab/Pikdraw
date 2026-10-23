@@ -55,7 +55,7 @@ public:
     bool apply_with_token(const GradientSessionToken& token);
 
     // Canvas gesture forwarding
-    void on_pointer_down(geometry::Point2D object_pos, bool shift, bool ctrl);
+    void on_pointer_down(geometry::Point2D object_pos, bool shift, bool ctrl, double hit_tolerance_mm = 3.0);
     void on_pointer_move(geometry::Point2D object_pos, bool shift, bool ctrl);
     bool on_pointer_up(geometry::Point2D object_pos);
     void on_cancel();

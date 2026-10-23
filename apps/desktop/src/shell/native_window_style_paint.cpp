@@ -1,6 +1,9 @@
 #include "pikdraw/color/preview/color_transform.hpp"
+#include "pikdraw/color/preview/icc_preview.hpp"
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "native_window_length_input.hpp"
 #include "native_window_gradient_properties_paint.hpp"
+#include "native_window_gradient_ramp.hpp"
 #include "../tools/gradient_tool_controller.hpp"
 #include <algorithm>
 #include <iomanip>
@@ -25,7 +28,8 @@ int effect_row_height(const document::EffectParameters &parameters) {
 void paint_gradient_properties_panel(
     HDC dc, int inspector_x, int width, int top, int bottom, ThemeMode theme,
     UILanguage language, tools::GradientToolController& controller,
-    NativeWindow::NumericFieldId active_field, const std::string& numeric_buffer) {
+    NativeWindow::NumericFieldId active_field, const std::string& numeric_buffer,
+    const color::IccPreview* color_preview, geometry::units::LengthUnit display_length_unit) {
     using Field = NativeWindow::NumericFieldId;
     namespace Layout = GradientPropertiesLayout;
     const bool vi = language == UILanguage::Vietnamese;
@@ -145,6 +149,9 @@ void paint_gradient_properties_panel(
     }
 
     const auto& stops = paint ? paint->stops : summary.stops;
+    const auto preview_color = [&](const color::ColorValue& value) {
+        return (color_preview ? color_preview->convert(value) : color::to_preview_rgba(value)).to_device();
+    };
     size_t selected_index = 0;
     if (paint && !stops.empty()) {
         const auto selected = std::find_if(stops.begin(), stops.end(), [&](const auto& stop) {
@@ -152,37 +159,16 @@ void paint_gradient_properties_panel(
         });
         if (selected != stops.end()) selected_index = static_cast<size_t>(selected - stops.begin());
     }
-    label(vi ? L"ĐIỂM DỪNG MÀU" : L"COLOR STOPS", Layout::stops_header_top, accent);
+    label(vi ? L"DẢI MÀU CHUYỂN SẮC" : L"GRADIENT RAMP", Layout::ramp_header_top, accent);
     std::wstring page = stops.empty() ? L"0/0"
         : std::to_wstring(selected_index + 1) + L"/" + std::to_wstring(stops.size());
-    RECT page_rect{content_right - 64, y(Layout::stops_header_top), content_right, y(Layout::stops_header_top) + 20};
+    RECT page_rect{content_right - 64, y(Layout::ramp_header_top), content_right, y(Layout::ramp_header_top) + 20};
     DrawTextW(dc, page.c_str(), -1, &page_rect,
               DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-    const size_t first = stops.empty() ? 0 : std::min(selected_index > 0 ? selected_index - 1 : 0,
-                                                      stops.size() > Layout::visible_stop_rows
-                                                          ? stops.size() - Layout::visible_stop_rows : 0);
-    for (int row = 0; row < Layout::visible_stop_rows; ++row) {
-        const size_t index = first + static_cast<size_t>(row);
-        if (index >= stops.size()) break;
-        const auto& stop = stops[index];
-        const int row_top = y(Layout::stops_top + row * (Layout::stop_row_height + Layout::stop_row_gap));
-        RECT row_rect{content_left, row_top, content_right, row_top + Layout::stop_row_height};
-        HBRUSH row_brush = CreateSolidBrush(index == selected_index ? active_surface : surface);
-        FillRect(dc, &row_rect, row_brush);
-        DeleteObject(row_brush);
-        FrameRect(dc, &row_rect, static_cast<HBRUSH>(GetStockObject(GRAY_BRUSH)));
-        const auto rgba = color::to_preview_rgba(stop.color).to_device();
-        RECT swatch{content_left + 5, row_top + 4, content_left + 22, row_top + 20};
-        HBRUSH swatch_brush = CreateSolidBrush(RGB(rgba.r, rgba.g, rgba.b));
-        FillRect(dc, &swatch, swatch_brush);
-        DeleteObject(swatch_brush);
-        std::wostringstream row_text;
-        row_text << (vi ? L"Stop " : L"Stop ") << (index + 1) << L"   "
-                 << std::fixed << std::setprecision(1) << stop.offset * 100.0 << L"%";
-        RECT text_rect{content_left + 29, row_top, content_right - 4, row_top + Layout::stop_row_height};
-        SetTextColor(dc, stops_mixed ? muted : index == selected_index ? accent : text);
-        DrawTextW(dc, row_text.str().c_str(), -1, &text_rect,
-                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+    if (paint) {
+        const RECT ramp_rect{content_left, y(Layout::ramp_top), content_right, y(Layout::ramp_top + Layout::ramp_height)};
+        paint_gradient_ramp(dc, ramp_rect, *paint, presenter.selected_stop_id(), theme, color_preview);
     }
 
     const int action_width = (content_width - 18) / 4;
@@ -202,7 +188,7 @@ void paint_gradient_properties_panel(
     color::ColorValue selected_color = stops.empty()
         ? color::ColorValue{color::RGBColor{0.0, 0.0, 0.0, 1.0}}
         : stops[selected_index].color;
-    const auto color_rgba = color::to_preview_rgba(selected_color).to_device();
+    const auto color_rgba = preview_color(selected_color);
     RECT color_swatch{content_left, y(Layout::color_top) + 3,
                       content_left + 22, y(Layout::color_top) + 24};
     HBRUSH color_brush = CreateSolidBrush(RGB(color_rgba.r, color_rgba.g, color_rgba.b));
@@ -212,9 +198,6 @@ void paint_gradient_properties_panel(
            vi ? L"Màu điểm dừng…" : L"Stop color…", false,
            can_edit && !stops_mixed && !stops.empty());
 
-    const Field offset_field = Field::EffectOffsetX;
-    const Field opacity_field = Field::EffectOpacity;
-    const Field midpoint_field = Field::PolygonSides;
     const bool stop_enabled = can_edit && !stops_mixed && !stops.empty();
     auto percent_text = [&](double value) {
         std::wostringstream formatted;
@@ -222,56 +205,70 @@ void paint_gradient_properties_panel(
         return formatted.str();
     };
     const auto* selected_stop = stops.empty() ? nullptr : &stops[selected_index];
-    field(Layout::offset_top, vi ? L"Vị trí" : L"Offset", offset_field,
+    field(Layout::offset_top, vi ? L"Vị trí" : L"Offset", Field::GradientStopOffset,
           selected_stop ? percent_text(selected_stop->offset * 100.0) : L"—", stop_enabled);
-    field(Layout::opacity_top, vi ? L"Độ mờ" : L"Opacity", opacity_field,
+    field(Layout::opacity_top, vi ? L"Độ mờ" : L"Opacity", Field::GradientStopOpacity,
           selected_stop ? percent_text(selected_stop->opacity * 100.0) : L"—", stop_enabled);
     const bool midpoint_enabled = stop_enabled && selected_stop && selected_index + 1 < stops.size();
-    field(Layout::midpoint_top, vi ? L"Trung điểm" : L"Midpoint", midpoint_field,
+    field(Layout::midpoint_top, vi ? L"Trung điểm" : L"Midpoint", Field::GradientStopMidpoint,
           midpoint_enabled ? percent_text(selected_stop->midpoint_to_next * 100.0)
                            : stops_mixed ? (vi ? L"Hỗn hợp" : L"Mixed") : L"—",
           midpoint_enabled);
 
+    // Preset library bar
+    label(vi ? L"THƯ VIỆN MẪU CÓ SẴN" : L"PRESET LIBRARY", Layout::preset_header_top, accent);
+    const auto& presets = get_gradient_presets();
+    const int preset_count = static_cast<int>(presets.size());
+    const int p_gap = 4;
+    const int p_width = (content_width - (preset_count - 1) * p_gap) / std::max(1, preset_count);
+    for (int p_idx = 0; p_idx < preset_count; ++p_idx) {
+        const int px = content_left + p_idx * (p_width + p_gap);
+        button(px, Layout::presets_top, p_width,
+               vi ? presets[p_idx].name_vi : presets[p_idx].name_en,
+               false, can_edit, 24);
+    }
+
+    // Alignment and distribution actions
+    const int half = (content_width - 6) / 2;
+    button(content_left, Layout::align_top, half,
+           vi ? L"⇄ Đảo dải màu" : L"⇄ Reverse Stops", false,
+           can_edit && !stops_mixed, 24);
+    button(content_left + half + 6, Layout::align_top, half,
+           vi ? L"⇋ Phân bố đều" : L"⇋ Distribute", false,
+           can_edit && !stops_mixed && stops.size() > 2, 24);
+
     label(vi ? L"HÌNH HỌC" : L"GEOMETRY", Layout::geometry_heading_top, accent);
     const auto projection = presenter.geometry_projection();
-    auto measure = [&](double value, const wchar_t* unit) {
+    auto measure_angle = [&](double value) {
         std::wostringstream formatted;
-        formatted << std::fixed << std::setprecision(2) << value << unit;
+        formatted << std::fixed << std::setprecision(2) << value << L"°";
         return formatted.str();
     };
     const std::wstring mixed_geometry = vi ? L"Hỗn hợp · chọn một Path" : L"Mixed · select one Path";
-    field(Layout::angle_top, vi ? L"Góc" : L"Angle", Field::PolygonRotation,
-          geometry_mixed ? mixed_geometry : measure(projection.angle_degrees, L"°"),
+    field(Layout::angle_top, vi ? L"Góc" : L"Angle", Field::GradientAngle,
+          geometry_mixed ? mixed_geometry : measure_angle(projection.angle_degrees),
           can_edit && !geometry_mixed);
-    field(Layout::length_top, vi ? L"Chiều dài" : L"Length", Field::ObjectHeight,
-          geometry_mixed ? mixed_geometry : measure(projection.length_mm, L" mm"),
+    field(Layout::length_top, vi ? L"Chiều dài" : L"Length", Field::GradientLength,
+          geometry_mixed ? mixed_geometry : format_mm_display(projection.length_mm, display_length_unit),
           can_edit && !geometry_mixed);
-    field(Layout::center_x_top, vi ? L"Tâm X" : L"Center X", Field::ObjectX,
-          geometry_mixed ? mixed_geometry : measure(projection.center_mm.x, L" mm"),
+    field(Layout::center_x_top, vi ? L"Tâm X" : L"Center X", Field::GradientCenterX,
+          geometry_mixed ? mixed_geometry : format_mm_display(projection.center_mm.x, display_length_unit),
           can_edit && !geometry_mixed);
-    field(Layout::center_y_top, vi ? L"Tâm Y" : L"Center Y", Field::ObjectY,
-          geometry_mixed ? mixed_geometry : measure(projection.center_mm.y, L" mm"),
+    field(Layout::center_y_top, vi ? L"Tâm Y" : L"Center Y", Field::GradientCenterY,
+          geometry_mixed ? mixed_geometry : format_mm_display(projection.center_mm.y, display_length_unit),
           can_edit && !geometry_mixed);
 
-    RECT hint{content_left, y(Layout::hint_top), content_right, y(Layout::hint_top) + 34};
-    SetTextColor(dc, muted);
-    const wchar_t* hint_text = stops_mixed
-        ? (vi ? L"Stop hỗn hợp đang khóa. Sửa riêng từng Path để tránh ghi đè giá trị khác nhau."
-              : L"Mixed stops are locked. Edit one Path to avoid overwriting distinct values.")
-        : geometry_mixed
-            ? (vi ? L"Hình học hỗn hợp đang khóa để giữ góc, chiều dài và tâm riêng của từng Path."
-                  : L"Mixed geometry is locked to preserve each Path's angle, length and center.")
-        : (vi ? L"Enter xác nhận vào bản nháp · Apply ghi vào tài liệu · Esc hủy ô · Cancel bỏ bản nháp."
-              : L"Enter updates the draft · Apply writes to the document · Esc cancels a field.");
-    DrawTextW(dc, hint_text, -1, &hint, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+    button(content_left, Layout::hint_top, content_width,
+           vi ? L"⧈ Khớp dải màu theo khung đối tượng" : L"⧈ Fit Gradient to Bounds", false,
+           can_edit, 26);
+
     const int buttons_y = Layout::actions_top;
-    const int half = (content_width - 6) / 2;
     button(content_left, buttons_y, half, vi ? L"Áp dụng" : L"Apply", false,
            can_edit && presenter.is_dirty(), 28);
     button(content_left + half + 6, buttons_y, half, vi ? L"Hủy" : L"Cancel", false,
            can_edit && presenter.is_dirty(), 28);
     if (visible_bottom < buttons_y + 32)
-        label(vi ? L"Phóng to cửa sổ để thấy đủ thuộc tính" : L"Enlarge the window to see all properties",
+        label(vi ? L"Cuộn xuống để xem đầy đủ nút bấm" : L"Scroll down to see all buttons",
               buttons_y + 30, muted);
     (void)inspector_x;
     RestoreDC(dc, saved);
@@ -286,6 +283,11 @@ void NativeWindow::paint_style_inspector(HDC dc, int left, int top, int bottom) 
     SetViewportOrgEx(dc, 0, -style_inspector_scroll_, nullptr);
     const bool vi = language_ == UILanguage::Vietnamese;
     const bool dark = theme_ == ThemeMode::CyberDark;
+    const auto unit_suffix = display_length_unit_suffix_wide(display_length_unit_);
+    const auto sigma_x_label = std::wstring(L"σX ") + unit_suffix;
+    const auto sigma_y_label = std::wstring(L"σY ") + unit_suffix;
+    const auto offset_x_label = std::wstring(L"X ") + unit_suffix;
+    const auto offset_y_label = std::wstring(L"Y ") + unit_suffix;
     const COLORREF text = dark ? RGB(220, 230, 242) : RGB(30, 41, 59);
     const COLORREF muted = dark ? RGB(142, 159, 179) : RGB(100, 116, 139);
     const COLORREF accent = dark ? RGB(0, 242, 195) : RGB(0, 112, 88);
@@ -330,9 +332,10 @@ void NativeWindow::paint_style_inspector(HDC dc, int left, int top, int bottom) 
     label(title, 12, 0, 256, accent);
     if (const auto bounds = selection.bounds(*snapshot)) {
         std::wostringstream xy, wh;
-        xy << std::fixed << std::setprecision(2) << L"X " << bounds->x << L"   Y " << bounds->y << L" mm";
-        wh << std::fixed << std::setprecision(2) << L"W " << bounds->width << L"   H " << bounds->height
-           << L" mm";
+        xy << L"X " << format_mm_display(bounds->x, display_length_unit_, 5)
+           << L"  Y " << format_mm_display(bounds->y, display_length_unit_, 5);
+        wh << L"W " << format_mm_display(bounds->width, display_length_unit_, 5)
+           << L"  H " << format_mm_display(bounds->height, display_length_unit_, 5);
         label(xy.str(), 12, 27, 256, text);
         label(wh.str(), 12, 49, 256, text);
     } else {
@@ -343,7 +346,8 @@ void NativeWindow::paint_style_inspector(HDC dc, int left, int top, int bottom) 
     button({142, 82, 268, 110}, vi ? L"Đường viền · Stroke" : L"Stroke", palette_stroke_, style.all_paths);
     button({12, 120, 268, 164}, L"", false);
     const auto convert = [&](const color::ColorValue &value) {
-        return (color_preview_ ? color_preview_->convert(value) : color::to_preview_rgba(value)).to_device();
+        const auto* preview = effective_color_preview();
+        return (preview ? preview->convert(value) : color::to_preview_rgba(value)).to_device();
     };
     const auto device = convert(source_color);
     RECT swatch{left + 20, top + 128, left + 46, top + 156};
@@ -374,7 +378,7 @@ void NativeWindow::paint_style_inspector(HDC dc, int left, int top, int bottom) 
     else if (style.values.width_mm <= 0.0001)
         width << (vi ? L"Hairline (Nét mảnh)" : L"Hairline");
     else
-        width << std::fixed << std::setprecision(3) << style.values.width_mm << L" mm";
+        width << format_mm_display(style.values.width_mm, display_length_unit_, 5);
     button({12, 236, 268, 266}, width.str() + L"   ▾", false, style.all_paths);
 
     const auto paint_opacity_text = [&](bool stroke) {
@@ -467,7 +471,8 @@ void NativeWindow::paint_style_inspector(HDC dc, int left, int top, int bottom) 
     label(vi ? L"Trái: mục đang chọn · phải: Viền" : L"Left: active target · right: Stroke", 12, 480, 256,
           muted);
     button({12, 504, 268, 532}, vi ? L"Bảng màu Spot…" : L"Spot palette…", false);
-    label(color_preview_ && color_preview_->has_cmyk_transform()
+    const auto* preview = effective_color_preview();
+    label(preview && preview->has_cmyk_transform()
               ? L"CMYK preview: ICC → sRGB"
               : (vi ? L"CMYK preview: gần đúng · chưa có ICC" : L"CMYK preview: approximate · no ICC"),
           12, 534, 256, muted);
@@ -557,7 +562,8 @@ void NativeWindow::paint_style_inspector(HDC dc, int left, int top, int bottom) 
             DeleteObject(field_brush);
             const std::wstring shown = focused
                 ? utf8_to_wide(effect_draft->numeric_buffer) + L"|"
-                : parameter_text(value, percent);
+                : percent ? parameter_text(value, true)
+                          : format_mm_display(value, display_length_unit_, 5);
             RECT value_rect{input.left + 5, input.top, input.right - 5, input.bottom};
             SetTextColor(dc, focused ? accent : text);
             SelectObject(dc, font_mono_);
@@ -565,18 +571,18 @@ void NativeWindow::paint_style_inspector(HDC dc, int left, int top, int bottom) 
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
         };
         if (blur) {
-            draw_draft_numeric(12, draft_top + 40, L"σX mm",
+            draw_draft_numeric(12, draft_top + 40, sigma_x_label.c_str(),
                                DocumentWorkflow::EffectDraftField::SigmaX, blur->sigma_x_mm, false);
-            draw_draft_numeric(142, draft_top + 40, L"σY mm",
+            draw_draft_numeric(142, draft_top + 40, sigma_y_label.c_str(),
                                DocumentWorkflow::EffectDraftField::SigmaY, blur->sigma_y_mm, false);
         } else if (shadow) {
-            draw_draft_numeric(12, draft_top + 40, L"X mm",
+            draw_draft_numeric(12, draft_top + 40, offset_x_label.c_str(),
                                DocumentWorkflow::EffectDraftField::OffsetX, shadow->dx_mm, false);
-            draw_draft_numeric(142, draft_top + 40, L"Y mm",
+            draw_draft_numeric(142, draft_top + 40, offset_y_label.c_str(),
                                DocumentWorkflow::EffectDraftField::OffsetY, shadow->dy_mm, false);
-            draw_draft_numeric(12, draft_top + 68, L"σX mm",
+            draw_draft_numeric(12, draft_top + 68, sigma_x_label.c_str(),
                                DocumentWorkflow::EffectDraftField::SigmaX, shadow->sigma_x_mm, false);
-            draw_draft_numeric(142, draft_top + 68, L"σY mm",
+            draw_draft_numeric(142, draft_top + 68, sigma_y_label.c_str(),
                                DocumentWorkflow::EffectDraftField::SigmaY, shadow->sigma_y_mm, false);
             draw_draft_numeric(12, draft_top + 96, L"Opacity %",
                                DocumentWorkflow::EffectDraftField::Opacity, shadow->opacity * 100.0, true);
@@ -652,7 +658,8 @@ void NativeWindow::paint_style_inspector(HDC dc, int left, int top, int bottom) 
             else if (field_mixed)
                 shown = vi ? L"Khác nhau" : L"Mixed";
             else
-                shown = parameter_text(value, percent);
+                shown = percent ? parameter_text(value, true)
+                                : format_mm_display(value, display_length_unit_, 5);
             RECT value_rect{input.left + 5, input.top, input.right - 5, input.bottom};
             SetTextColor(dc, !available ? muted : focused ? accent : text);
             SelectObject(dc, font_mono_);
@@ -689,19 +696,19 @@ void NativeWindow::paint_style_inspector(HDC dc, int left, int top, int bottom) 
             const int first_row = node_top + 48;
             if (blur) {
                 const auto &blur_value = std::get<document::GaussianBlurEffect>(effect.parameters);
-                draw_numeric(12, first_row, L"σX mm", NumericFieldId::EffectSigmaX, index,
+                draw_numeric(12, first_row, sigma_x_label.c_str(), NumericFieldId::BlurSigmaX, index,
                              effect.mixed_sigma_x, blur_value.sigma_x_mm, false, can_edit_node);
-                draw_numeric(142, first_row, L"σY mm", NumericFieldId::EffectSigmaY, index,
+                draw_numeric(142, first_row, sigma_y_label.c_str(), NumericFieldId::BlurSigmaY, index,
                              effect.mixed_sigma_y, blur_value.sigma_y_mm, false, can_edit_node);
             } else {
                 const auto &shadow = std::get<document::DropShadowEffect>(effect.parameters);
-                draw_numeric(12, first_row, vi ? L"X mm" : L"X mm", NumericFieldId::EffectOffsetX,
+                draw_numeric(12, first_row, offset_x_label.c_str(), NumericFieldId::ShadowOffsetX,
                              index, effect.mixed_offset_x, shadow.dx_mm, false, can_edit_node);
-                draw_numeric(142, first_row, vi ? L"Y mm" : L"Y mm", NumericFieldId::EffectOffsetY,
+                draw_numeric(142, first_row, offset_y_label.c_str(), NumericFieldId::ShadowOffsetY,
                              index, effect.mixed_offset_y, shadow.dy_mm, false, can_edit_node);
-                draw_numeric(12, first_row + 30, L"σX mm", NumericFieldId::EffectSigmaX,
+                draw_numeric(12, first_row + 30, sigma_x_label.c_str(), NumericFieldId::ShadowFeatherX,
                              index, effect.mixed_sigma_x, shadow.sigma_x_mm, false, can_edit_node);
-                draw_numeric(142, first_row + 30, L"σY mm", NumericFieldId::EffectSigmaY,
+                draw_numeric(142, first_row + 30, sigma_y_label.c_str(), NumericFieldId::ShadowFeatherY,
                              index, effect.mixed_sigma_y, shadow.sigma_y_mm, false, can_edit_node);
                 label(vi ? L"Màu bóng" : L"Shadow color", 12, first_row + 62, 82, muted);
                 button({96, first_row + 62, 268, first_row + 88},
@@ -715,7 +722,7 @@ void NativeWindow::paint_style_inspector(HDC dc, int left, int top, int bottom) 
                 FillRect(dc, &color_swatch, shadow_brush);
                 DeleteObject(shadow_brush);
                 FrameRect(dc, &color_swatch, static_cast<HBRUSH>(GetStockObject(GRAY_BRUSH)));
-                draw_numeric(12, first_row + 92, L"Opacity %", NumericFieldId::EffectOpacity,
+                draw_numeric(12, first_row + 92, L"Opacity %", NumericFieldId::ShadowOpacity,
                              index, effect.mixed_opacity, shadow.opacity * 100.0, true, can_edit_node);
                 label(vi ? L"Hòa bóng lên nền" : L"Shadow blend with backdrop",
                       12, first_row + 122, 210, muted);

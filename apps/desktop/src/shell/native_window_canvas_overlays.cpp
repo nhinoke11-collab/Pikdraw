@@ -6,6 +6,7 @@
 #include "../tools/gradient_tool_controller.hpp"
 #include "../tools/dimension_tool_controller.hpp"
 #include "native_gdiplus_api.hpp"
+#include "native_window_length_input.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -410,11 +411,96 @@ void NativeWindow::paint_node_canvas_overlay(HDC dc, int width, int height) {
 
     AntialiasedOverlayRenderer aa(dc);
 
+    const auto outline_col = theme_ == ThemeMode::CyberDark ? RGB(0, 242, 195) : RGB(14, 165, 233);
+    const auto sel_seg_col = RGB(245, 158, 11); // Amber-500 for selected segment
+    const auto hov_seg_col = RGB(56, 189, 248); // Sky-400 for hovered segment
+
+    const auto draw_segment = [&](const document::EditableSubpath& sub, size_t i, COLORREF col, float width, BYTE alpha = 255) {
+        const size_t n = sub.nodes.size();
+        if (n == 0 || i >= sub.segments.size()) return;
+        const size_t next_i = (i + 1) % n;
+        const auto p0_w = tr.map_point(sub.nodes[i].anchor);
+        const auto p3_w = tr.map_point(sub.nodes[next_i].anchor);
+        const auto& seg = sub.segments[i];
+
+        if (seg.kind == document::PathSegmentKind::CubicBezier ||
+            sub.nodes[i].has_outgoing_handle || sub.nodes[next_i].has_incoming_handle) {
+            const auto [s_in, s_out] = document::editable_path_handles_for(sub, i);
+            const auto [e_in, e_out] = document::editable_path_handles_for(sub, next_i);
+            (void)s_in; (void)e_out;
+            const POINT p0 = screen(p0_w);
+            const POINT c1 = screen(tr.map_point(s_out));
+            const POINT c2 = screen(tr.map_point(e_in));
+            const POINT p3 = screen(p3_w);
+            aa.draw_bezier(static_cast<float>(p0.x), static_cast<float>(p0.y),
+                           static_cast<float>(c1.x), static_cast<float>(c1.y),
+                           static_cast<float>(c2.x), static_cast<float>(c2.y),
+                           static_cast<float>(p3.x), static_cast<float>(p3.y),
+                           col, width, alpha);
+        } else if (seg.kind == document::PathSegmentKind::QuadraticBezier) {
+            const auto q_w = tr.map_point(seg.quadratic_control);
+            const auto c1_w = p0_w + (q_w - p0_w) * (2.0 / 3.0);
+            const auto c2_w = p3_w + (q_w - p3_w) * (2.0 / 3.0);
+            const POINT p0 = screen(p0_w);
+            const POINT c1 = screen(c1_w);
+            const POINT c2 = screen(c2_w);
+            const POINT p3 = screen(p3_w);
+            aa.draw_bezier(static_cast<float>(p0.x), static_cast<float>(p0.y),
+                           static_cast<float>(c1.x), static_cast<float>(c1.y),
+                           static_cast<float>(c2.x), static_cast<float>(c2.y),
+                           static_cast<float>(p3.x), static_cast<float>(p3.y),
+                           col, width, alpha);
+        } else {
+            const POINT p0 = screen(p0_w);
+            const POINT p3 = screen(p3_w);
+            aa.draw_line(static_cast<float>(p0.x), static_cast<float>(p0.y),
+                         static_cast<float>(p3.x), static_cast<float>(p3.y),
+                         col, width, alpha);
+        }
+    };
+
+    // 0. Draw overall path outline when in Node Tool (highlighting editable path boundary)
+    if (active_tool_ == 11 && !is_dragging_node && !is_dragging_handle) {
+        for (const auto& sub : po.authoring_source->subpaths) {
+            for (size_t i = 0; i < sub.segments.size(); ++i) {
+                draw_segment(sub, i, outline_col, 1.4f, 210);
+            }
+        }
+    }
+
+    // 0b. Draw hovered segment highlight
+    const auto hover_seg = node_tool_->hover_segment();
+    if (hover_seg && !is_dragging_bend && !is_dragging_node && !is_dragging_handle) {
+        for (const auto& sub : po.authoring_source->subpaths) {
+            if (sub.id != hover_seg->first) continue;
+            for (size_t i = 0; i < sub.segments.size(); ++i) {
+                if (sub.segments[i].id == hover_seg->second) {
+                    draw_segment(sub, i, hov_seg_col, 2.5f, 255);
+                    break;
+                }
+            }
+        }
+    }
+
+    // 0c. Draw selected segment highlight
+    const auto sel_seg = node_tool_->selected_segment();
+    if (sel_seg && !is_dragging_bend) {
+        for (const auto& sub : po.authoring_source->subpaths) {
+            if (sub.id != sel_seg->first) continue;
+            for (size_t i = 0; i < sub.segments.size(); ++i) {
+                if (sub.segments[i].id == sel_seg->second) {
+                    draw_segment(sub, i, sel_seg_col, 3.0f, 255);
+                    break;
+                }
+            }
+        }
+    }
+
     // 1b. Live preview for Direct Segment Bending (BendSegment)
     if (is_dragging_bend) {
         const auto asd = *node_tool_->tool().active_segment_drag();
         const auto [c1_w, c2_w] = node_tool_->tool().current_segment_bend_handles();
-        const COLORREF bend_col = theme_ == ThemeMode::CyberDark ? RGB(0, 242, 195) : RGB(14, 165, 233);
+        const COLORREF bend_col = sel_seg_col;
         const COLORREF handle_col = RGB(0, 210, 210);
 
         const POINT p0 = screen(asd.p0_world);
@@ -422,11 +508,17 @@ void NativeWindow::paint_node_canvas_overlay(HDC dc, int width, int height) {
         const POINT c2 = screen(c2_w);
         const POINT p3 = screen(asd.p3_world);
 
+        // Draw ghost baseline for the segment being deformed
+        aa.draw_line(static_cast<float>(p0.x), static_cast<float>(p0.y),
+                     static_cast<float>(p3.x), static_cast<float>(p3.y),
+                     RGB(148, 163, 184), 1.0f, 120, kDashStyleDot);
+
+        // Draw real-time bending curve preview
         aa.draw_bezier(static_cast<float>(p0.x), static_cast<float>(p0.y),
                        static_cast<float>(c1.x), static_cast<float>(c1.y),
                        static_cast<float>(c2.x), static_cast<float>(c2.y),
                        static_cast<float>(p3.x), static_cast<float>(p3.y),
-                       bend_col, 1.2f);
+                       bend_col, 2.2f);
 
         aa.draw_line(static_cast<float>(p0.x), static_cast<float>(p0.y),
                      static_cast<float>(c1.x), static_cast<float>(c1.y),
@@ -469,10 +561,14 @@ void NativeWindow::paint_node_canvas_overlay(HDC dc, int width, int height) {
         if (active_cw) {
             const auto active_pos_w = active_cw->widget_position + active_cw->bisector * node_tool_->tool().current_corner_radius();
             const POINT wp = screen(active_pos_w);
-            std::wostringstream ss;
-            ss << L"R: " << std::fixed << std::setprecision(1) << node_tool_->tool().current_corner_radius() << L" mm";
-            const auto str = ss.str();
-            RECT badge_rc{wp.x + 14, wp.y - 12, wp.x + 95, wp.y + 12};
+            const std::wstring str = L"R: " + format_mm_display(
+                node_tool_->tool().current_corner_radius(), display_length_unit_, 5);
+            HFONT font = font_secondary_ ? font_secondary_ : font_be_vietnam_;
+            HGDIOBJ ofn = SelectObject(dc, font);
+            SIZE text_size{};
+            GetTextExtentPoint32W(dc, str.c_str(), static_cast<int>(str.size()), &text_size);
+            const int badge_width = std::max(81, static_cast<int>(text_size.cx) + 16);
+            RECT badge_rc{wp.x + 14, wp.y - 12, wp.x + 14 + badge_width, wp.y + 12};
             HBRUSH badge_bg = CreateSolidBrush(theme_ == ThemeMode::CyberDark ? RGB(15, 23, 42) : RGB(248, 250, 252));
             HPEN badge_pen = CreatePen(PS_SOLID, 1, RGB(14, 165, 233));
             HGDIOBJ obg = SelectObject(dc, badge_bg);
@@ -483,8 +579,6 @@ void NativeWindow::paint_node_canvas_overlay(HDC dc, int width, int height) {
             DeleteObject(badge_bg);
             DeleteObject(badge_pen);
 
-            HFONT font = font_secondary_ ? font_secondary_ : font_be_vietnam_;
-            HGDIOBJ ofn = SelectObject(dc, font);
             SetTextColor(dc, theme_ == ThemeMode::CyberDark ? RGB(56, 189, 248) : RGB(14, 165, 233));
             DrawTextW(dc, str.c_str(), -1, &badge_rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
             SelectObject(dc, ofn);
@@ -657,7 +751,7 @@ void NativeWindow::paint_node_canvas_overlay(HDC dc, int width, int height) {
 }
 
 void NativeWindow::paint_contour_canvas_overlay(HDC dc, const RECT& area) {
-    if (!contour_tool_ || !contour_tool_->active() || !contour_tool_->has_preview())
+    if (!contour_tool_ || !contour_tool_->active() || !contour_tool_->has_preview() || contour_applied_)
         return;
 
     const auto& res = contour_tool_->preview_result();
@@ -768,16 +862,35 @@ void NativeWindow::paint_dimension_canvas_overlay(HDC dc, const RECT& area) {
             LineTo(dc, sp.x + sz + 3, sp.y);
             MoveToEx(dc, sp.x, sp.y - sz - 2, nullptr);
             LineTo(dc, sp.x, sp.y + sz + 3);
+        } else if (st == tools::DimensionSnapType::Perpendicular) {
+            // Right-angle marker
+            MoveToEx(dc, sp.x, sp.y - sz, nullptr);
+            LineTo(dc, sp.x, sp.y);
+            LineTo(dc, sp.x + sz, sp.y);
+            MoveToEx(dc, sp.x + sz * 0.5, sp.y - sz * 0.5, nullptr);
+            LineTo(dc, sp.x + sz * 0.5, sp.y);
+        } else if (st == tools::DimensionSnapType::Quadrant) {
+            POINT pts[4] = { {sp.x, sp.y - sz}, {sp.x + sz, sp.y}, {sp.x, sp.y + sz}, {sp.x - sz, sp.y} };
+            Polygon(dc, pts, 4);
+        } else if (st == tools::DimensionSnapType::Intersection) {
+            MoveToEx(dc, sp.x - sz, sp.y - sz, nullptr);
+            LineTo(dc, sp.x + sz, sp.y + sz);
+            MoveToEx(dc, sp.x + sz, sp.y - sz, nullptr);
+            LineTo(dc, sp.x - sz, sp.y + sz);
         }
         SelectObject(dc, old_b);
         SelectObject(dc, old_p);
         DeleteObject(snap_pen);
 
+        const bool is_vi = language_ == UILanguage::Vietnamese;
         const wchar_t* snap_lbl = L"Snap";
-        if (st == tools::DimensionSnapType::Node) snap_lbl = L"Node";
-        else if (st == tools::DimensionSnapType::Midpoint) snap_lbl = L"Midpoint";
-        else if (st == tools::DimensionSnapType::Center) snap_lbl = L"Center";
-        else if (st == tools::DimensionSnapType::BoundingBoxCorner) snap_lbl = L"Góc / Box";
+        if (st == tools::DimensionSnapType::Node) snap_lbl = is_vi ? L"Đỉnh mút (Node)" : L"Node";
+        else if (st == tools::DimensionSnapType::Midpoint) snap_lbl = is_vi ? L"Trung điểm (Midpoint)" : L"Midpoint";
+        else if (st == tools::DimensionSnapType::Center) snap_lbl = is_vi ? L"Tâm (Center)" : L"Center";
+        else if (st == tools::DimensionSnapType::Perpendicular) snap_lbl = is_vi ? L"Vuông góc (Perp)" : L"Perpendicular";
+        else if (st == tools::DimensionSnapType::Quadrant) snap_lbl = is_vi ? L"1/4 Đ.tròn (Quad)" : L"Quadrant";
+        else if (st == tools::DimensionSnapType::Intersection) snap_lbl = is_vi ? L"Giao điểm (Int)" : L"Intersection";
+        else if (st == tools::DimensionSnapType::BoundingBoxCorner) snap_lbl = is_vi ? L"Góc khung bao" : L"Box Corner";
 
         ensure_ui_fonts();
         SelectObject(dc, font_secondary_);
@@ -935,26 +1048,92 @@ void NativeWindow::paint_gradient_canvas_overlay(HDC dc, const RECT& area) {
         DeleteObject(axis_pen);
     }
 
-    // Draw handles
-    HBRUSH handle_brush = CreateSolidBrush(RGB(255, 255, 255));
-    HPEN handle_pen = CreatePen(PS_SOLID, 2, RGB(0, 242, 195));
-    SelectObject(dc, handle_brush);
-    SelectObject(dc, handle_pen);
+    const auto preview_ptr = effective_color_preview();
+    const auto to_preview_cr = [&](const color::ColorValue& cv) -> COLORREF {
+        const auto preview = preview_ptr ? preview_ptr->convert(cv) : color::to_preview_rgba(cv);
+        const auto dev = preview.to_device();
+        return RGB(dev.r, dev.g, dev.b);
+    };
+    const uint64_t selected_stop_id = gradient_tool_->presenter().selected_stop_id();
+
+    auto draw_diamond = [&](POINT pt, int r, COLORREF fill_cr, COLORREF border_cr) {
+        POINT pts[4] = {
+            {pt.x, pt.y - r},
+            {pt.x + r, pt.y},
+            {pt.x, pt.y + r},
+            {pt.x - r, pt.y}
+        };
+        HBRUSH br = CreateSolidBrush(fill_cr);
+        HPEN pen = CreatePen(PS_SOLID, 1, border_cr);
+        auto old_br = SelectObject(dc, br);
+        auto old_pen = SelectObject(dc, pen);
+        Polygon(dc, pts, 4);
+        SelectObject(dc, old_br);
+        SelectObject(dc, old_pen);
+        DeleteObject(pen);
+        DeleteObject(br);
+    };
 
     for (const auto& h : handles) {
         const auto pt = screen(h.position_object);
         if (h.kind == vector::tools::GradientHandleKind::LinearStart ||
             h.kind == vector::tools::GradientHandleKind::LinearEnd ||
             h.kind == vector::tools::GradientHandleKind::RadialCenter ||
-            h.kind == vector::tools::GradientHandleKind::RadialRadius) {
-            Rectangle(dc, pt.x - 4, pt.y - 4, pt.x + 5, pt.y + 5);
-        } else {
-            Ellipse(dc, pt.x - 3, pt.y - 3, pt.x + 4, pt.y + 4);
+            h.kind == vector::tools::GradientHandleKind::RadialRadius ||
+            h.kind == vector::tools::GradientHandleKind::RadialAspect) {
+            COLORREF fill_col = RGB(255, 255, 255);
+            if (h.kind == vector::tools::GradientHandleKind::LinearStart && !paint->stops.empty()) {
+                fill_col = to_preview_cr(paint->stops.front().color);
+            } else if (h.kind == vector::tools::GradientHandleKind::LinearEnd && !paint->stops.empty()) {
+                fill_col = to_preview_cr(paint->stops.back().color);
+            }
+            if (h.kind == vector::tools::GradientHandleKind::RadialAspect) {
+                draw_diamond(pt, 5, fill_col, RGB(0, 242, 195));
+            } else {
+                HBRUSH br = CreateSolidBrush(fill_col);
+                HPEN pen = CreatePen(PS_SOLID, 2, RGB(0, 242, 195));
+                auto old_br = SelectObject(dc, br);
+                auto old_pen = SelectObject(dc, pen);
+                Rectangle(dc, pt.x - 5, pt.y - 5, pt.x + 6, pt.y + 6);
+                SelectObject(dc, old_br);
+                SelectObject(dc, old_pen);
+                DeleteObject(pen);
+                DeleteObject(br);
+            }
+        } else if (h.kind == vector::tools::GradientHandleKind::Midpoint) {
+            draw_diamond(pt, 5, RGB(245, 245, 250), RGB(20, 24, 30));
+        } else if (h.kind == vector::tools::GradientHandleKind::Stop) {
+            const bool is_selected = h.stop_index < paint->stops.size() &&
+                                     paint->stops[h.stop_index].id == selected_stop_id;
+            if (is_selected) {
+                HPEN halo_pen = CreatePen(PS_SOLID, 2, RGB(0, 242, 195));
+                HBRUSH null_br = static_cast<HBRUSH>(GetStockObject(NULL_BRUSH));
+                auto old_pen = SelectObject(dc, halo_pen);
+                auto old_br = SelectObject(dc, null_br);
+                Ellipse(dc, pt.x - 8, pt.y - 8, pt.x + 9, pt.y + 9);
+                SelectObject(dc, old_br);
+                SelectObject(dc, old_pen);
+                DeleteObject(halo_pen);
+            }
+            COLORREF stop_col = h.stop_index < paint->stops.size()
+                ? to_preview_cr(paint->stops[h.stop_index].color)
+                : RGB(255, 255, 255);
+            HBRUSH br = CreateSolidBrush(stop_col);
+            HPEN pen = CreatePen(PS_SOLID, 2, RGB(255, 255, 255));
+            auto old_br = SelectObject(dc, br);
+            auto old_pen = SelectObject(dc, pen);
+            Ellipse(dc, pt.x - 5, pt.y - 5, pt.x + 6, pt.y + 6);
+            HPEN border_pen = CreatePen(PS_SOLID, 1, RGB(30, 35, 45));
+            SelectObject(dc, border_pen);
+            SelectObject(dc, GetStockObject(NULL_BRUSH));
+            Ellipse(dc, pt.x - 5, pt.y - 5, pt.x + 6, pt.y + 6);
+            SelectObject(dc, old_br);
+            SelectObject(dc, old_pen);
+            DeleteObject(border_pen);
+            DeleteObject(pen);
+            DeleteObject(br);
         }
     }
-
-    DeleteObject(handle_pen);
-    DeleteObject(handle_brush);
     RestoreDC(dc, saved);
 }
 
@@ -970,6 +1149,8 @@ void NativeWindow::paint_canvas_guidelines(HDC dc, int width, int height) {
     const COLORREF col_guide = is_dark ? RGB(0, 242, 255) : RGB(2, 132, 199);
     const COLORREF col_drag_guide = is_dark ? RGB(56, 189, 248) : RGB(14, 165, 233);
     const COLORREF col_tag_bg = is_dark ? RGB(15, 23, 42) : RGB(241, 245, 249);
+    const COLORREF col_sel_guide = is_dark ? RGB(248, 113, 113) : RGB(220, 38, 38);
+    const COLORREF col_sel_tag_bg = is_dark ? RGB(69, 10, 10) : RGB(254, 226, 226);
 
     int saved = SaveDC(dc);
     IntersectClipRect(dc, area.left, area.top, area.right, area.bottom);
@@ -977,12 +1158,18 @@ void NativeWindow::paint_canvas_guidelines(HDC dc, int width, int height) {
     // 1. Draw existing guidelines if show_guidelines_ is true
     if (show_guidelines_) {
         HPEN guide_pen = CreatePen(PS_DOT, 1, col_guide);
+        HPEN sel_guide_pen = CreatePen(PS_SOLID, 2, col_sel_guide);
         HGDIOBJ old_pen = SelectObject(dc, guide_pen);
         HFONT guide_font = font_secondary_ ? font_secondary_ : font_be_vietnam_;
         HGDIOBJ old_font = SelectObject(dc, guide_font);
         SetBkMode(dc, TRANSPARENT);
 
-        for (const auto& g : guidelines_) {
+        for (size_t i = 0; i < guidelines_.size(); ++i) {
+            const auto& g = guidelines_[i];
+            const bool is_sel = (static_cast<int>(i) == selected_guideline_index_);
+            SelectObject(dc, is_sel ? sel_guide_pen : guide_pen);
+            const COLORREF active_col = is_sel ? col_sel_guide : col_guide;
+            const COLORREF active_tag_bg = is_sel ? col_sel_tag_bg : col_tag_bg;
             if (g.orientation == GuidelineOrientation::Horizontal) {
                 const auto screen_pt = camera.world_to_screen({0.0, g.position_mm});
                 const int sy = area.top + static_cast<int>(std::lround(screen_pt.y));
@@ -991,15 +1178,18 @@ void NativeWindow::paint_canvas_guidelines(HDC dc, int width, int height) {
                     LineTo(dc, area.right, sy);
 
                     // Measurement tag near left ruler
-                    std::wostringstream wss;
-                    wss << L"Y " << std::fixed << std::setprecision(1) << g.position_mm << L"mm";
-                    std::wstring tag = wss.str();
-
-                    RECT rc_tag = { area.left + 4, sy - 14, area.left + 78, sy - 1 };
-                    HBRUSH tag_br = CreateSolidBrush(col_tag_bg);
+                    const std::wstring tag = L"Y " + format_mm_display(
+                        g.position_mm, display_length_unit_, 5);
+                    SIZE tag_size{};
+                    GetTextExtentPoint32W(dc, tag.c_str(), static_cast<int>(tag.size()), &tag_size);
+                    const int max_tag_width = std::max(1, static_cast<int>(area.right - area.left - 8));
+                    const int tag_width = std::min(max_tag_width, static_cast<int>(tag_size.cx) + 8);
+                    RECT rc_tag = { area.left + 4, sy - 14,
+                                    area.left + 4 + tag_width, sy - 1 };
+                    HBRUSH tag_br = CreateSolidBrush(active_tag_bg);
                     FillRect(dc, &rc_tag, tag_br);
                     DeleteObject(tag_br);
-                    SetTextColor(dc, col_guide);
+                    SetTextColor(dc, active_col);
                     DrawTextW(dc, tag.c_str(), -1, &rc_tag, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
                 }
             } else {
@@ -1010,15 +1200,22 @@ void NativeWindow::paint_canvas_guidelines(HDC dc, int width, int height) {
                     LineTo(dc, sx, area.bottom);
 
                     // Measurement tag near top ruler
-                    std::wostringstream wss;
-                    wss << L"X " << std::fixed << std::setprecision(1) << g.position_mm << L"mm";
-                    std::wstring tag = wss.str();
-
-                    RECT rc_tag = { sx + 2, area.top + 2, sx + 76, area.top + 15 };
-                    HBRUSH tag_br = CreateSolidBrush(col_tag_bg);
+                    const std::wstring tag = L"X " + format_mm_display(
+                        g.position_mm, display_length_unit_, 5);
+                    SIZE tag_size{};
+                    GetTextExtentPoint32W(dc, tag.c_str(), static_cast<int>(tag.size()), &tag_size);
+                    const int max_tag_width = std::max(1, static_cast<int>(area.right - area.left - 8));
+                    const int tag_width = std::min(max_tag_width, static_cast<int>(tag_size.cx) + 8);
+                    const int max_tag_left = std::max(static_cast<int>(area.left + 2),
+                                                      static_cast<int>(area.right - 2) - tag_width);
+                    const int tag_left = std::clamp(
+                        static_cast<int>(sx) + 2, static_cast<int>(area.left) + 2, max_tag_left);
+                    RECT rc_tag = { tag_left, area.top + 2,
+                                    tag_left + tag_width, area.top + 15 };
+                    HBRUSH tag_br = CreateSolidBrush(active_tag_bg);
                     FillRect(dc, &rc_tag, tag_br);
                     DeleteObject(tag_br);
-                    SetTextColor(dc, col_guide);
+                    SetTextColor(dc, active_col);
                     DrawTextW(dc, tag.c_str(), -1, &rc_tag, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
                 }
             }
@@ -1027,6 +1224,7 @@ void NativeWindow::paint_canvas_guidelines(HDC dc, int width, int height) {
         SelectObject(dc, old_font);
         SelectObject(dc, old_pen);
         DeleteObject(guide_pen);
+        DeleteObject(sel_guide_pen);
     }
 
     // 2. Draw live dragging guideline if currently dragging from ruler
@@ -1046,7 +1244,7 @@ void NativeWindow::paint_canvas_guidelines(HDC dc, int width, int height) {
                 // Live floating coordinate badge
                 std::wostringstream wss;
                 wss << (language_ == UILanguage::Vietnamese ? L"Gióng ngang Y: " : L"Horiz Guide Y: ")
-                    << std::fixed << std::setprecision(1) << drag_guideline_pos_mm_ << L" mm";
+                    << format_mm_display(drag_guideline_pos_mm_, display_length_unit_, 5);
                 std::wstring badge = wss.str();
 
                 RECT rc_calc = {0, 0, 0, 0};
@@ -1083,7 +1281,7 @@ void NativeWindow::paint_canvas_guidelines(HDC dc, int width, int height) {
                 // Live floating coordinate badge
                 std::wostringstream wss;
                 wss << (language_ == UILanguage::Vietnamese ? L"Gióng dọc X: " : L"Vert Guide X: ")
-                    << std::fixed << std::setprecision(1) << drag_guideline_pos_mm_ << L" mm";
+                    << format_mm_display(drag_guideline_pos_mm_, display_length_unit_, 5);
                 std::wstring badge = wss.str();
 
                 RECT rc_calc = {0, 0, 0, 0};
@@ -1142,8 +1340,13 @@ void NativeWindow::paint_canvas_rulers(HDC dc, int width, int height) {
         const double major = unit * power;
         return std::pair{std::max(major / 5.0, 1e-9), major};
     };
-    const auto [minor_x, major_x] = choose_step(visible_width);
-    const auto [minor_y, major_y] = choose_step(visible_height);
+    const auto unit_scale = geometry::units::millimeters_per_unit(display_length_unit_).value_or(1.0);
+    const auto [minor_x_unit, major_x_unit] = choose_step(visible_width / unit_scale);
+    const auto [minor_y_unit, major_y_unit] = choose_step(visible_height / unit_scale);
+    const double minor_x = minor_x_unit * unit_scale;
+    const double major_x = major_x_unit * unit_scale;
+    const double minor_y = minor_y_unit * unit_scale;
+    const double major_y = major_y_unit * unit_scale;
     const auto& page = root().document().current_snapshot()->page();
 
     const COLORREF base = theme_ == ThemeMode::CyberDark ? RGB(15, 23, 34) : RGB(226, 232, 240);
@@ -1165,6 +1368,9 @@ void NativeWindow::paint_canvas_rulers(HDC dc, int width, int height) {
     HGDIOBJ old_font = SelectObject(dc, ruler_font);
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, text);
+    const auto unit_label = NativeWindow::utf8_to_wide(
+        std::string(display_length_unit_suffix(display_length_unit_)));
+    TextOutW(dc, 55, 104, unit_label.c_str(), static_cast<int>(unit_label.size()));
     const double left_world = camera.screen_to_world({0.0f, 0.0f}).x;
     const double right_world = camera.screen_to_world(
         {static_cast<float>(area.right - area.left), 0.0f}).x;
@@ -1177,7 +1383,8 @@ void NativeWindow::paint_canvas_rulers(HDC dc, int width, int height) {
         MoveToEx(dc, x, area.top - (is_major ? 10 : 5), nullptr);
         LineTo(dc, x, area.top - 1);
         if (is_major && x >= area.left && x < area.right - 26) {
-            const auto label = std::to_wstring(static_cast<long long>(std::llround(value)));
+            const auto label = NativeWindow::utf8_to_wide(
+                format_ruler_value_mm(value, display_length_unit_, major_x_unit));
             TextOutW(dc, x + 2, 103, label.c_str(), static_cast<int>(label.size()));
         }
     }
@@ -1199,7 +1406,8 @@ void NativeWindow::paint_canvas_rulers(HDC dc, int width, int height) {
         MoveToEx(dc, area.left - (is_major ? 10 : 5), y, nullptr);
         LineTo(dc, area.left - 1, y);
         if (is_major && y >= area.top + 14 && y < area.bottom - 8) {
-            const auto label = std::to_wstring(static_cast<long long>(std::llround(value)));
+            const auto label = NativeWindow::utf8_to_wide(
+                format_ruler_value_mm(value, display_length_unit_, major_y_unit));
             TextOutW(dc, 54, y + 3, label.c_str(), static_cast<int>(label.size()));
         }
     }

@@ -117,20 +117,29 @@ bool GradientToolController::apply_with_token(const GradientSessionToken& token)
     return apply();
 }
 
-void GradientToolController::on_pointer_down(geometry::Point2D object_pos, bool shift, bool ctrl) {
+void GradientToolController::on_pointer_down(geometry::Point2D object_pos, bool shift, bool ctrl, double hit_tolerance_mm) {
     status_message_.clear();
-    tool_->on_pointer_down(object_pos, shift, ctrl);
+    if (presenter_.draft_paint()) {
+        tool_->set_draft_paint(*presenter_.draft_paint());
+    }
+    tool_->on_pointer_down(object_pos, shift, ctrl, hit_tolerance_mm);
 }
 
 void GradientToolController::on_pointer_move(geometry::Point2D object_pos, bool shift, bool ctrl) {
     tool_->on_pointer_move(object_pos, shift, ctrl);
+    if (tool_->is_editing() && tool_->draft_paint()) {
+        presenter_.set_draft_paint(*tool_->draft_paint());
+    }
 }
 
 bool GradientToolController::on_pointer_up(geometry::Point2D object_pos) {
     const bool committed = tool_->on_pointer_up(object_pos);
     if (committed) {
         last_document_revision_ = document_.revision();
+        presenter_.mark_clean();
         sync_presenter_from_document();
+    } else if (tool_->draft_paint()) {
+        presenter_.set_draft_paint(*tool_->draft_paint());
     }
     return committed;
 }
