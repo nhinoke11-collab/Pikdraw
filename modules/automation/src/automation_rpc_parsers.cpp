@@ -21,6 +21,13 @@ bool only_fields(const JsonValue& value, std::initializer_list<std::string_view>
     return true;
 }
 
+std::optional<geometry::units::LengthUnit> parse_physical_length_unit(
+    std::string_view suffix) noexcept {
+    const auto unit = geometry::units::parse_length_unit_suffix(suffix);
+    if (!unit || !geometry::units::is_physical_length_unit(*unit)) return std::nullopt;
+    return unit;
+}
+
 JsonValue rect_json(const geometry::Rect2D& bounds) {
     return JsonValue::Object{{"x_mm", bounds.x}, {"y_mm", bounds.y},
                              {"width_mm", bounds.width}, {"height_mm", bounds.height}};
@@ -335,20 +342,51 @@ bool parse_object_operations(const JsonValue* input, uint64_t epoch, uint64_t re
             if (*op == "object.transform") {
                 const std::set<std::string, std::less<>> allowed{
                     "op", "target_ids", "translate_x_mm", "translate_y_mm", "scale_x", "scale_y",
-                    "rotation_degrees", "pivot_x_mm", "pivot_y_mm"};
+                    "rotation_degrees", "pivot_x_mm", "pivot_y_mm", "translate_x", "translate_y",
+                    "pivot_x", "pivot_y", "length_unit"};
                 if (!reject_unknown(allowed)) return false;
                 if (!parse_target_ids(value, target_ids, 256, target_error)) {
                     diagnostic = prefix + target_error; return false;
                 }
+                const bool typed_lengths = field(value, "translate_x") || field(value, "translate_y") ||
+                    field(value, "pivot_x") || field(value, "pivot_y");
+                const bool mm_lengths = field(value, "translate_x_mm") || field(value, "translate_y_mm") ||
+                    field(value, "pivot_x_mm") || field(value, "pivot_y_mm");
+                const auto* unit_text = string_field(value, "length_unit");
+                const bool has_unit = field(value, "length_unit") != nullptr;
+                if (typed_lengths != has_unit || (typed_lengths && mm_lengths)) {
+                    diagnostic = prefix + "typed transform lengths require length_unit and cannot mix with *_mm fields.";
+                    return false;
+                }
+                auto unit = geometry::units::LengthUnit::Millimeter;
+                if (typed_lengths) {
+                    const auto parsed = unit_text ? parse_physical_length_unit(*unit_text) : std::nullopt;
+                    if (!parsed) {
+                        diagnostic = prefix + "length_unit must be mm, cm, m, in, ft, yd, pt or pc; px needs DPI.";
+                        return false;
+                    }
+                    unit = *parsed;
+                }
                 TransformObjects transform;
                 transform.target_ids = std::move(target_ids);
-                if (!read_optional_number("translate_x_mm", transform.translate_x_mm) ||
-                    !read_optional_number("translate_y_mm", transform.translate_y_mm) ||
+                const auto read_length = [&](std::string_view mm_key, std::string_view typed_key, double& target) {
+                    if (!typed_lengths) return read_optional_number(mm_key, target);
+                    if (!field(value, typed_key)) return true;
+                    const auto* number = number_field(value, typed_key);
+                    if (!number || !std::isfinite(*number) ||
+                        !geometry::units::convert_length_to_mm(*number, unit, target)) {
+                        diagnostic = prefix + std::string(typed_key) + " must be a finite length in length_unit.";
+                        return false;
+                    }
+                    return true;
+                };
+                if (!read_length("translate_x_mm", "translate_x", transform.translate_x_mm) ||
+                    !read_length("translate_y_mm", "translate_y", transform.translate_y_mm) ||
                     !read_optional_number("scale_x", transform.scale_x) ||
                     !read_optional_number("scale_y", transform.scale_y) ||
                     !read_optional_number("rotation_degrees", transform.rotation_degrees) ||
-                    !read_optional_number("pivot_x_mm", transform.pivot_mm.x) ||
-                    !read_optional_number("pivot_y_mm", transform.pivot_mm.y)) return false;
+                    !read_length("pivot_x_mm", "pivot_x", transform.pivot_mm.x) ||
+                    !read_length("pivot_y_mm", "pivot_y", transform.pivot_mm.y)) return false;
                 if (!std::isfinite(transform.translate_x_mm) || !std::isfinite(transform.translate_y_mm) ||
                     !std::isfinite(transform.scale_x) || !std::isfinite(transform.scale_y) ||
                     !std::isfinite(transform.rotation_degrees) || !transform.pivot_mm.is_finite()) {
@@ -360,15 +398,44 @@ bool parse_object_operations(const JsonValue* input, uint64_t epoch, uint64_t re
             }
             if (*op == "object.duplicate") {
                 const std::set<std::string, std::less<>> allowed{
-                    "op", "target_ids", "offset_x_mm", "offset_y_mm"};
+                    "op", "target_ids", "offset_x_mm", "offset_y_mm",
+                    "offset_x", "offset_y", "length_unit"};
                 if (!reject_unknown(allowed)) return false;
                 if (!parse_target_ids(value, target_ids, 64, target_error)) {
                     diagnostic = prefix + target_error; return false;
                 }
+                const bool typed_lengths = field(value, "offset_x") || field(value, "offset_y");
+                const bool mm_lengths = field(value, "offset_x_mm") || field(value, "offset_y_mm");
+                const auto* unit_text = string_field(value, "length_unit");
+                const bool has_unit = field(value, "length_unit") != nullptr;
+                if (typed_lengths != has_unit || (typed_lengths && mm_lengths)) {
+                    diagnostic = prefix + "typed duplicate offsets require length_unit and cannot mix with *_mm fields.";
+                    return false;
+                }
+                auto unit = geometry::units::LengthUnit::Millimeter;
+                if (typed_lengths) {
+                    const auto parsed = unit_text ? parse_physical_length_unit(*unit_text) : std::nullopt;
+                    if (!parsed) {
+                        diagnostic = prefix + "length_unit must be mm, cm, m, in, ft, yd, pt or pc; px needs DPI.";
+                        return false;
+                    }
+                    unit = *parsed;
+                }
                 DuplicateObjects duplicate;
                 duplicate.target_ids = std::move(target_ids);
-                if (!read_optional_number("offset_x_mm", duplicate.offset_x_mm) ||
-                    !read_optional_number("offset_y_mm", duplicate.offset_y_mm)) return false;
+                const auto read_offset = [&](std::string_view mm_key, std::string_view typed_key, double& target) {
+                    if (!typed_lengths) return read_optional_number(mm_key, target);
+                    if (!field(value, typed_key)) return true;
+                    const auto* number = number_field(value, typed_key);
+                    if (!number || !std::isfinite(*number) ||
+                        !geometry::units::convert_length_to_mm(*number, unit, target)) {
+                        diagnostic = prefix + std::string(typed_key) + " must be a finite length in length_unit.";
+                        return false;
+                    }
+                    return true;
+                };
+                if (!read_offset("offset_x_mm", "offset_x", duplicate.offset_x_mm) ||
+                    !read_offset("offset_y_mm", "offset_y", duplicate.offset_y_mm)) return false;
                 if (!std::isfinite(duplicate.offset_x_mm) || !std::isfinite(duplicate.offset_y_mm)) {
                     diagnostic = prefix + "duplicate offsets must be finite numbers."; return false;
                 }
@@ -388,7 +455,8 @@ bool parse_object_operations(const JsonValue* input, uint64_t epoch, uint64_t re
             }
             if (*op == "object.style") {
                 const std::set<std::string, std::less<>> allowed{
-                    "op", "target_ids", "fill", "stroke", "stroke_width_mm"};
+                    "op", "target_ids", "fill", "stroke", "stroke_width_mm",
+                    "stroke_width", "length_unit"};
                 if (!reject_unknown(allowed)) return false;
                 if (!parse_target_ids(value, target_ids, 256, target_error)) {
                     diagnostic = prefix + target_error; return false;
@@ -410,8 +478,26 @@ bool parse_object_operations(const JsonValue* input, uint64_t epoch, uint64_t re
                     style.stroke = stroke;
                 }
                 double stroke_width = 0.0;
-                if (!read_optional_number("stroke_width_mm", stroke_width)) return false;
-                if (field(value, "stroke_width_mm")) style.stroke_width_mm = stroke_width;
+                const bool typed_width = field(value, "stroke_width") != nullptr;
+                const bool has_unit = field(value, "length_unit") != nullptr;
+                if (typed_width != has_unit || (typed_width && field(value, "stroke_width_mm"))) {
+                    diagnostic = prefix + "typed stroke_width requires length_unit and cannot mix with stroke_width_mm.";
+                    return false;
+                }
+                if (typed_width) {
+                    const auto* unit_text = string_field(value, "length_unit");
+                    const auto unit = unit_text ? parse_physical_length_unit(*unit_text) : std::nullopt;
+                    const auto* number = number_field(value, "stroke_width");
+                    if (!unit || !number || !std::isfinite(*number) ||
+                        !geometry::units::convert_length_to_mm(*number, *unit, stroke_width)) {
+                        diagnostic = prefix + "length_unit and stroke_width must be valid finite physical lengths; px needs DPI.";
+                        return false;
+                    }
+                    style.stroke_width_mm = stroke_width;
+                } else {
+                    if (!read_optional_number("stroke_width_mm", stroke_width)) return false;
+                    if (field(value, "stroke_width_mm")) style.stroke_width_mm = stroke_width;
+                }
                 parsed_operations.emplace_back(std::move(style));
                 parsed_client_refs.emplace_back();
                 continue;
@@ -500,15 +586,16 @@ bool parse_object_operations(const JsonValue* input, uint64_t epoch, uint64_t re
         }
 
         const std::set<std::string, std::less<>> common_create_fields{
-            "op", "client_ref", "name", "layer_index", "fill", "stroke", "stroke_width_mm"};
+            "op", "client_ref", "name", "layer_index", "fill", "stroke",
+            "stroke_width_mm", "stroke_width", "length_unit"};
         std::set<std::string, std::less<>> allowed = common_create_fields;
         if (*op == "object.create_rectangle" || *op == "object.create_ellipse") {
-            allowed.insert({"x_mm", "y_mm", "width_mm", "height_mm"});
+            allowed.insert({"x_mm", "y_mm", "width_mm", "height_mm", "x", "y", "width", "height"});
         } else if (*op == "object.create_text") {
             allowed.insert({"x_mm", "y_mm", "text", "font_family", "font_postscript_name",
-                "font_weight", "font_italic", "font_size_pt", "alignment", "underline"});
+                "font_weight", "font_italic", "font_size_pt", "alignment", "underline", "x", "y"});
         } else {
-            allowed.insert({"points_mm", "closed"});
+            allowed.insert({"points_mm", "points", "closed"});
         }
         if (!reject_unknown(allowed)) return false;
 
@@ -520,6 +607,40 @@ bool parse_object_operations(const JsonValue* input, uint64_t epoch, uint64_t re
         else if (*op == "object.create_text") create.kind = CreateObjectKind::Text;
         else if (*op == "object.create_line") create.kind = CreateObjectKind::Line;
         else create.kind = CreateObjectKind::Polyline;
+
+        const bool has_length_unit = field(value, "length_unit") != nullptr;
+        const auto* length_unit_text = string_field(value, "length_unit");
+        geometry::units::LengthUnit unit = geometry::units::LengthUnit::Millimeter;
+        if (has_length_unit) {
+            const auto parsed_unit = length_unit_text
+                ? parse_physical_length_unit(*length_unit_text) : std::nullopt;
+            if (!parsed_unit) {
+                diagnostic = prefix + "length_unit must be mm, cm, m, in, ft, yd, pt or pc; px needs an explicit DPI basis.";
+                return false;
+            }
+            unit = *parsed_unit;
+        }
+        const bool has_typed_geometry = create.kind == CreateObjectKind::Rectangle ||
+                create.kind == CreateObjectKind::Ellipse
+            ? (field(value, "x") || field(value, "y") || field(value, "width") || field(value, "height"))
+            : create.kind == CreateObjectKind::Text
+                ? (field(value, "x") || field(value, "y"))
+                : field(value, "points") != nullptr;
+        const bool has_mm_geometry = field(value, "x_mm") || field(value, "y_mm") ||
+            field(value, "width_mm") || field(value, "height_mm") || field(value, "points_mm");
+        if (has_length_unit != has_typed_geometry || (has_length_unit && has_mm_geometry)) {
+            diagnostic = prefix + "use either explicit *_mm/points_mm fields or typed geometry fields with length_unit; do not mix them.";
+            return false;
+        }
+        const auto read_typed_length = [&](std::string_view key, double& target) {
+            const auto* number = number_field(value, key);
+            if (!number || !std::isfinite(*number) ||
+                !geometry::units::convert_length_to_mm(*number, unit, target)) {
+                diagnostic = prefix + std::string(key) + " must be a finite length in length_unit.";
+                return false;
+            }
+            return true;
+        };
         if (field(value, "name") && !string_field(value, "name")) {
             diagnostic = prefix + "name must be a string.";
             return false;
@@ -541,22 +662,42 @@ bool parse_object_operations(const JsonValue* input, uint64_t epoch, uint64_t re
             diagnostic = prefix + "fill and stroke currently accept validated RGB source colors.";
             return false;
         }
-        if (!read_optional_number("stroke_width_mm", create.stroke_width_mm)) return false;
+        if ((has_length_unit && field(value, "stroke_width_mm")) ||
+            (!has_length_unit && field(value, "stroke_width"))) {
+            diagnostic = prefix + "stroke_width_mm cannot be mixed with typed stroke_width; typed stroke_width requires length_unit.";
+            return false;
+        }
+        if (has_length_unit && field(value, "stroke_width")) {
+            if (!read_typed_length("stroke_width", create.stroke_width_mm)) return false;
+        } else if (!read_optional_number("stroke_width_mm", create.stroke_width_mm)) {
+            return false;
+        }
         if (create.kind == CreateObjectKind::Text) {
             if (field(value, "width_mm") || field(value, "height_mm") ||
-                field(value, "stroke") || field(value, "stroke_width_mm")) {
+                field(value, "width") || field(value, "height") || field(value, "stroke") ||
+                field(value, "stroke_width_mm") || field(value, "stroke_width")) {
                 diagnostic = prefix + "text objects do not accept shape dimensions or stroke fields.";
                 return false;
             }
             const auto* text = string_field(value, "text");
             const auto* family = string_field(value, "font_family");
-            const auto* x = number_field(value, "x_mm");
-            const auto* y = number_field(value, "y_mm");
-            if (!text || !family || !x || !y) {
-                diagnostic = prefix + "text requires text, font_family and x_mm/y_mm."; return false;
+            double x_mm = 0.0, y_mm = 0.0;
+            bool position_valid = false;
+            if (has_length_unit) {
+                position_valid = read_typed_length("x", x_mm) && read_typed_length("y", y_mm);
+            } else {
+                const auto* x = number_field(value, "x_mm");
+                const auto* y = number_field(value, "y_mm");
+                position_valid = x && y && std::isfinite(*x) && std::isfinite(*y);
+                if (position_valid) { x_mm = *x; y_mm = *y; }
+            }
+            if (!text || !family || !position_valid) {
+                if (!has_length_unit)
+                    diagnostic = prefix + "text requires text, font_family and finite x_mm/y_mm or x/y with length_unit.";
+                return false;
             }
             create.text = *text;
-            create.position_mm = {*x, *y};
+            create.position_mm = {x_mm, y_mm};
             create.font.family_name = *family;
             create.font.postscript_name.clear();
             if (field(value, "font_postscript_name") && !string_field(value, "font_postscript_name")) {
@@ -592,32 +733,48 @@ bool parse_object_operations(const JsonValue* input, uint64_t epoch, uint64_t re
             }
         } else if (create.kind == CreateObjectKind::Line || create.kind == CreateObjectKind::Polyline) {
             if (field(value, "x_mm") || field(value, "y_mm") || field(value, "width_mm") ||
-                field(value, "height_mm") || field(value, "text") || field(value, "font_family") ||
+                field(value, "height_mm") || field(value, "x") || field(value, "y") ||
+                field(value, "width") || field(value, "height") || field(value, "text") || field(value, "font_family") ||
                 field(value, "font_postscript_name") || field(value, "font_weight") ||
                 field(value, "font_italic") || field(value, "font_size_pt") ||
                 field(value, "alignment") || field(value, "underline")) {
-                diagnostic = prefix + "path objects use points_mm and do not accept box or text fields.";
+                diagnostic = prefix + "path objects use points_mm or points and do not accept box or text fields.";
                 return false;
             }
-            const auto* points = field(value, "points_mm");
+            const auto* points = field(value, has_length_unit ? "points" : "points_mm");
             if (!points || !points->array() || points->array()->size() < 2 || points->array()->size() > 4096) {
-                diagnostic = prefix + "points_mm must contain 2 to 4096 point objects.";
+                diagnostic = prefix + "points_mm or points must contain 2 to 4096 point objects.";
                 return false;
             }
             create.path_points_mm.reserve(points->array()->size());
             for (const auto& point_value : *points->array()) {
-                if (!point_value.object() || !only_fields(point_value, {"x_mm", "y_mm"})) {
-                    diagnostic = prefix + "each point must contain only x_mm and y_mm.";
+                if (!point_value.object() ||
+                    !(has_length_unit ? only_fields(point_value, {"x", "y"})
+                                      : only_fields(point_value, {"x_mm", "y_mm"}))) {
+                    diagnostic = prefix + (has_length_unit
+                        ? "each typed point must contain only x and y."
+                        : "each point must contain only x_mm and y_mm.");
                     return false;
                 }
                 geometry::Point2D point;
-                const auto* x = number_field(point_value, "x_mm");
-                const auto* y = number_field(point_value, "y_mm");
-                if (!x || !y || !std::isfinite(*x) || !std::isfinite(*y)) {
-                    diagnostic = prefix + "each point requires finite x_mm and y_mm.";
-                    return false;
+                if (has_length_unit) {
+                    const auto* x = number_field(point_value, "x");
+                    const auto* y = number_field(point_value, "y");
+                    if (!x || !y || !std::isfinite(*x) || !std::isfinite(*y) ||
+                        !geometry::units::convert_length_to_mm(*x, unit, point.x) ||
+                        !geometry::units::convert_length_to_mm(*y, unit, point.y)) {
+                        diagnostic = prefix + "each typed point requires finite x/y in length_unit.";
+                        return false;
+                    }
+                } else {
+                    const auto* x = number_field(point_value, "x_mm");
+                    const auto* y = number_field(point_value, "y_mm");
+                    if (!x || !y || !std::isfinite(*x) || !std::isfinite(*y)) {
+                        diagnostic = prefix + "each point requires finite x_mm and y_mm.";
+                        return false;
+                    }
+                    point = {*x, *y};
                 }
-                point = {*x, *y};
                 create.path_points_mm.push_back(point);
             }
             if (create.kind == CreateObjectKind::Line && field(value, "closed")) {
@@ -636,14 +793,26 @@ bool parse_object_operations(const JsonValue* input, uint64_t epoch, uint64_t re
                 diagnostic = prefix + "shape objects do not accept text or font fields.";
                 return false;
             }
-            const auto* x = number_field(value, "x_mm");
-            const auto* y = number_field(value, "y_mm");
-            const auto* width = number_field(value, "width_mm");
-            const auto* height = number_field(value, "height_mm");
-            if (!x || !y || !width || !height) {
-                diagnostic = prefix + "shape requires finite x/y/width/height in mm."; return false;
+            double x_mm = 0.0, y_mm = 0.0, width_mm = 0.0, height_mm = 0.0;
+            bool dimensions_valid = false;
+            if (has_length_unit) {
+                dimensions_valid = read_typed_length("x", x_mm) && read_typed_length("y", y_mm) &&
+                    read_typed_length("width", width_mm) && read_typed_length("height", height_mm);
+            } else {
+                const auto* x = number_field(value, "x_mm");
+                const auto* y = number_field(value, "y_mm");
+                const auto* width = number_field(value, "width_mm");
+                const auto* height = number_field(value, "height_mm");
+                dimensions_valid = x && y && width && height && std::isfinite(*x) &&
+                    std::isfinite(*y) && std::isfinite(*width) && std::isfinite(*height);
+                if (dimensions_valid) { x_mm = *x; y_mm = *y; width_mm = *width; height_mm = *height; }
             }
-            create.bounds_mm = {*x, *y, *width, *height};
+            if (!dimensions_valid) {
+                if (!has_length_unit)
+                    diagnostic = prefix + "shape requires finite x/y/width/height in mm or length_unit.";
+                return false;
+            }
+            create.bounds_mm = {x_mm, y_mm, width_mm, height_mm};
         }
         std::string client_ref;
         if (const auto* ref = string_field(value, "client_ref")) {

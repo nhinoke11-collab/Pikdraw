@@ -1,8 +1,11 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "../performance/canvas_trace.hpp"
 #include "pikdraw/desktop/shell/native_font_picker.hpp"
 #include "native_window_file_menu.hpp"
 #include "native_window_menus.hpp"
 #include "native_window_page_presets.hpp"
+#include "native_window_length_input.hpp"
+#include "native_window_page_navigation.hpp"
 #include "../tools/drawing_tool_controller.hpp"
 #include "../tools/pen_tool_controller.hpp"
 #include "../tools/node_tool_controller.hpp"
@@ -24,14 +27,63 @@
 namespace pikdraw::desktop {
 
 #ifdef _WIN32
+namespace {
+constexpr UINT kPointerMoveCoalesceTimerId = 14;
+constexpr UINT kPointerMoveCoalesceIntervalMs = 16;
+}
 
 double NativeWindow::window_dpi_scale() const noexcept {
     // Drawing controllers receive the same DIP coordinates as the camera.
     return 1.0;
 }
 
+void NativeWindow::queue_coalesced_mouse_move(int x, int y, unsigned modifiers) {
+    const bool should_schedule = pointer_move_coalescer_.offer({x, y, modifiers});
+    if (!should_schedule) return;
+    if (hwnd_ && SetTimer(hwnd_, kPointerMoveCoalesceTimerId,
+                          kPointerMoveCoalesceIntervalMs, nullptr) != 0)
+        return;
+    flush_coalesced_mouse_move();
+}
+
+void NativeWindow::flush_coalesced_mouse_move() {
+    if (hwnd_) KillTimer(hwnd_, kPointerMoveCoalesceTimerId);
+    const auto move = pointer_move_coalescer_.take();
+    if (move) handle_mouse_move(move->x, move->y, move->modifiers);
+}
+
 LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     auto* self = reinterpret_cast<NativeWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    const bool recovery_user_mouse_input =
+        uMsg == WM_LBUTTONDOWN || uMsg == WM_LBUTTONUP || uMsg == WM_LBUTTONDBLCLK ||
+        uMsg == WM_RBUTTONDOWN || uMsg == WM_RBUTTONUP || uMsg == WM_RBUTTONDBLCLK ||
+        uMsg == WM_MBUTTONDOWN || uMsg == WM_MBUTTONUP || uMsg == WM_MBUTTONDBLCLK ||
+        uMsg == WM_MOUSEWHEEL || uMsg == WM_MOUSEHWHEEL ||
+        uMsg == WM_XBUTTONDOWN || uMsg == WM_XBUTTONUP || uMsg == WM_XBUTTONDBLCLK;
+    if (self && self->recovery_scan_pending_ &&
+        (recovery_user_mouse_input ||
+         uMsg == WM_KEYDOWN || uMsg == WM_KEYUP || uMsg == WM_SYSKEYDOWN ||
+         uMsg == WM_SYSKEYUP || uMsg == WM_CHAR || uMsg == WM_COMMAND)) {
+        self->recovery_scan_user_activity_ = true;
+    }
+    if (self && self->native_file_job_pending_ &&
+        (recovery_user_mouse_input ||
+         uMsg == WM_KEYDOWN || uMsg == WM_KEYUP || uMsg == WM_SYSKEYDOWN ||
+         uMsg == WM_SYSKEYUP || uMsg == WM_CHAR || uMsg == WM_COMMAND)) {
+        self->native_file_job_user_activity_ = true;
+    }
+    if (self && uMsg != WM_MOUSEMOVE &&
+        !(uMsg == WM_TIMER && wParam == kPointerMoveCoalesceTimerId))
+        self->flush_coalesced_mouse_move();
+    if (self && self->canvas_trace_ && uMsg >= WM_MOUSEFIRST && uMsg <= WM_MOUSELAST) {
+        auto event_id = self->pending_trace_event_id_;
+        if (event_id == 0) {
+            event_id = self->next_trace_event_id_++;
+            self->record_performance_event(CanvasTraceKind::Input, event_id);
+        }
+        self->last_trace_event_id_ = event_id;
+        self->record_performance_event(CanvasTraceKind::InputDequeued, event_id);
+    }
 
     switch (uMsg) {
     case kImportWorkerMessage:
@@ -39,6 +91,30 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         return 0;
     case kExportWorkerMessage:
         if (self) self->handle_export_worker_message(wParam);
+        return 0;
+    case kRasterExportWorkerMessage:
+        if (self) self->handle_raster_export_worker_message(wParam);
+        return 0;
+    case kTestSheetWorkerMessage:
+        if (self) self->handle_test_sheet_worker_message(wParam);
+        return 0;
+    case kRasterPreviewWorkerMessage:
+        if (self) self->handle_raster_preview_worker_message();
+        return 0;
+    case kRasterHistogramWorkerMessage:
+        if (self) self->handle_raster_histogram_worker_message();
+        return 0;
+    case kRasterProfileWorkerMessage:
+        if (self) self->handle_raster_profile_worker_message(wParam);
+        return 0;
+    case kAutosaveWorkerMessage:
+        if (self) self->handle_autosave_worker_message();
+        return 0;
+    case kRecoveryScanWorkerMessage:
+        if (self) self->handle_recovery_scan_worker_message();
+        return 0;
+    case kNativeFileWorkerMessage:
+        if (self) self->handle_native_file_worker_message();
         return 0;
     case WM_CHAR:
         if (self && self->is_font_picker_open()) {
@@ -51,17 +127,35 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
             return 0;
         if (self && self->show_settings_modal_ && self->settings_active_tab_ == 6)
             return 0;
+        if (self && self->artboard_name_editing_ &&
+            self->handle_artboard_tool_char(static_cast<wchar_t>(wParam))) {
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        if (self && self->is_dock_text_editing()) {
+            if (self->handle_layers_dock_char(static_cast<wchar_t>(wParam))) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+        }
         if (self && self->active_numeric_field() != NumericFieldId::None) {
             self->handle_numeric_char_input(static_cast<wchar_t>(wParam));
             return 0;
         }
         if (self && self->is_quick_dimension_active() && !self->is_inline_text_editing_) {
+            const auto update_quick_dimension_status = [self] {
+                const std::string unit(display_length_unit_suffix(self->display_length_unit_));
+                const std::string suffix_hint = self->language_ == UILanguage::Vietnamese
+                    ? " [mặc định " + unit + "; hậu tố ghi đè] (Enter nhận, Esc hủy)"
+                    : " [default " + unit + "; suffix overrides] (Enter to apply, Esc to cancel)";
+                self->status_msg_ = (self->language_ == UILanguage::Vietnamese
+                    ? "Kích thước: " : "Dimensions: ") +
+                    self->quick_dimension_buffer_ + suffix_hint;
+            };
             if (wParam == VK_BACK) {
                 if (!self->quick_dimension_buffer_.empty()) {
                     self->quick_dimension_buffer_.pop_back();
-                    self->status_msg_ = (self->language_ == UILanguage::Vietnamese ? "Kích thước: " : "Dimensions: ") +
-                                        self->quick_dimension_buffer_ +
-                                        (self->language_ == UILanguage::Vietnamese ? " mm (Enter để nhận, Esc hủy)" : " mm (Enter to apply, Esc to cancel)");
+                    update_quick_dimension_status();
                     InvalidateRect(hwnd, nullptr, FALSE);
                 }
                 return 0;
@@ -77,12 +171,10 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
-            if ((wParam >= '0' && wParam <= '9') || wParam == '.' || wParam == ',' || wParam == ';' ||
-                wParam == 'x' || wParam == 'X' || wParam == ' ' || wParam == '-') {
+            if (self->quick_dimension_buffer_.size() < 128 &&
+                is_quick_dimension_input_character(static_cast<wchar_t>(wParam))) {
                 self->quick_dimension_buffer_ += static_cast<char>(wParam);
-                self->status_msg_ = (self->language_ == UILanguage::Vietnamese ? "Kích thước: " : "Dimensions: ") +
-                                    self->quick_dimension_buffer_ +
-                                    (self->language_ == UILanguage::Vietnamese ? " mm (Enter để nhận, Esc hủy)" : " mm (Enter to apply, Esc to cancel)");
+                update_quick_dimension_status();
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
@@ -140,7 +232,13 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         break;
     case WM_IME_ENDCOMPOSITION:
         if (self && self->text_editor_) {
-            self->text_editor_->composition.clear();
+            if (!self->text_editor_->composition.empty()) {
+                self->text_editor_->draft.text.replace(
+                    self->text_editor_->first(),
+                    self->text_editor_->last() - self->text_editor_->first(),
+                    self->text_editor_->composition);
+                self->text_editor_->composition.clear();
+            }
             self->refresh_inline_text_preview();
         }
         break;
@@ -179,17 +277,46 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
                 return 0;
             }
         }
+        if (self && self->handle_artboard_tool_key(wParam)) {
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        if (self && self->is_dock_text_editing()) {
+            if (self->artboard_name_editing_ && self->handle_artboard_tool_key(wParam)) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (self->handle_layers_dock_key(wParam)) {
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+        }
         if (self && self->show_recovery_modal_ && self->handle_recovery_key(wParam))
             return 0;
         if (self && wParam == VK_ESCAPE && self->export_job_active()) {
             self->request_cancel_export_job();
             return 0;
         }
+        if (self && wParam == VK_ESCAPE && self->raster_export_job_) {
+            self->request_cancel_raster_export_job();
+            return 0;
+        }
+        if (self && wParam == VK_ESCAPE && self->test_sheet_job_) {
+            self->request_cancel_test_sheet_job();
+            return 0;
+        }
+        if (self && wParam == VK_ESCAPE && self->raster_profile_conversion_active()) {
+            self->request_cancel_raster_profile_conversion();
+            return 0;
+        }
+        if (self && self->handle_import_placement_escape(wParam)) return 0;
         if (self && wParam == VK_ESCAPE && self->import_job_active()) {
             self->request_cancel_import_job();
             return 0;
         }
         if (self && self->is_menu_open()) {
+            if (self->handle_text_case_submenu_key(static_cast<unsigned>(wParam)))
+                return 0;
             const auto menu = static_cast<MenuId>(self->open_menu_id());
             if (wParam == VK_ESCAPE) {
                 self->close_menu();
@@ -220,6 +347,30 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
                     self->execute_menu_action(static_cast<int>(*action));
                 return 0;
             }
+        }
+        if (self && self->show_settings_modal_ && self->settings_active_tab_ == 3) {
+            if (self->active_num_field_ == NativeWindow::NumericFieldId::TacLimitPercent) {
+                if (wParam == VK_TAB) {
+                    self->handle_numeric_char_input(9);
+                    return 0;
+                }
+                (void)self->handle_key_down(wParam);
+                return 0;
+            }
+            if (wParam == VK_ESCAPE) {
+                self->close_settings_modal();
+                return 0;
+            }
+            if (wParam == VK_TAB) {
+                const int direction = (GetKeyState(VK_SHIFT) & 0x8000) ? -1 : 1;
+                self->move_settings_tac_focus(direction);
+                return 0;
+            }
+            if (wParam == VK_RETURN || wParam == VK_SPACE) {
+                self->activate_settings_tac_focus();
+                return 0;
+            }
+            return 0;
         }
         if (self && self->show_settings_modal_ && self->settings_active_tab_ == 6) {
             if (wParam == VK_ESCAPE) {
@@ -302,15 +453,6 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
                 InvalidateRect(hwnd, nullptr, FALSE);
                 return 0;
             }
-            if (!workflow.effect_draft_numeric_input_active() &&
-                (wParam == 'V' || wParam == 'R' || wParam == 'E' || wParam == 'K' ||
-                 wParam == 'C' || wParam == 'A' || wParam == 'T' || wParam == 'H')) {
-                workflow.cancel_effect_draft();
-                self->status_msg_ = self->language_ == UILanguage::Vietnamese
-                    ? "Đã hủy bản nháp khi chuyển công cụ"
-                    : "Effect draft cancelled on tool change";
-                InvalidateRect(hwnd, nullptr, FALSE);
-            }
         }
         if (self && wParam == VK_SPACE) {
             self->space_down_ = true;
@@ -329,7 +471,7 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         break;
     case WM_KEYUP:
         if (self && wParam == VK_SPACE) {
-            self->space_down_ = false;
+            self->handle_key_up(wParam);
             return 0;
         }
         break;
@@ -408,12 +550,48 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         }
         return 0;
     case WM_MOUSEMOVE:
-        if (self && !self->show_recovery_modal_) self->handle_mouse_move(self->logical_pixel(GET_X_LPARAM(lParam)), self->logical_pixel(GET_Y_LPARAM(lParam)),
-                                          static_cast<unsigned>(wParam));
+        if (self && !self->show_recovery_modal_) {
+            const int mx = self->logical_pixel(GET_X_LPARAM(lParam));
+            const int my = self->logical_pixel(GET_Y_LPARAM(lParam));
+            if (self->active_dock_tab_ == 1 && self->layers_dock_state().pointer_pressed) {
+                self->handle_layers_dock_mouse_move(mx, my);
+                return 0;
+            }
+            const bool is_dragging = ((wParam & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON)) != 0) ||
+                                     (GetCapture() == hwnd) ||
+                                     (self->raster_dock_drag_control_ != 0) ||
+                                     (self->gradient_ramp_drag_kind_ != NativeWindow::GradientRampDragKind::None) ||
+                                     self->is_dragging_guideline_ ||
+                                     (self->resize_handle_ != -1) ||
+                                     self->is_panning_ ||
+                                     (self->drawing_tool_ && self->drawing_tool_->active()) ||
+                                     (self->node_tool_ && self->node_tool_->active()) ||
+                                     (self->pen_tool_ && self->pen_tool_->active()) ||
+                                     (self->gradient_tool_ && self->gradient_tool_->active());
+
+            const bool is_canvas = self->is_canvas_point(mx, my);
+
+            if (is_dragging || is_canvas) {
+                self->flush_coalesced_mouse_move();
+                self->handle_mouse_move(mx, my, static_cast<unsigned>(wParam));
+                if (is_dragging && hwnd) {
+                    UpdateWindow(hwnd);
+                }
+                return 0;
+            }
+            self->queue_coalesced_mouse_move(mx, my, static_cast<unsigned>(wParam));
+        }
         return 0;
     case WM_LBUTTONUP:
-        if (self) self->handle_mouse_up(self->logical_pixel(GET_X_LPARAM(lParam)), self->logical_pixel(GET_Y_LPARAM(lParam)),
-                                        static_cast<unsigned>(wParam));
+        if (self) {
+            const int lx = self->logical_pixel(GET_X_LPARAM(lParam));
+            const int ly = self->logical_pixel(GET_Y_LPARAM(lParam));
+            if (self->active_dock_tab_ == 1 && self->layers_dock_state().pointer_pressed) {
+                self->handle_layers_dock_mouse_up(lx, ly);
+                return 0;
+            }
+            self->handle_mouse_up(lx, ly, static_cast<unsigned>(wParam));
+        }
         return 0;
     case WM_RBUTTONDOWN:
         if (self && !self->show_recovery_modal_) {
@@ -426,6 +604,12 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
             }
             if (self->handle_style_click(rx, ry, true)) {
                 return 0;
+            }
+            if (self->active_dock_tab_ == 1 && rx >= self->width_ - LayersDockMetrics::dock_width && rx <= self->width_) {
+                POINT screen_pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+                ClientToScreen(hwnd, &screen_pt);
+                if (self->handle_layers_dock_context_menu(screen_pt.x, screen_pt.y, rx, ry))
+                    return 0;
             }
             if (self->is_canvas_point(rx, ry)) {
                 POINT screen_pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
@@ -450,7 +634,13 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
                 ScreenToClient(hwnd, &client_pt);
                 const int rx = self->logical_pixel(client_pt.x);
                 const int ry = self->logical_pixel(client_pt.y);
-                if (self->is_canvas_point(rx, ry)) {
+                if (self->active_dock_tab_ == 1 && rx >= self->width_ - LayersDockMetrics::dock_width && rx <= self->width_) {
+                POINT screen_pt{GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
+                ClientToScreen(hwnd, &screen_pt);
+                if (self->handle_layers_dock_context_menu(screen_pt.x, screen_pt.y, rx, ry))
+                    return 0;
+            }
+            if (self->is_canvas_point(rx, ry)) {
                     self->show_context_menu(screen_x, screen_y, rx, ry);
                     return 0;
                 }
@@ -502,8 +692,12 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
             }
             if (self->active_dock_tab_ == 0 && self->show_style_inspector_ &&
                 point.x >= self->width_ - 280 && point.x < self->width_ &&
-                point.y >= 162 && point.y < self->height_ - 26) {
+                point.y >= 162 && point.y < self->height_ - page_navigation::kBottomChromeHeight) {
                 self->scroll_style_inspector(GET_WHEEL_DELTA_WPARAM(wParam));
+            } else if (self->active_dock_tab_ == 0 &&
+                point.x >= self->width_ - self->inspector_width() && point.x < self->width_ &&
+                point.y >= 130 && point.y < self->height_ - page_navigation::kBottomChromeHeight) {
+                self->scroll_properties_dock(GET_WHEEL_DELTA_WPARAM(wParam));
             } else if (self->is_canvas_point(point.x, point.y)) {
                 const auto area = self->canvas_rect(self->width_, self->height_);
                 auto& camera = self->root().renderer().camera();
@@ -520,6 +714,10 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         }
         return 0;
     case WM_TIMER:
+        if (self && wParam == kPointerMoveCoalesceTimerId) {
+            self->flush_coalesced_mouse_move();
+            return 0;
+        }
         if (self && wParam == 12 && self->text_editor_) {
             self->text_editor_->caret_visible = !self->text_editor_->caret_visible;
             InvalidateRect(hwnd, nullptr, FALSE);
@@ -548,9 +746,10 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         return 0;
     case WM_SETCURSOR:
         if (self && LOWORD(lParam) == HTCLIENT) {
-            const WORD cursor_id = self->is_panning_ ? 32646
-                : self->active_tool_ == 3 ? 32649
-                : self->active_tool_ == 4 ? 32513 : self->active_tool_ >= 6 ? 32515 : 32512;
+            POINT cursor_point{};
+            GetCursorPos(&cursor_point);
+            ScreenToClient(hwnd, &cursor_point);
+            const WORD cursor_id = self->canvas_cursor_at(cursor_point.x, cursor_point.y);
             SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(cursor_id)));
             return TRUE;
         }
@@ -559,6 +758,12 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
         if (self) {
+            if (self->canvas_trace_) {
+            self->active_trace_frame_id_ = self->next_trace_frame_id_++;
+            self->active_trace_event_id_ = self->last_trace_event_id_;
+            self->record_performance_event(CanvasTraceKind::PaintBegin,
+                self->active_trace_event_id_, self->active_trace_frame_id_);
+            }
             const bool modal_active = !IsWindowEnabled(hwnd);
             if (modal_active && self->backbuffer_dc_ && self->backbuffer_bmp_) {
                 const int rx = ps.rcPaint.left;
@@ -568,11 +773,24 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
                 if (rw > 0 && rh > 0) {
                     BitBlt(hdc, rx, ry, rw, rh, self->backbuffer_dc_, rx, ry, SRCCOPY);
                 }
-            } else {
+            } else if (!self->paint_direct_present_frame(
+                           self->width_, self->height_)) {
                 self->paint(hdc, self->width_, self->height_);
             }
         }
         EndPaint(hwnd, &ps);
+        if (self && self->canvas_trace_) {
+            self->record_performance_event(CanvasTraceKind::PaintEnd,
+                self->active_trace_event_id_, self->active_trace_frame_id_);
+            if (!self->trace_first_frame_recorded_) {
+                self->trace_first_frame_recorded_ = true;
+                self->record_performance_event(CanvasTraceKind::FirstFrame,
+                    self->active_trace_event_id_, self->active_trace_frame_id_);
+            }
+            self->last_trace_event_id_ = 0;
+            self->active_trace_event_id_ = 0;
+            self->active_trace_frame_id_ = 0;
+        }
         return 0;
     }
     case WM_DPICHANGED:
@@ -583,6 +801,7 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
             self->cleanup_canvas_cache();
             self->cleanup_backbuffer();
             self->ensure_ui_fonts();
+            (void)self->refresh_display_preview_profile();
             if (const auto* bounds = reinterpret_cast<const RECT*>(lParam))
                 SetWindowPos(hwnd, nullptr, bounds->left, bounds->top,
                     bounds->right - bounds->left, bounds->bottom - bounds->top,
@@ -598,6 +817,12 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
             }
             InvalidateRect(hwnd, nullptr, FALSE);
         }
+        return 0;
+    case WM_MOVE:
+        if (self) (void)self->refresh_display_preview_profile();
+        return 0;
+    case WM_DISPLAYCHANGE:
+        if (self) (void)self->refresh_display_preview_profile(true);
         return 0;
     case WM_SIZE: {
         int w = self ? self->logical_pixel(LOWORD(lParam)) : LOWORD(lParam);
@@ -615,6 +840,28 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
     }
     case WM_CAPTURECHANGED:
         if (self) {
+            const bool lost_gradient_ramp_capture =
+                self->gradient_ramp_drag_kind_ != NativeWindow::GradientRampDragKind::None &&
+                GetCapture() != hwnd;
+            if (lost_gradient_ramp_capture) {
+                self->gradient_ramp_drag_kind_ = NativeWindow::GradientRampDragKind::None;
+                self->gradient_ramp_drag_stop_id_ = 0;
+                self->gradient_ramp_drag_moved_ = false;
+                if (self->gradient_tool_ && self->gradient_tool_->active()) {
+                    self->gradient_tool_->cancel();
+                    self->status_msg_ = self->language_ == UILanguage::Vietnamese
+                        ? "Đã hủy kéo Ramp vì mất pointer capture · tài liệu không đổi"
+                        : "Ramp drag cancelled after pointer capture was lost · document unchanged";
+                }
+            }
+            if (self->gradient_tool_ && self->gradient_tool_->active() &&
+                self->gradient_tool_->tool().state() != vector::tools::GradientToolState::Idle) {
+                self->gradient_tool_->cancel();
+                self->status_msg_ = self->language_ == UILanguage::Vietnamese
+                    ? "Đã hủy kéo Gradient vì mất pointer capture · tài liệu không đổi"
+                    : "Gradient drag cancelled after pointer capture was lost · document unchanged";
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
             if (self->text_editor_) self->text_editor_->selecting = self->text_editor_->creating_frame = false;
             if (self->resize_handle_ == -2) {
                 self->resize_handle_ = -1;
@@ -655,10 +902,15 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         return 0;
     case WM_DESTROY:
         KillTimer(hwnd, kAutoSaveTimerId);
+        KillTimer(hwnd, kPointerMoveCoalesceTimerId);
         KillTimer(hwnd, 12);
         if (self) {
             self->cancel_import_job();
+            self->cancel_import_placement();
             self->cancel_export_job();
+            self->cancel_raster_export_job();
+            self->cancel_test_sheet_job();
+            self->cancel_raster_profile_conversion();
         }
         PostQuitMessage(0);
         return 0;

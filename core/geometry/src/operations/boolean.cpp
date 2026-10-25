@@ -23,9 +23,38 @@ int edge_direction(const GridEdge& edge) noexcept {
     return 3;                        // north
 }
 
+double contour_signed_area(const Path2D& path) noexcept {
+    double twice_area = 0.0;
+    Point2D start{};
+    Point2D previous{};
+    bool active = false;
+    for (const auto& element : path.elements()) {
+        if (element.verb == PathVerb::MoveTo) {
+            start = previous = element.pt;
+            active = true;
+        } else if (element.verb == PathVerb::LineTo && active) {
+            twice_area += previous.x * element.pt.y - element.pt.x * previous.y;
+            previous = element.pt;
+        } else if (element.verb == PathVerb::Close && active) {
+            twice_area += previous.x * start.y - start.x * previous.y;
+            active = false;
+        }
+    }
+    return twice_area * 0.5;
+}
+
+void append_path(Path2D& destination, const Path2D& source) {
+    for (const auto& element : source.elements()) {
+        if (element.verb == PathVerb::MoveTo) destination.move_to(element.pt);
+        else if (element.verb == PathVerb::LineTo) destination.line_to(element.pt);
+        else if (element.verb == PathVerb::Close) destination.close();
+    }
+}
+
 BooleanResult boolean_rectangle_regions(const Rect2D& subject, const Rect2D& clip, BooleanOp op) {
     BooleanResult result;
     result.success = true;
+    result.status = BooleanStatus::Success;
 
     std::vector<double> xs{subject.x, subject.right(), clip.x, clip.right()};
     std::vector<double> ys{subject.y, subject.bottom(), clip.y, clip.bottom()};
@@ -57,6 +86,7 @@ BooleanResult boolean_rectangle_regions(const Rect2D& subject, const Rect2D& cli
             case BooleanOp::BackMinusFront: include = in_clip && !in_subject; break;
             default:
                 result.success = false;
+                result.status = BooleanStatus::Unsupported;
                 result.error_message = "Unsupported Boolean operation on rectangles";
                 return result;
             }
@@ -87,12 +117,19 @@ BooleanResult boolean_rectangle_regions(const Rect2D& subject, const Rect2D& cli
         }
     }
 
-    Path2D boundary;
+    struct BoundaryLoop {
+        Path2D path;
+        double signed_area{0.0};
+        Rect2D bounds;
+    };
+    std::vector<BoundaryLoop> loops;
     for (size_t seed = 0; seed < edges.size(); ++seed) {
         if (edges[seed].used) continue;
         const size_t start_x = edges[seed].x0;
         const size_t start_y = edges[seed].y0;
-        boundary.move_to({xs[start_x], ys[start_y]});
+        Path2D loop;
+        loop.set_winding_rule(WindingRule::NonZero);
+        loop.move_to({xs[start_x], ys[start_y]});
         size_t current = seed;
         bool closed = false;
 
@@ -100,9 +137,9 @@ BooleanResult boolean_rectangle_regions(const Rect2D& subject, const Rect2D& cli
             auto& edge = edges[current];
             if (edge.used) break;
             edge.used = true;
-            boundary.line_to({xs[edge.x1], ys[edge.y1]});
+            loop.line_to({xs[edge.x1], ys[edge.y1]});
             if (edge.x1 == start_x && edge.y1 == start_y) {
-                boundary.close();
+                loop.close();
                 closed = true;
                 break;
             }
@@ -127,14 +164,43 @@ BooleanResult boolean_rectangle_regions(const Rect2D& subject, const Rect2D& cli
         }
         if (!closed) {
             result.success = false;
+            result.status = BooleanStatus::InvalidInput;
             result.rectangles.clear();
             result.path = {};
+            result.components.clear();
             result.error_message = "Could not trace Boolean rectangle boundary";
             return result;
         }
+        loops.push_back({loop, contour_signed_area(loop), loop.bounds()});
     }
 
+    Path2D boundary;
+    boundary.set_winding_rule(WindingRule::NonZero);
+    for (const auto& loop : loops) append_path(boundary, loop.path);
+    for (size_t index = 0; index < loops.size(); ++index) {
+        if (loops[index].signed_area <= 0.0) continue;
+        Path2D component = loops[index].path;
+        for (size_t hole_index = 0; hole_index < loops.size(); ++hole_index) {
+            if (loops[hole_index].signed_area >= 0.0) continue;
+            const auto& hole_bounds = loops[hole_index].bounds;
+            const Point2D center{hole_bounds.x + hole_bounds.width * 0.5,
+                                 hole_bounds.y + hole_bounds.height * 0.5};
+            if (center.x > loops[index].bounds.left() &&
+                center.x < loops[index].bounds.right() &&
+                center.y > loops[index].bounds.top() &&
+                center.y < loops[index].bounds.bottom()) {
+                append_path(component, loops[hole_index].path);
+            }
+        }
+        result.components.push_back(std::move(component));
+    }
+    // A valid rectangle Boolean always has at least one positive outer loop,
+    // but retain a conservative fallback if a future edge convention changes.
+    if (result.components.empty()) {
+        for (const auto& loop : loops) result.components.push_back(loop.path);
+    }
     result.path = std::move(boundary);
+    if (result.path.empty()) result.status = BooleanStatus::Empty;
     return result;
 }
 
@@ -149,6 +215,7 @@ BooleanResult boolean_rectangles(const Rect2D& subject, const Rect2D& clip, Bool
     }
     if (op == BooleanOp::Boundary) {
         BooleanResult res;
+        res.status = BooleanStatus::Unsupported;
         res.error_message = "Boundary extraction is unsupported";
         return res;
     }
@@ -158,6 +225,7 @@ BooleanResult boolean_rectangles(const Rect2D& subject, const Rect2D& clip, Bool
         auto clip_diff = boolean_rectangles(clip, subject, BooleanOp::Difference);
         BooleanResult res;
         if (!inter.success || !sub_diff.success || !clip_diff.success) {
+            res.status = BooleanStatus::InvalidInput;
             res.error_message = "Could not simplify rectangle paths";
             return res;
         }
@@ -171,6 +239,7 @@ BooleanResult boolean_rectangles(const Rect2D& subject, const Rect2D& clip, Bool
         if (!res.rectangles.empty()) {
             res.path = res.sub_paths.front();
         }
+        res.status = res.path.empty() ? BooleanStatus::Empty : BooleanStatus::Success;
         return res;
     }
 
@@ -186,6 +255,7 @@ BooleanResult boolean_rectangles(const Rect2D& subject, const Rect2D& clip, Bool
         break;
     default: {
         BooleanResult res;
+        res.status = BooleanStatus::Unsupported;
         res.error_message = "Unsupported Boolean operation on rectangles";
         return res;
     }
@@ -194,6 +264,7 @@ BooleanResult boolean_rectangles(const Rect2D& subject, const Rect2D& clip, Bool
     if (subject.is_empty() || clip.is_empty()) {
         BooleanResult res;
         res.success = true;
+        res.status = BooleanStatus::Empty;
         const Rect2D* remaining = nullptr;
         switch (op) {
         case BooleanOp::Union:
@@ -212,22 +283,12 @@ BooleanResult boolean_rectangles(const Rect2D& subject, const Rect2D& clip, Bool
         if (remaining) {
             res.rectangles.push_back(*remaining);
             res.path = Path2D::make_rect(remaining->x, remaining->y, remaining->width, remaining->height);
+            res.status = BooleanStatus::Success;
         }
         return res;
     }
 
     return boolean_rectangle_regions(subject, clip, op);
-}
-
-BooleanResult boolean_paths(const Path2D& subject, const Path2D& clip, BooleanOp op) {
-    const auto subject_rect = detail::axis_aligned_rectangle(subject);
-    const auto clip_rect = detail::axis_aligned_rectangle(clip);
-    if (!subject_rect || !clip_rect) {
-        BooleanResult result;
-        result.error_message = "General path Boolean is unsupported; only exact axis-aligned rectangles are implemented";
-        return result;
-    }
-    return boolean_rectangles(*subject_rect, *clip_rect, op);
 }
 
 std::pair<bool, std::vector<Path2D>> split_rect_by_line(

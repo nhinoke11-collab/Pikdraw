@@ -1,12 +1,17 @@
+#include "../../powerclip_view.hpp"
 #include "pikdraw/rendering/d2d_backend.hpp"
 #include "d2d_internal.hpp"
+#include "../../pdf_source_preview.hpp"
 #include "d2d_scene_compositor.hpp"
 #include "pikdraw/document/commands/contour_commands.hpp"
 #include "pikdraw/document/annotations/dimension_layout.hpp"
 #include "pikdraw/document/annotations/dimension_object.hpp"
+#include "pikdraw/document/annotations/annotation_layout.hpp"
+#include "pikdraw/document/annotations/annotation_object.hpp"
 #include "pikdraw/rendering/spatial_index.hpp"
 #include "pikdraw/typography/layout/glyph_outline.hpp"
 #include "pikdraw/typography/layout/text_layout.hpp"
+#include "pikdraw/typography/layout/text_on_path.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -23,15 +28,24 @@ namespace pikdraw::rendering {
 
 namespace {
 
+bool is_device_lost(HRESULT hr) noexcept {
+  return hr == D2DERR_RECREATE_TARGET || hr == DXGI_ERROR_DEVICE_REMOVED ||
+         hr == DXGI_ERROR_DEVICE_RESET || hr == DXGI_ERROR_DRIVER_INTERNAL_ERROR;
+}
+
 D2D1_MATRIX_3X2_F object_projection(const geometry::Transform2D &object,
-                                   const Camera2D &camera) {
+                                   const Camera2D &camera,
+                                   float viewport_origin_x = 0.0f,
+                                   float viewport_origin_y = 0.0f) {
   const double z = camera.zoom();
   // Subtract camera origin in binary64 before narrowing to D2D floats.
   return D2D1::Matrix3x2F(
       static_cast<float>(object.a * z), static_cast<float>(-object.b * z),
       static_cast<float>(object.c * z), static_cast<float>(-object.d * z),
-      static_cast<float>((object.tx - camera.center().x) * z + camera.width() * 0.5),
-      static_cast<float>(-(object.ty - camera.center().y) * z + camera.height() * 0.5));
+      static_cast<float>((object.tx - camera.center().x) * z +
+                         camera.width() * 0.5 + viewport_origin_x),
+      static_cast<float>(-(object.ty - camera.center().y) * z +
+                         camera.height() * 0.5 + viewport_origin_y));
 }
 
 class ScopedTransform {
@@ -56,10 +70,20 @@ struct D2DRenderBackend::Impl {
   d2d::D2DEffectsPipeline effects_pipeline;
   SpatialIndex spatial_index;
   SoftwareRasterizer fallback_rasterizer;
+  RenderViewContext view;
+  document::ObjectId excluded_owner{0};
   color::DeviceRGBA background{255, 255, 255, 255};
   std::shared_ptr<const color::IccPreview> color_preview;
+  RasterImageResolver raster_image_resolver;
   d2d::ComPtr<ID2D1Bitmap1> pixel_render_bitmap;
   d2d::ComPtr<ID2D1Bitmap1> pixel_staging_bitmap;
+  d2d::ComPtr<IDXGISwapChain1> swap_chain;
+  d2d::ComPtr<IDXGISurface1> swap_chain_gdi_surface;
+  HDC swap_chain_gdi_dc{};
+  HWND swap_chain_hwnd{};
+  int32_t swap_chain_width{};
+  int32_t swap_chain_height{};
+  float swap_chain_dpi_ratio{1.0f};
   D2D1_SIZE_U pixel_bitmap_size{};
   bool d2d_initialized{false};
   int32_t document_raster_dpi{0};
@@ -84,11 +108,100 @@ struct D2DRenderBackend::Impl {
     pixel_bitmap_size = {};
   }
 
+  void clear_swap_chain() {
+    if (swap_chain_gdi_surface && swap_chain_gdi_dc)
+      (void)swap_chain_gdi_surface->ReleaseDC(nullptr);
+    swap_chain_gdi_surface.Reset();
+    swap_chain_gdi_dc = nullptr;
+    if (auto *context = device_mgr.context())
+      context->SetTarget(nullptr);
+    swap_chain.Reset();
+    swap_chain_hwnd = nullptr;
+    swap_chain_width = 0;
+    swap_chain_height = 0;
+    swap_chain_dpi_ratio = 1.0f;
+  }
+
+  bool create_swap_chain(HWND hwnd, int32_t width, int32_t height,
+                         float dpi_ratio) {
+    if (!hwnd || !IsWindow(hwnd) || width <= 0 || height <= 0 ||
+        !std::isfinite(dpi_ratio) || dpi_ratio <= 0.0f ||
+        !device_mgr.is_valid())
+      return false;
+
+    if (swap_chain && swap_chain_hwnd == hwnd) {
+      if (swap_chain_gdi_dc)
+        return false;
+      if (width != swap_chain_width || height != swap_chain_height) {
+        if (auto *context = device_mgr.context())
+          context->SetTarget(nullptr);
+        const HRESULT resize_hr = swap_chain->ResizeBuffers(
+            0, static_cast<UINT>(width), static_cast<UINT>(height),
+            DXGI_FORMAT_UNKNOWN, DXGI_SWAP_CHAIN_FLAG_GDI_COMPATIBLE);
+        if (FAILED(resize_hr)) {
+          if (is_device_lost(resize_hr))
+            recover_device();
+          return false;
+        }
+        swap_chain_width = width;
+        swap_chain_height = height;
+      }
+      swap_chain_dpi_ratio = dpi_ratio;
+      return true;
+    }
+    if (swap_chain)
+      clear_swap_chain();
+
+    d2d::ComPtr<IDXGIDevice> dxgi_device;
+    d2d::ComPtr<IDXGIAdapter> adapter;
+    d2d::ComPtr<IDXGIFactory2> factory;
+    if (FAILED(device_mgr.d3d_device()->QueryInterface(
+            IID_PPV_ARGS(dxgi_device.ReleaseAndGetAddressOf()))) ||
+        FAILED(dxgi_device->GetAdapter(adapter.ReleaseAndGetAddressOf())) ||
+        FAILED(adapter->GetParent(IID_PPV_ARGS(factory.ReleaseAndGetAddressOf()))))
+      return false;
+
+    DXGI_SWAP_CHAIN_DESC1 desc{};
+    desc.Width = static_cast<UINT>(width);
+    desc.Height = static_cast<UINT>(height);
+    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    desc.SampleDesc.Count = 1;
+    desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    desc.BufferCount = 2;
+    desc.Scaling = DXGI_SCALING_STRETCH;
+    desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+    desc.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
+    desc.Flags = DXGI_SWAP_CHAIN_FLAG_GDI_COMPATIBLE;
+
+    d2d::ComPtr<IDXGISwapChain1> created;
+    const HRESULT hr = factory->CreateSwapChainForHwnd(
+        device_mgr.d3d_device(), hwnd, &desc, nullptr, nullptr,
+        created.ReleaseAndGetAddressOf());
+    if (FAILED(hr))
+      return false;
+
+    if (auto *context = device_mgr.context())
+      context->SetTarget(nullptr);
+    swap_chain = std::move(created);
+    swap_chain_hwnd = hwnd;
+    swap_chain_width = width;
+    swap_chain_height = height;
+    swap_chain_dpi_ratio = dpi_ratio;
+    return true;
+  }
+
   bool recover_device() {
+    const HWND hwnd = swap_chain_hwnd;
+    const int32_t width = swap_chain_width;
+    const int32_t height = swap_chain_height;
+    const float dpi_ratio = swap_chain_dpi_ratio;
+    clear_swap_chain();
     clear_pixel_bitmaps();
     image_cache.clear();
     geometry_cache.clear();
-    return device_mgr.recover();
+    if (!device_mgr.recover())
+      return false;
+    return !hwnd || create_swap_chain(hwnd, width, height, dpi_ratio);
   }
 
   void update_metric(const document::DocumentSnapshot &snapshot,
@@ -189,9 +302,16 @@ struct D2DRenderBackend::Impl {
       return false;
     }
 
+    const auto project = [&camera, scene](const geometry::Transform2D &transform) {
+      return object_projection(transform, camera,
+          scene ? scene->viewport_origin_x : 0.0f,
+          scene ? scene->viewport_origin_y : 0.0f);
+    };
+
     return std::visit(
         [&](const auto &obj) -> bool {
           using T = std::decay_t<decltype(obj)>;
+          if (!obj.visible || (excluded_owner && obj.id == excluded_owner)) return true;
           const auto fail = [&](const char *message) {
             diagnostics.push_back({obj.id, true, message});
             return false;
@@ -205,7 +325,7 @@ struct D2DRenderBackend::Impl {
             }
 
             auto draw_geometry_contents = [&](ID2D1DeviceContext *ctx) {
-              ScopedTransform transform(ctx, object_projection(effective_transform, camera));
+              ScopedTransform transform(ctx, project(effective_transform));
               if (obj.has_fill) {
                 d2d::ComPtr<ID2D1Brush> fill_brush;
                 const float fill_op = static_cast<float>(
@@ -236,31 +356,36 @@ struct D2DRenderBackend::Impl {
               }
 
               if (obj.contour_spec.starts_with("contour:v1;")) {
-                const auto feat = document::deserialize_contour_feature(obj.contour_spec);
+                auto feat = document::deserialize_contour_feature(obj.contour_spec);
                 if (feat) {
+                  if (obj.contour_paints) {
+                    feat->outline_color = obj.contour_paints->outline;
+                    feat->fill_color = obj.contour_paints->fill;
+                  }
                   const auto res = document::evaluate_contour(obj, *feat);
                   const float zoom = static_cast<float>(camera.zoom());
                   const float contour_w = std::max(1.0f / zoom,
                       static_cast<float>(feat->stroke_width_mm > 0.0 ? feat->stroke_width_mm : 0.2));
-                  auto stroke_b = effects_pipeline.create_brush(
-                      ctx, feat->outline_color, 1.0f, color_preview.get());
-                  if (stroke_b) {
-                    for (size_t s = 0; s < res.steps.size(); ++s) {
-                      const auto& step = res.steps[s];
-                      if (step.is_empty) continue;
-                      for (size_t l = 0; l < step.loops.size(); ++l) {
-                        auto loop_geo = geometry_cache.get_or_create_path(
-                            factory, obj.id, snapshot.revision(), step.loops[l],
-                            static_cast<uint8_t>(20 + (s * 4 + l) % 200));
-                        if (loop_geo) {
-                          if (feat->has_fill) {
-                            auto fill_b = effects_pipeline.create_brush(
-                                ctx, feat->fill_color, 1.0f, color_preview.get());
-                            if (fill_b) ctx->FillGeometry(loop_geo.Get(), fill_b.Get());
-                          }
-                          ctx->DrawGeometry(loop_geo.Get(), stroke_b.Get(), contour_w);
-                        }
+                  d2d::ComPtr<ID2D1Brush> stroke_b;
+                  if (feat->has_outline) {
+                    stroke_b = effects_pipeline.create_brush(
+                        ctx, feat->outline_color, 1.0f, color_preview.get());
+                  }
+                  for (size_t s = 0; s < res.steps.size(); ++s) {
+                    const auto& step = res.steps[s];
+                    if (step.is_empty) continue;
+                    for (size_t l = 0; l < step.loops.size(); ++l) {
+                      auto loop_geo = geometry_cache.get_or_create_path(
+                          factory, obj.id, snapshot.revision(), step.loops[l],
+                          static_cast<uint8_t>(20 + (s * 4 + l) % 200));
+                      if (!loop_geo) continue;
+                      if (feat->has_fill) {
+                        auto fill_b = effects_pipeline.create_brush(
+                            ctx, feat->fill_color, 1.0f, color_preview.get());
+                        if (fill_b) ctx->FillGeometry(loop_geo.Get(), fill_b.Get());
                       }
+                      if (stroke_b)
+                        ctx->DrawGeometry(loop_geo.Get(), stroke_b.Get(), contour_w);
                     }
                   }
                 }
@@ -271,8 +396,7 @@ struct D2DRenderBackend::Impl {
                 if (dim) {
                   const auto dim_layout = document::evaluate_dimension_layout(*dim, snapshot);
                   if (dim_layout.valid) {
-                    if (dim->style.arrow_type == geometry::ArrowType::ClosedFilled ||
-                        dim->style.arrow_type == geometry::ArrowType::Dot) {
+                    if (!dim_layout.arrows.empty()) {
                       auto arr_brush = effects_pipeline.create_brush(
                           ctx, dim->style.line_color, 1.0f, color_preview.get());
                       if (arr_brush) {
@@ -280,9 +404,14 @@ struct D2DRenderBackend::Impl {
                           auto arr_geo = geometry_cache.get_or_create_path(
                               factory, obj.id, snapshot.revision(), dim_layout.arrows[a_idx],
                               static_cast<uint8_t>(210 + a_idx));
-                          if (arr_geo) {
+                          if (!arr_geo) continue;
+                          if (dim->style.arrow_type == geometry::ArrowType::ClosedFilled ||
+                              dim->style.arrow_type == geometry::ArrowType::Dot)
                             ctx->FillGeometry(arr_geo.Get(), arr_brush.Get());
-                          }
+                          else
+                            ctx->DrawGeometry(arr_geo.Get(), arr_brush.Get(),
+                                static_cast<float>((std::max)(
+                                    0.1, dim->style.line_width_mm)));
                         }
                       }
                     }
@@ -322,6 +451,92 @@ struct D2DRenderBackend::Impl {
                   }
                 }
               }
+
+              if (obj.contour_spec.starts_with("annotation:v1")) {
+                const auto ann = document::AnnotationRegistry::instance().get(obj.id);
+                auto ann_val = ann.has_value() ? *ann : document::deserialize_annotation_spec(obj.contour_spec).value_or(document::AnnotationObject{});
+                if (!ann_val.text.empty() || !ann_val.leader_points.empty()) {
+                  const auto ann_layout = document::evaluate_annotation_layout(ann_val);
+                  if (!ann_layout.arrow_path.empty()) {
+                    auto arr_brush = effects_pipeline.create_brush(
+                        ctx, ann_val.style.color, 1.0f, color_preview.get());
+                    if (arr_brush) {
+                      auto arr_geo = geometry_cache.get_or_create_path(
+                          factory, obj.id, snapshot.revision(), ann_layout.arrow_path, 220);
+                      if (arr_geo) {
+                        if (ann_val.style.arrow_type == geometry::ArrowType::ClosedFilled ||
+                            ann_val.style.arrow_type == geometry::ArrowType::Dot) {
+                          ctx->FillGeometry(arr_geo.Get(), arr_brush.Get());
+                        } else {
+                          ctx->DrawGeometry(arr_geo.Get(), arr_brush.Get(),
+                              static_cast<float>((std::max)(0.1, ann_val.style.line_width_mm)));
+                        }
+                      }
+                    }
+                  }
+                  if (!ann_layout.formatted_text.empty()) {
+#ifdef PIKDRAW_TYPOGRAPHY_REAL_OUTLINES
+                    try {
+                      typography::FontIdentity font{typography::FontIdentity::make_default()};
+                      font.size_pt = (ann_val.style.text_size_mm > 0.5 ? ann_val.style.text_size_mm : 2.5) * (72.0 / 25.4);
+                      typography::LayoutOptions opts;
+                      opts.alignment = typography::TextAlignment::Left;
+                      const auto t_layout = typography::TextLayout::layout_text(ann_layout.formatted_text, font, opts);
+                      const auto t_path = typography::text_to_path_outlines(t_layout, false);
+
+                      geometry::Transform2D t_xform =
+                          geometry::Transform2D::translation(ann_layout.text_origin.x, ann_layout.text_origin.y) *
+                          geometry::Transform2D::scale(1.0, -1.0);
+
+                      const auto final_t_path = t_path.transformed(t_xform);
+                      auto text_geo = geometry_cache.get_or_create_path(
+                          factory, obj.id, snapshot.revision(), final_t_path, 253);
+                      if (text_geo) {
+                        auto text_b = effects_pipeline.create_brush(
+                            ctx, ann_val.style.color, 1.0f, color_preview.get());
+                        if (text_b) {
+                          ctx->FillGeometry(text_geo.Get(), text_b.Get());
+                        }
+                      }
+                    } catch (...) {}
+#endif
+                  }
+                }
+              }
+
+              if (obj.contour_spec.starts_with("detail_view:v1")) {
+                const auto dv_opt = document::DetailViewRegistry::instance().get(obj.id);
+                auto dv = dv_opt.has_value() ? *dv_opt : document::deserialize_detail_view_spec(obj.contour_spec).value_or(document::DetailViewObject{});
+                const auto dv_layout = document::evaluate_detail_view_layout(dv);
+                if (!dv_layout.formatted_label.empty()) {
+#ifdef PIKDRAW_TYPOGRAPHY_REAL_OUTLINES
+                  try {
+                    typography::FontIdentity font{typography::FontIdentity::make_default()};
+                    font.size_pt = (dv.text_size_mm > 0.5 ? dv.text_size_mm : 2.5) * (72.0 / 25.4);
+                    typography::LayoutOptions opts;
+                    opts.alignment = typography::TextAlignment::Center;
+                    const auto t_layout = typography::TextLayout::layout_text(dv_layout.formatted_label, font, opts);
+                    const auto t_path = typography::text_to_path_outlines(t_layout, false);
+                    const auto tb = t_path.bounds();
+
+                    geometry::Transform2D t_xform =
+                        geometry::Transform2D::translation(dv_layout.label_origin.x, dv_layout.label_origin.y + tb.height) *
+                        geometry::Transform2D::scale(1.0, -1.0);
+
+                    const auto final_t_path = t_path.transformed(t_xform);
+                    auto text_geo = geometry_cache.get_or_create_path(
+                        factory, obj.id, snapshot.revision(), final_t_path, 252);
+                    if (text_geo) {
+                      auto text_b = effects_pipeline.create_brush(
+                          ctx, dv.color, 1.0f, color_preview.get());
+                      if (text_b) {
+                        ctx->FillGeometry(text_geo.Get(), text_b.Get());
+                      }
+                    }
+                  } catch (...) {}
+#endif
+                }
+              }
               return true;
             };
 
@@ -337,19 +552,37 @@ struct D2DRenderBackend::Impl {
                 ++rendered_count;
                 return true;
               }
-              const auto layout = obj.layout();
-              auto path = typography::text_to_path_outlines(layout, obj.underline);
-              const auto effective_transform = (parent_transform * obj.transform) *
-                                               geometry::Transform2D::translation(
-                                                   obj.position.x, obj.position.y) *
-                                               geometry::Transform2D::scale(1, -1);
+              geometry::Path2D path;
+              geometry::Transform2D effective_transform;
+              if (obj.is_text_on_path()) {
+                auto path_opt = snapshot.objects().get(obj.path_binding_id);
+                if (path_opt && std::holds_alternative<document::PathObject>(*path_opt)) {
+                  const auto& host_path = std::get<document::PathObject>(*path_opt);
+                  typography::TextOnPathOptions top_opts;
+                  top_opts.start_offset_mm = obj.path_offset_mm;
+                  top_opts.baseline_offset_mm = obj.path_baseline_offset_mm;
+                  top_opts.reversed = obj.path_reversed;
+                  top_opts.alignment = obj.alignment;
+                  auto top_res = typography::layout_text_on_path(host_path.path, obj.text, obj.font, top_opts);
+                  path = std::move(top_res.combined_outlines);
+                  effective_transform = (parent_transform * host_path.transform) * geometry::Transform2D::scale(1, -1);
+                }
+              }
+              if (path.empty()) {
+                const auto layout = obj.layout();
+                path = typography::text_to_path_outlines(layout, obj.underline, obj.strikethrough);
+                effective_transform = (parent_transform * obj.transform) *
+                                                 geometry::Transform2D::translation(
+                                                     obj.position.x, obj.position.y) *
+                                                 geometry::Transform2D::scale(1, -1);
+              }
               d2d::D2DGeometryCache text_geometry;
               auto geo = text_geometry.get_or_create_path(
                   factory, obj.id, snapshot.revision(), path);
               if (!geo)
                 return fail("Direct2D could not create text glyph-outline geometry");
               const auto draw_text = [&](ID2D1DeviceContext *ctx) {
-                ScopedTransform transform(ctx, object_projection(effective_transform, camera));
+                ScopedTransform transform(ctx, project(effective_transform));
                 auto brush = effects_pipeline.create_brush(
                     ctx, obj.fill,
                     static_cast<float>(obj.appearance.fill_opacity *
@@ -375,29 +608,32 @@ struct D2DRenderBackend::Impl {
             return fail("This build does not provide DirectWrite glyph outlines");
 #endif
           } else if constexpr (std::is_same_v<T, document::ImageObject>) {
-            const auto pixels = obj.rgba_pixels();
-            if (obj.width_px <= 0 || obj.height_px <= 0 ||
-                pixels.size() != static_cast<size_t>(obj.width_px) *
-                                              static_cast<size_t>(obj.height_px)) {
+            const auto resolved = raster_image_resolver
+                ? raster_image_resolver(snapshot, obj) : nullptr;
+            const auto& image = resolved ? *resolved : obj;
+            const auto pixels = image.rgba_pixels();
+            if (image.width_px <= 0 || image.height_px <= 0 ||
+                pixels.size() != static_cast<size_t>(image.width_px) *
+                                              static_cast<size_t>(image.height_px)) {
               return fail("Image pixel dimensions do not match the stored RGBA pixels");
             }
-            auto d2d_bitmap = image_cache.get(context, obj, snapshot.revision());
+            auto d2d_bitmap = image_cache.get(context, image, snapshot.revision());
             if (!d2d_bitmap)
               return fail("Direct2D could not allocate or upload the image bitmap");
             HRESULT hr = S_OK;
 
-            const auto effective_transform = parent_transform * obj.transform;
+            const auto effective_transform = parent_transform * image.transform;
             D2D1_RECT_F dst_rect = D2D1::RectF(
-                static_cast<float>(obj.bounds_rect.x),
-                static_cast<float>(obj.bounds_rect.y),
-                static_cast<float>(obj.bounds_rect.right()),
-                static_cast<float>(obj.bounds_rect.bottom()));
-            ScopedTransform transform(context, object_projection(effective_transform, camera));
+                static_cast<float>(image.bounds_rect.x),
+                static_cast<float>(image.bounds_rect.y),
+                static_cast<float>(image.bounds_rect.right()),
+                static_cast<float>(image.bounds_rect.bottom()));
+            ScopedTransform transform(context, project(effective_transform));
 
             d2d::ComPtr<ID2D1Layer> clip_layer;
-            if (obj.clip_path) {
+            if (image.clip_path) {
               auto clip_geometry = geometry_cache.get_or_create_path(
-                  factory, obj.id, snapshot.revision(), *obj.clip_path, 1);
+                  factory, image.id, snapshot.revision(), *image.clip_path, 1);
               if (!clip_geometry)
                 return fail("Direct2D could not create the image clip geometry");
               hr = context->CreateLayer(nullptr, clip_layer.ReleaseAndGetAddressOf());
@@ -425,14 +661,15 @@ struct D2DRenderBackend::Impl {
             const auto child_transform = parent_transform * obj.transform;
             if (obj.is_clipping_container()) {
               const auto* mask_child = snapshot.objects().lookup_ref(obj.clip->mask_object_id);
-              if (mask_child && std::holds_alternative<document::PathObject>(*mask_child)) {
-                const auto& mask_obj = std::get<document::PathObject>(*mask_child);
+              const auto mask_geometry = mask_child ? document::frame_geometry(*mask_child) : std::nullopt;
+              if (mask_geometry) {
+                const auto& mask_obj = *mask_geometry;
                 const auto mask_effective_transform = child_transform * mask_obj.transform;
                 auto mask_geo = geometry_cache.get_or_create_path(
                     factory, mask_obj.id, snapshot.revision(), mask_obj.path);
 
                 if (obj.clip->preserve_frame_appearance && mask_obj.has_fill && mask_geo) {
-                  ScopedTransform transform(context, object_projection(mask_effective_transform, camera));
+                  ScopedTransform transform(context, project(mask_effective_transform));
                   d2d::ComPtr<ID2D1Brush> fill_brush;
                   const float fill_op = static_cast<float>(
                       mask_obj.appearance.fill_opacity * mask_obj.appearance.object_opacity);
@@ -452,7 +689,7 @@ struct D2DRenderBackend::Impl {
                 D2D1_MATRIX_3X2_F prev_layer_xform{};
                 if (mask_geo) {
                   d2d::ComPtr<ID2D1TransformedGeometry> transformed_mask;
-                  const auto mask_xform = object_projection(mask_effective_transform, camera);
+                  const auto mask_xform = project(mask_effective_transform);
                   HRESULT hr_geo = factory->CreateTransformedGeometry(mask_geo.Get(), &mask_xform, transformed_mask.ReleaseAndGetAddressOf());
                   if (SUCCEEDED(hr_geo)) {
                     context->GetTransform(&prev_layer_xform);
@@ -500,7 +737,7 @@ struct D2DRenderBackend::Impl {
                 }
 
                 if (obj.clip->preserve_frame_appearance && mask_obj.has_stroke && mask_geo) {
-                  ScopedTransform transform(context, object_projection(mask_effective_transform, camera));
+                  ScopedTransform transform(context, project(mask_effective_transform));
                   const float stroke_op = static_cast<float>(
                       mask_obj.appearance.stroke_opacity * mask_obj.appearance.object_opacity);
                   auto stroke_brush = effects_pipeline.create_brush(
@@ -518,6 +755,7 @@ struct D2DRenderBackend::Impl {
               }
             }
 
+            if (obj.is_clipping_container()) return fail("Unsupported PowerClip frame geometry");
             for (const auto child_id : obj.children_ids) {
               const auto *child = snapshot.objects().lookup_ref(child_id);
               if (!child) {
@@ -535,6 +773,38 @@ struct D2DRenderBackend::Impl {
           }
         },
         variant);
+  }
+
+  bool render_edit_view(const document::DocumentSnapshot& snapshot,const Camera2D& camera,
+      ID2D1DeviceContext* context,ID2D1Factory1* factory,size_t& rendered_count,
+      std::vector<RenderDiagnostic>& diagnostics,d2d::SceneDrawState* scene,int width,int height) {
+    bool resource_failure=false;
+    if (view.owner) {
+      const auto* entry = snapshot.hierarchy().find(view.owner);
+      const auto* object = snapshot.objects().lookup_ref(view.owner);
+      const auto* group = object ? std::get_if<document::GroupObject>(object) : nullptr;
+      if (!entry || !group) resource_failure = true;
+      else {
+        ScopedTransform identity(context, D2D1::Matrix3x2F::Identity());
+        d2d::ComPtr<ID2D1SolidColorBrush> wash;
+        if (FAILED(context->CreateSolidColorBrush(D2D1::ColorF(.94f,.94f,.94f,.67f), &wash))) resource_failure = true;
+        else context->FillRectangle(D2D1::RectF(0,0,float(width),float(height)), wash.Get());
+        excluded_owner = 0;
+        if (!view.reveal_contents || view.edit_frame) {
+          if (!render_object(snapshot, *object, entry->parent_world, camera, context, factory,
+              rendered_count, diagnostics, scene)) resource_failure = true;
+        } else for (auto id : group->children_ids) {
+          if (group->clip && id == group->clip->mask_object_id) continue;
+          const auto* child = snapshot.objects().lookup_ref(id);
+          if (!child || !render_object(snapshot, *child, entry->world, camera, context, factory,
+              rendered_count, diagnostics, scene)) resource_failure = true;
+        }
+        if (auto outline = detail::clip_frame_outline(snapshot, view.owner, camera))
+          if (!render_object(snapshot, document::ObjectVariant{*outline}, {}, camera, context,
+              factory, rendered_count, diagnostics, scene)) resource_failure = true;
+      }
+    }
+    return !resource_failure;
   }
 
   bool render_to_pixel_buffer(const document::DocumentSnapshot &snapshot,
@@ -618,6 +888,15 @@ struct D2DRenderBackend::Impl {
         snapshot, visible_bounds, camera.zoom(), 0.0);
 
     bool resource_failure = !paper_ok;
+    image_cache.begin_frame();
+
+    if (auto source_preview = detail::make_pdf_source_preview(snapshot.active_page())) {
+      document::ObjectVariant preview_object{std::move(*source_preview)};
+      if (!render_object(snapshot, preview_object, geometry::Transform2D::identity(),
+                         camera, context, factory, rendered_count, diagnostics,
+                         &scene))
+        resource_failure = true;
+    }
 
     for (const auto &ref : visible_refs) {
       if (!ref.object)
@@ -629,6 +908,7 @@ struct D2DRenderBackend::Impl {
       }
     }
 
+    if (!render_edit_view(snapshot,camera,context,factory,rendered_count,diagnostics,&scene,target.width,target.height)) resource_failure=true;
     hr = scene.drawing_active ? context->EndDraw() : S_OK;
     scene.drawing_active = false;
     if (FAILED(hr)) {
@@ -638,6 +918,18 @@ struct D2DRenderBackend::Impl {
       return fail("Direct2D EndDraw failed; the partial GPU frame was rejected");
     }
     if (resource_failure) {
+      if (image_cache.memory_pressure_encountered()) {
+        // Do not reject an imported image because its GPU cache allocation is
+        // blocked by system pressure. The software renderer consumes the
+        // already-decoded immutable source pixels into the caller's target,
+        // avoiding another full-image upload buffer and keeping the canvas
+        // usable while applications release RAM.
+        RenderMetric fallback_metric{};
+        const bool fallback_ok = fallback_rasterizer.render(
+            snapshot, camera, target, &fallback_metric);
+        if (out_metric) *out_metric = std::move(fallback_metric);
+        return fallback_ok;
+      }
       update_metric(snapshot, out_metric, rendered_count, diagnostics,
                     start_time, false);
       return false;
@@ -759,6 +1051,19 @@ DeviceLossStatus D2DRenderBackend::device_status() const noexcept {
   return impl_->device_mgr.status();
 }
 
+bool D2DRenderBackend::supports_effect(
+    const document::EffectParameters &parameters) const noexcept {
+  return std::visit([](const auto &effect) noexcept {
+    using T = std::decay_t<decltype(effect)>;
+    if constexpr (std::is_same_v<T, document::GaussianBlurEffect>) {
+      return true;
+    } else if constexpr (std::is_same_v<T, document::DropShadowEffect>) {
+      return effect.blend_mode == document::BlendMode::Normal;
+    }
+    return false;
+  }, parameters);
+}
+
 bool D2DRenderBackend::recover_device() {
   return impl_->recover_device();
 }
@@ -778,9 +1083,131 @@ bool D2DRenderBackend::is_hardware_accelerated() const noexcept {
   return impl_->device_mgr.is_hardware();
 }
 
+bool D2DRenderBackend::create_swap_chain_target(void *hwnd, int32_t width,
+                                                int32_t height,
+                                                float device_pixel_ratio) {
+  return impl_->create_swap_chain(static_cast<HWND>(hwnd), width, height,
+                                  device_pixel_ratio);
+}
+
+GpuSurfaceTarget D2DRenderBackend::swap_chain_target() const noexcept {
+  return {GpuTargetType::DxgiSwapChain, impl_->swap_chain.Get(),
+          impl_->swap_chain_width, impl_->swap_chain_height,
+          impl_->swap_chain_dpi_ratio};
+}
+
+void D2DRenderBackend::release_swap_chain_target() noexcept {
+  impl_->clear_swap_chain();
+}
+
+bool D2DRenderBackend::resize_swap_chain_target(int32_t width,
+                                                int32_t height) {
+  if (!impl_->swap_chain || impl_->swap_chain_gdi_dc ||
+      width <= 0 || height <= 0)
+    return false;
+  if (width == impl_->swap_chain_width && height == impl_->swap_chain_height)
+    return true;
+  if (auto *context = impl_->device_mgr.context())
+    context->SetTarget(nullptr);
+  const HRESULT hr = impl_->swap_chain->ResizeBuffers(
+      0, static_cast<UINT>(width), static_cast<UINT>(height),
+      DXGI_FORMAT_UNKNOWN, DXGI_SWAP_CHAIN_FLAG_GDI_COMPATIBLE);
+  if (FAILED(hr)) {
+    if (is_device_lost(hr))
+      impl_->recover_device();
+    return false;
+  }
+  impl_->swap_chain_width = width;
+  impl_->swap_chain_height = height;
+  return true;
+}
+
+bool D2DRenderBackend::present_swap_chain_target(uint32_t sync_interval) {
+  if (!impl_->swap_chain || impl_->swap_chain_gdi_dc || sync_interval > 4)
+    return false;
+  if (auto *context = impl_->device_mgr.context())
+    context->SetTarget(nullptr);
+  const HRESULT hr = impl_->swap_chain->Present(sync_interval, 0);
+  if (is_device_lost(hr)) {
+    impl_->recover_device();
+    return false;
+  }
+  return SUCCEEDED(hr);
+}
+
+void *D2DRenderBackend::acquire_swap_chain_target_dc() {
+  if (!impl_->swap_chain || impl_->swap_chain_gdi_dc)
+    return nullptr;
+  d2d::ComPtr<IDXGISurface1> surface;
+  if (FAILED(impl_->swap_chain->GetBuffer(
+          0, IID_PPV_ARGS(surface.ReleaseAndGetAddressOf()))))
+    return nullptr;
+  HDC dc = nullptr;
+  if (FAILED(surface->GetDC(FALSE, &dc)) || !dc)
+    return nullptr;
+  impl_->swap_chain_gdi_surface = std::move(surface);
+  impl_->swap_chain_gdi_dc = dc;
+  return dc;
+}
+
+bool D2DRenderBackend::release_swap_chain_target_dc() {
+  if (!impl_->swap_chain_gdi_surface || !impl_->swap_chain_gdi_dc)
+    return false;
+  const HRESULT hr = impl_->swap_chain_gdi_surface->ReleaseDC(nullptr);
+  impl_->swap_chain_gdi_surface.Reset();
+  impl_->swap_chain_gdi_dc = nullptr;
+  return SUCCEEDED(hr);
+}
+
+bool D2DRenderBackend::capture_swap_chain_target(PixelBufferTarget &target) {
+  if (!target.is_valid() || !impl_->swap_chain ||
+      impl_->swap_chain_gdi_dc ||
+      target.width != impl_->swap_chain_width ||
+      target.height != impl_->swap_chain_height || !impl_->device_mgr.is_valid())
+    return false;
+
+  d2d::ComPtr<ID3D11Texture2D> back_buffer;
+  if (FAILED(impl_->swap_chain->GetBuffer(
+          0, IID_PPV_ARGS(back_buffer.ReleaseAndGetAddressOf()))))
+    return false;
+  D3D11_TEXTURE2D_DESC desc{};
+  back_buffer->GetDesc(&desc);
+  desc.Usage = D3D11_USAGE_STAGING;
+  desc.BindFlags = 0;
+  desc.MiscFlags = 0;
+  desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+  d2d::ComPtr<ID3D11Texture2D> staging;
+  if (FAILED(impl_->device_mgr.d3d_device()->CreateTexture2D(
+          &desc, nullptr, staging.ReleaseAndGetAddressOf())))
+    return false;
+
+  auto *d3d_context = impl_->device_mgr.d3d_context();
+  if (!d3d_context)
+    return false;
+  d3d_context->CopyResource(staging.Get(), back_buffer.Get());
+  D3D11_MAPPED_SUBRESOURCE mapped{};
+  if (FAILED(d3d_context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped)))
+    return false;
+  for (int32_t y = 0; y < target.height; ++y) {
+    const auto *src = static_cast<const uint8_t *>(mapped.pData) +
+                      static_cast<size_t>(y) * mapped.RowPitch;
+    for (int32_t x = 0; x < target.width; ++x) {
+      const auto *pixel = src + static_cast<size_t>(x) * 4;
+      target.set_pixel(x, y, pixel[2], pixel[1], pixel[0], pixel[3]);
+    }
+  }
+  d3d_context->Unmap(staging.Get(), 0);
+  return true;
+}
+
 bool D2DRenderBackend::render(const document::DocumentSnapshot &snapshot,
                              const Camera2D &camera, PixelBufferTarget &target,
                              RenderMetric *out_metric) {
+  impl_->view = view_context_;
+  impl_->excluded_owner = view_context_.owner;
+  impl_->raster_image_resolver = raster_image_resolver_;
+  impl_->fallback_rasterizer.set_raster_image_resolver(raster_image_resolver_);
+  impl_->fallback_rasterizer.set_view_context(view_context_);
   return impl_->render_to_pixel_buffer(snapshot, camera, target, out_metric);
 }
 
@@ -788,9 +1215,14 @@ bool D2DRenderBackend::render_gpu(const document::DocumentSnapshot &snapshot,
                                  const Camera2D &camera,
                                  const GpuSurfaceTarget &target,
                                  RenderMetric *out_metric) {
+  impl_->view=view_context_;impl_->excluded_owner=view_context_.owner;
+  impl_->raster_image_resolver = raster_image_resolver_;
+  impl_->fallback_rasterizer.set_raster_image_resolver(raster_image_resolver_);
   if (out_metric)
     out_metric->used_gpu = false;
-  if (!target.is_valid() || !impl_->device_mgr.is_valid()) {
+  if (!target.is_valid() || impl_->swap_chain_gdi_dc ||
+      !std::isfinite(target.device_pixel_ratio) ||
+      target.device_pixel_ratio <= 0.0f || !impl_->device_mgr.is_valid()) {
     return false;
   }
 
@@ -799,8 +1231,46 @@ bool D2DRenderBackend::render_gpu(const document::DocumentSnapshot &snapshot,
   if (!context || !factory)
     return false;
 
-  IDXGISurface *dxgi_surface = reinterpret_cast<IDXGISurface *>(target.native_resource);
-  if (!dxgi_surface)
+  d2d::ComPtr<IDXGISurface> swap_chain_surface;
+  IDXGISurface *dxgi_surface = nullptr;
+  if (target.type == GpuTargetType::DxgiSwapChain) {
+    auto *swap_chain = reinterpret_cast<IDXGISwapChain1 *>(target.native_resource);
+    if (!swap_chain || FAILED(swap_chain->GetBuffer(
+                            0, IID_PPV_ARGS(swap_chain_surface.ReleaseAndGetAddressOf()))))
+      return false;
+    dxgi_surface = swap_chain_surface.Get();
+  } else if (target.type == GpuTargetType::GpuTexture) {
+    dxgi_surface = reinterpret_cast<IDXGISurface *>(target.native_resource);
+  } else {
+    return false;
+  }
+  DXGI_SURFACE_DESC surface_desc{};
+  if (FAILED(dxgi_surface->GetDesc(&surface_desc)) ||
+      surface_desc.Width != static_cast<UINT>(target.width) ||
+      surface_desc.Height != static_cast<UINT>(target.height) ||
+      surface_desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM ||
+      surface_desc.SampleDesc.Count != 1)
+    return false;
+
+  if (!std::isfinite(target.viewport_x) || !std::isfinite(target.viewport_y) ||
+      !std::isfinite(target.viewport_width) ||
+      !std::isfinite(target.viewport_height) || target.viewport_x < 0.0f ||
+      target.viewport_y < 0.0f || target.viewport_width < 0.0f ||
+      target.viewport_height < 0.0f)
+    return false;
+  const double surface_width_dips =
+      static_cast<double>(target.width) / target.device_pixel_ratio;
+  const double surface_height_dips =
+      static_cast<double>(target.height) / target.device_pixel_ratio;
+  const float viewport_x = target.viewport_x;
+  const float viewport_y = target.viewport_y;
+  const float viewport_width = target.viewport_width == 0.0f
+      ? static_cast<float>(surface_width_dips) : target.viewport_width;
+  const float viewport_height = target.viewport_height == 0.0f
+      ? static_cast<float>(surface_height_dips) : target.viewport_height;
+  if (viewport_width <= 0.0f || viewport_height <= 0.0f ||
+      static_cast<double>(viewport_x) + viewport_width > surface_width_dips + 0.01 ||
+      static_cast<double>(viewport_y) + viewport_height > surface_height_dips + 0.01)
     return false;
 
   D2D1_BITMAP_PROPERTIES1 props{};
@@ -819,10 +1289,33 @@ bool D2DRenderBackend::render_gpu(const document::DocumentSnapshot &snapshot,
   context->SetTarget(surface_bitmap.Get());
   context->BeginDraw();
   context->SetTransform(D2D1::Matrix3x2F::Identity());
-  context->Clear(D2D1::ColorF(impl_->background.r / 255.0f,
-                              impl_->background.g / 255.0f,
-                              impl_->background.b / 255.0f,
-                              impl_->background.a / 255.0f));
+  const auto viewport = D2D1::RectF(
+      static_cast<float>(viewport_x), static_cast<float>(viewport_y),
+      static_cast<float>(viewport_x + viewport_width),
+      static_cast<float>(viewport_y + viewport_height));
+  const bool full_surface = viewport_x == 0 && viewport_y == 0 &&
+      std::abs(viewport_width - surface_width_dips) < 0.01 &&
+      std::abs(viewport_height - surface_height_dips) < 0.01;
+  if (full_surface) {
+    context->Clear(D2D1::ColorF(impl_->background.r / 255.0f,
+                                impl_->background.g / 255.0f,
+                                impl_->background.b / 255.0f,
+                                impl_->background.a / 255.0f));
+  } else {
+    d2d::ComPtr<ID2D1SolidColorBrush> background_brush;
+    if (FAILED(context->CreateSolidColorBrush(
+            D2D1::ColorF(impl_->background.r / 255.0f,
+                         impl_->background.g / 255.0f,
+                         impl_->background.b / 255.0f,
+                         impl_->background.a / 255.0f),
+            background_brush.ReleaseAndGetAddressOf()))) {
+      (void)context->EndDraw();
+      context->SetTarget(nullptr);
+      return false;
+    }
+    context->PushAxisAlignedClip(viewport, D2D1_ANTIALIAS_MODE_ALIASED);
+    context->FillRectangle(viewport, background_brush.Get());
+  }
 
   const float zoom = static_cast<float>(camera.zoom());
   const float half_w = static_cast<float>(camera.width()) * 0.5f;
@@ -830,8 +1323,11 @@ bool D2DRenderBackend::render_gpu(const document::DocumentSnapshot &snapshot,
 
   D2D1_MATRIX_3X2_F view_matrix =
       D2D1::Matrix3x2F::Scale(zoom, -zoom) *
-      D2D1::Matrix3x2F::Translation(half_w, half_h);
-  const bool paper_ok = d2d::draw_page(context, snapshot.page(), camera, impl_->background);
+      D2D1::Matrix3x2F::Translation(half_w + viewport_x,
+                                    half_h + viewport_y);
+  const bool paper_ok = d2d::draw_page(context, snapshot.page(), camera,
+                                      impl_->background,
+                                      viewport_x, viewport_y);
   context->SetTransform(view_matrix);
   d2d::SceneDrawState scene{};
   scene.target_bitmap = surface_bitmap.Get();
@@ -841,6 +1337,8 @@ bool D2DRenderBackend::render_gpu(const document::DocumentSnapshot &snapshot,
   scene.dpi_y = props.dpiY;
   scene.view_matrix = view_matrix;
   scene.drawing_active = true;
+  scene.viewport_origin_x = viewport_x;
+  scene.viewport_origin_y = viewport_y;
 
   const auto visible_bounds = camera.visible_world_bounds();
   const auto visible_refs = impl_->spatial_index.query_visible_refs(
@@ -849,6 +1347,14 @@ bool D2DRenderBackend::render_gpu(const document::DocumentSnapshot &snapshot,
   size_t rendered_count = 0;
   bool resource_failure = !paper_ok;
   std::vector<RenderDiagnostic> diagnostics;
+
+  if (auto source_preview = detail::make_pdf_source_preview(snapshot.active_page())) {
+    document::ObjectVariant preview_object{std::move(*source_preview)};
+    if (!impl_->render_object(snapshot, preview_object,
+                              geometry::Transform2D::identity(), camera, context,
+                              factory, rendered_count, diagnostics, &scene))
+      resource_failure = true;
+  }
 
   for (const auto &ref : visible_refs) {
     if (!ref.object)
@@ -860,10 +1366,14 @@ bool D2DRenderBackend::render_gpu(const document::DocumentSnapshot &snapshot,
     }
   }
 
+  if(!impl_->render_edit_view(snapshot,camera,context,factory,rendered_count,diagnostics,&scene,target.width,target.height)) resource_failure=true;
+  if (!full_surface)
+    context->PopAxisAlignedClip();
   hr = scene.drawing_active ? context->EndDraw() : S_OK;
   scene.drawing_active = false;
+  context->SetTarget(nullptr);
   if (FAILED(hr)) {
-    if (hr == D2DERR_RECREATE_TARGET || hr == DXGI_ERROR_DEVICE_REMOVED) {
+    if (is_device_lost(hr)) {
       impl_->recover_device();
     }
     return false;

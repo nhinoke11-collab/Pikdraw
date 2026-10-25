@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "pikdraw/rendering/gradient_sampler.hpp"
 #include "native_window_length_input.hpp"
 #include "native_window_file_menu.hpp"
 #include "native_window_length_input.hpp"
@@ -207,8 +208,21 @@ bool NativeWindow::handle_pen_pointer_move(int x, int y, unsigned modifiers) {
         }
     }
 
-    pen_last_pointer_world_ = gesture ? raw_world :
-        pen_numeric_buffer_.empty() ? pen_snap_point(raw_world, modifiers) : raw_world;
+    std::optional<tools::DrawingSnapQuery> pen_snap_query;
+    std::optional<geometry::Point2D> pen_external_anchor;
+    if (pen_tool_->anchor_count() > 0 && !pen_tool_->draft().nodes.empty())
+        pen_external_anchor = pen_tool_->world_point_from_source(pen_tool_->draft().nodes.back().anchor);
+    if (!gesture && pen_numeric_buffer_.empty() && (modifiers & MK_SHIFT) == 0 && drawing_tool_) {
+        pen_snap_query = drawing_tool_->query_snap_point(raw_world,
+            root().renderer().camera(), window_dpi_scale(), "pen", std::nullopt,
+            pen_external_anchor);
+    }
+    pen_last_pointer_world_ = gesture ? raw_world : pen_numeric_buffer_.empty()
+        ? (pen_snap_query
+            ? (pen_snap_query->result.chosen
+                ? pen_snap_query->result.chosen->world_point : raw_world)
+            : pen_snap_point(raw_world, modifiers))
+        : raw_world;
 
     if (pen_close_candidate_) {
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
@@ -231,6 +245,9 @@ bool NativeWindow::handle_pen_pointer_move(int x, int y, unsigned modifiers) {
     } else if (!pen_numeric_buffer_.empty()) {
         result = pen_tool_->update_numeric_candidate(pen_numeric_buffer_,
             vector::precision::numeric::ParseOptions{'.', display_length_unit_});
+    } else if (pen_snap_query) {
+        result = pen_tool_->update_from_snap_query(raw_world, pen_snap_query->result,
+            pen_snap_query->stamp, pen_snap_query->camera);
     } else {
         result = pen_tool_->pointer_move(pen_last_pointer_world_, false,
                                          pen_modifiers);
@@ -269,6 +286,15 @@ geometry::Point2D NativeWindow::pen_snap_point(geometry::Point2D raw_world,
                     };
                 }
             }
+        }
+        if ((modifiers & MK_SHIFT) == 0 && drawing_tool_) {
+            const auto external_anchor = pen_tool_->anchor_count() > 0 && !draft.nodes.empty()
+                ? std::optional(pen_tool_->world_point_from_source(draft.nodes.back().anchor))
+                : std::nullopt;
+            const auto query = drawing_tool_->query_snap_point(raw_world,
+                root().renderer().camera(), window_dpi_scale(), "pen", std::nullopt,
+                external_anchor);
+            if (query.result.chosen) return query.result.chosen->world_point;
         }
         return raw_world;
     }
@@ -446,7 +472,14 @@ bool NativeWindow::handle_node_pointer_move(int x, int y, unsigned modifiers) {
         return false;
     }
 
-    const auto world_pt = canvas_to_world(x, y);
+    auto world_pt = canvas_to_world(x, y);
+    if (node_tool_->tool().drag_mode() == vector::tools::node::NodeDragMode::MoveNode &&
+        drawing_tool_) {
+        const auto query = drawing_tool_->query_snap_point(world_pt,
+            root().renderer().camera(), window_dpi_scale(), "node",
+            node_tool_->target_object());
+        if (query.result.chosen) world_pt = query.result.chosen->world_point;
+    }
     const bool handled = node_tool_->pointer_move(world_pt);
     if (handled) {
         if (node_tool_->tool().is_rounding_corners()) {
@@ -570,18 +603,19 @@ bool NativeWindow::handle_node_property_click(int x, int y) {
         return false;
     if (active_dock_tab_ == 0 && x >= width_ - 280 && x <= width_ - 14) {
         const int dock_left = width_ - 280;
+        const int effective_y = y + properties_dock_scroll_;
         const auto selected_position = node_tool_->single_selected_node_position();
-        if (y >= 186 && y <= 218 && x >= dock_left + 132) {
+        if (effective_y >= 186 && effective_y <= 218 && x >= dock_left + 132) {
             if (selected_position) start_numeric_input(NumericFieldId::ObjectX);
             return true;
         }
-        if (y >= 226 && y <= 258 && x >= dock_left + 132) {
+        if (effective_y >= 226 && effective_y <= 258 && x >= dock_left + 132) {
             if (selected_position) start_numeric_input(NumericFieldId::ObjectY);
             return true;
         }
         const int panel_left = dock_left + AlignPanelMetrics::content_left;
         const int button_width = (AlignPanelMetrics::content_width - 12) / 3;
-        if (y >= 274 && y <= 304 && node_tool_->selected_node_count() > 0) {
+        if (effective_y >= 274 && effective_y <= 304 && node_tool_->selected_node_count() > 0) {
             const int item = std::clamp((x - panel_left) / (button_width + 6), 0, 2);
             constexpr document::PathNodeMode modes[] = {
                 document::PathNodeMode::Cusp,
@@ -598,7 +632,7 @@ bool NativeWindow::handle_node_property_click(int x, int y) {
         }
         // Segment convert: Line / Curve (content_y + 196 to 224 -> y 336..364)
         const int two_btn_width = (AlignPanelMetrics::content_width - 6) / 2;
-        if (y >= 334 && y <= 366 && node_tool_->selected_node_count() > 0) {
+        if (effective_y >= 334 && effective_y <= 366 && node_tool_->selected_node_count() > 0) {
             const int item = std::clamp((x - panel_left) / (two_btn_width + 6), 0, 1);
             if (item == 0) {
                 if (node_tool_->convert_selected_segment(document::PathSegmentKind::Line)) {
@@ -614,7 +648,7 @@ bool NativeWindow::handle_node_property_click(int x, int y) {
             return true;
         }
         // Path operations Row 1: Add, Delete, Break (content_y + 256 to 284 -> y 396..424)
-        if (y >= 394 && y <= 426) {
+        if (effective_y >= 394 && effective_y <= 426) {
             const int item = std::clamp((x - panel_left) / (button_width + 6), 0, 2);
             if (item == 0) {
                 if (node_tool_->add_node_at_midpoint()) {
@@ -635,7 +669,7 @@ bool NativeWindow::handle_node_property_click(int x, int y) {
             return true;
         }
         // Path operations Row 2: Join, Close, Reverse (content_y + 290 to 318 -> y 430..458)
-        if (y >= 428 && y <= 460 && node_tool_->selected_node_count() > 0) {
+        if (effective_y >= 428 && effective_y <= 460 && node_tool_->selected_node_count() > 0) {
             const int item = std::clamp((x - panel_left) / (button_width + 6), 0, 2);
             if (item == 0) {
                 if (node_tool_->join_selected(true)) {
@@ -776,7 +810,7 @@ bool NativeWindow::handle_contour_property_click(int x, int y) {
         const bool can_edit = path && !path->locked;
         const bool has_contour = can_edit &&
             document::get_object_contour(root().document(), target).has_value();
-        const int local_y = y - properties_top;
+        const int local_y = (y + properties_dock_scroll_) - properties_top;
         const int local_x = x - (panel_left + 14);
         const auto commit_active = [&]() {
             if (active_num_field_ == NumericFieldId::None) return true;
@@ -918,7 +952,42 @@ bool NativeWindow::handle_contour_property_click(int x, int y) {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Khoảng cách viền: " + format_mm_display_utf8(contour_tool_->spacing_mm(), display_length_unit_)
             : "Contour spacing: " + format_mm_display_utf8(contour_tool_->spacing_mm(), display_length_unit_);
-    } else if (x >= 470 && x <= 580) {
+    } else if (x >= 470 && x < 530) {
+        contour_tool_->set_join_type(geometry::JoinType::Miter);
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Góc nối: Nhọn (Miter)" : "Corner join: Miter";
+    } else if (x >= 533 && x < 593) {
+        contour_tool_->set_join_type(geometry::JoinType::Round);
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Góc nối: Tròn (Round)" : "Corner join: Round";
+    } else if (x >= 596 && x < 656) {
+        contour_tool_->set_join_type(geometry::JoinType::Bevel);
+        status_msg_ = language_ == UILanguage::Vietnamese ? "Góc nối: Vát (Bevel)" : "Corner join: Bevel";
+    } else if (x >= 662 && x < 715) {
+        contour_tool_->set_has_outline(!contour_tool_->has_outline());
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? (contour_tool_->has_outline() ? "Bật viền Contour (mặc định đen)" : "Tắt viền Contour")
+            : (contour_tool_->has_outline() ? "Contour outline enabled (black)" : "Contour outline disabled");
+    } else if (x >= 720 && x < 770) {
+        contour_tool_->set_has_fill(!contour_tool_->has_fill());
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? (contour_tool_->has_fill() ? "Bật tô màu Contour" : "Tắt tô màu Contour")
+            : (contour_tool_->has_fill() ? "Contour fill enabled" : "Contour fill disabled");
+    } else if (x >= 775 && x < 850) {
+        if (contour_tool_->apply()) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Đã áp dụng viền Contour vào đối tượng" : "Applied contour to object";
+        }
+    } else if (x >= 855 && x < 985) {
+        trigger_break_contour_apart();
+    } else if (x >= 990 && x < 1055) {
+        if (contour_tool_->remove()) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Đã xóa viền Contour khỏi đối tượng" : "Removed contour from object";
+        }
+    } else if (x >= 1060 && x < 1115) {
+        contour_tool_->cancel();
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đã hủy thiết lập Contour" : "Cancelled contour draft";
+    } else if (x >= 1120 && x <= 1160) {
         active_dock_tab_ = 0;
         show_style_inspector_ = false;
         show_align_panel_ = false;
@@ -943,12 +1012,107 @@ bool NativeWindow::handle_gradient_pointer_down(int x, int y, unsigned modifiers
     }
     if (!is_canvas_point(x, y))
         return false;
+    if (gradient_tool_->target_objects().size() != 1) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Chọn đúng một Path để kéo Gradient trên canvas"
+            : "Select one Path to edit Gradient handles on the canvas";
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return true;
+    }
     const auto world_pt = canvas_to_world(x, y);
+    const auto object_pt = gradient_tool_->world_to_object(world_pt);
+    if (!object_pt) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Không thể ánh xạ pointer vào Path · Gradient chưa đổi"
+            : "Could not map the pointer into this Path · Gradient unchanged";
+        return true;
+    }
     const bool shift = (modifiers & MK_SHIFT) != 0;
     const bool ctrl = (modifiers & MK_CONTROL) != 0;
-    const double zoom = root().renderer().camera().zoom();
-    const double hit_tolerance_mm = 8.0 / std::max(0.001, zoom);
-    gradient_tool_->on_pointer_down(world_pt, shift, ctrl, hit_tolerance_mm);
+    const auto* draft = gradient_tool_->active_draft_paint();
+    if (draft && !gradient_tool_->tool().is_editing())
+        (void)gradient_tool_->tool().set_draft_paint(*draft);
+    const auto area = canvas_rect(width_, height_);
+    const auto& camera = root().renderer().camera();
+    const auto handles = gradient_tool_->tool().get_handles();
+    vector::tools::GradientHandleHit handle_hit{};
+    double best_distance_sq = 8.0 * 8.0;
+    int best_priority = -1;
+    const auto priority = [](vector::tools::GradientHandleKind kind) {
+        return kind == vector::tools::GradientHandleKind::Stop ||
+                       kind == vector::tools::GradientHandleKind::Midpoint ? 1 : 0;
+    };
+    for (const auto& handle : handles) {
+        const auto handle_world = gradient_tool_->object_to_world(handle.position_object);
+        if (!handle_world) continue;
+        const auto screen = camera.world_to_screen(*handle_world);
+        const double dx = (x - area.left) - screen.x;
+        const double dy = (y - area.top) - screen.y;
+        const double distance_sq = dx * dx + dy * dy;
+        const int candidate_priority = priority(handle.kind);
+        if (distance_sq <= best_distance_sq &&
+            (distance_sq < best_distance_sq || candidate_priority > best_priority)) {
+            best_distance_sq = distance_sq;
+            best_priority = candidate_priority;
+            handle_hit = handle;
+        }
+    }
+    if (handle_hit.kind == vector::tools::GradientHandleKind::None && draft &&
+        draft->stops.size() < document::kMaxGradientStops) {
+        if (handles.size() >= 2 &&
+            (draft->kind == document::GradientKind::Linear ||
+             draft->kind == document::GradientKind::Radial)) {
+            const auto a_world = gradient_tool_->object_to_world(handles[0].position_object);
+            const auto b_world = gradient_tool_->object_to_world(handles[1].position_object);
+            if (!a_world || !b_world) return true;
+            const auto a = camera.world_to_screen(*a_world);
+            const auto b = camera.world_to_screen(*b_world);
+            const double px = x - area.left;
+            const double py = y - area.top;
+            const double dx = b.x - a.x;
+            const double dy = b.y - a.y;
+            const double length_sq = dx * dx + dy * dy;
+            if (length_sq > 1e-9) {
+                const double t = std::clamp(((px - a.x) * dx + (py - a.y) * dy) / length_sq, 0.0, 1.0);
+                const double nearest_x = a.x + t * dx;
+                const double nearest_y = a.y + t * dy;
+                if (std::hypot(px - nearest_x, py - nearest_y) <= 8.0) {
+                    const auto sampler = rendering::GradientSampler::prepare(
+                        *draft, geometry::Transform2D::identity(), rendering::Camera2D{}, nullptr, 1.0);
+                    if (sampler) {
+                        const auto sampled = sampler->sample_at_t(t);
+                        auto& presenter = gradient_tool_->presenter();
+                        std::vector<uint64_t> prior_ids;
+                        prior_ids.reserve(draft->stops.size());
+                        for (const auto& stop : draft->stops) prior_ids.push_back(stop.id);
+                        const color::ColorValue color{color::RGBColor{
+                            sampled.r, sampled.g, sampled.b, 1.0}};
+                        if (presenter.add_stop(t, color, sampled.a)) {
+                            const auto* updated = presenter.draft_paint();
+                            const auto inserted = std::find_if(updated->stops.begin(), updated->stops.end(),
+                                [&](const auto& stop) {
+                                    return std::find(prior_ids.begin(), prior_ids.end(), stop.id) == prior_ids.end();
+                                });
+                            if (inserted != updated->stops.end())
+                                (void)presenter.select_stop(inserted->id);
+                            (void)gradient_tool_->tool().set_draft_paint(*updated);
+                            if (gradient_tool_->apply()) {
+                                status_msg_ = language_ == UILanguage::Vietnamese
+                                    ? "Đã thêm Stop trên trục Gradient · Ctrl+Z hoàn tác"
+                                    : "Added a stop on the Gradient axis · Ctrl+Z undoes";
+                            }
+                            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (handle_hit.kind == vector::tools::GradientHandleKind::None)
+        gradient_tool_->on_pointer_down(*object_pt, shift, ctrl, 0.0);
+    else
+        gradient_tool_->on_pointer_down_with_hit(*object_pt, handle_hit, shift, ctrl);
     if (hwnd_) SetCapture(hwnd_);
     status_msg_ = language_ == UILanguage::Vietnamese
         ? "Đang kéo chỉnh Gradient · Giữ Shift khóa góc 15° · Thả chuột để áp dụng"
@@ -963,9 +1127,11 @@ bool NativeWindow::handle_gradient_pointer_move(int x, int y, unsigned modifiers
     if (GetCapture() != hwnd_)
         return false;
     const auto world_pt = canvas_to_world(x, y);
+    const auto object_pt = gradient_tool_->world_to_object(world_pt);
+    if (!object_pt) return true;
     const bool shift = (modifiers & MK_SHIFT) != 0;
     const bool ctrl = (modifiers & MK_CONTROL) != 0;
-    gradient_tool_->on_pointer_move(world_pt, shift, ctrl);
+    gradient_tool_->on_pointer_move(*object_pt, shift, ctrl);
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
     return true;
 }
@@ -974,10 +1140,63 @@ bool NativeWindow::handle_gradient_pointer_up(int x, int y, unsigned modifiers) 
     (void)modifiers;
     if (active_tool_ != 13 || !gradient_tool_ || !gradient_tool_->active())
         return false;
+    const auto active_handle = gradient_tool_->tool().active_handle();
+    const uint64_t dragged_stop_id = gradient_tool_->tool().active_stop_id();
+    if ((active_handle.kind == vector::tools::GradientHandleKind::Stop ||
+         active_handle.kind == vector::tools::GradientHandleKind::Midpoint) &&
+        dragged_stop_id != 0 && gradient_tool_->tool().draft_paint()) {
+        const auto& paint = *gradient_tool_->tool().draft_paint();
+        const auto handles = gradient_tool_->tool().get_handles();
+        if (handles.size() >= 2 && paint.stops.size() > 2) {
+            const auto area = canvas_rect(width_, height_);
+            const auto& camera = root().renderer().camera();
+            const auto a_world = gradient_tool_->object_to_world(handles[0].position_object);
+            const auto b_world = gradient_tool_->object_to_world(handles[1].position_object);
+            if (!a_world || !b_world) return true;
+            const auto a = camera.world_to_screen(*a_world);
+            const auto b = camera.world_to_screen(*b_world);
+            const double px = x - area.left;
+            const double py = y - area.top;
+            const double dx = b.x - a.x;
+            const double dy = b.y - a.y;
+            const double length_sq = dx * dx + dy * dy;
+            if (length_sq > 1e-9) {
+                const double t = std::clamp(((px - a.x) * dx + (py - a.y) * dy) / length_sq, 0.0, 1.0);
+                const double distance = std::hypot(px - (a.x + t * dx), py - (a.y + t * dy));
+                if (distance > 30.0 && active_handle.kind == vector::tools::GradientHandleKind::Stop) {
+                    auto& presenter = gradient_tool_->presenter();
+                    const auto* current = presenter.draft_paint();
+                    if (current) {
+                        const auto stop = std::find_if(current->stops.begin(), current->stops.end(),
+                            [dragged_stop_id](const auto& item) { return item.id == dragged_stop_id; });
+                        if (stop != current->stops.end()) {
+                            const size_t index = static_cast<size_t>(stop - current->stops.begin());
+                            (void)presenter.select_stop(dragged_stop_id);
+                            if (presenter.delete_stop(index)) {
+                                const auto* updated = presenter.draft_paint();
+                                if (updated && !updated->stops.empty())
+                                    (void)presenter.select_stop(updated->stops[
+                                        std::min(index, updated->stops.size() - 1)].id);
+                                (void)gradient_tool_->tool().set_draft_paint(*presenter.draft_paint());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    const auto world_pt = canvas_to_world(x, y);
+    const auto object_pt = gradient_tool_->world_to_object(world_pt);
+    if (!object_pt) {
+        gradient_tool_->cancel();
+        if (GetCapture() == hwnd_) ReleaseCapture();
+        return true;
+    }
+    const bool committed = gradient_tool_->on_pointer_up(*object_pt);
+    // Commit or reject the gesture before releasing capture. WM_CAPTURECHANGED
+    // cancels a still-active Gradient draft when capture is lost unexpectedly.
     if (GetCapture() == hwnd_)
         ReleaseCapture();
-    const auto world_pt = canvas_to_world(x, y);
-    const bool committed = gradient_tool_->on_pointer_up(world_pt);
     if (committed) {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Đã áp dụng chuyển sắc vào đối tượng · Ctrl+Z để hoàn tác"

@@ -1,7 +1,10 @@
 #include "pikdraw/rendering/renderer.hpp"
+#include "pikdraw/color/preview/icc_preview.hpp"
+#include "pikdraw/color/profiles/profile_resource.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <iostream>
 #include <limits>
 #include <memory>
@@ -81,6 +84,18 @@ void test_fill_and_holes() {
   open.add(triangle);
   require(open.render() && open.channel(12, 40, 1) == 0,
           "open fill must implicitly close");
+}
+void test_transparent_selection_render_can_omit_page_paper() {
+  Fixture f;
+  f.renderer.set_canvas_background({0, 0, 0, 0});
+  f.renderer.set_render_page_background(false);
+  f.add(rectangle(1, {1, 0, 0, 1}, 20, 20, 12, 12));
+  require(f.render(), "transparent selection render failed");
+  require(f.channel(2, 2, 3) == 0,
+          "selection render must leave pixels outside selected artwork transparent");
+  require(f.channel(25, 39, 0) == 255 && f.channel(25, 39, 1) == 0 &&
+              f.channel(25, 39, 3) == 255,
+          "selection render must retain opaque artwork pixels");
 }
 void test_thin_clipped_fill_preserves_pixel_centers() {
   // AC-R1 — Given a small path clipped by the viewport top/right edges, when
@@ -378,6 +393,80 @@ void test_image_scaling_uses_linear_sampling() {
           "scaled image used nearest-neighbor sampling or changed source orientation");
 }
 
+void test_locked_pdf_preview_renders_without_document_objects() {
+  Fixture f;
+  auto asset = std::make_shared<PdfSourceAsset>();
+  asset->sha256_hex = std::string(64, 'a');
+  asset->page_count = 1;
+  asset->bytes = std::make_shared<const std::vector<uint8_t>>(
+      std::vector<uint8_t>{'%', 'P', 'D', 'F'});
+  auto preview = std::make_shared<const std::vector<uint32_t>>(
+      std::vector<uint32_t>(4, 0xff0000ffu));
+  auto page = make_document_page(
+      "PDF page", f.page, {}, PdfSourcePageReference{asset, 0, 0, 2, 2, preview});
+  const PageId active_page_id = page.id;
+  const DocumentSnapshot snapshot{
+      1, 7, std::vector<DocumentPage>{std::move(page)},
+      active_page_id, {}, DocumentContentMode::PdfPrintLocked};
+  require(f.renderer.render(snapshot, f.camera, f.target),
+          "locked PDF preview cache did not render");
+  require(snapshot.object_count() == 0 && f.channel(32, 32, 0) == 255 &&
+              f.channel(32, 32, 1) == 0 && f.channel(32, 32, 2) == 0,
+          "PDF screen preview was not drawn independently of editable objects");
+}
+
+void test_bound_custom_cmyk_profile_renders_through_icc_preview() {
+  using namespace pikdraw::color;
+  const auto srgb_path = IccPreview::system_srgb_profile();
+  if (srgb_path.empty()) {
+    std::cout << "[NOT_MEASURED] System sRGB ICC profile is unavailable for bound-paint render\n";
+    return;
+  }
+  const auto cmyk_path = srgb_path.parent_path() / L"RSWOP.icm";
+  if (!std::filesystem::is_regular_file(cmyk_path)) {
+    std::cout << "[NOT_MEASURED] Installed SWOP ICC profile is unavailable for bound-paint render\n";
+    return;
+  }
+  const auto srgb = ProfileResource::load_file(srgb_path, ColorSpace::Rgb);
+  const auto swop = ProfileResource::load_file(cmyk_path, ColorSpace::Cmyk);
+  if (!srgb || !swop) {
+    std::cout << "[NOT_MEASURED] Windows CMM rejected the installed ICC render fixtures\n";
+    return;
+  }
+  std::string diagnostic;
+  const auto render_context = IccPreview::create_from_resources(srgb.resource, {}, &diagnostic);
+  const auto reference_context = IccPreview::create_from_resources(
+      srgb.resource, swop.resource, &diagnostic);
+  if (!render_context || !reference_context) {
+    std::cout << "[NOT_MEASURED] Windows CMM could not create ICC render transforms\n";
+    return;
+  }
+
+  auto paint = ColorValue::make_cmyk(0.0, 1.0, 1.0, 0.0, 1.0);
+  require(paint.set_profile_resource(swop.resource), "could not bind SWOP ICC to the paint");
+  const auto expected = reference_context->convert(paint);
+  Fixture fixture;
+  require(fixture.renderer.set_color_preview(render_context), "CPU preview binding failed");
+  auto object = rectangle(701, {0.0, 0.0, 0.0, 1.0});
+  object.fill = paint;
+  fixture.add(std::move(object));
+  require(fixture.render(), "bound custom-profile render failed");
+  const auto byte = [](float channel) {
+    return static_cast<int>(std::lround(std::clamp(channel, 0.0f, 1.0f) * 255.0f));
+  };
+  require(std::abs(fixture.channel(20, 20, 0) - byte(expected.r)) <= 1 &&
+              std::abs(fixture.channel(20, 20, 1) - byte(expected.g)) <= 1 &&
+              std::abs(fixture.channel(20, 20, 2) - byte(expected.b)) <= 1 &&
+              fixture.channel(20, 20, 3) == byte(expected.a),
+          "SoftwareRasterizer did not use the bound paint ICC profile");
+  require(render_context->conversion_failure_count() == 0,
+          "bound paint ICC preview recorded a conversion failure");
+  require(paint.profile_resource() == swop.resource &&
+              std::get<CMYKColor>(paint.payload()).a == 1.0,
+          "rendering mutated bound paint source values");
+  std::cout << "[PASS] bound CMYK paint uses its ICC profile in SoftwareRasterizer\n";
+}
+
 void test_text_backend() {
   Fixture f;
   TextObject text;
@@ -586,8 +675,27 @@ void test_target_and_camera() {
           "straight alpha target compositing incorrect");
 }
 } // namespace
+void test_powerclip_reveal_view_is_transient() {
+    Fixture f;
+    auto content=rectangle(1,{1,0,0,1},4,4,52,52);
+    auto frame=rectangle(2,{0,0,0,1},20,20,12,12);
+    GroupObject group;group.id=3;group.children_ids={2,1};group.clip=ClipProperties{};
+    group.clip->mask_object_id=2;group.clip->preserve_frame_appearance=false;
+    f.objects=f.objects.set(1,content).set(2,frame).set(3,group);f.page.layers[0].object_ids={3};
+    require(f.render(),"normal clip render failed");
+    require(f.channel(10,54,1)>200,"normal view revealed hidden content");
+    require(f.channel(25,39,0)>240&&f.channel(25,39,1)<10,"clip content missing");
+    f.renderer.set_view_context({3,1,true,false});
+    require(f.render(),"reveal view failed");
+    require(f.channel(10,54,0)>240&&f.channel(10,54,1)<10,"edit view did not reveal content");
+    f.renderer.set_view_context({});
+    require(f.render(),"normal view after finish failed");
+    require(f.channel(10,54,1)>200,"edit view leaked into normal output");
+}
 int main() {
   try {
+    test_powerclip_reveal_view_is_transient();
+    test_transparent_selection_render_can_omit_page_paper();
     test_fill_and_holes();
     test_thin_clipped_fill_preserves_pixel_centers();
     test_layers_and_alpha();
@@ -601,6 +709,8 @@ int main() {
     test_nested_groups_apply_parent_transforms();
     test_image_clip_masks_transformed_pixels();
     test_image_scaling_uses_linear_sampling();
+    test_locked_pdf_preview_renders_without_document_objects();
+    test_bound_custom_cmyk_profile_renders_through_icc_preview();
     std::cout << "Pixel semantics, winding, layers, alpha, stroke, clipping "
                  "and validation passed.\n";
   } catch (const std::exception &error) {

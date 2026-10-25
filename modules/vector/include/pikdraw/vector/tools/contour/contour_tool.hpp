@@ -30,6 +30,11 @@ public:
     void set_miter_limit(double limit);
     [[nodiscard]] double miter_limit() const noexcept { return miter_limit_; }
 
+    bool set_arc_tolerance_mm(double tolerance);
+    /// Returns the effective supported tolerance for UI/status consumers.
+    /// A legacy serialized value below the floor remains stored until Apply.
+    [[nodiscard]] double arc_tolerance_mm() const noexcept;
+
     void set_outline_color(color::ColorValue col) noexcept { outline_color_ = std::move(col); }
     [[nodiscard]] const color::ColorValue& outline_color() const noexcept { return outline_color_; }
 
@@ -64,7 +69,7 @@ private:
     int steps_{1};
     geometry::JoinType join_type_{geometry::JoinType::Miter};
     double miter_limit_{4.0};
-    double arc_tolerance_mm_{0.05};
+    double arc_tolerance_mm_{geometry::kContourDefaultArcToleranceMm};
     color::ColorValue outline_color_{color::RGBColor{0.0, 0.0, 0.0, 1.0}};
     color::ColorValue fill_color_{color::RGBColor{0.0, 0.0, 0.0, 1.0}};
     bool has_outline_{true};

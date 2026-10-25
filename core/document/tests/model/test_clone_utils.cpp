@@ -1,5 +1,6 @@
 #include "pikdraw/document/model/clone_utils.hpp"
 #include "pikdraw/document/document.hpp"
+#include "pikdraw/document/model/validation.hpp"
 #include <cassert>
 #include <iostream>
 #include <unordered_set>
@@ -62,6 +63,82 @@ void test_clone_editable_path() {
     }
 
     std::cout << "test_clone_editable_path: PASS\n";
+}
+
+void test_asset_backed_raster_model_and_clone() {
+    ImageObject image = ImageObject::make_procedural_photo(generate_object_id(), 1, 2, 30, 20);
+    image.source.frame_count = 300;
+    image.source.frame_index = 299;
+    image.asset_source = RasterSourceDescriptor{
+        RasterAssetId{0x1234, 0x5678}, 7, RasterStorageMode::Linked, UINT64_C(0x100000001),
+        "image/tiff", "file:///assets/large.tif", std::string(64, 'a')};
+    image.edit_graph.nodes = {
+        RasterEditNode{RasterEditNodeId{101}, true, RasterCropParams{0.1, 0.2, 0.7, 0.6}},
+        RasterEditNode{RasterEditNodeId{102}, true, RasterFlipParams{true, false}},
+        RasterEditNode{RasterEditNodeId{103}, true, RasterRotateParams{90.0}},
+        RasterEditNode{RasterEditNodeId{104}, true, RasterExposureParams{1.25}}};
+    RasterAdjustmentMask local_mask;
+    local_mask.id = 505;
+    local_mask.width_px = 12;
+    local_mask.height_px = 21;
+    local_mask.kind = RasterAdjustmentMaskKind::Rectangle;
+    local_mask.left = 0.1;
+    local_mask.top = 0.2;
+    local_mask.width = 0.5;
+    local_mask.height = 0.5;
+    local_mask.feather_px = 2.0;
+    image.edit_graph.nodes.back().mask = local_mask;
+    image.shared_pixels_rgba =
+        std::make_shared<const std::vector<uint32_t>>(std::move(image.pixels_rgba));
+    validate_object_source(image.id, ObjectVariant{image});
+
+    const auto clone_variant = clone_object(ObjectVariant{image});
+    const auto& clone = std::get<ImageObject>(clone_variant);
+    assert(clone.id != image.id);
+    assert(clone.asset_source->asset_id == image.asset_source->asset_id);
+    assert(clone.asset_source->revision == image.asset_source->revision);
+    assert(clone.asset_source->encoded_byte_length == UINT64_C(0x100000001));
+    assert(clone.source.frame_count == 300 && clone.source.frame_index == 299);
+    assert(clone.edit_graph.nodes.size() == image.edit_graph.nodes.size());
+    for (size_t i = 0; i < image.edit_graph.nodes.size(); ++i)
+        assert(clone.edit_graph.nodes[i].id == image.edit_graph.nodes[i].id);
+    assert(clone.edit_graph.nodes.back().mask == local_mask);
+    assert(clone.rgba_pixels().data() == image.rgba_pixels().data());
+
+    auto expect_invalid = [](ImageObject invalid) {
+        bool rejected = false;
+        try { validate_object_source(invalid.id, ObjectVariant{std::move(invalid)}); }
+        catch (const std::invalid_argument&) { rejected = true; }
+        assert(rejected);
+    };
+    auto invalid = image;
+    invalid.asset_source->asset_id = {};
+    expect_invalid(std::move(invalid));
+    invalid = image;
+    invalid.asset_source->revision = 0;
+    expect_invalid(std::move(invalid));
+    invalid = image;
+    invalid.asset_source->mode = RasterStorageMode::Linked;
+    invalid.asset_source->locator.clear();
+    expect_invalid(std::move(invalid));
+    invalid = image;
+    invalid.asset_source->fingerprint_sha256 = "not-a-hash";
+    expect_invalid(std::move(invalid));
+    invalid = image;
+    invalid.edit_graph.nodes[1].id = invalid.edit_graph.nodes[0].id;
+    expect_invalid(std::move(invalid));
+    invalid = image;
+    invalid.edit_graph.nodes[0].parameters = RasterCropParams{0.8, 0.0, 0.3, 1.0};
+    expect_invalid(std::move(invalid));
+    invalid = image;
+    invalid.edit_graph.nodes[2].parameters = RasterRotateParams{std::numeric_limits<double>::infinity()};
+    expect_invalid(std::move(invalid));
+    invalid = image;
+    invalid.edit_graph.nodes[3].parameters = RasterExposureParams{33.0};
+    expect_invalid(std::move(invalid));
+    invalid = image;
+    invalid.edit_graph.schema_version++;
+    expect_invalid(std::move(invalid));
 }
 
 class SetupGroupTestCommand final : public DocumentCommand {
@@ -148,6 +225,7 @@ void test_clone_hierarchy_and_groups() {
 
 int main() {
     test_clone_editable_path();
+    test_asset_backed_raster_model_and_clone();
     test_clone_hierarchy_and_groups();
     std::cout << "All clone_utils tests PASSED.\n";
     return 0;

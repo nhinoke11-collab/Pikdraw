@@ -1,8 +1,11 @@
+#include "pikdraw/document/commands/clip_commands.hpp"
 #include "pikdraw/document/document.hpp"
 #include "pikdraw/document/commands/appearance_commands.hpp"
 #include "pikdraw/document/commands/path_commands.hpp"
 #include "pikdraw/document/commands/import_content_command.hpp"
 #include "pikdraw/document/commands/page_commands.hpp"
+#include "pikdraw/document/commands/unit_commands.hpp"
+#include "pikdraw/document/commands/raster_edit_commands.hpp"
 #include "pikdraw/geometry/primitives/validation.hpp"
 #include <cassert>
 #include <cmath>
@@ -615,11 +618,19 @@ void test_import_content_preserves_layers_and_undoes_atomically() {
     assert(doc.current_snapshot()->page().layers.back().locked);
     assert(doc.current_snapshot()->page().width_mm == 400.0);
     assert(doc.current_snapshot()->page().height_mm == 200.0);
+    const auto& resized_artboard = doc.current_snapshot()->active_page().artboards.front();
+    assert(resized_artboard.linked_to_page_bounds && resized_artboard.x_mm == 0.0 &&
+           resized_artboard.y_mm == 0.0 && resized_artboard.width_mm == 400.0 &&
+           resized_artboard.height_mm == 200.0);
     assert(doc.current_snapshot()->object_count() == 2);
     assert(doc.undo());
     assert(doc.current_snapshot()->page().layers.size() == original_layers);
     assert(doc.current_snapshot()->page().width_mm == original_width_mm);
     assert(doc.current_snapshot()->page().height_mm == original_height_mm);
+    const auto& restored_artboard = doc.current_snapshot()->active_page().artboards.front();
+    assert(restored_artboard.linked_to_page_bounds &&
+           restored_artboard.width_mm == original_width_mm &&
+           restored_artboard.height_mm == original_height_mm);
     assert(doc.current_snapshot()->object_count() == 0);
     assert(doc.redo());
     assert(doc.current_snapshot()->page().width_mm == 400.0);
@@ -779,8 +790,333 @@ void test_pdf_print_locked_document_rejects_content_mutation() {
     assert(doc.current_snapshot()->is_content_locked());
 }
 
+void test_page_and_document_display_units_are_undoable() {
+    using geometry::units::LengthUnit;
+    Document doc("display-unit-command-test");
+    const auto first_id = doc.active_page_id();
+    auto second_page = document::make_document_page("Second", Page::make_default());
+    const auto second_id = second_page.id;
+    assert(doc.execute_command(std::make_unique<AddPageCommand>(second_page)).success);
+    const double first_width = doc.current_snapshot()->find_page(first_id)->layout.width_mm;
+    const double second_width = doc.current_snapshot()->find_page(second_id)->layout.width_mm;
+
+    assert(doc.execute_command(std::make_unique<SetPageDisplayLengthUnitCommand>(
+        second_id, LengthUnit::Inch)).success);
+    auto snapshot = doc.current_snapshot();
+    assert(snapshot->find_page(first_id)->layout.display_length_unit == LengthUnit::Millimeter);
+    assert(snapshot->find_page(second_id)->layout.display_length_unit == LengthUnit::Inch);
+    assert(snapshot->find_page(second_id)->layout.display_length_unit_explicit);
+    assert(snapshot->find_page(first_id)->layout.width_mm == first_width);
+    assert(snapshot->find_page(second_id)->layout.width_mm == second_width);
+    assert(doc.undo());
+    assert(!doc.current_snapshot()->find_page(second_id)->layout.display_length_unit_explicit);
+
+    assert(doc.execute_command(std::make_unique<SetDocumentDisplayLengthUnitCommand>(
+        LengthUnit::Foot)).success);
+    snapshot = doc.current_snapshot();
+    for (const auto& page : snapshot->pages()) {
+        assert(page.layout.display_length_unit == LengthUnit::Foot);
+        assert(page.layout.display_length_unit_explicit);
+    }
+    assert(snapshot->find_page(first_id)->layout.width_mm == first_width);
+    assert(snapshot->find_page(second_id)->layout.width_mm == second_width);
+    const auto before_invalid = snapshot;
+    assert(!doc.execute_command(std::make_unique<SetDocumentDisplayLengthUnitCommand>(
+        LengthUnit::Pixel)).success);
+    assert(doc.current_snapshot() == before_invalid);
+    assert(doc.undo());
+    assert(!doc.current_snapshot()->find_page(first_id)->layout.display_length_unit_explicit);
+    assert(!doc.current_snapshot()->find_page(second_id)->layout.display_length_unit_explicit);
+}
+
+void test_raster_edit_node_uses_stable_id_and_undo_redo() {
+    Document doc("raster-edit-node-command-test");
+    ImageObject image;
+    image.id = generate_object_id();
+    image.name = "Large raster placement";
+    image.width_px = 2;
+    image.height_px = 2;
+    image.shared_pixels_rgba = std::make_shared<const std::vector<uint32_t>>(
+        std::vector<uint32_t>(4, 0xff336699u));
+    image.asset_source = RasterSourceDescriptor{
+        RasterAssetId{17, 29}, 1, RasterStorageMode::Embedded,
+        1024ull * 1024ull * 1024ull, "image/tiff", {}, {}, 0};
+    assert(doc.execute_command(std::make_unique<AddObjectCommand>(image)).success);
+
+    const RasterEditNodeId exposure_id{9001};
+    assert(doc.execute_command(std::make_unique<SetRasterEditNodeCommand>(
+        image.id, RasterEditNode{exposure_id, true, RasterExposureParams{0.5}})).success);
+    assert(doc.execute_command(std::make_unique<SetRasterEditNodeCommand>(
+        image.id, RasterEditNode{exposure_id, true, RasterExposureParams{1.5}})).success);
+    auto local_exposure = RasterEditNode{
+        exposure_id, true, RasterExposureParams{1.5}};
+    local_exposure.mask = RasterAdjustmentMask{700, 2, 2, 50, false,
+        {0, 64, 192, 255}};
+    assert(doc.execute_command(std::make_unique<SetRasterEditNodeCommand>(
+        image.id, local_exposure)).success);
+    const auto read_exposure = [&]() {
+        const auto* value = doc.objects().lookup_ref(image.id);
+        assert(value && std::holds_alternative<ImageObject>(*value));
+        const auto& graph = std::get<ImageObject>(*value).edit_graph;
+        assert(graph.nodes.size() == 1 && graph.nodes.front().id == exposure_id);
+        return graph.nodes.front();
+    };
+    assert(read_exposure().mask == local_exposure.mask);
+    assert(doc.undo());
+    assert(std::get<RasterExposureParams>(read_exposure().parameters).exposure_ev == 1.5);
+    assert(!read_exposure().mask);
+    assert(doc.redo());
+    assert(read_exposure().mask == local_exposure.mask);
+
+    const auto before_invalid = doc.current_snapshot();
+    const auto invalid = doc.execute_command(std::make_unique<SetRasterEditNodeCommand>(
+        image.id, RasterEditNode{exposure_id, true, RasterExposureParams{10.1}}));
+    assert(!invalid.success);
+    assert(doc.current_snapshot() == before_invalid);
+    auto invalid_geometry_mask = RasterEditNode{
+        RasterEditNodeId{9003}, true, RasterCropParams{0.0, 0.0, 0.5, 1.0}};
+    invalid_geometry_mask.mask = RasterAdjustmentMask{701, 2, 2, 100,
+        false, {255, 255, 255, 255}};
+    assert(!doc.execute_command(std::make_unique<SetRasterEditNodeCommand>(
+        image.id, invalid_geometry_mask)).success);
+
+    // Older imported images may keep their immutable encoded source in the
+    // document record without the newer disk-backed asset descriptor.
+    Document legacy_doc("raster-edit-preserved-source-test");
+    ImageObject legacy_image = image;
+    legacy_image.id = generate_object_id();
+    legacy_image.asset_source.reset();
+    legacy_image.source.media_type = "image/tiff";
+    legacy_image.source.original_bytes = {0x49, 0x49, 0x2a, 0x00};
+    assert(legacy_doc.execute_command(
+        std::make_unique<AddObjectCommand>(legacy_image)).success);
+    const RasterEditNodeId crop_id{9002};
+    assert(legacy_doc.execute_command(std::make_unique<SetRasterEditNodeCommand>(
+        legacy_image.id, RasterEditNode{crop_id, true,
+            RasterCropParams{0.0, 0.0, 0.5, 1.0}})).success);
+    const auto* legacy_value = legacy_doc.objects().lookup_ref(legacy_image.id);
+    assert(legacy_value && std::holds_alternative<ImageObject>(*legacy_value));
+    const auto& preserved = std::get<ImageObject>(*legacy_value);
+    assert(preserved.source.original_data() == legacy_image.source.original_bytes);
+    assert(preserved.edit_graph.nodes.size() == 1);
+    assert(legacy_doc.undo());
+    const auto* restored_value = legacy_doc.objects().lookup_ref(legacy_image.id);
+    assert(restored_value && std::get<ImageObject>(*restored_value).edit_graph.nodes.empty());
+}
+
+void test_raster_light_command_updates_one_node_with_undo_redo() {
+    Document doc("raster-light-node-command-test");
+    ImageObject image;
+    image.id = generate_object_id();
+    image.name = "Light controls";
+    image.width_px = 1;
+    image.height_px = 1;
+    image.shared_pixels_rgba = std::make_shared<const std::vector<uint32_t>>(
+        std::vector<uint32_t>{0xff808080u});
+    image.asset_source = RasterSourceDescriptor{
+        RasterAssetId{37, 41}, 1, RasterStorageMode::Embedded,
+        4, "image/png", {}, {}, 0};
+    assert(doc.execute_command(std::make_unique<AddObjectCommand>(image)).success);
+
+    const RasterEditNodeId light_id{9050};
+    const RasterLightParams first{0.5, 10.0, 20.0, -10.0, 5.0, 0.0};
+    assert(doc.execute_command(std::make_unique<SetRasterEditNodeCommand>(
+        image.id, RasterEditNode{light_id, true, first})).success);
+    const RasterLightParams updated{1.0, -5.0, 0.0, 15.0, -5.0, 10.0};
+    assert(doc.execute_command(std::make_unique<SetRasterEditNodeCommand>(
+        image.id, RasterEditNode{light_id, true, updated})).success);
+
+    const auto current_params = [&]() -> RasterLightParams {
+        const auto* value = doc.objects().lookup_ref(image.id);
+        assert(value && std::holds_alternative<ImageObject>(*value));
+        const auto& graph = std::get<ImageObject>(*value).edit_graph;
+        assert(graph.nodes.size() == 1 && graph.nodes.front().id == light_id);
+        return std::get<RasterLightParams>(graph.nodes.front().parameters);
+    };
+    assert(current_params().exposure_ev == 1.0);
+    assert(doc.undo() && current_params().exposure_ev == 0.5);
+    assert(doc.redo() && current_params().exposure_ev == 1.0);
+    const auto before_invalid = doc.current_snapshot();
+    assert(!doc.execute_command(std::make_unique<SetRasterEditNodeCommand>(
+        image.id, RasterEditNode{light_id, true,
+            RasterLightParams{5.1, 0.0, 0.0, 0.0, 0.0, 0.0}})).success);
+    assert(doc.current_snapshot() == before_invalid);
+}
+
+void test_raster_channel_mixer_command_updates_one_node_with_undo_redo() {
+    Document doc("raster-channel-mixer-node-command-test");
+    ImageObject image;
+    image.id = generate_object_id();
+    image.width_px = image.height_px = 1;
+    image.shared_pixels_rgba = std::make_shared<const std::vector<uint32_t>>(
+        std::vector<uint32_t>{0xff804020u});
+    image.asset_source = RasterSourceDescriptor{
+        RasterAssetId{53, 59}, 1, RasterStorageMode::Embedded,
+        4, "image/png", {}, {}, 0};
+    assert(doc.execute_command(std::make_unique<AddObjectCommand>(image)).success);
+    RasterChannelMixerParams first;
+    first.coefficients = {0.8, 0.2, 0.0, 0.0, 1.0, 0.0, 0.0, 0.1, 0.9};
+    RasterChannelMixerParams second;
+    second.coefficients = {0.5, 0.5, 0.0, 0.1, 0.8, 0.1, 0.0, 0.0, 1.0};
+    const RasterEditNodeId node_id{9060};
+    assert(doc.execute_command(std::make_unique<SetRasterEditNodeCommand>(
+        image.id, RasterEditNode{node_id, true, first})).success);
+    assert(doc.execute_command(std::make_unique<SetRasterEditNodeCommand>(
+        image.id, RasterEditNode{node_id, true, second})).success);
+    const auto current = [&]() {
+        const auto* value = doc.objects().lookup_ref(image.id);
+        assert(value && std::holds_alternative<ImageObject>(*value));
+        const auto& graph = std::get<ImageObject>(*value).edit_graph;
+        assert(graph.nodes.size() == 1 && graph.nodes.front().id == node_id);
+        return std::get<RasterChannelMixerParams>(graph.nodes.front().parameters);
+    };
+    assert(current().coefficients == second.coefficients);
+    assert(doc.undo() && current().coefficients == first.coefficients);
+    assert(doc.redo() && current().coefficients == second.coefficients);
+    auto invalid = second;
+    invalid.coefficients[5] = 2.1;
+    const auto before_invalid = doc.current_snapshot();
+    assert(!doc.execute_command(std::make_unique<SetRasterEditNodeCommand>(
+        image.id, RasterEditNode{node_id, true, invalid})).success);
+    assert(doc.current_snapshot() == before_invalid);
+}
+
+void test_raster_clone_stamp_command_updates_one_node_with_undo_redo() {
+    Document doc("raster-clone-stamp-node-command-test");
+    ImageObject image;
+    image.id = generate_object_id();
+    image.width_px = image.height_px = 8;
+    image.shared_pixels_rgba = std::make_shared<const std::vector<uint32_t>>(
+        static_cast<size_t>(image.width_px) * image.height_px, 0xff804020u);
+    image.asset_source = RasterSourceDescriptor{
+        RasterAssetId{61, 67}, 1, RasterStorageMode::Embedded,
+        4, "image/png", {}, {}, 0};
+    assert(doc.execute_command(std::make_unique<AddObjectCommand>(image)).success);
+    const RasterEditNodeId node_id{9070};
+    const RasterCloneStampParams first{0.1, 0.2, 0.7, 0.8, 5.0, 60.0, 75.0};
+    const RasterCloneStampParams second{0.2, 0.3, 0.6, 0.7, 8.0, 90.0, 55.0};
+    assert(doc.execute_command(std::make_unique<SetRasterEditNodeCommand>(
+        image.id, RasterEditNode{node_id, true, first})).success);
+    assert(doc.execute_command(std::make_unique<SetRasterEditNodeCommand>(
+        image.id, RasterEditNode{node_id, true, second})).success);
+    const auto current = [&]() {
+        const auto* value = doc.objects().lookup_ref(image.id);
+        assert(value && std::holds_alternative<ImageObject>(*value));
+        const auto& graph = std::get<ImageObject>(*value).edit_graph;
+        assert(graph.nodes.size() == 1 && graph.nodes.front().id == node_id);
+        return std::get<RasterCloneStampParams>(graph.nodes.front().parameters);
+    };
+    assert(current().target_x == second.target_x &&
+           current().radius_percent == second.radius_percent);
+    assert(doc.undo() && current().target_x == first.target_x &&
+           current().opacity_percent == first.opacity_percent);
+    assert(doc.redo() && current().target_x == second.target_x);
+    auto invalid = second;
+    invalid.source_x = 1.1;
+    const auto before_invalid = doc.current_snapshot();
+    assert(!doc.execute_command(std::make_unique<SetRasterEditNodeCommand>(
+        image.id, RasterEditNode{node_id, true, invalid})).success);
+    assert(doc.current_snapshot() == before_invalid);
+}
+
 void test_document_color_commands();
+void test_powerclip_atomic_ownership_and_world_transforms() {
+    Document doc("powerclip-regression");
+    const auto add = [&](double x, double y, double w, double h) {
+        PathObject object; object.id=generate_object_id();
+        object.path=geometry::Path2D::make_rect(x,y,w,h); object.has_stroke=false;
+        assert(doc.execute_command(std::make_unique<AddObjectCommand>(object)).success); return object.id;
+    };
+    const auto frame=add(10,10,40,20), content=add(100,100,80,20);
+    auto place=std::make_unique<ClipCommand>(ClipOperation::Place,frame,std::vector<ObjectId>{content});
+    const auto clip=place->result_id();
+    const auto before=doc.current_snapshot();
+    assert(doc.execute_command(std::move(place)).success);
+    auto snapshot=doc.current_snapshot();
+    assert(snapshot->hierarchy().find(content)->parent==clip);
+    assert(snapshot->hierarchy().find(frame)->mask);
+    assert(std::abs(snapshot->hierarchy().find(content)->bounds->x-100)<1e-8);
+    assert(doc.undo()); assert(doc.objects().size()==2);
+    assert(doc.page().layers[0].object_ids==before->page().layers[0].object_ids);
+    assert(doc.redo()); assert(doc.objects().contains(clip));
+    assert(doc.execute_command(std::make_unique<ClipCommand>(ClipOperation::Fit,clip,
+        std::vector<ObjectId>{},ClipContentFitMode::FitProportionally)).success);
+    snapshot=doc.current_snapshot();
+    assert(std::abs(snapshot->hierarchy().find(content)->bounds->width-40)<1e-8);
+    assert(std::abs(snapshot->hierarchy().find(content)->bounds->height-10)<1e-8);
+    assert(doc.execute_command(std::make_unique<ClipCommand>(ClipOperation::Fit,clip,
+        std::vector<ObjectId>{},ClipContentFitMode::CenterContents)).success);
+    snapshot=doc.current_snapshot();
+    assert(std::abs(snapshot->hierarchy().find(content)->bounds->width-40)<1e-8);
+    assert(std::abs(snapshot->hierarchy().find(content)->bounds->height-10)<1e-8);
+    assert(doc.execute_command(std::make_unique<ClipCommand>(ClipOperation::Fit,clip,
+        std::vector<ObjectId>{},ClipContentFitMode::FillProportionally)).success);
+    snapshot=doc.current_snapshot();
+    assert(std::abs(snapshot->hierarchy().find(content)->bounds->width-80)<1e-8);
+    assert(std::abs(snapshot->hierarchy().find(content)->bounds->height-20)<1e-8);
+    assert(doc.execute_command(std::make_unique<ClipCommand>(ClipOperation::Fit,clip,
+        std::vector<ObjectId>{},ClipContentFitMode::StretchToFill)).success);
+    snapshot=doc.current_snapshot();
+    assert(std::abs(snapshot->hierarchy().find(content)->bounds->width-40)<1e-8);
+    assert(std::abs(snapshot->hierarchy().find(content)->bounds->height-20)<1e-8);
+    const auto before_current_position=snapshot->hierarchy().find(content)->bounds;
+    assert(doc.execute_command(std::make_unique<ClipCommand>(ClipOperation::Fit,clip,
+        std::vector<ObjectId>{},ClipContentFitMode::CurrentPosition)).success);
+    snapshot=doc.current_snapshot();
+    assert(snapshot->hierarchy().find(content)->bounds->x==before_current_position->x &&
+           snapshot->hierarchy().find(content)->bounds->y==before_current_position->y &&
+           snapshot->hierarchy().find(content)->bounds->width==before_current_position->width &&
+           snapshot->hierarchy().find(content)->bounds->height==before_current_position->height);
+    assert(doc.execute_command(std::make_unique<TransformObjectCommand>(clip,
+        geometry::Transform2D::translation(7,9)*geometry::Transform2D::rotation_degrees(30))).success);
+    const auto position=doc.current_snapshot()->hierarchy().find(content)->world.map_point({0,0});
+    assert(doc.execute_command(std::make_unique<ClipCommand>(ClipOperation::Extract,clip)).success);
+    snapshot=doc.current_snapshot();
+    assert(snapshot->hierarchy().find(content)->parent==0);
+    assert(snapshot->hierarchy().find(content)->world.map_point({0,0}).distance_to(position)<1e-8);
+    assert(std::get<GroupObject>(*doc.objects().get(clip)).clip->is_empty_frame);
+    assert(doc.undo());
+    assert(doc.execute_command(std::make_unique<ClipCommand>(ClipOperation::SetLock,clip,
+        std::vector<ObjectId>{},ClipContentFitMode::CurrentPosition,false)).success);
+    const auto world_before=doc.current_snapshot()->hierarchy().find(content)->world.map_point({3,4});
+    assert(doc.execute_command(std::make_unique<TransformObjectCommand>(clip,geometry::Transform2D::translation(50,20))).success);
+    assert(doc.current_snapshot()->hierarchy().find(content)->world.map_point({3,4}).distance_to(world_before)<1e-8);
+    assert(doc.execute_command(std::make_unique<ClipCommand>(ClipOperation::SetLock,clip,
+        std::vector<ObjectId>{},ClipContentFitMode::CurrentPosition,true)).success);
+    const auto locked_before=doc.current_snapshot()->hierarchy().find(content)->world.map_point({3,4});
+    assert(doc.execute_command(std::make_unique<TransformObjectCommand>(clip,
+        geometry::Transform2D::translation(5,7))).success);
+    const auto locked_after=doc.current_snapshot()->hierarchy().find(content)->world.map_point({3,4});
+    assert(std::abs((locked_after.x-locked_before.x)-5)<1e-8 &&
+           std::abs((locked_after.y-locked_before.y)-7)<1e-8);
+    assert(doc.undo()); assert(doc.redo());
+    PathObject scoped; scoped.id=generate_object_id(); scoped.path=geometry::Path2D::make_rect(5,6,2,3);
+    assert(doc.execute_command(std::make_unique<AddScopedObjectCommand>(scoped,clip)).success);
+    assert(doc.current_snapshot()->hierarchy().find(scoped.id)->parent==clip);
+    assert(std::abs(doc.current_snapshot()->hierarchy().find(scoped.id)->bounds->x-5)<1e-8);
+    assert(doc.execute_command(std::make_unique<RemoveObjectCommand>(scoped.id)).success);
+    assert(!doc.objects().contains(scoped.id));assert(doc.undo());assert(doc.objects().contains(scoped.id));
+    const auto copy_target_frame=add(200,200,30,30);
+    auto empty=std::make_unique<ClipCommand>(ClipOperation::Place,copy_target_frame);
+    const auto copy_target=empty->result_id();assert(doc.execute_command(std::move(empty)).success);
+    const auto source_count=std::get<GroupObject>(*doc.objects().get(clip)).children_ids.size();
+    assert(doc.execute_command(std::make_unique<ClipCommand>(ClipOperation::CopyContents,copy_target,std::vector<ObjectId>{content})).success);
+    const auto copied=std::get<GroupObject>(*doc.objects().get(copy_target)).children_ids.back();
+    assert(copied!=content&&doc.objects().contains(content));
+    assert(std::get<GroupObject>(*doc.objects().get(clip)).children_ids.size()==source_count);
+    assert(doc.current_snapshot()->hierarchy().find(copied)->world.map_point({3,4}).distance_to(doc.current_snapshot()->hierarchy().find(content)->world.map_point({3,4}))<1e-8);
+    assert(doc.undo());assert(!doc.objects().contains(copied));assert(doc.redo());assert(doc.objects().contains(copied));
+    const auto unchanged=doc.current_snapshot();
+    assert(!doc.execute_command(std::make_unique<ClipCommand>(ClipOperation::Place,clip,std::vector<ObjectId>{clip})).success);
+    assert(doc.current_snapshot()==unchanged);
+    const auto final_position=doc.current_snapshot()->hierarchy().find(content)->world.map_point({0,0});
+    assert(doc.execute_command(std::make_unique<ClipCommand>(ClipOperation::Release,clip)).success);
+    assert(!doc.objects().contains(clip));assert(doc.objects().contains(frame));
+    assert(doc.current_snapshot()->hierarchy().find(content)->world.map_point({0,0}).distance_to(final_position)<1e-8);
+}
+
 int main() {
+    test_powerclip_atomic_ownership_and_world_transforms();
     test_document_color_commands();
     std::cout << "[test_commands] Running command tests...\n";
     test_add_and_undo_path();
@@ -800,6 +1136,11 @@ int main() {
     test_import_content_preserves_layers_and_undoes_atomically();
     test_import_pages_is_atomic_and_keeps_page_and_object_ids_on_redo();
     test_pdf_print_locked_document_rejects_content_mutation();
+    test_page_and_document_display_units_are_undoable();
+    test_raster_edit_node_uses_stable_id_and_undo_redo();
+    test_raster_light_command_updates_one_node_with_undo_redo();
+    test_raster_channel_mixer_command_updates_one_node_with_undo_redo();
+    test_raster_clone_stamp_command_updates_one_node_with_undo_redo();
     std::cout << "[test_commands] All tests passed!\n";
     return 0;
 }

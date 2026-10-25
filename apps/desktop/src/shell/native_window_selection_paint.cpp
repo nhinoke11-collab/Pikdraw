@@ -1,4 +1,5 @@
 #include "native_window_selection_geometry.hpp"
+#include "native_window_length_input.hpp"
 #include "../tools/node_tool_controller.hpp"
 #include <iomanip>
 #include <sstream>
@@ -42,6 +43,19 @@ void NativeWindow::paint_selection_overlay(HDC dc) {
     const auto &selection = root().vector_controller().selection();
     const auto &camera = root().renderer().camera();
     const auto area = canvas_rect(width_, height_);
+    COLORREF selection_layer_color = theme_ == ThemeMode::CyberDark
+        ? RGB(0, 242, 195) : RGB(0, 135, 106);
+    const auto& selected_ids = selection.selected_ids();
+    if (!selected_ids.empty()) {
+        const auto* entry = snapshot->hierarchy().find(selected_ids.front());
+        const auto& layers = snapshot->page().layers;
+        if (entry && entry->layer < layers.size()) {
+            const uint32_t rgba = layers[entry->layer].color_rgba;
+            selection_layer_color = RGB((rgba >> 24) & 0xFF,
+                                        (rgba >> 16) & 0xFF,
+                                        (rgba >> 8) & 0xFF);
+        }
+    }
     const int saved_dc = SaveDC(dc);
     IntersectClipRect(dc, area.left, area.top, area.right, area.bottom);
     if (active_tool_ == 11) {
@@ -86,7 +100,8 @@ void NativeWindow::paint_selection_overlay(HDC dc) {
         if (is_dragging_ && drag_preview_bounds_)
             bounds = current_delta.map_rect(*drag_preview_bounds_);
         const auto rect = rect_for(*bounds);
-        // Borderless selection: only sizing handles and pivot are drawn, matching CorelDRAW / Illustrator standards
+        // Draw the selection outline and handles in the selected object's layer color.
+        outline(dc, rect, selection_layer_color, PS_DOT);
         if (is_dragging_ && drag_preview_bounds_) {
             const auto &source = *drag_preview_bounds_;
             const std::array<geometry::Point2D, 4> corners{{
@@ -100,7 +115,7 @@ void NativeWindow::paint_selection_overlay(HDC dc) {
                               area.top + static_cast<LONG>(std::lround(screen.y))};
             }
             preview.back() = preview.front();
-            HPEN preview_pen = CreatePen(PS_DASH, 1, RGB(0, 135, 106));
+            HPEN preview_pen = CreatePen(PS_DASH, 1, selection_layer_color);
             const auto old_pen = SelectObject(dc, preview_pen);
             const auto old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
             Polyline(dc, preview.data(), static_cast<int>(preview.size()));
@@ -116,11 +131,11 @@ void NativeWindow::paint_selection_overlay(HDC dc) {
                 const auto p = handle_pts[i];
                 if (i % 2 == 0) { // Corners: rotation circles
                     const auto brush = CreateSolidBrush(RGB(255, 255, 255));
-                    const auto pen = CreatePen(PS_SOLID, 1, RGB(14, 165, 233));
+                    const auto pen = CreatePen(PS_SOLID, 1, selection_layer_color);
                     const auto old_b = SelectObject(dc, brush);
                     const auto old_p = SelectObject(dc, pen);
                     Ellipse(dc, p.x - 5, p.y - 5, p.x + 5, p.y + 5);
-                    SetPixel(dc, p.x, p.y, RGB(14, 165, 233));
+                    SetPixel(dc, p.x, p.y, selection_layer_color);
                     SelectObject(dc, old_p);
                     SelectObject(dc, old_b);
                     DeleteObject(pen);
@@ -139,7 +154,7 @@ void NativeWindow::paint_selection_overlay(HDC dc) {
         }
         const auto rotate = selection_ui::rotation_handle(rect);
         const auto rotate_brush = CreateSolidBrush(RGB(255, 255, 255));
-        const auto rotate_pen = CreatePen(PS_SOLID, 1, RGB(14, 165, 233));
+        const auto rotate_pen = CreatePen(PS_SOLID, 1, selection_layer_color);
         const auto old_rotate_brush = SelectObject(dc, rotate_brush);
         const auto old_rotate_pen = SelectObject(dc, rotate_pen);
         Ellipse(dc, rotate.x - 7, rotate.y - 7, rotate.x + 7, rotate.y + 7);
@@ -154,28 +169,31 @@ void NativeWindow::paint_selection_overlay(HDC dc) {
         DeleteObject(rotate_pen);
         DeleteObject(rotate_brush);
 
-        // Rotation Pivot Point (tâm xoay) - displayed in both modes, draggable
+        // Rotation Pivot Point (tÃ¢m xoay) - compact CorelDRAW-style bullseye, displayed in both modes, draggable
         const auto pivot_world = custom_pivot_world_.value_or(bounds->center());
         const auto pivot_screen = selection_ui::pivot_point(camera, pivot_world, area);
         const LONG px = pivot_screen.x, py = pivot_screen.y;
-        const auto pivot_pen = CreatePen(PS_SOLID, 1, RGB(14, 165, 233));
+        const auto pivot_pen = CreatePen(PS_SOLID, 1, selection_layer_color);
         const auto pivot_brush = CreateSolidBrush(RGB(255, 255, 255));
         const auto old_p_brush = SelectObject(dc, pivot_brush);
         const auto old_p_pen = SelectObject(dc, pivot_pen);
-        Ellipse(dc, px - 6, py - 6, px + 7, py + 7);
-        const auto dot_brush = CreateSolidBrush(RGB(14, 165, 233));
+        // Compact outer ring (diameter 7px)
+        Ellipse(dc, px - 3, py - 3, px + 4, py + 4);
+        // Crisp center dot (diameter 3px)
+        const auto dot_brush = CreateSolidBrush(selection_layer_color);
         SelectObject(dc, dot_brush);
-        Ellipse(dc, px - 2, py - 2, px + 3, py + 3);
+        Ellipse(dc, px - 1, py - 1, px + 2, py + 2);
         SelectObject(dc, pivot_brush);
         DeleteObject(dot_brush);
-        MoveToEx(dc, px - 9, py, nullptr);
-        LineTo(dc, px - 5, py);
-        MoveToEx(dc, px + 6, py, nullptr);
-        LineTo(dc, px + 10, py);
-        MoveToEx(dc, px, py - 9, nullptr);
-        LineTo(dc, px, py - 5);
-        MoveToEx(dc, px, py + 6, nullptr);
-        LineTo(dc, px, py + 10);
+        // Short crosshair tick marks extending 2-3px outside the circle
+        MoveToEx(dc, px - 6, py, nullptr);
+        LineTo(dc, px - 3, py);
+        MoveToEx(dc, px + 4, py, nullptr);
+        LineTo(dc, px + 7, py);
+        MoveToEx(dc, px, py - 6, nullptr);
+        LineTo(dc, px, py - 3);
+        MoveToEx(dc, px, py + 4, nullptr);
+        LineTo(dc, px, py + 7);
         SelectObject(dc, old_p_pen);
         SelectObject(dc, old_p_brush);
         DeleteObject(pivot_pen);
@@ -187,12 +205,16 @@ void NativeWindow::paint_selection_overlay(HDC dc) {
             text << (language_ == UILanguage::Vietnamese ? L"Kích thước: " : L"Dimensions: ");
             if (!quick_dimension_buffer_.empty()) {
                 for (char c : quick_dimension_buffer_) text << static_cast<wchar_t>(c);
-                text << L" mm (↵ Enter)";
+                text << (language_ == UILanguage::Vietnamese ? L" [mặc định " : L" [default ")
+                     << display_length_unit_suffix_wide(display_length_unit_) << L"] (↵ Enter)";
             } else {
-                text << std::fixed << std::setprecision(1) << bounds->width << L", " << bounds->height << (language_ == UILanguage::Vietnamese ? L" (Gõ ngang,dài ↵)" : L" (Type W,L ↵)");
+                text << format_mm_display(bounds->width, display_length_unit_, 5) << L", "
+                     << format_mm_display(bounds->height, display_length_unit_, 5)
+                     << (language_ == UILanguage::Vietnamese ? L" (Gõ ngang,dài ↵)" : L" (Type W,L ↵)");
             }
         } else {
-            text << std::fixed << std::setprecision(2) << bounds->width << L" × " << bounds->height << L" mm";
+            text << format_mm_display(bounds->width, display_length_unit_, 5) << L" × "
+                 << format_mm_display(bounds->height, display_length_unit_, 5);
             if (is_rotate_mode_) {
                 text << (language_ == UILanguage::Vietnamese ? L" · Chế độ xoay" : L" · Rotate Mode");
             }
@@ -207,91 +229,6 @@ void NativeWindow::paint_selection_overlay(HDC dc) {
         SetTextColor(dc, quick_dimension_active_ ? RGB(0, 242, 195) : (theme_ == ThemeMode::CyberDark ? RGB(0, 242, 195) : RGB(0, 112, 88)));
         DrawTextW(dc, text.str().c_str(), -1, &label, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
-        // PowerClip On-Canvas Overlay (matching CorelDRAW Image 2):
-        // 1. Center crossmark 'x' on contents
-        // 2. Floating mini-toolbar above container with [Edit] [Select] [Extract] [Lock] [Fit]
-        if (selection.count() == 1 && const_cast<NativeWindow*>(this)->workflow().is_clipping_container(selection.selected_ids().front())) {
-            const auto clip_id = selection.selected_ids().front();
-            const auto* grp_obj = snapshot->objects().lookup_ref(clip_id);
-            if (grp_obj && std::holds_alternative<document::GroupObject>(*grp_obj)) {
-                const auto& grp = std::get<document::GroupObject>(*grp_obj);
-                std::optional<geometry::Rect2D> content_bounds;
-                for (auto cid : grp.children_ids) {
-                    if (cid == grp.clip->mask_object_id) continue;
-                    auto cb = const_cast<NativeWindow*>(this)->workflow().get_object_bounds(cid);
-                    if (cb) content_bounds = content_bounds ? content_bounds->united(*cb) : *cb;
-                }
-                if (content_bounds) {
-                    const auto center_world = content_bounds->center();
-                    const auto center_screen = camera.world_to_screen(center_world);
-                    const int cx_c = area.left + static_cast<int>(std::lround(center_screen.x));
-                    const int cy_c = area.top + static_cast<int>(std::lround(center_screen.y));
-
-                    // Draw center cross 'x'
-                    const auto x_pen = CreatePen(PS_SOLID, 1, RGB(100, 116, 139));
-                    const auto old_x_pen = SelectObject(dc, x_pen);
-                    MoveToEx(dc, cx_c - 5, cy_c - 5, nullptr);
-                    LineTo(dc, cx_c + 6, cy_c + 6);
-                    MoveToEx(dc, cx_c - 5, cy_c + 5, nullptr);
-                    LineTo(dc, cx_c + 6, cy_c - 6);
-                    SelectObject(dc, old_x_pen);
-                    DeleteObject(x_pen);
-                }
-
-                // Draw floating mini-toolbar matching Image 2
-                int bar_w = 264;
-                int bar_h = 28;
-                int bar_x = rect.left;
-                if (bar_x + bar_w > area.right - 10) bar_x = area.right - bar_w - 10;
-                if (bar_x < area.left + 10) bar_x = area.left + 10;
-                int bar_y = rect.top - bar_h - 8;
-                if (bar_y < area.top + 8) bar_y = rect.top + 8;
-
-                RECT bar_rc{bar_x, bar_y, bar_x + bar_w, bar_y + bar_h};
-                fill_rect(dc, bar_rc, theme_ == ThemeMode::CyberDark ? RGB(18, 28, 42) : RGB(255, 255, 255));
-                outline(dc, bar_rc, theme_ == ThemeMode::CyberDark ? RGB(45, 60, 80) : RGB(203, 213, 225));
-
-                const bool is_vi = (language_ == UILanguage::Vietnamese);
-                const bool locked = grp.clip ? grp.clip->lock_contents_to_frame : true;
-
-                SetBkMode(dc, TRANSPARENT);
-                // 1. [ Edit ]
-                RECT r_edit{bar_x + 4, bar_y + 3, bar_x + 52, bar_y + bar_h - 3};
-                fill_rect(dc, r_edit, theme_ == ThemeMode::CyberDark ? RGB(26, 40, 60) : RGB(241, 245, 249));
-                outline(dc, r_edit, theme_ == ThemeMode::CyberDark ? RGB(0, 242, 195) : RGB(0, 135, 106));
-                SetTextColor(dc, theme_ == ThemeMode::CyberDark ? RGB(0, 242, 195) : RGB(0, 135, 106));
-                DrawTextW(dc, is_vi ? L"✎ Sửa" : L"✎ Edit", -1, &r_edit, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-                // 2. [ ⛶ ] (Select)
-                RECT r_sel{bar_x + 56, bar_y + 3, bar_x + 84, bar_y + bar_h - 3};
-                fill_rect(dc, r_sel, theme_ == ThemeMode::CyberDark ? RGB(26, 40, 60) : RGB(241, 245, 249));
-                outline(dc, r_sel, theme_ == ThemeMode::CyberDark ? RGB(45, 60, 80) : RGB(203, 213, 225));
-                SetTextColor(dc, theme_ == ThemeMode::CyberDark ? RGB(241, 245, 249) : RGB(15, 23, 42));
-                DrawTextW(dc, L"⛶", -1, &r_sel, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-                // 3. [ ⇱ ] (Extract)
-                RECT r_ext{bar_x + 88, bar_y + 3, bar_x + 116, bar_y + bar_h - 3};
-                fill_rect(dc, r_ext, theme_ == ThemeMode::CyberDark ? RGB(26, 40, 60) : RGB(241, 245, 249));
-                outline(dc, r_ext, theme_ == ThemeMode::CyberDark ? RGB(45, 60, 80) : RGB(203, 213, 225));
-                SetTextColor(dc, theme_ == ThemeMode::CyberDark ? RGB(241, 245, 249) : RGB(15, 23, 42));
-                DrawTextW(dc, L"⇱", -1, &r_ext, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-                // 4. [ 🔒 / 🔓 ] (Lock)
-                RECT r_lock{bar_x + 120, bar_y + 3, bar_x + 148, bar_y + bar_h - 3};
-                fill_rect(dc, r_lock, locked ? (theme_ == ThemeMode::CyberDark ? RGB(0, 60, 50) : RGB(220, 252, 231))
-                                             : (theme_ == ThemeMode::CyberDark ? RGB(26, 40, 60) : RGB(241, 245, 249)));
-                outline(dc, r_lock, locked ? RGB(0, 242, 195) : (theme_ == ThemeMode::CyberDark ? RGB(45, 60, 80) : RGB(203, 213, 225)));
-                SetTextColor(dc, locked ? RGB(0, 242, 195) : (theme_ == ThemeMode::CyberDark ? RGB(148, 163, 184) : RGB(100, 116, 139)));
-                DrawTextW(dc, locked ? L"🔒" : L"🔓", -1, &r_lock, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-                // 5. [ Fit Contents ▾ ]
-                RECT r_fit{bar_x + 152, bar_y + 3, bar_x + bar_w - 4, bar_y + bar_h - 3};
-                fill_rect(dc, r_fit, theme_ == ThemeMode::CyberDark ? RGB(26, 40, 60) : RGB(241, 245, 249));
-                outline(dc, r_fit, theme_ == ThemeMode::CyberDark ? RGB(45, 60, 80) : RGB(203, 213, 225));
-                SetTextColor(dc, theme_ == ThemeMode::CyberDark ? RGB(241, 245, 249) : RGB(15, 23, 42));
-                DrawTextW(dc, is_vi ? L"Căn chỉnh ▾" : L"Fit Contents ▾", -1, &r_fit, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-            }
-        }
     }
     if (is_marquee_) {
         auto rect = rect_for(selection_ui::between(pointer_down_world_, pointer_current_world_));
@@ -311,7 +248,7 @@ void NativeWindow::paint_selection_overlay(HDC dc) {
         DrawTextW(dc, text, -1, &label, DT_SINGLELINE | DT_NOPREFIX);
     }
     document::ObjectId rect_id;
-    if ((active_tool_ == 0 || active_tool_ == 1) && node_tool_ && is_selected_rectangle(&rect_id)) {
+    if (active_tool_ == 0 && node_tool_ && is_selected_rectangle(&rect_id)) {
         if (node_tool_->target_object() != rect_id && !node_tool_->tool().is_rounding_corners()) {
             node_tool_->activate(rect_id);
         }

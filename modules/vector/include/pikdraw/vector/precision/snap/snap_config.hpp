@@ -95,6 +95,8 @@ struct SnapToolOverride {
 struct SnapConfigSnapshot {
     uint64_t generation{1};
     bool master_enabled{true};
+    bool smart_guides_enabled{true};
+    bool smart_spacing_enabled{true};
     std::array<bool, kSnapGroupCount> groups{};
     std::array<bool, kSnapOptionCount> options{};
     std::array<int, kSnapOptionCount> configured_priorities{};
@@ -126,8 +128,14 @@ public:
     SnapConfiguration();
 
     [[nodiscard]] SnapConfigSnapshot snapshot() const { return state_; }
+    [[nodiscard]] bool master_enabled() const noexcept { return state_.master_enabled; }
+    [[nodiscard]] bool group_enabled(SnapGroup group) const noexcept;
+    [[nodiscard]] bool option_enabled(SnapOption option) const noexcept;
+    [[nodiscard]] SnapGridSettings grid_settings() const noexcept { return state_.grid; }
     bool set_master_enabled(bool enabled) noexcept;
     bool toggle_master() noexcept;
+    bool set_smart_guides_enabled(bool enabled) noexcept;
+    bool set_smart_spacing_enabled(bool enabled) noexcept;
     bool set_group_enabled(SnapGroup group, bool enabled) noexcept;
     bool set_option_enabled(SnapOption option, bool enabled) noexcept;
     bool set_all_group_options(SnapGroup group, bool enabled) noexcept;

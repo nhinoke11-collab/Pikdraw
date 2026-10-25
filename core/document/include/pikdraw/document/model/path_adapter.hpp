@@ -187,17 +187,36 @@ editable_path_handles_for(const EditableSubpath& subpath, size_t node_index) {
 [[nodiscard]] inline bool editable_path_matches_adapter(
     const EditablePath& source, const geometry::Path2D& adapter) {
     const auto expected = editable_path_to_path2d(source);
-    if (expected.winding_rule() != adapter.winding_rule() ||
-        expected.elements().size() != adapter.elements().size()) return false;
+    if (expected.winding_rule() != adapter.winding_rule()) return false;
     const auto& left = expected.elements();
     const auto& right = adapter.elements();
-    for (size_t i = 0; i < left.size(); ++i)
-        if (left[i].verb != right[i].verb || left[i].pt != right[i].pt ||
-            left[i].ctrl1 != right[i].ctrl1 || left[i].ctrl2 != right[i].ctrl2 ||
-            left[i].rx != right[i].rx || left[i].ry != right[i].ry ||
-            left[i].rotation_deg != right[i].rotation_deg ||
-            left[i].large_arc != right[i].large_arc || left[i].sweep != right[i].sweep)
+    size_t redundant_close_line = right.size();
+    if (left.size() + 1 == right.size() && left.size() >= 2 &&
+        right.size() >= 3 && left.back().verb == geometry::PathVerb::Close &&
+        right.back().verb == geometry::PathVerb::Close &&
+        right.front().verb == geometry::PathVerb::MoveTo &&
+        right[right.size() - 2].verb == geometry::PathVerb::LineTo &&
+        right[right.size() - 2].pt == right.front().pt)
+        redundant_close_line = right.size() - 2;
+    if (left.size() != right.size() -
+            static_cast<size_t>(redundant_close_line < right.size()))
+        return false;
+    size_t right_index = 0;
+    for (size_t left_index = 0; left_index < left.size(); ++left_index) {
+        if (right_index == redundant_close_line) ++right_index;
+        const auto& expected_element = left[left_index];
+        const auto& actual_element = right[right_index++];
+        if (expected_element.verb != actual_element.verb ||
+            expected_element.pt != actual_element.pt ||
+            expected_element.ctrl1 != actual_element.ctrl1 ||
+            expected_element.ctrl2 != actual_element.ctrl2 ||
+            expected_element.rx != actual_element.rx ||
+            expected_element.ry != actual_element.ry ||
+            expected_element.rotation_deg != actual_element.rotation_deg ||
+            expected_element.large_arc != actual_element.large_arc ||
+            expected_element.sweep != actual_element.sweep)
             return false;
+    }
     return true;
 }
 

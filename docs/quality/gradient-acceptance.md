@@ -1,10 +1,13 @@
 # Nghiệm thu Gradient theo luồng sử dụng
 
-Ngày: 17/10/2026. **Toàn bộ ca dưới đây đang planned/chưa chạy.** Đây là catalog theo rủi ro, không
-lệnh bắt mỗi agent chạy tất cả. G01–G11 chọn ca đúng ownership trong [plan](../roadmap/gradient-20261017.md);
+Ngày: 17/10/2026. Đây là catalog nghiệm thu mục tiêu theo rủi ro, không có nghĩa mọi ca đã chạy.
+Các bằng chứng đã chạy cho một phần Gradient được ghi tại [phiếu UI](../design/features/gradient.md#9-kiểm-tra-và-giới-hạn-runtime-2026-10-23).
+G01–G11 chọn ca đúng ownership trong [plan](../roadmap/gradient-20261017.md);
 UI theo [phiếu](../design/features/gradient.md); cấu trúc theo [chuẩn nghiệm thu](feature-acceptance.md).
-Targets/file test Gradient là đề xuất cần G00 đăng ký trước build. Không lưu source/output tạm sau kiểm;
-giữ regression test/fixture an toàn có giá trị và report cần review.
+Các test target Gradient hiện đã được đăng ký trong CMake. Catalog G01–G11 vẫn là phạm vi nghiệm thu
+mục tiêu; test pass chỉ chứng minh các ca đã chạy, không tự xác nhận các ca còn lại. Runtime hiện commit
+mỗi thao tác hợp lệ; các bước trong catalog ghi “Apply” phải được hiểu theo mục tiêu từng ca, không khẳng
+định UI hiện có nút Apply. Không lưu output tạm sau kiểm; giữ regression test/fixture có giá trị.
 
 ## AC-G01 — Giá trị paint và hard edges
 

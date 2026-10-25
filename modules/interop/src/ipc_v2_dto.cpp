@@ -1,10 +1,26 @@
 #include "pikdraw/interop/ipc_dto.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 
 namespace pikdraw::interop {
 namespace {
+
+constexpr std::array<uint32_t, 256> MakeCrc32Table() noexcept {
+    std::array<uint32_t, 256> table{};
+    for (uint32_t value = 0; value < table.size(); ++value) {
+        uint32_t remainder = value;
+        for (unsigned bit = 0; bit < 8; ++bit) {
+            const uint32_t mask = 0u - (remainder & 1u);
+            remainder = (remainder >> 1) ^ (0xedb88320u & mask);
+        }
+        table[value] = remainder;
+    }
+    return table;
+}
+
+constexpr auto kCrc32Table = MakeCrc32Table();
 
 class Writer final {
 public:
@@ -147,13 +163,8 @@ bool ValidateCanonicalRecords(
 
 uint32_t V2ProposalRecordsCrc32(std::span<const uint8_t> bytes) noexcept {
     uint32_t crc = 0xffffffffu;
-    for (uint8_t byte : bytes) {
-        crc ^= byte;
-        for (int bit = 0; bit < 8; ++bit) {
-            const uint32_t mask = 0u - (crc & 1u);
-            crc = (crc >> 1) ^ (0xedb88320u & mask);
-        }
-    }
+    for (uint8_t byte : bytes)
+        crc = (crc >> 8) ^ kCrc32Table[(crc ^ byte) & 0xffu];
     return ~crc;
 }
 
@@ -293,6 +304,30 @@ std::vector<uint8_t> SerializeV2ProposalChunk(const V2ProposalChunk& chunk, uint
         !writer.U32(static_cast<uint32_t>(chunk.canonical_record_bytes.size())) ||
         !writer.U32(chunk.checksum_crc32) || !writer.Bytes(chunk.canonical_record_bytes)) return {};
     return SerializeV2Frame(MessageType::V2ProposalChunk, sequence_id, writer.View());
+}
+
+std::optional<V2ProposalChunkView> DeserializeV2ProposalChunkPayload(
+    std::span<const uint8_t> payload) {
+    try {
+        Reader reader(payload);
+        V2FrameIdentity prefix;
+        V2ProposalChunkView chunk;
+        uint32_t records_bytes = 0;
+        if (!ReadIdentityPrefix(reader, prefix) || !ReadIdentity(reader, chunk.job) ||
+            !PrefixMatches(prefix, chunk.job) || !reader.U32(chunk.chunk_ordinal) ||
+            !reader.U64(chunk.first_record_ordinal) || !reader.U32(chunk.record_count) ||
+            !reader.U32(records_bytes) || !reader.U32(chunk.checksum_crc32) ||
+            records_bytes != reader.Remaining().size() || records_bytes > IPC_V2_MAX_FRAME_BYTES ||
+            chunk.record_count == 0 || chunk.record_count > IPC_V2_MAX_RECORDS_PER_CHUNK)
+            return std::nullopt;
+        chunk.canonical_record_bytes = reader.Remaining();
+        if (!ValidateCanonicalRecords(chunk.canonical_record_bytes, chunk.record_count, nullptr) ||
+            V2ProposalRecordsCrc32(chunk.canonical_record_bytes) != chunk.checksum_crc32)
+            return std::nullopt;
+        return chunk;
+    } catch (...) {
+        return std::nullopt;
+    }
 }
 
 std::optional<V2ProposalChunk> DeserializeV2ProposalChunk(std::span<const uint8_t> packet) {

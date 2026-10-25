@@ -9,7 +9,11 @@ add_library(pikdraw_document STATIC
     src/async/proposal_validator.cpp
     src/snapshots/structure_validator.cpp
     src/commands/command.cpp
+    src/commands/path_cut_commands.cpp
+    src/commands/clip_commands.cpp
     src/commands/color_commands.cpp
+    src/commands/tac_commands.cpp
+    src/commands/unit_commands.cpp
     src/commands/layer_commands.cpp
     src/commands/appearance_commands.cpp
     src/commands/gradient_commands.cpp
@@ -17,11 +21,17 @@ add_library(pikdraw_document STATIC
     src/commands/node_commands.cpp
     src/commands/contour_commands.cpp
     src/commands/import_content_command.cpp
+    src/commands/raster_edit_commands.cpp
+    src/commands/raster_profile_commands.cpp
     src/commands/dimension_commands.cpp
+    src/commands/annotation_commands.cpp
     src/annotations/dimension_style.cpp
     src/annotations/dimension_layout.cpp
+    src/annotations/annotation_layout.cpp
     src/commands/transaction_writer.cpp
     src/storage/native_format.cpp
+    src/storage/native_chunk_encode.cpp
+    src/storage/native_chunk_decode.cpp
     src/storage/crc32.cpp
     src/storage/color_codec.cpp
     src/storage/appearance_codec.cpp
@@ -29,6 +39,7 @@ add_library(pikdraw_document STATIC
     src/storage/object_codec.cpp
     src/storage/editable_path_codec.cpp
     src/storage/recovery_draft.cpp
+    src/storage/resource_budget.cpp
     src/storage/save_recovery.cpp
     src/storage/file_io.cpp
     src/model/clone_utils.cpp
@@ -46,6 +57,14 @@ target_link_libraries(pikdraw_document PUBLIC
     pikdraw_color
     pikdraw_typography
 )
+
+if(TARGET pikdraw_zlib)
+    target_link_libraries(pikdraw_document PRIVATE pikdraw_zlib)
+else()
+    find_package(ZLIB REQUIRED)
+    target_link_libraries(pikdraw_document PRIVATE ZLIB::ZLIB)
+endif()
+target_compile_definitions(pikdraw_document PRIVATE PIKDRAW_NATIVE_ZLIB=1)
 
 if(PIKDRAW_BUILD_TESTS)
     macro(add_doc_test target_name source_file)
@@ -66,7 +85,10 @@ if(PIKDRAW_BUILD_TESTS)
     target_sources(test_pikdraw_document_commands PRIVATE tests/commands/test_color_commands.cpp)
     add_doc_test(test_pikdraw_document_layer_commands tests/commands/test_layer_commands.cpp)
     add_doc_test(test_pikdraw_document_node_commands tests/commands/test_node_commands.cpp)
+    add_doc_test(test_pikdraw_document_path_cut tests/commands/test_path_cut_commands.cpp)
     add_doc_test(test_pikdraw_document_contour tests/commands/test_contour_commands.cpp)
+    add_doc_test(test_pikdraw_document_raster_profile_commands
+        tests/commands/test_raster_profile_commands.cpp)
     add_doc_test(test_pikdraw_document_pen_path_extension tests/commands/test_pen_path_extension.cpp)
     add_doc_test(test_pikdraw_document_snapshots tests/snapshots/test_snapshots.cpp)
     add_doc_test(test_pikdraw_document_persistent_map tests/snapshots/test_persistent_map.cpp)
@@ -78,6 +100,7 @@ if(PIKDRAW_BUILD_TESTS)
     add_doc_test(test_pikdraw_document_clone_utils tests/model/test_clone_utils.cpp)
     add_doc_test(test_pikdraw_document_dimension_model tests/annotations/test_dimension_model.cpp)
     add_doc_test(test_pikdraw_document_dimension_commands tests/commands/test_dimension_commands.cpp)
+    add_doc_test(test_pikdraw_document_annotation_model tests/annotations/test_annotation_model.cpp)
     add_doc_test(test_pikdraw_document_gradient tests/model/test_gradient_paint.cpp)
     add_doc_test(test_pikdraw_document_gradient_commands tests/commands/test_gradient_commands.cpp)
     add_doc_test(test_pikdraw_document_gradient_storage tests/storage/test_gradient_storage.cpp)

@@ -7,6 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Desktop core shell and presenters library
 add_library(pikdraw_desktop STATIC
+    src/performance/canvas_trace.cpp
     src/shell/shell_geometry.cpp
     src/shell/workspace_state.cpp
     src/shell/status_bar_model.cpp
@@ -31,10 +32,12 @@ add_library(pikdraw_desktop STATIC
     src/workflows/document_workflow_appearance.cpp
     src/workflows/document_workflow_effect_draft.cpp
     src/workflows/document_workflow_io_shaping.cpp
+    src/workflows/document_workflow_cut.cpp
     src/workflows/document_workflow_import.cpp
     src/clipboard/native_clipboard.cpp
     src/tools/drawing_preferences.cpp
     src/tools/drawing_tool_controller.cpp
+    src/tools/artboard_tool_controller.cpp
     src/tools/pen_tool_controller.cpp
     src/tools/node_tool_controller.cpp
     src/tools/contour_tool_controller.cpp
@@ -43,7 +46,10 @@ add_library(pikdraw_desktop STATIC
     src/tools/snap_index_worker.cpp
     src/tools/snap_status_controller.cpp
     src/tools/dimension_tool_controller.cpp
+    src/tools/annotation/annotation_tool_controller.cpp
+    src/shell/native_window_artboard_tool.cpp
     src/shell/native_window.cpp
+    src/shell/native_window_performance.cpp
     src/shell/native_window_isolation_menus.cpp
     src/shell/native_window_powerclip.cpp
     src/shell/native_window_settings.cpp
@@ -65,6 +71,7 @@ add_library(pikdraw_desktop STATIC
     src/automation/native_window_automation.cpp
     src/shell/native_window_events.cpp
     src/shell/native_window_menu_actions.cpp
+    src/shell/native_window_text_case_menu.cpp
     src/shell/native_window_context_menu.cpp
     src/shell/native_window_pointer_dispatch.cpp
     src/shell/native_window_tool_events.cpp
@@ -73,9 +80,12 @@ add_library(pikdraw_desktop STATIC
     src/shell/native_window_shortcuts.cpp
     src/shell/native_window_shortcuts_settings.cpp
     src/shell/native_window_canvas.cpp
+    src/shell/native_window_direct_present.cpp
+    src/shell/native_window_paint_canvas_handles.cpp
     src/shell/native_window_canvas_overlays.cpp
     src/shell/native_window_canvas_snap.cpp
     src/shell/native_window_selection.cpp
+    src/shell/native_window_smart_guides.cpp
     src/shell/native_window_selection_paint.cpp
     src/shell/native_window_style.cpp
     src/shell/native_window_style_events.cpp
@@ -87,6 +97,16 @@ add_library(pikdraw_desktop STATIC
     src/shell/native_window_files.cpp
     src/shell/native_window_svg_export.cpp
     src/shell/native_window_raster_export.cpp
+    src/shell/native_window_test_print.cpp
+    src/shell/native_window_measurement.cpp
+    src/shell/raster_bitmap_export.cpp
+    src/shell/native_window_raster_edits.cpp
+    src/shell/native_window_raster_properties.cpp
+    src/shell/native_window_raster_dock_paint.cpp
+    src/shell/native_window_eyedropper.cpp
+    src/shell/native_window_raster_mask.cpp
+    src/shell/native_window_raster_histogram.cpp
+    src/shell/native_window_raster_profile.cpp
     src/shell/native_window_import.cpp
     src/shell/native_window_recovery.cpp
     src/shell/native_window_paint_icons.cpp
@@ -96,6 +116,7 @@ add_library(pikdraw_desktop STATIC
     src/shell/native_window_layers_dock.cpp
     src/shell/native_window_layers_events.cpp
     src/shell/native_window_paint.cpp
+    src/shell/native_window_paint_front_layer.cpp
     src/shell/native_window_paint_status.cpp
     src/shell/native_window_paint_menu.cpp
     src/shell/native_window_paint_home.cpp
@@ -118,6 +139,7 @@ target_link_libraries(pikdraw_desktop PUBLIC
     pikdraw_interop
     pikdraw_automation
     pikdraw_raster
+    pikdraw_production
 )
 
 if(WIN32)
@@ -166,6 +188,16 @@ endif()
 
 # Native unit and lifecycle tests
 if(PIKDRAW_BUILD_TESTS)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_raster_profile_workflow.cpp")
+        add_executable(test_pikdraw_raster_profile_workflow
+            tests/test_raster_profile_workflow.cpp)
+        target_link_libraries(test_pikdraw_raster_profile_workflow PRIVATE pikdraw_desktop)
+        add_test(NAME test_pikdraw_raster_profile_workflow
+            COMMAND test_pikdraw_raster_profile_workflow)
+        set_tests_properties(test_pikdraw_raster_profile_workflow PROPERTIES
+            TIMEOUT 30 RUN_SERIAL TRUE LABELS "windows;raster;icc")
+    endif()
+
     add_executable(test_pikdraw_document_color_workflow tests/test_document_color_workflow.cpp)
     target_link_libraries(test_pikdraw_document_color_workflow PRIVATE pikdraw_desktop)
     add_test(NAME test_pikdraw_document_color_workflow COMMAND test_pikdraw_document_color_workflow)
@@ -180,6 +212,12 @@ if(PIKDRAW_BUILD_TESTS)
     endif()
     add_test(NAME test_pikdraw_desktop_import COMMAND test_pikdraw_desktop_import)
     set_tests_properties(test_pikdraw_desktop_import PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE LABELS "windows;isolated-import")
+    if(WIN32 AND TARGET pikdraw_stage_worker)
+        add_test(NAME test_pikdraw_desktop_raster_import
+            COMMAND test_pikdraw_desktop_import --raster-import)
+        set_tests_properties(test_pikdraw_desktop_raster_import PROPERTIES
+            TIMEOUT 120 RUN_SERIAL TRUE LABELS "windows;isolated-import;raster")
+    endif()
     add_executable(test_pikdraw_desktop_shell
         tests/test_desktop_shell.cpp
         tests/test_desktop_shell_align_boolean.cpp
@@ -191,6 +229,18 @@ if(PIKDRAW_BUILD_TESTS)
         pikdraw_desktop
     )
     add_test(NAME test_pikdraw_desktop_shell COMMAND test_pikdraw_desktop_shell)
+    add_test(NAME test_pikdraw_desktop_bitmap_eyedropper
+        COMMAND test_pikdraw_desktop_shell --bitmap-eyedropper-regressions)
+    set_tests_properties(test_pikdraw_desktop_bitmap_eyedropper PROPERTIES
+        TIMEOUT 60 RUN_SERIAL TRUE LABELS "windows;raster;eyedropper")
+    add_test(NAME test_pikdraw_artboard_tool_ui COMMAND test_pikdraw_desktop_shell --artboard-only)
+    set_tests_properties(test_pikdraw_artboard_tool_ui PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+    add_test(NAME test_pikdraw_artboard_snap_ui COMMAND test_pikdraw_desktop_shell --artboard-snap-only)
+    set_tests_properties(test_pikdraw_artboard_snap_ui PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+    add_test(NAME test_pikdraw_snap_properties_ui COMMAND test_pikdraw_desktop_shell --snap-ui-only)
+    set_tests_properties(test_pikdraw_snap_properties_ui PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+    add_test(NAME test_pikdraw_quick_shape_snap_ui COMMAND test_pikdraw_desktop_shell --shape-snap-only)
+    set_tests_properties(test_pikdraw_quick_shape_snap_ui PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
     add_test(NAME test_pikdraw_desktop_powerclip COMMAND test_pikdraw_desktop_shell --powerclip-only)
     set_tests_properties(test_pikdraw_desktop_powerclip PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
     add_test(NAME test_pikdraw_tac_settings_ui COMMAND test_pikdraw_desktop_shell --tac-only)
@@ -232,6 +282,16 @@ if(PIKDRAW_BUILD_TESTS)
     )
     add_test(NAME test_pikdraw_desktop_actions COMMAND test_pikdraw_desktop_actions)
 
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_raster_bitmap_export.cpp")
+        add_executable(test_pikdraw_raster_bitmap_export
+            tests/test_raster_bitmap_export.cpp
+        )
+        target_link_libraries(test_pikdraw_raster_bitmap_export PRIVATE
+            pikdraw_desktop
+        )
+        add_test(NAME test_pikdraw_raster_bitmap_export COMMAND test_pikdraw_raster_bitmap_export)
+    endif()
+
     add_executable(test_pikdraw_desktop_reload
         tests/test_desktop_reload.cpp
     )
@@ -263,11 +323,26 @@ if(PIKDRAW_BUILD_TESTS)
         pikdraw_desktop
     )
     add_test(NAME test_pikdraw_canvas_view COMMAND test_pikdraw_canvas_view)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_canvas_trace.cpp")
+        add_executable(test_pikdraw_canvas_trace tests/test_canvas_trace.cpp)
+        target_link_libraries(test_pikdraw_canvas_trace PRIVATE pikdraw_desktop)
+        add_test(NAME test_pikdraw_canvas_trace COMMAND test_pikdraw_canvas_trace)
+    endif()
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_pointer_move_coalescer.cpp")
+        add_executable(test_pikdraw_pointer_move_coalescer tests/test_pointer_move_coalescer.cpp)
+        target_link_libraries(test_pikdraw_pointer_move_coalescer PRIVATE pikdraw_desktop)
+        add_test(NAME test_pikdraw_pointer_move_coalescer COMMAND test_pikdraw_pointer_move_coalescer)
+    endif()
     add_executable(test_pikdraw_editor_tools tests/test_editor_tools.cpp)
     target_link_libraries(test_pikdraw_editor_tools PRIVATE pikdraw_desktop)
     add_test(NAME test_pikdraw_editor_tools COMMAND test_pikdraw_editor_tools)
     add_executable(benchmark_pikdraw_editor_tools tests/benchmark_editor_tools.cpp)
     target_link_libraries(benchmark_pikdraw_editor_tools PRIVATE pikdraw_desktop)
+    if(WIN32)
+        target_link_libraries(benchmark_pikdraw_editor_tools PRIVATE psapi)
+    endif()
+    target_compile_definitions(benchmark_pikdraw_editor_tools PRIVATE
+        PIKDRAW_BENCHMARK_CONFIGURATION="$<CONFIG>")
 
     add_executable(test_pikdraw_drawing_tool_controller tests/test_drawing_tool_controller.cpp tests/test_drawing_tool_snap_input.cpp)
     target_link_libraries(test_pikdraw_drawing_tool_controller PRIVATE pikdraw_desktop)
@@ -329,6 +404,21 @@ if(PIKDRAW_BUILD_TESTS)
         pikdraw_geometry
     )
     add_test(NAME test_pikdraw_dimension_tool_controller COMMAND test_pikdraw_dimension_tool_controller)
+
+    add_executable(test_pikdraw_annotation_tool_controller
+        tests/test_annotation_tool_controller.cpp
+        src/tools/annotation/annotation_tool_controller.cpp
+    )
+    target_include_directories(test_pikdraw_annotation_tool_controller PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(test_pikdraw_annotation_tool_controller PRIVATE
+        pikdraw_document
+        pikdraw_vector
+        pikdraw_geometry
+    )
+    add_test(NAME test_pikdraw_annotation_tool_controller COMMAND test_pikdraw_annotation_tool_controller)
  
     add_executable(test_pikdraw_gradient_tool_controller
         tests/test_gradient_tool_controller.cpp

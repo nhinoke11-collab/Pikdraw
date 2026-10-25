@@ -237,6 +237,46 @@ void draw_tool_icon_gdiplus(GdiplusApi* api, GpGraphics* g, int tool, float cx, 
             {cx + 2.8f, cy + 2.5f}
         };
         api->FillPolygon(g, fill_brush, right_arrow, 3, kFillModeAlternate);
+    } else if (tool == 17) {
+        // Artboard: page outline with a corner resize handle.
+        api->DrawRectangle(g, pen, cx - 7.0f, cy - 7.0f, 14.0f, 14.0f);
+        api->DrawLine(g, pen, cx + 1.0f, cy + 7.0f, cx + 7.0f, cy + 1.0f);
+        api->FillRectangle(g, fill_brush, cx + 4.0f, cy + 4.0f, 4.0f, 4.0f);
+    } else if (tool == 18) {
+        // Tool 18: Eyedropper (Pipette color sampler)
+        GpPointF bulb[] = {
+            {cx + 2.0f, cy - 8.0f},
+            {cx + 8.0f, cy - 2.0f},
+            {cx + 5.0f, cy + 1.0f},
+            {cx - 1.0f, cy - 5.0f}
+        };
+        api->FillPolygon(g, fill_brush, bulb, 4, kFillModeAlternate);
+        for (int i = 0; i < 4; ++i) {
+            int next = (i + 1) % 4;
+            api->DrawLine(g, pen, bulb[i].X, bulb[i].Y, bulb[next].X, bulb[next].Y);
+        }
+        api->DrawLine(g, pen, cx - 1.0f, cy - 5.0f, cx - 6.0f, cy);
+        api->DrawLine(g, pen, cx + 5.0f, cy + 1.0f, cx, cy + 6.0f);
+        api->DrawLine(g, pen, cx - 6.0f, cy, cx - 7.5f, cy + 7.5f);
+        api->DrawLine(g, pen, cx, cy + 6.0f, cx - 7.5f, cy + 7.5f);
+    } else if (tool == 19) {
+        // Vector eraser: angled rubber block with a visible cut face.
+        const GpPointF eraser[] = {
+            {cx - 6.8f, cy + 1.8f}, {cx + 1.8f, cy - 6.8f},
+            {cx + 7.0f, cy - 1.6f}, {cx - 1.6f, cy + 7.0f}
+        };
+        api->DrawLines(g, pen, eraser, 4);
+        api->DrawLine(g, pen, eraser[3].X, eraser[3].Y, eraser[0].X, eraser[0].Y);
+        api->DrawLine(g, pen, cx - 2.5f, cy - 2.5f, cx + 2.7f, cy + 2.7f);
+    } else if (tool == 20) {
+        // Annotation / Leader Note: note rectangle with leader elbow line
+        api->DrawRectangle(g, pen, cx - 7.0f, cy - 7.0f, 10.0f, 8.0f);
+        GpPointF leader[] = {
+            {cx - 2.0f, cy + 1.0f},
+            {cx + 2.0f, cy + 5.0f},
+            {cx + 7.0f, cy + 5.0f}
+        };
+        api->DrawLines(g, pen, leader, 3);
     }
 
     api->DeleteBrush(fill_brush);
@@ -348,6 +388,33 @@ void draw_tool_icon_gdi_fallback(HDC dc, int tool, int center_x, int center_y, C
         MoveToEx(dc, center_x + 4, center_y - 3, nullptr);
         LineTo(dc, center_x + 7, center_y);
         LineTo(dc, center_x + 4, center_y + 3);
+    } else if (tool == 17) {
+        Rectangle(dc, center_x - 7, center_y - 7, center_x + 8, center_y + 8);
+        MoveToEx(dc, center_x + 1, center_y + 7, nullptr);
+        LineTo(dc, center_x + 7, center_y + 1);
+        Rectangle(dc, center_x + 4, center_y + 4, center_x + 8, center_y + 8);
+    } else if (tool == 18) {
+        MoveToEx(dc, center_x + 5, center_y - 7, nullptr);
+        LineTo(dc, center_x + 7, center_y - 5);
+        LineTo(dc, center_x + 3, center_y - 1);
+        LineTo(dc, center_x - 5, center_y + 7);
+        LineTo(dc, center_x - 7, center_y + 7);
+        LineTo(dc, center_x - 7, center_y + 5);
+        LineTo(dc, center_x + 1, center_y - 3);
+        LineTo(dc, center_x + 5, center_y - 7);
+    } else if (tool == 19) {
+        MoveToEx(dc, center_x - 7, center_y + 2, nullptr);
+        LineTo(dc, center_x + 2, center_y - 7);
+        LineTo(dc, center_x + 7, center_y - 2);
+        LineTo(dc, center_x - 2, center_y + 7);
+        LineTo(dc, center_x - 7, center_y + 2);
+        MoveToEx(dc, center_x - 2, center_y - 3, nullptr);
+        LineTo(dc, center_x + 3, center_y + 2);
+    } else if (tool == 20) {
+        Rectangle(dc, center_x - 7, center_y - 7, center_x + 3, center_y + 1);
+        MoveToEx(dc, center_x - 2, center_y + 1, nullptr);
+        LineTo(dc, center_x + 2, center_y + 5);
+        LineTo(dc, center_x + 7, center_y + 5);
     }
     SelectObject(dc, old_brush);
     SelectObject(dc, old_pen);

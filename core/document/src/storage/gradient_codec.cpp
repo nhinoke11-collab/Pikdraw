@@ -4,7 +4,8 @@
 
 namespace pikdraw::document::storage_detail {
 
-void write_gradient(Writer &writer, const std::shared_ptr<const GradientPaint> &gradient) {
+void write_gradient(Writer &writer, const std::shared_ptr<const GradientPaint> &gradient,
+                    const ProfileResourceIndexMap *profile_indices) {
     if (!gradient) {
         writer.u32(0);
         return;
@@ -28,7 +29,7 @@ void write_gradient(Writer &writer, const std::shared_ptr<const GradientPaint> &
     for (const auto &stop : gradient->stops) {
         body.u64(stop.id);
         body.f64(stop.offset);
-        write_color(body, stop.color);
+        write_color(body, stop.color, profile_indices);
         body.f64(stop.opacity);
         body.f64(stop.midpoint_to_next);
     }
@@ -37,7 +38,8 @@ void write_gradient(Writer &writer, const std::shared_ptr<const GradientPaint> &
     writer.append(body.bytes);
 }
 
-std::shared_ptr<const GradientPaint> read_gradient(Reader &reader, size_t &remaining_stops) {
+std::shared_ptr<const GradientPaint> read_gradient(Reader &reader, size_t &remaining_stops,
+                                                   bool include_profile_bindings) {
     const uint32_t length = reader.u32();
     if (length == 0) {
         return nullptr;
@@ -103,7 +105,7 @@ std::shared_ptr<const GradientPaint> read_gradient(Reader &reader, size_t &remai
             throw std::invalid_argument("Invalid or duplicate native gradient stop ID");
         }
         stop.offset = sub.f64();
-        stop.color = read_color(sub);
+        stop.color = read_color(sub, include_profile_bindings);
         stop.opacity = sub.f64();
         stop.midpoint_to_next = sub.f64();
         paint.stops.push_back(std::move(stop));

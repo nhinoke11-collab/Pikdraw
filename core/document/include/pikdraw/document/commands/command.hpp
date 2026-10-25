@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pikdraw/document/model/object.hpp"
+#include "pikdraw/color/preview/color_transform.hpp"
 #include <string>
 #include <memory>
 #include <optional>
@@ -8,15 +9,25 @@
 namespace pikdraw::document {
 
 class Document;
+class DocumentSnapshot;
 
 struct CommandResult {
     bool success{false};
     std::string error_message;
     bool is_no_change{false};
+    std::optional<color::ColorConversionSummary> color_conversion;
+    std::optional<color::TACSummary> tac_summary;
 
-    static CommandResult ok() { return {true, "", false}; }
-    static CommandResult no_change() { return {true, "", true}; }
-    static CommandResult fail(std::string msg) { return {false, std::move(msg), false}; }
+    static CommandResult ok(std::optional<color::ColorConversionSummary> color_report = std::nullopt,
+                            std::optional<color::TACSummary> tac_report = std::nullopt) {
+        return {true, "", false, std::move(color_report), std::move(tac_report)};
+    }
+    static CommandResult no_change(std::optional<color::TACSummary> tac_report = std::nullopt) {
+        return {true, "", true, std::nullopt, std::move(tac_report)};
+    }
+    static CommandResult fail(std::string msg) {
+        return {false, std::move(msg), false, std::nullopt, std::nullopt};
+    }
 };
 
 /// Abstract base class for transactional document commands
@@ -60,6 +71,7 @@ public:
 private:
     ObjectId id_{kInvalidObjectId};
     std::optional<ObjectVariant> removed_object_;
+    std::shared_ptr<const DocumentSnapshot> before_remove_;
     size_t layer_idx_{0};
     size_t object_idx_{0};
 };
@@ -77,6 +89,7 @@ private:
     ObjectId id_{kInvalidObjectId};
     geometry::Transform2D delta_;
     geometry::Transform2D previous_transform_;
+    std::vector<std::pair<ObjectId, geometry::Transform2D>> previous_content_transforms_;
 };
 
 } // namespace pikdraw::document

@@ -1,3 +1,4 @@
+#include "pikdraw/document/commands/clip_commands.hpp"
 #include "pikdraw/vector/tools/line/path_drawing_tool.hpp"
 #include "path_object_builder.hpp"
 
@@ -41,8 +42,8 @@ PathDrawingResult PathDrawingTool::finish_path(document::Document& document,
     document::CommandResult command;
     try {
         command = document.execute_command(
-            std::make_unique<document::AddObjectCommand>(
-                std::move(built.object), target_layer_));
+            std::make_unique<document::AddScopedObjectCommand>(
+                std::move(built.object), destination_owner_, target_layer_));
     } catch (const std::exception& error) {
         return {PathDrawingResultCode::CommandFailed, error.what(), {}};
     }

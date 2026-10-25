@@ -15,6 +15,7 @@ void DimensionToolController::activate(document::DimensionKind kind, bool smart_
     snap_active_ = false;
     snap_type_ = DimensionSnapType::None;
     ortho_active_ = false;
+    baseline_step_count_ = 0;
 }
 
 void DimensionToolController::deactivate() {
@@ -26,26 +27,40 @@ void DimensionToolController::deactivate() {
     snap_type_ = DimensionSnapType::None;
     ortho_active_ = false;
     has_last_placement_ = false;
+    baseline_mode_ = false;
+    baseline_step_count_ = 0;
+}
+
+void DimensionToolController::set_axis_lock(DimensionAxisLock lock) noexcept {
+    axis_lock_ = lock;
+    if (lock == DimensionAxisLock::Horizontal) {
+        orientation_ = geometry::LinearOrientation::Horizontal;
+    } else if (lock == DimensionAxisLock::Vertical) {
+        orientation_ = geometry::LinearOrientation::Vertical;
+    } else if (lock == DimensionAxisLock::Aligned) {
+        orientation_ = geometry::LinearOrientation::Aligned;
+    }
+    update_preview();
 }
 
 static geometry::Point2D compute_continuous_placement(
     geometry::Point2D p1,
     geometry::Point2D p2,
     geometry::Point2D last_placement,
-    geometry::LinearOrientation orientation) {
-    if (orientation == geometry::LinearOrientation::Horizontal) {
+    geometry::LinearOrientation orientation,
+    DimensionAxisLock axis_lock,
+    geometry::Point2D collinear_dir) {
+    if (orientation == geometry::LinearOrientation::Horizontal || axis_lock == DimensionAxisLock::Horizontal) {
         return { (p1.x + p2.x) * 0.5, last_placement.y };
     }
-    if (orientation == geometry::LinearOrientation::Vertical) {
+    if (orientation == geometry::LinearOrientation::Vertical || axis_lock == DimensionAxisLock::Vertical) {
         return { last_placement.x, (p1.y + p2.y) * 0.5 };
     }
     const geometry::Point2D mid = (p1 + p2) * 0.5;
-    const geometry::Point2D v = p2 - p1;
-    const double len = std::hypot(v.x, v.y);
-    if (len < 1e-6) return last_placement;
-    const geometry::Point2D n{-v.y / len, v.x / len};
-    const double dist = (last_placement.x - p1.x) * n.x + (last_placement.y - p1.y) * n.y;
-    return mid + n * dist;
+    const double u_len = std::hypot(collinear_dir.x, collinear_dir.y);
+    const geometry::Point2D u = (u_len > 1e-6) ? (collinear_dir / u_len) : geometry::Point2D{1.0, 0.0};
+    const double proj_t = (mid.x - last_placement.x) * u.x + (mid.y - last_placement.y) * u.y;
+    return last_placement + u * proj_t;
 }
 
 void DimensionToolController::start_continue_from(
@@ -56,9 +71,45 @@ void DimensionToolController::start_continue_from(
     activate(kind, false);
     set_linear_orientation(ori);
     continuous_mode_ = true;
+    baseline_mode_ = false;
     first_point_ = base_pt;
     last_placement_point_ = placement_pt;
     has_last_placement_ = true;
+    if (ori == geometry::LinearOrientation::Horizontal) {
+        collinear_dir_ = {1.0, 0.0};
+    } else if (ori == geometry::LinearOrientation::Vertical) {
+        collinear_dir_ = {0.0, 1.0};
+    } else {
+        const double dx = placement_pt.x - base_pt.x;
+        const double dy = placement_pt.y - base_pt.y;
+        collinear_dir_ = {-dy, dx};
+        const double d_len = std::hypot(collinear_dir_.x, collinear_dir_.y);
+        if (d_len > 1e-6) collinear_dir_ = collinear_dir_ / d_len;
+        else collinear_dir_ = {1.0, 0.0};
+    }
+    references_.clear();
+    document::SourceReference ref;
+    ref.ref_kind = document::SourceRefKind::ExplicitPoint;
+    ref.explicit_point = base_pt;
+    references_.push_back(ref);
+    state_ = DimensionSessionState::PickSecond;
+    has_preview_ = false;
+}
+
+void DimensionToolController::start_baseline_from(
+    geometry::Point2D base_pt,
+    geometry::Point2D placement_pt,
+    document::DimensionKind kind,
+    geometry::LinearOrientation ori) {
+    activate(kind, false);
+    set_linear_orientation(ori);
+    baseline_mode_ = true;
+    continuous_mode_ = false;
+    first_point_ = base_pt;
+    baseline_origin_ = base_pt;
+    last_placement_point_ = placement_pt;
+    has_last_placement_ = true;
+    baseline_step_count_ = 1;
     references_.clear();
     document::SourceReference ref;
     ref.ref_kind = document::SourceRefKind::ExplicitPoint;
@@ -84,17 +135,31 @@ void DimensionToolController::update_snap(geometry::Point2D world_pos, double zo
         return;
     }
 
-    ortho_active_ = ortho_constraint;
+    ortho_active_ = ortho_constraint || (axis_lock_ != DimensionAxisLock::Auto && axis_lock_ != DimensionAxisLock::Aligned);
     geometry::Point2D query_pt = world_pos;
 
-    // If picking second point and ORTHO constraint is active (Ctrl or Shift held):
-    if (state_ == DimensionSessionState::PickSecond && ortho_constraint) {
-        const double dx = query_pt.x - first_point_.x;
-        const double dy = query_pt.y - first_point_.y;
-        if (std::abs(dx) >= std::abs(dy)) {
+    // If picking second point or placement and ORTHO constraint or axis lock is active:
+    if (state_ == DimensionSessionState::PickSecond) {
+        if (axis_lock_ == DimensionAxisLock::Horizontal) {
             query_pt.y = first_point_.y;
-        } else {
+        } else if (axis_lock_ == DimensionAxisLock::Vertical) {
             query_pt.x = first_point_.x;
+        } else if (axis_lock_ == DimensionAxisLock::Angle45) {
+            const double dx = query_pt.x - first_point_.x;
+            const double dy = query_pt.y - first_point_.y;
+            const double d = (std::abs(dx) + std::abs(dy)) * 0.5;
+            query_pt.x = first_point_.x + (dx >= 0 ? d : -d);
+            query_pt.y = first_point_.y + (dy >= 0 ? d : -d);
+        } else if (ortho_constraint) {
+            const double dx = query_pt.x - first_point_.x;
+            const double dy = query_pt.y - first_point_.y;
+            const double angle = std::atan2(dy, dx);
+            constexpr double kPi = 3.14159265358979323846;
+            constexpr double kStep = kPi / 4.0; // 45 deg snap
+            const double snapped_angle = std::round(angle / kStep) * kStep;
+            const double dist = std::hypot(dx, dy);
+            query_pt.x = first_point_.x + dist * std::cos(snapped_angle);
+            query_pt.y = first_point_.y + dist * std::sin(snapped_angle);
         }
     }
 
@@ -141,15 +206,44 @@ void DimensionToolController::update_snap(geometry::Point2D world_pos, double zo
             test_candidate({b.x, b.y + b.height * 0.5}, DimensionSnapType::Midpoint, id, std::nullopt);
             test_candidate({b.right(), b.y + b.height * 0.5}, DimensionSnapType::Midpoint, id, std::nullopt);
 
-            // Center
+            // Center of bounding box
             test_candidate({b.x + b.width * 0.5, b.y + b.height * 0.5}, DimensionSnapType::Center, id, std::nullopt);
 
-            // Path nodes
+            // Circle / ellipse quadrant points
+            if (std::abs(b.width - b.height) < 1.0) {
+                const auto center_pt = geometry::Point2D{b.x + b.width * 0.5, b.y + b.height * 0.5};
+                test_candidate({center_pt.x, b.y}, DimensionSnapType::Quadrant, id, std::nullopt);
+                test_candidate({center_pt.x, b.bottom()}, DimensionSnapType::Quadrant, id, std::nullopt);
+                test_candidate({b.x, center_pt.y}, DimensionSnapType::Quadrant, id, std::nullopt);
+                test_candidate({b.right(), center_pt.y}, DimensionSnapType::Quadrant, id, std::nullopt);
+            }
+
+            // Path nodes and segment midpoints & perpendiculars
             if (path_obj->authoring_source) {
                 for (const auto& sp : path_obj->authoring_source->subpaths) {
-                    for (const auto& node : sp.nodes) {
-                        const auto world_anchor = path_obj->transform.map_point(node.anchor);
-                        test_candidate(world_anchor, DimensionSnapType::Node, id, node.id.value());
+                    const size_t n_cnt = sp.nodes.size();
+                    for (size_t i = 0; i < n_cnt; ++i) {
+                        const auto world_anchor = path_obj->transform.map_point(sp.nodes[i].anchor);
+                        test_candidate(world_anchor, DimensionSnapType::Node, id, sp.nodes[i].id.value());
+
+                        if (i + 1 < n_cnt || sp.closed) {
+                            const size_t next_i = (i + 1) % n_cnt;
+                            const auto pt_b = path_obj->transform.map_point(sp.nodes[next_i].anchor);
+                            const auto mid = (world_anchor + pt_b) * 0.5;
+                            test_candidate(mid, DimensionSnapType::Midpoint, id, std::nullopt);
+
+                            // Perpendicular snap from first_point_
+                            if (state_ == DimensionSessionState::PickSecond) {
+                                const auto v = pt_b - world_anchor;
+                                const double lsq = v.x * v.x + v.y * v.y;
+                                if (lsq > 1e-6) {
+                                    const double t = ((first_point_.x - world_anchor.x) * v.x + (first_point_.y - world_anchor.y) * v.y) / lsq;
+                                    if (t > 0.05 && t < 0.95) {
+                                        test_candidate(world_anchor + v * t, DimensionSnapType::Perpendicular, id, std::nullopt);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             } else {
@@ -185,6 +279,7 @@ bool DimensionToolController::handle_pointer_press(
 
         references_.push_back(ref);
         first_point_ = effective_pos;
+        baseline_origin_ = effective_pos;
 
         if (current_kind_ == document::DimensionKind::Radius ||
             current_kind_ == document::DimensionKind::Diameter ||
@@ -209,7 +304,29 @@ bool DimensionToolController::handle_pointer_press(
         second_point_ = effective_pos;
 
         if (continuous_mode_ && has_last_placement_) {
-            draft_dim_.placement_point = compute_continuous_placement(first_point_, second_point_, last_placement_point_, orientation_);
+            draft_dim_.placement_point = compute_continuous_placement(
+                first_point_, second_point_, last_placement_point_, orientation_, axis_lock_, collinear_dir_);
+            state_ = DimensionSessionState::Placement;
+            update_preview();
+            return commit();
+        }
+
+        if (baseline_mode_ && has_last_placement_) {
+            const double spacing = style_.baseline_spacing_mm > 0.0 ? style_.baseline_spacing_mm : 8.0;
+            geometry::Point2D place = last_placement_point_;
+            if (orientation_ == geometry::LinearOrientation::Horizontal || axis_lock_ == DimensionAxisLock::Horizontal) {
+                const double sign = (last_placement_point_.y >= first_point_.y) ? 1.0 : -1.0;
+                place.y += sign * spacing * baseline_step_count_;
+            } else if (orientation_ == geometry::LinearOrientation::Vertical || axis_lock_ == DimensionAxisLock::Vertical) {
+                const double sign = (last_placement_point_.x >= first_point_.x) ? 1.0 : -1.0;
+                place.x += sign * spacing * baseline_step_count_;
+            } else {
+                const geometry::Point2D v = second_point_ - first_point_;
+                const double len = std::hypot(v.x, v.y);
+                const geometry::Point2D n = (len > 1e-6) ? geometry::Point2D{-v.y / len, v.x / len} : geometry::Point2D{0.0, 1.0};
+                place = place + n * (spacing * baseline_step_count_);
+            }
+            draft_dim_.placement_point = place;
             state_ = DimensionSessionState::Placement;
             update_preview();
             return commit();
@@ -233,10 +350,29 @@ bool DimensionToolController::handle_pointer_press(
 void DimensionToolController::handle_pointer_move(geometry::Point2D world_pos) {
     if (!active_) return;
 
-    if (state_ == DimensionSessionState::PickSecond && continuous_mode_ && has_last_placement_) {
+    if (state_ == DimensionSessionState::PickSecond && (continuous_mode_ || baseline_mode_) && has_last_placement_) {
         const geometry::Point2D cur_pt = snap_active_ ? snap_point_ : world_pos;
         second_point_ = cur_pt;
-        draft_dim_.placement_point = compute_continuous_placement(first_point_, second_point_, last_placement_point_, orientation_);
+        if (continuous_mode_) {
+            draft_dim_.placement_point = compute_continuous_placement(
+                first_point_, second_point_, last_placement_point_, orientation_, axis_lock_, collinear_dir_);
+        } else if (baseline_mode_) {
+            const double spacing = style_.baseline_spacing_mm > 0.0 ? style_.baseline_spacing_mm : 8.0;
+            geometry::Point2D place = last_placement_point_;
+            if (orientation_ == geometry::LinearOrientation::Horizontal || axis_lock_ == DimensionAxisLock::Horizontal) {
+                const double sign = (last_placement_point_.y >= first_point_.y) ? 1.0 : -1.0;
+                place.y += sign * spacing * baseline_step_count_;
+            } else if (orientation_ == geometry::LinearOrientation::Vertical || axis_lock_ == DimensionAxisLock::Vertical) {
+                const double sign = (last_placement_point_.x >= first_point_.x) ? 1.0 : -1.0;
+                place.x += sign * spacing * baseline_step_count_;
+            } else {
+                const geometry::Point2D v = second_point_ - first_point_;
+                const double len = std::hypot(v.x, v.y);
+                const geometry::Point2D n = (len > 1e-6) ? geometry::Point2D{-v.y / len, v.x / len} : geometry::Point2D{0.0, 1.0};
+                place = place + n * (spacing * baseline_step_count_);
+            }
+            draft_dim_.placement_point = place;
+        }
         if (references_.size() == 1) {
             document::SourceReference ref;
             ref.explicit_point = cur_pt;
@@ -269,11 +405,12 @@ bool DimensionToolController::handle_pointer_release(geometry::Point2D /*world_p
 bool DimensionToolController::handle_escape() noexcept {
     if (!active_) return false;
 
-    if (continuous_mode_) {
+    if (continuous_mode_ || baseline_mode_) {
         state_ = DimensionSessionState::Idle;
         references_.clear();
         has_preview_ = false;
         has_last_placement_ = false;
+        baseline_step_count_ = 0;
         return true;
     }
 
@@ -305,7 +442,7 @@ bool DimensionToolController::commit() {
     draft_dim_.linear_orientation = orientation_;
     draft_dim_.references = references_;
 
-    const auto res = doc_.execute_command(std::make_unique<document::AddDimensionCommand>(draft_dim_, 0));
+    const auto res = doc_.execute_command(std::make_unique<document::AddDimensionCommand>(draft_dim_, active_layer_index_));
     if (res.success) {
         if (continuous_mode_) {
             last_placement_point_ = draft_dim_.placement_point;
@@ -317,6 +454,16 @@ bool DimensionToolController::commit() {
             ref.element_id = snapped_element_id_;
             ref.ref_kind = snapped_element_id_.has_value() ? document::SourceRefKind::Node : document::SourceRefKind::ExplicitPoint;
             ref.explicit_point = first_point_;
+            references_.push_back(ref);
+            state_ = DimensionSessionState::PickSecond;
+            has_preview_ = false;
+        } else if (baseline_mode_) {
+            baseline_step_count_++;
+            first_point_ = baseline_origin_;
+            references_.clear();
+            document::SourceReference ref;
+            ref.ref_kind = document::SourceRefKind::ExplicitPoint;
+            ref.explicit_point = baseline_origin_;
             references_.push_back(ref);
             state_ = DimensionSessionState::PickSecond;
             has_preview_ = false;

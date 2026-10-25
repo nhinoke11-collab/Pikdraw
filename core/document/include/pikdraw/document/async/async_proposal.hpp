@@ -28,7 +28,8 @@ enum class ProposalStatus {
     EpochMismatch,      // Document was closed, re-opened, or reset
     JobCancelled,       // Job was superseded or cancelled
     ExecutionFailed,    // Command failed to apply during atomic commit
-    ReadOnlyDocument    // Document content is locked to a source representation
+    ReadOnlyDocument,   // Document content is locked to a source representation
+    StalePageContext    // Active page/navigation changed for an object-scoped proposal
 };
 
 /// Asynchronous proposal containing proposed mutations from background workers

@@ -418,48 +418,32 @@ RemoveObjectCommand::RemoveObjectCommand(ObjectId id)
     : id_(id) {}
 
 CommandResult RemoveObjectCommand::execute(Document& doc) {
-    auto opt = doc.objects().get(id_);
-    if (!opt) {
-        return CommandResult::fail("Object to remove not found in document");
-    }
-    removed_object_ = opt;
-
-    Page page = doc.page();
-    bool found_in_layer = false;
-    for (size_t i = 0; i < page.layers.size(); ++i) {
-        auto& ids = page.layers[i].object_ids;
-        for (auto it = ids.begin(); it != ids.end(); ++it) {
-            if (*it == id_) {
-                object_idx_ = static_cast<size_t>(it - ids.begin());
-                ids.erase(it);
-                layer_idx_ = i;
-                found_in_layer = true;
-                break;
-            }
+    const auto snapshot = doc.current_snapshot();
+    const auto* entry = snapshot->hierarchy().find(id_);
+    if (!entry || entry->mask || !snapshot->hierarchy().editable(id_))
+        return CommandResult::fail("Cannot delete missing, locked, hidden object or clip frame geometry");
+    auto page = doc.page(); auto map = doc.objects();
+    if (entry->parent) {
+        auto parent = std::get<GroupObject>(*map.get(entry->parent));
+        std::erase(parent.children_ids, id_);
+        if (parent.clip) parent.clip->is_empty_frame = parent.children_ids.size() == 1;
+        map = map.set(parent.id, parent);
+    } else std::erase(page.layers[entry->layer].object_ids, id_);
+    std::vector<ObjectId> pending{id_};
+    while (!pending.empty()) {
+        const auto id = pending.back(); pending.pop_back();
+        if (auto object = map.get(id)) {
+            if (const auto* group = std::get_if<GroupObject>(&*object))
+                pending.insert(pending.end(), group->children_ids.begin(), group->children_ids.end());
+            map = map.remove(id);
         }
-        if (found_in_layer) break;
     }
-
-    PersistentObjectMap map = doc.objects().remove(id_);
-    doc.apply_mutation(std::move(page), std::move(map));
-    return CommandResult::ok();
+    before_remove_ = snapshot;
+    doc.apply_mutation(std::move(page), std::move(map)); return CommandResult::ok();
 }
-
 CommandResult RemoveObjectCommand::undo(Document& doc) {
-    if (!removed_object_) {
-        return CommandResult::fail("No saved object to restore on undo");
-    }
-    Page page = doc.page();
-    if (layer_idx_ >= page.layers.size()) {
-        return CommandResult::fail("Invalid layer index restoring removed object");
-    }
-
-    PersistentObjectMap map = doc.objects().set(id_, *removed_object_);
-    auto& ids = page.layers[layer_idx_].object_ids;
-    if (object_idx_ > ids.size()) return CommandResult::fail("Invalid saved z-order index");
-    ids.insert(ids.begin() + static_cast<std::ptrdiff_t>(object_idx_), id_);
-    doc.apply_mutation(std::move(page), std::move(map));
-    return CommandResult::ok();
+    if (!before_remove_) return CommandResult::fail("No saved deletion state");
+    doc.apply_mutation(before_remove_->page(), before_remove_->objects()); return CommandResult::ok();
 }
 
 // --- TransformObjectCommand ---
@@ -468,7 +452,10 @@ TransformObjectCommand::TransformObjectCommand(ObjectId id, geometry::Transform2
     : id_(id), delta_(delta) {}
 
 CommandResult TransformObjectCommand::execute(Document& doc) {
-    if (!delta_.is_finite()) return CommandResult::fail("Non-finite transform delta");
+    if (!delta_.is_finite() || !delta_.is_invertible()) return CommandResult::fail("Invalid transform delta");
+    const auto committed_snapshot = doc.current_snapshot();
+    if (!committed_snapshot || !committed_snapshot->hierarchy().editable(id_))
+        return CommandResult::fail("Transform target is hidden or locked");
     auto opt = doc.objects().get(id_);
     if (!opt) {
         return CommandResult::fail("Object to transform not found in document");
@@ -483,7 +470,25 @@ CommandResult TransformObjectCommand::execute(Document& doc) {
     if (!std::visit([](const auto& obj) { return obj.transform.is_finite(); }, updated))
         return CommandResult::fail("Transform overflow");
 
-    PersistentObjectMap map = doc.objects().set(id_, std::move(updated));
+    PersistentObjectMap map = doc.objects();
+    previous_content_transforms_.clear();
+    if (const auto* group = std::get_if<GroupObject>(&updated);
+        group && group->clip && !group->clip->lock_contents_to_frame) {
+        const auto inverse = group->transform.inverted();
+        if (!inverse) return CommandResult::fail("Frame transform is not invertible");
+        const auto compensation = *inverse * previous_transform_;
+        for (auto child_id : group->children_ids) {
+            if (child_id == group->clip->mask_object_id) continue;
+            auto child = map.get(child_id);
+            if (!child) return CommandResult::fail("Missing PowerClip content");
+            std::visit([&](auto& value) {
+                previous_content_transforms_.emplace_back(child_id, value.transform);
+                value.transform = compensation * value.transform;
+            }, *child);
+            map = map.set(child_id, std::move(*child));
+        }
+    }
+    map = map.set(id_, std::move(updated));
     doc.apply_mutation(doc.page(), std::move(map));
     return CommandResult::ok();
 }
@@ -500,6 +505,12 @@ CommandResult TransformObjectCommand::undo(Document& doc) {
     }, updated);
 
     PersistentObjectMap map = doc.objects().set(id_, std::move(updated));
+    for (const auto& [child_id, transform] : previous_content_transforms_) {
+        auto child = map.get(child_id);
+        if (!child) return CommandResult::fail("Missing PowerClip content during Undo");
+        std::visit([&](auto& value) { value.transform = transform; }, *child);
+        map = map.set(child_id, std::move(*child));
+    }
     doc.apply_mutation(doc.page(), std::move(map));
     return CommandResult::ok();
 }

@@ -88,6 +88,7 @@ bool IsV2MessageType(uint16_t message_type) noexcept {
         case MessageType::V2ProposalChunk:
         case MessageType::V2ImportEnd:
         case MessageType::V2ErrorResponse:
+        case MessageType::V2MemoryWait:
             return true;
         default:
             return false;

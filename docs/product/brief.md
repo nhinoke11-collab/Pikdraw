@@ -67,4 +67,4 @@ Objects không hỗ trợ được giữ nguồn/tham chiếu read-only, chuyể
 
 Ưu tiên chất lượng vector, tương thích và ổn định xuyên suốt các mốc. Danh sách tính năng lớn không thay thế tiêu chí hoàn thành. Xem [kiến trúc](../architecture/architecture.md), [workspace](../architecture/workspace-layout.md) và [quality gates](../quality/gates.md).
 
-Foundation theo [kế hoạch ba spike hai tuần](../roadmap/foundation-spikes.md). Pan/zoom 60 FPS chỉ nghiệm thu trên corpus/máy đã xác định; software có budget/chất lượng riêng, stress có limits công khai. Startup < 300 ms/idle < 100 MB là stretch targets chưa đo.
+Foundation theo [kế hoạch hiệu năng và module](../roadmap/performance-storage-automation.md). Pan/zoom 60 FPS chỉ nghiệm thu trên corpus/máy đã xác định; software có budget/chất lượng riêng, stress có limits công khai. Ngân sách startup/RAM và workload hiện hành nằm trong kế hoạch đó; chưa có cam kết hiệu năng trên mọi máy.

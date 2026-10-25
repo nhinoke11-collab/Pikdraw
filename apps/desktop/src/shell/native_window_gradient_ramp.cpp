@@ -1,4 +1,5 @@
 #include "native_window_gradient_ramp.hpp"
+#include "pikdraw/rendering/gradient_sampler.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -10,17 +11,6 @@ COLORREF resolve_color(const color::ColorValue& cv, const color::IccPreview* pre
     const auto p = preview ? preview->convert(cv) : color::to_preview_rgba(cv);
     const auto dev = p.to_device();
     return RGB(dev.r, dev.g, dev.b);
-}
-
-color::RGBColor to_rgb_unit(const color::ColorValue& cv) {
-    return std::visit([](const auto& c) -> color::RGBColor {
-        using T = std::decay_t<decltype(c)>;
-        if constexpr (std::is_same_v<T, color::RGBColor>) {
-            return c;
-        } else {
-            return color::RGBColor{0.0, 0.0, 0.0, 1.0};
-        }
-    }, cv.payload());
 }
 
 } // namespace
@@ -45,54 +35,38 @@ void paint_gradient_ramp(
     const int track_width = std::max(1, track_right - track_left);
     const int track_height = track_bottom - track_top;
 
-    // Draw track gradient using 1D interpolated scanline
+    // Use the same sampler as the canvas so ICC conversion, alpha, opacity,
+    // duplicate-offset behavior, and midpoint remapping match the real paint.
     const auto& stops = paint.stops;
     if (!stops.empty()) {
-        std::vector<uint32_t> scanline(track_width);
-        for (int x = 0; x < track_width; ++x) {
-            const double t = static_cast<double>(x) / std::max(1, track_width - 1);
-            color::RGBColor sample{0.0, 0.0, 0.0, 1.0};
-
-            if (t <= stops.front().offset) {
-                sample = to_rgb_unit(stops.front().color);
-            } else if (t >= stops.back().offset) {
-                sample = to_rgb_unit(stops.back().color);
-            } else {
-                for (size_t i = 0; i + 1 < stops.size(); ++i) {
-                    if (t >= stops[i].offset && t <= stops[i + 1].offset) {
-                        const double s0 = stops[i].offset;
-                        const double s1 = stops[i + 1].offset;
-                        const double seg_len = s1 - s0;
-                        double local_t = seg_len > 1e-6 ? (t - s0) / seg_len : 0.0;
-                        const double mid = std::clamp(stops[i].midpoint_to_next, 0.05, 0.95);
-                        if (local_t < mid) {
-                            local_t = 0.5 * (local_t / mid);
-                        } else {
-                            local_t = 0.5 + 0.5 * ((local_t - mid) / (1.0 - mid));
-                        }
-                        const auto c0 = to_rgb_unit(stops[i].color);
-                        const auto c1 = to_rgb_unit(stops[i + 1].color);
-                        sample.r = c0.r + (c1.r - c0.r) * local_t;
-                        sample.g = c0.g + (c1.g - c0.g) * local_t;
-                        sample.b = c0.b + (c1.b - c0.b) * local_t;
-                        sample.a = c0.a + (c1.a - c0.a) * local_t;
-                        break;
-                    }
-                }
+        const auto sampler = rendering::GradientSampler::prepare(
+            paint, geometry::Transform2D::identity(), rendering::Camera2D{}, preview, 1.0);
+        if (!sampler) return;
+        std::vector<uint32_t> pixels(static_cast<size_t>(track_width) * track_height);
+        for (int y = 0; y < track_height; ++y) {
+            for (int x = 0; x < track_width; ++x) {
+                const double t = static_cast<double>(x) / std::max(1, track_width - 1);
+                const auto sample = sampler->sample_at_t(t);
+                const double checker = ((x / 5 + y / 5) & 1) ? 0.72 : 0.92;
+                const double alpha = std::clamp(static_cast<double>(sample.a), 0.0, 1.0);
+                const auto channel = [&](float value) {
+                    return static_cast<uint8_t>(std::lround(std::clamp(
+                        static_cast<double>(value) * alpha + checker * (1.0 - alpha),
+                        0.0, 1.0) * 255.0));
+                };
+                const uint8_t r = channel(sample.r);
+                const uint8_t g = channel(sample.g);
+                const uint8_t b = channel(sample.b);
+                pixels[static_cast<size_t>(y) * track_width + x] =
+                    (static_cast<uint32_t>(r) << 16) |
+                    (static_cast<uint32_t>(g) << 8) | static_cast<uint32_t>(b);
             }
-
-            const uint8_t r = static_cast<uint8_t>(std::clamp(sample.r * 255.0, 0.0, 255.0));
-            const uint8_t g = static_cast<uint8_t>(std::clamp(sample.g * 255.0, 0.0, 255.0));
-            const uint8_t b = static_cast<uint8_t>(std::clamp(sample.b * 255.0, 0.0, 255.0));
-            scanline[x] = (static_cast<uint32_t>(r) << 16) |
-                          (static_cast<uint32_t>(g) << 8) |
-                          static_cast<uint32_t>(b);
         }
 
         BITMAPINFO bmi{};
         bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
         bmi.bmiHeader.biWidth = track_width;
-        bmi.bmiHeader.biHeight = -1; // top-down
+        bmi.bmiHeader.biHeight = -track_height; // top-down
         bmi.bmiHeader.biPlanes = 1;
         bmi.bmiHeader.biBitCount = 32;
         bmi.bmiHeader.biCompression = BI_RGB;
@@ -100,8 +74,8 @@ void paint_gradient_ramp(
         StretchDIBits(
             dc,
             track_left, track_top, track_width, track_height,
-            0, 0, track_width, 1,
-            scanline.data(), &bmi, DIB_RGB_COLORS, SRCCOPY);
+            0, 0, track_width, track_height,
+            pixels.data(), &bmi, DIB_RGB_COLORS, SRCCOPY);
     }
 
     // Track frame border
@@ -279,11 +253,30 @@ const std::vector<GradientPreset>& get_gradient_presets() {
             }
         },
         {
-            L"Biển Sâu", L"Ocean",
+            L"Đồng Bronze", L"Bronze",
             document::GradientKind::Linear,
             {
-                {0.0, color::RGBColor{0.180, 0.192, 0.573, 1.0}},
-                {1.0, color::RGBColor{0.106, 1.0, 1.0, 1.0}}
+                {0.0, color::RGBColor{0.306, 0.176, 0.110, 1.0}},
+                {0.48, color::RGBColor{0.710, 0.424, 0.235, 1.0}},
+                {1.0, color::RGBColor{0.925, 0.690, 0.420, 1.0}}
+            }
+        },
+        {
+            L"Pastel", L"Pastel",
+            document::GradientKind::Linear,
+            {
+                {0.0, color::RGBColor{1.0, 0.694, 0.710, 1.0}},
+                {0.5, color::RGBColor{0.718, 0.827, 1.0, 1.0}},
+                {1.0, color::RGBColor{0.792, 0.961, 0.855, 1.0}}
+            }
+        },
+        {
+            L"Neon", L"Neon",
+            document::GradientKind::Linear,
+            {
+                {0.0, color::RGBColor{0.0, 0.953, 0.816, 1.0}},
+                {0.5, color::RGBColor{0.914, 0.0, 0.886, 1.0}},
+                {1.0, color::RGBColor{1.0, 0.882, 0.0, 1.0}}
             }
         }
     };

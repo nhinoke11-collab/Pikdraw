@@ -1,10 +1,13 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "pikdraw/desktop/shell/open_document_policy.hpp"
+#include "native_window_length_input.hpp"
 
 #include <atomic>
+#include <cwchar>
 #include <filesystem>
-#include <iomanip>
 #include <iterator>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <thread>
 
@@ -19,11 +22,99 @@ namespace pikdraw::desktop {
 namespace {
 constexpr int kImportChoiceApply = 4101;
 constexpr int kImportChoiceCancel = 4102;
+constexpr int kTiffPageEdit = 4103;
 
-std::wstring FormatNumber(double value) {
-    std::wostringstream text;
-    text << std::fixed << std::setprecision(2) << value;
-    return text.str();
+struct TiffPageDialogState {
+    bool vietnamese{false};
+    uint32_t zero_based_page{0};
+};
+
+INT_PTR CALLBACK tiff_page_dialog_proc(HWND dialog, UINT message,
+                                       WPARAM wparam, LPARAM lparam) {
+    auto* state = reinterpret_cast<TiffPageDialogState*>(
+        GetWindowLongPtrW(dialog, DWLP_USER));
+    if (message == WM_INITDIALOG) {
+        state = reinterpret_cast<TiffPageDialogState*>(lparam);
+        SetWindowLongPtrW(dialog, DWLP_USER, lparam);
+        SetWindowTextW(dialog, state->vietnamese
+            ? L"Chọn trang TIFF" : L"Select TIFF page");
+        const HFONT font = reinterpret_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+        const wchar_t* prompt = state->vietnamese
+            ? L"Chọn số trang TIFF cần nhập (1–256):"
+            : L"Choose the TIFF page to import (1–256):";
+        const wchar_t* hint = state->vietnamese
+            ? L"Mặc định trang 1; worker sẽ kiểm tra số trang trong tệp."
+            : L"Page 1 is default; the worker checks the file's page count.";
+        HWND label = CreateWindowExW(0, L"STATIC", prompt, WS_CHILD | WS_VISIBLE,
+            10, 10, 250, 16, dialog, nullptr, GetModuleHandleW(nullptr), nullptr);
+        HWND edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"1",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER | ES_AUTOHSCROLL,
+            10, 31, 250, 22, dialog, reinterpret_cast<HMENU>(kTiffPageEdit),
+            GetModuleHandleW(nullptr), nullptr);
+        HWND help = CreateWindowExW(0, L"STATIC", hint, WS_CHILD | WS_VISIBLE,
+            10, 57, 250, 16, dialog, nullptr, GetModuleHandleW(nullptr), nullptr);
+        HWND ok = CreateWindowExW(0, L"BUTTON",
+            state->vietnamese ? L"Chọn" : L"Select",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+            139, 83, 58, 23, dialog, reinterpret_cast<HMENU>(IDOK),
+            GetModuleHandleW(nullptr), nullptr);
+        HWND cancel = CreateWindowExW(0, L"BUTTON",
+            state->vietnamese ? L"Hủy" : L"Cancel",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+            202, 83, 58, 23, dialog, reinterpret_cast<HMENU>(IDCANCEL),
+            GetModuleHandleW(nullptr), nullptr);
+        for (HWND control : {label, edit, help, ok, cancel})
+            if (control) SendMessageW(control, WM_SETFONT,
+                reinterpret_cast<WPARAM>(font), TRUE);
+        SetFocus(edit);
+        SendMessageW(edit, EM_SETSEL, 0, -1);
+        return FALSE;
+    }
+    if (!state) return FALSE;
+    if (message == WM_COMMAND) {
+        if (LOWORD(wparam) == IDOK) {
+            wchar_t text[32]{};
+            GetDlgItemTextW(dialog, kTiffPageEdit, text,
+                            static_cast<int>(std::size(text)));
+            wchar_t* end = nullptr;
+            const unsigned long page = std::wcstoul(text, &end, 10);
+            if (end == text || *end != L'\0' || page == 0 || page > 256) {
+                MessageBoxW(dialog,
+                    state->vietnamese ? L"Nhập số trang từ 1 đến 256." :
+                                        L"Enter a page number from 1 to 256.",
+                    state->vietnamese ? L"Số trang không hợp lệ" : L"Invalid page number",
+                    MB_OK | MB_ICONWARNING);
+                return TRUE;
+            }
+            state->zero_based_page = static_cast<uint32_t>(page - 1);
+            EndDialog(dialog, IDOK);
+            return TRUE;
+        }
+        if (LOWORD(wparam) == IDCANCEL) {
+            EndDialog(dialog, IDCANCEL);
+            return TRUE;
+        }
+    }
+    if (message == WM_CLOSE) {
+        EndDialog(dialog, IDCANCEL);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+std::optional<uint32_t> choose_tiff_page(HWND owner, bool vietnamese) {
+    struct EmptyDialog { DLGTEMPLATE dialog; WORD menu{0}, klass{0}, title{0}; } layout{};
+    layout.dialog.style = WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME |
+        DS_CENTER | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
+    layout.dialog.cx = 280;
+    layout.dialog.cy = 119;
+    layout.dialog.cdit = 0;
+    TiffPageDialogState state{vietnamese, 0};
+    const INT_PTR result = DialogBoxIndirectParamW(GetModuleHandleW(nullptr),
+        &layout.dialog, owner, tiff_page_dialog_proc,
+        reinterpret_cast<LPARAM>(&state));
+    return result == IDOK ? std::optional<uint32_t>{state.zero_based_page}
+                          : std::nullopt;
 }
 
 }
@@ -34,8 +125,11 @@ struct ImportJobSession {
     std::string target_tab_id;
     std::atomic<ImportProgressStage> stage{ImportProgressStage::Snapshotting};
     std::atomic<size_t> records_received{0};
+    std::atomic<uint64_t> source_bytes_copied{0};
+    std::atomic<uint64_t> source_bytes_total{0};
     std::atomic<bool> finished{false};
     std::atomic<bool> cancel_requested{false};
+    std::atomic<bool> progress_message_pending{false};
     std::mutex result_mutex;
     std::optional<ImportWorkerResult> result;
     bool is_open_action{false};
@@ -51,6 +145,13 @@ bool NativeWindow::import_job_active() const noexcept {
 }
 
 bool NativeWindow::import_file_to_tab(const std::wstring& path, bool is_open_action) {
+    if (import_placement_active()) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Hãy đặt hoặc hủy ảnh đang nhập trước khi nhập tệp khác"
+            : "Place or cancel the pending image before starting another import";
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return false;
+    }
     if (import_job_active()) {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Đang nhập tệp khác · nhấn Esc để hủy"
@@ -62,6 +163,8 @@ bool NativeWindow::import_file_to_tab(const std::wstring& path, bool is_open_act
         if (import_job_->worker.joinable()) import_job_->worker.join();
         import_job_.reset();
     }
+    last_import_succeeded_ = false;
+    close_recovery_modal();
 
     const std::wstring extension = std::filesystem::path(path).extension().wstring();
     ImportFormat format{};
@@ -87,6 +190,15 @@ bool NativeWindow::import_file_to_tab(const std::wstring& path, bool is_open_act
         return false;
     }
 
+    uint32_t raster_frame_index = 0;
+    if (_wcsicmp(extension.c_str(), L".tif") == 0 ||
+        _wcsicmp(extension.c_str(), L".tiff") == 0) {
+        const auto selected_page = choose_tiff_page(hwnd_,
+            language_ == UILanguage::Vietnamese);
+        if (!selected_page) return false;
+        raster_frame_index = *selected_page;
+    }
+
     const auto u8_filename = std::filesystem::path(path).filename().u8string();
     const std::string filename(u8_filename.begin(), u8_filename.end());
 
@@ -94,8 +206,9 @@ bool NativeWindow::import_file_to_tab(const std::wstring& path, bool is_open_act
     std::string previous_tab_title;
     std::string previous_file_path;
     if (is_open_action) {
+        const auto current_snapshot = root().document().current_snapshot();
         const bool tab_has_content = root().document().is_dirty() ||
-            root().document().current_snapshot()->object_count() > 0;
+            detail::snapshot_has_openable_content(*current_snapshot);
         if (tab_has_content) {
             create_new_tab(filename, 297.0, 210.0);
             created_open_tab = true;
@@ -145,13 +258,21 @@ bool NativeWindow::import_file_to_tab(const std::wstring& path, bool is_open_act
     const HWND notify_window = hwnd_;
     const auto metadata = session->metadata;
     session->worker = std::jthread([raw = session.get(), path_copy = path, format,
-                                    metadata, notify_window](std::stop_token cancellation) {
+                                    metadata, notify_window, raster_frame_index](std::stop_token cancellation) {
+        (void)SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
         auto result = run_import_worker_job(path_copy, format, metadata, cancellation,
             [raw, notify_window](ImportProgress progress) {
                 raw->stage.store(progress.stage, std::memory_order_release);
                 raw->records_received.store(progress.records_received, std::memory_order_release);
-                (void)PostMessageW(notify_window, kImportWorkerMessage, 0, 0);
-            });
+                raw->source_bytes_copied.store(progress.source_bytes_copied,
+                                                std::memory_order_release);
+                raw->source_bytes_total.store(progress.source_bytes_total,
+                                              std::memory_order_release);
+                if (!raw->progress_message_pending.exchange(true,
+                        std::memory_order_acq_rel) &&
+                    !PostMessageW(notify_window, kImportWorkerMessage, 0, 0))
+                    raw->progress_message_pending.store(false, std::memory_order_release);
+            }, PdfOpenIntent::EditableObjects, raster_frame_index);
         {
             std::lock_guard lock(raw->result_mutex);
             raw->result.emplace(std::move(result));
@@ -168,6 +289,13 @@ bool NativeWindow::import_file_to_tab(const std::wstring& path, bool is_open_act
 }
 
 void NativeWindow::open_import_dialog() {
+    if (import_placement_active()) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Hãy đặt hoặc hủy ảnh đang nhập trước khi nhập tệp khác"
+            : "Place or cancel the pending image before starting another import";
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
     if (import_job_active()) {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Đang nhập tệp khác · nhấn Esc để hủy"
@@ -229,12 +357,267 @@ void NativeWindow::cancel_import_job() {
     import_job_.reset();
 }
 
+bool NativeWindow::import_placement_active() const noexcept {
+    return import_placement_ != nullptr;
+}
+
+void NativeWindow::cancel_import_placement() {
+    if (!import_placement_) return;
+    for (auto& tab : tabs_) {
+        if (tab.id != import_placement_->target_tab_id || !tab.workflow) continue;
+        try { tab.workflow->cancel_import_job(import_placement_->metadata.job_id); } catch (...) {}
+        break;
+    }
+    import_placement_.reset();
+    status_msg_ = language_ == UILanguage::Vietnamese
+        ? "Đã hủy đặt ảnh · tài liệu không đổi"
+        : "Image placement cancelled · document unchanged";
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+bool NativeWindow::handle_import_placement_escape(WPARAM key) {
+    if (key != VK_ESCAPE || !import_placement_active()) return false;
+    cancel_import_placement();
+    return true;
+}
+
+bool NativeWindow::place_pending_import_at(int x, int y) {
+    if (!import_placement_) return false;
+    if (active_tab().id != import_placement_->target_tab_id) return false;
+    if (!is_canvas_point(x, y)) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Nhấp trong canvas để đặt ảnh · Esc để hủy"
+            : "Click inside the canvas to place the image · Esc cancels";
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return true;
+    }
+    DocumentTab* target = nullptr;
+    for (auto& tab : tabs_) {
+        if (tab.id == import_placement_->target_tab_id) {
+            target = &tab;
+            break;
+        }
+    }
+    if (!target || !target->workflow || !target->root) {
+        cancel_import_placement();
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Không còn tài liệu đích để đặt ảnh"
+            : "The target document is no longer available for image placement";
+        return true;
+    }
+    const auto world = canvas_to_world(x, y);
+    document::ImageObject* image = nullptr;
+    for (auto& object : import_placement_->proposal.objects) {
+        image = std::get_if<document::ImageObject>(&object);
+        if (image) break;
+    }
+    if (!image || !std::isfinite(world.x) || !std::isfinite(world.y) ||
+        !std::isfinite(image->bounds_rect.width) ||
+        !std::isfinite(image->bounds_rect.height) ||
+        image->bounds_rect.width <= 0 || image->bounds_rect.height <= 0) {
+        cancel_import_placement();
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Kích thước hoặc vị trí ảnh nhập không hợp lệ"
+            : "The imported image size or placement is invalid";
+        return true;
+    }
+    image->bounds_rect.x = world.x;
+    image->bounds_rect.y = world.y - image->bounds_rect.height;
+    const document::ObjectId placed_id = image->id;
+    const auto committed = target->workflow->commit_import_proposal(
+        import_placement_->metadata, std::move(import_placement_->proposal), false);
+    if (committed == document::ProposalStatus::Accepted) {
+        last_import_succeeded_ = true;
+        target->root->vector_controller().selection().select(placed_id);
+        if (active_tab().id == target->id) set_active_tool(0);
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đã đặt ảnh · một bước Ctrl+Z · góc trên trái tại "
+            : "Image placed · one Ctrl+Z step · top-left at ";
+        status_msg_ += format_mm_display_utf8(world.x, display_length_unit_, 3) + ", " +
+            format_mm_display_utf8(world.y, display_length_unit_, 3);
+    } else {
+        try { target->workflow->cancel_import_job(import_placement_->metadata.job_id); } catch (...) {}
+        status_msg_ = (committed == document::ProposalStatus::StaleRevision ||
+                       committed == document::ProposalStatus::StalePageContext)
+            ? (language_ == UILanguage::Vietnamese
+                ? "Tài liệu hoặc trang đích đã đổi · ảnh chưa được đặt; hãy nhập lại"
+                : "The document or target page changed · image was not placed; import it again")
+            : (language_ == UILanguage::Vietnamese
+                ? "Không thể đặt ảnh · tài liệu không đổi"
+                : "Could not place the image · document unchanged");
+    }
+    import_placement_.reset();
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    return true;
+}
+
+void NativeWindow::paint_import_placement_overlay(HDC dc) {
+    if (!import_placement_ || !import_placement_->pointer_valid ||
+        active_tab().id != import_placement_->target_tab_id) return;
+    const document::ImageObject* image = nullptr;
+    for (const auto& object : import_placement_->proposal.objects) {
+        image = std::get_if<document::ImageObject>(&object);
+        if (image) break;
+    }
+    if (!image) return;
+    const RECT area = canvas_rect(width_, height_);
+    auto& camera = root().renderer().camera();
+    camera.set_viewport_size(area.right - area.left, area.bottom - area.top);
+    const auto top_left = camera.world_to_screen(import_placement_->pointer_world);
+    const auto bottom_right = camera.world_to_screen({
+        import_placement_->pointer_world.x + image->bounds_rect.width,
+        import_placement_->pointer_world.y - image->bounds_rect.height});
+    const RECT frame{
+        area.left + static_cast<LONG>(std::lround(top_left.x)),
+        area.top + static_cast<LONG>(std::lround(top_left.y)),
+        area.left + static_cast<LONG>(std::lround(bottom_right.x)),
+        area.top + static_cast<LONG>(std::lround(bottom_right.y))};
+
+    // Build a screen-resolution, premultiplied preview once per placement.
+    // The source remains authoritative in the proposal; this DIB is only a
+    // disposable view cache and never duplicates a full-resolution asset when
+    // the image is larger than the visible canvas.
+    const auto source_pixels = image->rgba_pixels();
+    if (image->width_px > 0 && image->height_px > 0 &&
+        static_cast<uint64_t>(image->width_px) *
+                static_cast<uint64_t>(image->height_px) == source_pixels.size()) {
+        const int viewport_width = (std::max)(
+            1, static_cast<int>(area.right - area.left));
+        const int viewport_height = (std::max)(
+            1, static_cast<int>(area.bottom - area.top));
+        const auto screen_extent = [](double extent, int viewport_extent) {
+            if (!std::isfinite(extent) || extent < 1.0) return 1;
+            return static_cast<int>((std::min)(
+                static_cast<double>(viewport_extent), std::ceil(extent)));
+        };
+        const int screen_width = screen_extent(
+            std::abs(static_cast<double>(bottom_right.x - top_left.x)),
+            viewport_width);
+        const int screen_height = screen_extent(
+            std::abs(static_cast<double>(bottom_right.y - top_left.y)),
+            viewport_height);
+        const double preview_scale = (std::min)({
+            1.0,
+            static_cast<double>(screen_width) / image->width_px,
+            static_cast<double>(screen_height) / image->height_px});
+        const int desired_width = (std::clamp)(
+            static_cast<int>(std::lround(image->width_px * preview_scale)),
+            1, image->width_px);
+        const int desired_height = (std::clamp)(
+            static_cast<int>(std::lround(image->height_px * preview_scale)),
+            1, image->height_px);
+        if (!import_placement_->preview_bitmap ||
+            import_placement_->preview_width_px != desired_width ||
+            import_placement_->preview_height_px != desired_height) {
+            BITMAPINFO bitmap_info{};
+            bitmap_info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+            bitmap_info.bmiHeader.biWidth = desired_width;
+            bitmap_info.bmiHeader.biHeight = -desired_height;
+            bitmap_info.bmiHeader.biPlanes = 1;
+            bitmap_info.bmiHeader.biBitCount = 32;
+            bitmap_info.bmiHeader.biCompression = BI_RGB;
+            void* bitmap_pixels = nullptr;
+            HBITMAP preview = CreateDIBSection(
+                dc, &bitmap_info, DIB_RGB_COLORS, &bitmap_pixels, nullptr, 0);
+            if (preview && bitmap_pixels) {
+                auto* destination = static_cast<uint32_t*>(bitmap_pixels);
+                for (int y = 0; y < desired_height; ++y) {
+                    const auto source_y = static_cast<int64_t>(
+                        (static_cast<uint64_t>(2 * static_cast<int64_t>(y) + 1) *
+                         static_cast<uint64_t>(image->height_px)) /
+                        (2u * static_cast<uint64_t>(desired_height)));
+                    for (int x = 0; x < desired_width; ++x) {
+                        const auto source_x = static_cast<int64_t>(
+                            (static_cast<uint64_t>(2 * static_cast<int64_t>(x) + 1) *
+                             static_cast<uint64_t>(image->width_px)) /
+                            (2u * static_cast<uint64_t>(desired_width)));
+                        const uint32_t rgba = source_pixels[
+                            static_cast<size_t>(source_y) * image->width_px +
+                            static_cast<size_t>(source_x)];
+                        const uint32_t alpha = rgba & 0xffu;
+                        const uint32_t red = (((rgba >> 24) & 0xffu) * alpha + 127u) / 255u;
+                        const uint32_t green = (((rgba >> 16) & 0xffu) * alpha + 127u) / 255u;
+                        const uint32_t blue = (((rgba >> 8) & 0xffu) * alpha + 127u) / 255u;
+                        destination[static_cast<size_t>(y) * desired_width + x] =
+                            (alpha << 24) | (red << 16) | (green << 8) | blue;
+                    }
+                }
+                if (import_placement_->preview_bitmap)
+                    DeleteObject(import_placement_->preview_bitmap);
+                import_placement_->preview_bitmap = preview;
+                import_placement_->preview_bitmap_pixels = destination;
+                import_placement_->preview_width_px = desired_width;
+                import_placement_->preview_height_px = desired_height;
+            } else if (preview) {
+                DeleteObject(preview);
+            }
+        }
+    }
+
+    const int saved_dc = SaveDC(dc);
+    IntersectClipRect(dc, area.left, area.top, area.right, area.bottom);
+    if (import_placement_->preview_bitmap &&
+        import_placement_->preview_width_px > 0 &&
+        import_placement_->preview_height_px > 0) {
+        HDC preview_dc = CreateCompatibleDC(dc);
+        if (preview_dc) {
+            const HGDIOBJ old_bitmap = SelectObject(
+                preview_dc, import_placement_->preview_bitmap);
+            BLENDFUNCTION blend{AC_SRC_OVER, 0, 255, AC_SRC_ALPHA};
+            AlphaBlend(dc, frame.left, frame.top,
+                       frame.right - frame.left, frame.bottom - frame.top,
+                       preview_dc, 0, 0, import_placement_->preview_width_px,
+                       import_placement_->preview_height_px, blend);
+            SelectObject(preview_dc, old_bitmap);
+            DeleteDC(preview_dc);
+        }
+    }
+    HPEN pen = CreatePen(PS_DASH, 1, RGB(0, 170, 205));
+    if (!pen) {
+        RestoreDC(dc, saved_dc);
+        return;
+    }
+    const HGDIOBJ old_pen = SelectObject(dc, pen);
+    const HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+    Rectangle(dc, frame.left, frame.top, frame.right, frame.bottom);
+    MoveToEx(dc, frame.left - 7, frame.top, nullptr);
+    LineTo(dc, frame.left + 7, frame.top);
+    MoveToEx(dc, frame.left, frame.top - 7, nullptr);
+    LineTo(dc, frame.left, frame.top + 7);
+    SelectObject(dc, old_brush);
+    SelectObject(dc, old_pen);
+    DeleteObject(pen);
+
+    std::wstring label = format_length_pair_mm(
+        image->bounds_rect.width, image->bounds_rect.height, display_length_unit_, 3);
+    label += language_ == UILanguage::Vietnamese
+        ? L" · nhấp để đặt · Esc hủy" : L" · click to place · Esc cancels";
+    RECT label_rect{frame.left, frame.top - 24, frame.left + 300, frame.top - 3};
+    if (label_rect.top < area.top) {
+        label_rect.top = frame.bottom + 3;
+        label_rect.bottom = label_rect.top + 21;
+    }
+    HBRUSH label_background = CreateSolidBrush(RGB(30, 40, 48));
+    FillRect(dc, &label_rect, label_background);
+    DeleteObject(label_background);
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, RGB(235, 248, 251));
+    DrawTextW(dc, label.c_str(), static_cast<int>(label.size()), &label_rect,
+              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    RestoreDC(dc, saved_dc);
+}
+
 void NativeWindow::handle_import_worker_message(WPARAM kind) {
     if (!import_job_) return;
     if (kind == 0) {
+        import_job_->progress_message_pending.store(false, std::memory_order_release);
         if (import_job_active()) {
             const auto stage = import_job_->stage.load(std::memory_order_acquire);
             const size_t count = import_job_->records_received.load(std::memory_order_acquire);
+            const uint64_t source_copied = import_job_->source_bytes_copied.load(
+                std::memory_order_acquire);
+            const uint64_t source_total = import_job_->source_bytes_total.load(
+                std::memory_order_acquire);
             switch (stage) {
             case ImportProgressStage::Snapshotting:
                 status_msg_ = language_ == UILanguage::Vietnamese
@@ -247,15 +630,39 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
                     : "Starting isolated worker… · Esc to cancel";
                 break;
             case ImportProgressStage::Reading:
-                status_msg_ = (language_ == UILanguage::Vietnamese
-                    ? "Đang nhập · đã nhận " : "Importing · received ") +
-                    std::to_string(count) + (language_ == UILanguage::Vietnamese
-                        ? " bản ghi · Esc để hủy" : " records · Esc to cancel");
+                if (source_total > 0) {
+                    constexpr uint64_t kKiB = 1024;
+                    constexpr uint64_t kMiB = 1024 * kKiB;
+                    const auto format_bytes = [](uint64_t bytes) {
+                        if (bytes >= kMiB) return std::to_string(bytes / kMiB) + " MiB";
+                        if (bytes >= kKiB) return std::to_string(bytes / kKiB) + " KiB";
+                        return std::to_string(bytes) + " B";
+                    };
+                    const auto percent = source_copied >= source_total ? 100u
+                        : static_cast<unsigned>((static_cast<long double>(source_copied) /
+                            static_cast<long double>(source_total)) * 100.0L);
+                    status_msg_ = (language_ == UILanguage::Vietnamese
+                        ? "Đang chép ảnh nguồn · " : "Staging raster source · ") +
+                        std::to_string(percent) + "% (" + format_bytes(source_copied) +
+                        " / " + format_bytes(source_total) + ")" +
+                        (language_ == UILanguage::Vietnamese
+                            ? " · Esc để hủy" : " · Esc to cancel");
+                } else {
+                    status_msg_ = (language_ == UILanguage::Vietnamese
+                        ? "Đang nhập · đã nhận " : "Importing · received ") +
+                        std::to_string(count) + (language_ == UILanguage::Vietnamese
+                            ? " bản ghi · Esc để hủy" : " records · Esc to cancel");
+                }
                 break;
             case ImportProgressStage::Validating:
                 status_msg_ = language_ == UILanguage::Vietnamese
                     ? "Đang kiểm tra cấu trúc và báo cáo độ trung thực… · Esc để hủy"
                     : "Validating structure and fidelity report… · Esc to cancel";
+                break;
+            case ImportProgressStage::WaitingForMemory:
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Đang tạm chờ RAM hệ thống · tiếp tục khi có bộ nhớ trống · Esc để hủy"
+                    : "Waiting for system RAM to free up · Esc to cancel";
                 break;
             case ImportProgressStage::Complete:
                 status_msg_ = language_ == UILanguage::Vietnamese
@@ -325,6 +732,9 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
             MessageBoxW(hwnd_, message.c_str(),
                 language_ == UILanguage::Vietnamese ? L"Không thể nhập tệp" : L"Could not import file",
                 MB_OK | MB_ICONWARNING);
+        } else if (!result->error_message.empty()) {
+            status_msg_ += ": ";
+            status_msg_ += result->error_message;
         }
         close_session();
         return;
@@ -353,13 +763,59 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
                                proposal.profile_id == "ai-pdf-compatible-page-set-v3";
     const bool is_eps_subset = proposal.profile_id == "eps-path-v1";
     const bool is_cdr_subset = proposal.profile_id == "cdr-libcdr-svg-v2";
+
+    // A raster import is a placement gesture: after the isolated worker has
+    // validated the image, show the cursor preview immediately. The review
+    // dialog used to block this common path even though the source and ICC
+    // metadata are retained; keep its color-fidelity caveat visible in status.
+    if (is_raster && !session->is_open_action && !auto_accept_import_review_) {
+        const auto imported_image = result->proposal.objects.size() == 1
+            ? std::get_if<document::ImageObject>(&result->proposal.objects.front())
+            : nullptr;
+        if (!imported_image || !result->proposal.pages.empty()) {
+            try { target->workflow->cancel_import_job(session->metadata.job_id); } catch (...) {}
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Đề xuất ảnh không hợp lệ · tài liệu không đổi"
+                : "The raster image proposal is invalid · document unchanged";
+            close_session();
+            return;
+        }
+        try {
+            import_placement_ = std::make_unique<ImportPlacementSession>();
+            import_placement_->metadata = session->metadata;
+            import_placement_->proposal = std::move(result->proposal);
+            import_placement_->target_tab_id = session->target_tab_id;
+            import_placement_->source_filename = session->source_filename;
+            if (target_index == active_tab_index_ && is_canvas_point(
+                    last_canvas_pointer_x_, last_canvas_pointer_y_)) {
+                import_placement_->pointer_world = canvas_to_world(
+                    last_canvas_pointer_x_, last_canvas_pointer_y_);
+                import_placement_->pointer_valid = true;
+            }
+        } catch (...) {
+            try { target->workflow->cancel_import_job(session->metadata.job_id); } catch (...) {}
+            import_placement_.reset();
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Không đủ bộ nhớ để mở xem trước vị trí ảnh"
+                : "Could not prepare the image placement preview";
+            close_session();
+            return;
+        }
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Di chuyển ảnh · nhấp để đặt · Esc hủy · giữ ICC nguồn, màu xem trước chưa xác minh"
+            : "Move image · click to place · Esc cancels · source ICC retained, preview color unverified";
+        close_session();
+        return;
+    }
+
     std::wostringstream content;
     content << (language_ == UILanguage::Vietnamese ? L"Nguồn: " : L"Source: ")
             << NativeWindow::utf8_to_wide(proposal.format_name).c_str() << L" · "
             << (language_ == UILanguage::Vietnamese ? L"trang nguồn · " : L"source pages · ")
             << (proposal.pages.empty() ? 1 : proposal.pages.size()) << L" · "
-            << FormatNumber(proposal.source_page_width_mm) << L" × "
-            << FormatNumber(proposal.source_page_height_mm) << L" mm\n"
+            << format_length_pair_mm(proposal.source_page_width_mm,
+                                     proposal.source_page_height_mm,
+                                     display_length_unit_, 4) << L"\n"
             << object_count << (language_ == UILanguage::Vietnamese
                 ? (is_raster ? L" ảnh raster · " : L" đối tượng chỉnh sửa được · ")
                 : (is_raster ? L" raster image · " : L" editable objects · "))
@@ -390,22 +846,33 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
         details = language_ == UILanguage::Vietnamese
             ? L"Các đơn vị SVG được quy đổi sang mm. DXF dùng $INSUNITS của nguồn; thiếu đơn vị được hỗ trợ thì từ chối.\n"
               L"Khổ trang tài liệu hiện tại không đổi. Geometry và layer nguồn sẽ được thêm vào trang hiện tại.\n"
-              L"File nguồn và báo cáo fidelity không được lưu cùng tài liệu .pikdraw. Import không chứng minh export ngược hoặc khả năng sản xuất."
+              L"Báo cáo nhập đã duyệt được lưu cùng tài liệu .pr; tài nguyên nguồn được nhúng theo khả năng của định dạng. Import không chứng minh export ngược hoặc khả năng sản xuất."
             : L"SVG source units are converted to mm. DXF uses source $INSUNITS; unsupported or missing units are rejected.\n"
               L"The current document page size stays unchanged. Source geometry and layers are added to its current page.\n"
-              L"The source file and fidelity report are not stored in the .pikdraw document. Import does not prove round-trip export or production readiness.";
+              L"The reviewed import report is stored in the .pr document; source resources are embedded according to format support. Import does not prove round-trip export or production readiness.";
     }
     if (is_pdf_subset || is_eps_subset || is_cdr_subset) {
         details += language_ == UILanguage::Vietnamese
             ? (session->is_open_action
-              ? L"\nOpen tạo tài liệu mới với đầy đủ trang nguồn và khổ riêng từng trang. Nguồn và báo cáo nhập không được nhúng trong file .pikdraw."
-                : L"\nImport thêm trang nguồn sau trang đang chọn và giữ nguyên nội dung hiện tại. Nguồn và báo cáo nhập không được nhúng trong file .pikdraw.")
+              ? L"\nOpen tạo tài liệu mới với đầy đủ trang nguồn và khổ riêng từng trang. Báo cáo nhập đã duyệt được lưu trong .pr; nguồn nhúng tùy định dạng."
+                : L"\nImport thêm trang nguồn sau trang đang chọn và giữ nguyên nội dung hiện tại. Báo cáo nhập đã duyệt được lưu trong .pr; nguồn nhúng tùy định dạng.")
             : (session->is_open_action
-                ? L"\nOpen creates a document with every source page and its own dimensions. The source file and import report are not embedded in the .pikdraw document."
-                : L"\nImport inserts source pages after the active page and leaves existing content in place. The source file and import report are not embedded in the .pikdraw document.");
+                ? L"\nOpen creates a document with every source page and its own dimensions. The reviewed import report is saved in .pr; embedded sources depend on format support."
+                : L"\nImport inserts source pages after the active page and leaves existing content in place. The reviewed import report is saved in .pr; embedded sources depend on format support.");
     }
     for (const auto& issue : proposal.issues) {
         details += L"\n• ";
+        switch (issue.severity) {
+        case ImportIssueSummary::Severity::Info:
+            details += language_ == UILanguage::Vietnamese ? L"Thông tin: " : L"Info: ";
+            break;
+        case ImportIssueSummary::Severity::Warning:
+            details += language_ == UILanguage::Vietnamese ? L"Cảnh báo: " : L"Warning: ";
+            break;
+        case ImportIssueSummary::Severity::Unsupported:
+            details += language_ == UILanguage::Vietnamese ? L"Không hỗ trợ: " : L"Unsupported: ";
+            break;
+        }
         if (issue.feature_code == "font_resolution") {
             details += language_ == UILanguage::Vietnamese
                 ? L"Giữ tên font; hình thức chữ chưa được xác minh."
@@ -422,6 +889,15 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
             details += language_ == UILanguage::Vietnamese
                 ? L"Có chẩn đoán giới hạn subset trong báo cáo nhập."
                 : L"The import report contains an additional subset diagnostic.";
+        }
+        if (!issue.source_locator.empty()) {
+            details += language_ == UILanguage::Vietnamese ? L" [Nguồn: " : L" [Source: ";
+            details += NativeWindow::utf8_to_wide(issue.source_locator);
+            if (!issue.diagnostic_code.empty()) {
+                details += L" · ";
+                details += NativeWindow::utf8_to_wide(issue.diagnostic_code);
+            }
+            details += L"]";
         }
     }
 
@@ -458,7 +934,9 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
     config.pButtons = buttons;
     config.nDefaultButton = kImportChoiceCancel;
     int choice = kImportChoiceCancel;
-    if (session->is_open_action && !is_pdf_subset && !is_eps_subset && !is_cdr_subset) {
+    if (auto_accept_import_review_) {
+        choice = kImportChoiceApply;
+    } else if (session->is_open_action && !is_pdf_subset && !is_eps_subset && !is_cdr_subset) {
         choice = kImportChoiceApply;
     } else {
         using TaskDialogFunction = HRESULT(WINAPI*)(const TASKDIALOGCONFIG*, int*, int*, BOOL*);
@@ -486,11 +964,16 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
     const auto committed = target->workflow->commit_import_proposal(
         session->metadata, std::move(result->proposal), session->is_open_action);
     if (committed == document::ProposalStatus::Accepted) {
+        last_import_succeeded_ = true;
         if (session->is_open_action) {
             const auto opened_snapshot = target->root->document().current_snapshot();
             if (opened_snapshot) {
                 target->page_width_mm = opened_snapshot->page().width_mm;
                 target->page_height_mm = opened_snapshot->page().height_mm;
+                target->artboard_overview = settings_artboard_overview_choice_;
+                target->active_artboard_id = opened_snapshot->active_page().artboards.empty()
+                    ? document::kInvalidArtboardId
+                    : opened_snapshot->active_page().artboards.front().id;
             }
         }
         const bool target_active = target_index == active_tab_index_;
@@ -511,6 +994,7 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
             root().vector_controller().selection().clear();
             set_active_tool(0);
         }
+        close_recovery_modal();
         if (session->is_open_action) {
             target->file_path.clear();
             status_msg_ = (language_ == UILanguage::Vietnamese ? "Đã mở tệp: " : "Opened file: ") +
@@ -535,9 +1019,11 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
             }
         }
     } else {
-        status_msg_ = committed == document::ProposalStatus::StaleRevision
-            ? (language_ == UILanguage::Vietnamese ? "Tài liệu đã thay đổi · đề xuất nhập bị từ chối"
-                                                  : "Document changed · import proposal rejected")
+        status_msg_ = (committed == document::ProposalStatus::StaleRevision ||
+                       committed == document::ProposalStatus::StalePageContext)
+            ? (language_ == UILanguage::Vietnamese
+                ? "Tài liệu hoặc trang đích đã đổi · đề xuất nhập bị từ chối"
+                : "The document or target page changed · import proposal rejected")
             : (language_ == UILanguage::Vietnamese ? "Không thể áp dụng đề xuất nhập"
                                                   : "Could not apply import proposal");
     }

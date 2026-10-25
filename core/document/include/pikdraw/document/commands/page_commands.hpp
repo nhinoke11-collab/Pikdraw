@@ -127,6 +127,8 @@ inline CommandResult AddPageCommand::execute(Document& doc) {
     if (!applied_) {
         previous_pages_ = next;
         previous_active_page_id_ = doc.active_page_id();
+        if (page_.artboards.empty())
+            page_.artboards.push_back(make_page_bounds_artboard(page_.id, page_.layout));
     }
     auto added = page_;
     const auto& settings = doc.page();
@@ -216,6 +218,11 @@ inline CommandResult ResizePageCommand::execute(Document& doc) {
     previous_active_page_id_ = doc.active_page_id();
     found->layout.width_mm = width_mm_;
     found->layout.height_mm = height_mm_;
+    for (auto& artboard : found->artboards) {
+        if (!artboard.linked_to_page_bounds) continue;
+        artboard.width_mm = width_mm_;
+        artboard.height_mm = height_mm_;
+    }
     doc.apply_page_collection(std::move(next), previous_active_page_id_);
     applied_ = true;
     return CommandResult::ok();
@@ -266,6 +273,12 @@ inline CommandResult DuplicatePageCommand::execute(Document& doc) {
         duplicate_.id = generate_page_id();
         if (duplicate_.id == kInvalidPageId) return CommandResult::fail("Page ID allocator exhausted");
         duplicate_.name += " copy";
+        for (auto& artboard : duplicate_.artboards) {
+            artboard.id = generate_artboard_id();
+            artboard.owner_page_id = duplicate_.id;
+            if (artboard.id == kInvalidArtboardId)
+                return CommandResult::fail("Artboard ID allocator exhausted");
+        }
         duplicate_.objects = {};
         std::vector<ObjectId> roots;
         for (const auto& layer : source_it->layout.layers)

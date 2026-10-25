@@ -44,8 +44,8 @@ bool BuildSvgImportRecords(std::span<const uint8_t> source,
         diagnostic = "SVG source exceeds the bounded input profile";
         return false;
     }
-    const std::string input(reinterpret_cast<const char*>(source.data()), source.size());
-    const auto imported = SvgImporter::import_from_string(input);
+    const std::string_view input(reinterpret_cast<const char*>(source.data()), source.size());
+    auto imported = SvgImporter::import_from_string(input);
     if (!imported.success) {
         diagnostic = imported.error_message.empty() ? "SVG parser rejected the source" : imported.error_message;
         return false;
@@ -131,7 +131,7 @@ bool BuildSvgImportRecords(std::span<const uint8_t> source,
     for (const document::ObjectId id : object_order) {
         const size_t index = object_indices.at(id);
         const std::string& source_id = imported.source_ids[index];
-        const auto& object = imported.objects[index];
+        auto& object = imported.objects[index];
         if (const auto* group = std::get_if<document::GroupObject>(&object)) {
             ImportGroupRecord record;
             record.local_id = local_ids.at(id);
@@ -155,7 +155,7 @@ bool BuildSvgImportRecords(std::span<const uint8_t> source,
                 record.clip_mask_local_id = mask->second;
             }
             if (!add_record(record)) return fail("SVG group record exceeds C6 record limits");
-        } else if (const auto* path = std::get_if<document::PathObject>(&object)) {
+        } else if (auto* path = std::get_if<document::PathObject>(&object)) {
             ImportPathRecord record;
             record.local_id = local_ids.at(id);
             record.source_id = source_id;
@@ -164,6 +164,9 @@ bool BuildSvgImportRecords(std::span<const uint8_t> source,
             record.has_fill = path->has_fill;
             record.has_stroke = path->has_stroke;
             record.stroke_width_mm = path->stroke_width_mm;
+            record.object_opacity = path->appearance.object_opacity;
+            record.fill_opacity = path->appearance.fill_opacity;
+            record.stroke_opacity = path->appearance.stroke_opacity;
             record.fill = FromColor(path->fill);
             record.stroke = FromColor(path->stroke);
             record.elements.reserve(path->path.size());
@@ -181,6 +184,7 @@ bool BuildSvgImportRecords(std::span<const uint8_t> source,
                 record.elements.push_back(converted);
             }
             if (!add_record(record)) return fail("SVG path record exceeds C6 record limits");
+            path->path = geometry::Path2D{};
         } else if (const auto* text = std::get_if<document::TextObject>(&object)) {
             ImportTextRecord record;
             record.local_id = local_ids.at(id);
@@ -194,6 +198,9 @@ bool BuildSvgImportRecords(std::span<const uint8_t> source,
             record.x_mm = text->position.x;
             record.y_mm = text->position.y;
             record.fill = FromColor(text->fill);
+            record.object_opacity = text->appearance.object_opacity;
+            record.fill_opacity = text->appearance.fill_opacity;
+            record.stroke_opacity = text->appearance.stroke_opacity;
             if (!add_record(record)) return fail("SVG text record exceeds C6 record limits");
         }
     }

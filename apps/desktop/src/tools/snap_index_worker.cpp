@@ -11,6 +11,8 @@ SnapIndexWorker::~SnapIndexWorker() {
         std::lock_guard lock(mutex_);
         stopping_ = true;
         ++generation_;
+        if (active_cancellation_) active_cancellation_->store(true, std::memory_order_release);
+        if (pending_.cancellation) pending_.cancellation->store(true, std::memory_order_release);
         pending_ = {};
     }
     condition_.notify_one();
@@ -21,8 +23,12 @@ void SnapIndexWorker::request(document::SnapshotPtr snapshot) {
     if (!snapshot) return;
     {
         std::lock_guard lock(mutex_);
+        if (active_cancellation_)
+            active_cancellation_->store(true, std::memory_order_release);
+        if (pending_.cancellation)
+            pending_.cancellation->store(true, std::memory_order_release);
         ++generation_;
-        pending_ = {generation_, std::move(snapshot)};
+        pending_ = {generation_, std::move(snapshot), std::make_shared<std::atomic_bool>(false)};
     }
     condition_.notify_one();
 }
@@ -51,13 +57,19 @@ void SnapIndexWorker::run() {
             if (stopping_) return;
             request = std::move(pending_);
             pending_ = {};
+            active_cancellation_ = request.cancellation;
             building_ = true;
         }
 
         vector::precision::snap::SnapIndexBuildResult result;
         try {
+            vector::precision::snap::SnapIndexBuildLimits limits;
+            limits.max_entries = 300000;
+            limits.should_cancel = [token = request.cancellation] {
+                return !token || token->load(std::memory_order_acquire);
+            };
             result = vector::precision::snap::SnapSourceIndex::build(
-                *request.snapshot, {300000});
+                *request.snapshot, std::move(limits));
         } catch (const std::exception& error) {
             result.diagnostic = error.what();
         } catch (...) {
@@ -71,6 +83,8 @@ void SnapIndexWorker::run() {
                 completed_revision_ = request.snapshot->revision();
                 completed_ = std::move(result);
             }
+            if (active_cancellation_ == request.cancellation)
+                active_cancellation_.reset();
             building_ = false;
         }
         condition_.notify_one();

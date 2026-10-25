@@ -156,16 +156,16 @@ void test_compact_icons_and_hover_tooltips() {
 
     // 2. Hover over Left Tool Strip: Tool 0 (Pick), Tool 11 (Node), Tool 4 (Text), Tool 5 (Knife)
     win.set_language(UILanguage::Vietnamese);
-    win.update_hover_tooltip(20, 115); // Tool 0 (content_top + 10 = 112)
+    win.update_hover_tooltip(20, 140); // Tool 0 (content_top + 10 = 112)
     assert(win.tooltip().visible);
     assert(win.tooltip().text.find(L"chọn") != std::wstring::npos);
     assert(win.tooltip().text.find(L"Phím V") != std::wstring::npos);
 
-    win.update_hover_tooltip(20, 115 + 1 * 42); // Node Tool (Row 1)
+    win.update_hover_tooltip(20, 140 + 1 * 42); // Node Tool (Row 1)
     assert(win.tooltip().visible);
     assert(win.tooltip().text.find(L"Node") != std::wstring::npos);
 
-    win.update_hover_tooltip(20, 115 + 5 * 42); // Tool 4 (Text Tool, Row 5)
+    win.update_hover_tooltip(20, 140 + 5 * 42); // Tool 4 (Text Tool, Row 5)
     assert(win.tooltip().visible);
     assert(win.tooltip().text.find(L"văn bản") != std::wstring::npos);
     assert(win.tooltip().text.find(L"F8") != std::wstring::npos);
@@ -506,7 +506,7 @@ void test_corel_pick_auto_select_resume_guidelines_and_space_shortcut() {
     assert(win.active_tool() == 0);
     assert(win.previous_drawing_tool() == 1);
 
-    // 2. CorelDRAW Flow: Vẽ xong 1 đối tượng -> Tự động chọn (Pick) ngay lập tức
+    // 2. PikDraw Flow: Váº½ xong 1 Ä‘á»‘i tÆ°á»£ng -> Giá»¯ nguyÃªn cÃ´ng cá»¥ váº½ (khÃ´ng tá»± há»§y lá»‡nh sang Pick)
     win.set_active_tool(2);
     assert(win.active_tool() == 2);
 
@@ -519,27 +519,19 @@ void test_corel_pick_auto_select_resume_guidelines_and_space_shortcut() {
     win.handle_mouse_move(x2, y2, 0);
     win.handle_mouse_up(x2, y2, 0);
 
-    // a) Đối tượng mới tạo được tự động chọn!
-    assert(sel.count() == 1);
-    // b) Hệ thống tự động chuyển sang công cụ Pick (active_tool == 0)!
-    assert(win.active_tool() == 0);
-    // c) previous_drawing_tool lưu lại là tool 2 (Elip)!
-    assert(win.previous_drawing_tool() == 2);
+    // a) CÃ´ng cá»¥ váº½ váº«n Ä‘Æ°á»£c giá»¯ nguyÃªn (tool 2) Ä‘á»ƒ tiáº¿p tá»¥c kÃ©o váº½ cÃ¡c hÃ¬nh khÃ¡c!
+    assert(win.active_tool() == 2);
 
-    // 3. Khi người dùng click ra ngoài khoảng trống (deselect) -> Tự động kích hoạt lại công cụ Elip (tool 2)!
+    // 3. Khi click ra ngoÃ i khoáº£ng trá»‘ng -> Váº«n giá»¯ nguyÃªn cÃ´ng cá»¥ váº½ (tool 2)!
     const int empty_x = area.left + 20;
     const int empty_y = area.top + 20;
     assert(win.is_canvas_point(empty_x, empty_y));
 
     win.handle_mouse_down(empty_x, empty_y, 0);
     win.handle_mouse_up(empty_x, empty_y, 0);
-
-    // a) Vùng chọn đã bị bỏ
-    assert(sel.count() == 0);
-    // b) Công cụ vẽ trước đó (Elip - tool 2) tự động kích hoạt trở lại để tiếp tục vẽ!
     assert(win.active_tool() == 2);
 
-    // 3b. Khi đang ở Quick Shape (tool 2), click vào đối tượng đã có -> Tự động PICK chọn đối tượng!
+    // 4. Khi click trÃºng Ä‘á»‘i tÆ°á»£ng khÃ¡c -> Láº­p tá»©c Ã¡p dá»¥ng Select cho Ä‘á»‘i tÆ°á»£ng Ä‘Ã³, chuyá»ƒn vá» Select tool (tool 0)!
     const int obj_center_x = area.left + 110;
     const int obj_center_y = area.top + 100;
     win.handle_mouse_move(obj_center_x, obj_center_y, 0);
@@ -547,8 +539,14 @@ void test_corel_pick_auto_select_resume_guidelines_and_space_shortcut() {
     win.handle_mouse_down(obj_center_x, obj_center_y, 0);
     win.handle_mouse_up(obj_center_x, obj_center_y, 0);
     assert(sel.count() == 1);
-    assert(win.active_tool() == 2);
+    assert(win.active_tool() == 0);
+    assert(win.previous_drawing_tool() == 2);
 
+    // 5. Khi Ä‘ang á»Ÿ tráº¡ng thÃ¡i Select do click trÃºng Ä‘á»‘i tÆ°á»£ng mÃ  click ra vÃ¹ng trá»‘ng -> Quay vá» Quick Shape trÆ°á»›c Ä‘Ã³ (tool 2)!
+    win.handle_mouse_down(empty_x, empty_y, 0);
+    win.handle_mouse_up(empty_x, empty_y, 0);
+    assert(sel.count() == 0);
+    assert(win.active_tool() == 2);
     // 4. Guidelines: Pick chọn và di chuyển vị trí thước gióng
     win.set_active_tool(0);
     win.clear_guidelines();
@@ -610,7 +608,7 @@ void test_layers_and_objects_dock_suite() {
     assert(win.layers_dock_state().filter == LayerFilterType::All);
 
     // 3. Test filter bar click: click Path filter (index 1)
-    const int filter_bar_y = 138 + 26 + 10;
+    const int filter_bar_y = 138 + 46 + 10;
     bool filter_clicked = win.handle_chrome_click(insp_x + 12 + 51 + 10, filter_bar_y);
     assert(filter_clicked);
     assert(win.layers_dock_state().filter == LayerFilterType::Path);
@@ -629,15 +627,15 @@ void test_layers_and_objects_dock_suite() {
 
     // 5. Test layer row expand/collapse toggle
     assert(win.layers_dock_state().collapsed_layers.empty());
-    bool expand_clicked = win.handle_chrome_click(insp_x + 16, 200);
+    bool expand_clicked = win.handle_chrome_click(insp_x + 16, 218);
     assert(expand_clicked);
     assert(win.layers_dock_state().collapsed_layers.count(0) == 1);
-    win.handle_chrome_click(insp_x + 16, 200);
+    win.handle_chrome_click(insp_x + 16, 218);
     assert(win.layers_dock_state().collapsed_layers.empty());
 
     // 6. Test layer eye (visibility) toggle
     assert(snap->page().layers[0].visible == true);
-    bool eye_clicked = win.handle_chrome_click(insp_x + 32, 200);
+    bool eye_clicked = win.handle_chrome_click(insp_x + 32, 218);
     assert(eye_clicked);
     snap = win.root().document().current_snapshot();
     assert(snap->page().layers[0].visible == false);
@@ -649,7 +647,7 @@ void test_layers_and_objects_dock_suite() {
 
     // 7. Test layer lock toggle
     assert(snap->page().layers[0].locked == false);
-    bool lock_clicked = win.handle_chrome_click(insp_x + 48, 200);
+    bool lock_clicked = win.handle_chrome_click(insp_x + 56, 218);
     assert(lock_clicked);
     snap = win.root().document().current_snapshot();
     assert(snap->page().layers[0].locked == true);

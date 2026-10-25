@@ -29,13 +29,35 @@ int main() {
     check(tool_list && tool_list->array() && tool_list->array()->size() == 20,
           "MCP tool list only advertises the implemented semantic operations");
     bool batch_schema_covers_authoring_and_edits = false;
+    bool batch_schema_supports_typed_physical_units = false;
+    bool rectangle_schema_supports_typed_physical_units = false;
     bool file_open_schema_is_scoped = false;
     bool document_create_schema_is_scoped = false;
+    bool document_create_schema_supports_typed_units = false;
+    bool object_query_schema_supports_filters = false;
+    bool object_changes_schema_is_guarded = false;
     if (tool_list && tool_list->array()) {
         for (const auto& tool : *tool_list->array()) {
             check(tool.get("inputSchema") && tool.get("inputSchema")->object(),
                   "every advertised MCP tool has a valid JSON input schema");
             const auto* name = tool.get("name");
+            if (name && name->string() && *name->string() == "pikdraw.objects.query") {
+                const auto encoded = tool.get("inputSchema")->serialize();
+                object_query_schema_supports_filters =
+                    encoded.find("object_id") != std::string::npos &&
+                    encoded.find("layer_index") != std::string::npos &&
+                    encoded.find("region_mm") != std::string::npos &&
+                    encoded.find("path") != std::string::npos &&
+                    encoded.find("v2:") != std::string::npos;
+            }
+            if (name && name->string() && *name->string() == "pikdraw.objects.changes") {
+                const auto* required = tool.get("inputSchema")->get("required");
+                const auto encoded = tool.get("inputSchema")->serialize();
+                object_changes_schema_is_guarded = required && required->array() &&
+                    required->array()->size() == 3 &&
+                    encoded.find("expected_epoch") != std::string::npos &&
+                    encoded.find("from_revision") != std::string::npos;
+            }
             if (name && name->string() && *name->string() == "pikdraw.batch.apply") {
                 const auto encoded = tool.get("inputSchema")->serialize();
                 batch_schema_covers_authoring_and_edits =
@@ -48,6 +70,20 @@ int main() {
                     encoded.find("object.ungroup") != std::string::npos &&
                     encoded.find("object.align") != std::string::npos &&
                     encoded.find("object.distribute") != std::string::npos;
+                batch_schema_supports_typed_physical_units =
+                    encoded.find("length_unit") != std::string::npos &&
+                    encoded.find("points") != std::string::npos &&
+                    encoded.find("translate_x") != std::string::npos &&
+                    encoded.find("offset_x") != std::string::npos &&
+                    encoded.find("stroke_width") != std::string::npos &&
+                    encoded.find("yd") != std::string::npos;
+            }
+            if (name && name->string() && *name->string() == "pikdraw.object.create_rectangle") {
+                const auto encoded = tool.get("inputSchema")->serialize();
+                rectangle_schema_supports_typed_physical_units =
+                    encoded.find("length_unit") != std::string::npos &&
+                    encoded.find("oneOf") != std::string::npos &&
+                    encoded.find("pc") != std::string::npos;
             }
             if (name && name->string() && (*name->string() == "pikdraw.objects.get" ||
                 *name->string() == "pikdraw.history.undo" || *name->string() == "pikdraw.history.redo"))
@@ -67,15 +103,32 @@ int main() {
                 document_create_schema_is_scoped = required && required->array() &&
                     !required->array()->empty() && required->array()->front().string() &&
                     *required->array()->front().string() == "session_handle";
+                const auto encoded = tool.get("inputSchema")->serialize();
+                document_create_schema_supports_typed_units =
+                    encoded.find("page_width_mm") != std::string::npos &&
+                    encoded.find("page_height_mm") != std::string::npos &&
+                    encoded.find("page_width") != std::string::npos &&
+                    encoded.find("page_height") != std::string::npos &&
+                    encoded.find("length_unit") != std::string::npos &&
+                    encoded.find("oneOf") != std::string::npos &&
+                    encoded.find("pc") != std::string::npos;
             }
         }
     }
     check(batch_schema_covers_authoring_and_edits,
           "MCP batch schema advertises only implemented line/polyline and stable-ID edits");
+    check(batch_schema_supports_typed_physical_units && rectangle_schema_supports_typed_physical_units,
+          "MCP create schemas expose explicit physical-unit inputs alongside legacy millimeter fields");
     check(file_open_schema_is_scoped,
           "native file.open requires a connected session and a granted-folder basename");
     check(document_create_schema_is_scoped,
           "document.create requires a session handle so the app can enforce its requested scope");
+    check(document_create_schema_supports_typed_units,
+          "document.create retains canonical mm fields and adds an exclusive typed physical-unit form");
+    check(object_query_schema_supports_filters,
+          "objects.query schema exposes stable-ID, layer, type and region filters with versioned cursors");
+    check(object_changes_schema_is_guarded,
+          "objects.changes schema requires session, epoch and source revision");
 
     auto create_without_session = server.handle(parse(R"({"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"pikdraw.document.create","arguments":{"instance_id":"123","page_width_mm":600,"page_height_mm":300},"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}})"));
     const auto* create_result = create_without_session.get("result");

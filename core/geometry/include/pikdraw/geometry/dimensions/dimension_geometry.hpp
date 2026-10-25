@@ -19,7 +19,8 @@ enum class LinearOrientation : uint8_t {
 enum class ArrowType : uint8_t {
     ClosedFilled,
     ArchitecturalTick,
-    Dot
+    Dot,
+    Open
 };
 
 enum class OrdinateAxis : uint8_t {

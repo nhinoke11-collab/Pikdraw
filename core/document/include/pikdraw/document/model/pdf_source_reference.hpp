@@ -24,6 +24,10 @@ struct PdfSourcePageReference {
     std::shared_ptr<const PdfSourceAsset> asset;
     uint32_t source_page_index{0};
     uint8_t rotation_quarters_clockwise{0};
+    // Screen-only cache. The original PDF remains authoritative for print/export.
+    uint32_t preview_width_px{0};
+    uint32_t preview_height_px{0};
+    std::shared_ptr<const std::vector<uint32_t>> preview_rgba;
 };
 
 } // namespace pikdraw::document

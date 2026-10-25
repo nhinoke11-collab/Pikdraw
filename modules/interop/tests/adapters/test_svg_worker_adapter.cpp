@@ -15,8 +15,8 @@ void TestTypedRecordRoundTrip() {
         xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" width="100mm" height="50mm" viewBox="0 0 400 200">
         <g id="art-layer" inkscape:groupmode="layer" inkscape:label="Artwork">
             <g id="group">
-                <path id="outline" d="M0 0 C20 0 20 20 40 20 Q60 40 80 20 Z" fill="#2480c0" stroke="#123" stroke-width="2"/>
-                <text id="label" x="20" y="100" font-family="Noto Sans" font-size="24">Tiếng Việt &amp; vectors</text>
+                <path id="outline" d="M0 0 C20 0 20 20 40 20 Q60 40 80 20 Z" fill="#2480c0" stroke="#123" stroke-width="2" opacity="75%" fill-opacity="25%" stroke-opacity="50%"/>
+                <text id="label" x="20" y="100" font-family="Noto Sans" font-size="24" opacity="0.4" fill-opacity="0.6">Tiếng Việt &amp; vectors</text>
             </g>
         </g>
     </svg>)";
@@ -51,15 +51,40 @@ void TestTypedRecordRoundTrip() {
     assert(path.source_id == "outline" && path.local_id == 2 && path.elements.size() == 4);
     assert(path.elements[1].verb == ImportPathVerb::Cubic);
     assert(path.fill.model == ImportColorModel::Rgb && path.has_stroke);
+    assert(path.object_opacity == 0.75 && path.fill_opacity == 0.25 && path.stroke_opacity == 0.5);
     const auto& text = std::get<ImportTextRecord>(decoded[4]);
     assert(text.source_id == "label" && text.local_id == 3 && text.utf8_text == "Tiếng Việt & vectors");
     assert(text.font_family == "Noto Sans");
     assert(std::abs(text.font_size_pt - (6.0 * 72.0 / 25.4)) < 1e-9);
+    assert(text.object_opacity == 0.4 && text.fill_opacity == 0.6 && text.stroke_opacity == 1.0);
     const auto& issue = std::get<ImportFidelityIssueRecord>(decoded[5]);
     assert(issue.source_locator == "label" && issue.feature_code == "font_resolution");
     const auto& report = std::get<ImportFidelityReportRecord>(decoded[6]);
     assert(report.coverage_profile == "svg-hierarchy-v3" && report.issue_count == 1);
     assert(report.coverage == ImportCoverage::Partial && report.appearance == ImportAppearance::Partial);
+
+    const std::vector<uint8_t> opacity_marker{'O', 'P', 'A', '1'};
+    auto legacy_path_payload = records[3].payload;
+    assert(legacy_path_payload.size() >= 28);
+    legacy_path_payload.resize(legacy_path_payload.size() - 28);
+    const auto legacy_path = DeserializeImportRecord(ImportRecordType::Path, legacy_path_payload);
+    assert(legacy_path.has_value());
+    const auto& default_path_opacity = std::get<ImportPathRecord>(*legacy_path);
+    assert(default_path_opacity.object_opacity == 1.0 && default_path_opacity.fill_opacity == 1.0 &&
+           default_path_opacity.stroke_opacity == 1.0);
+
+    auto legacy_text_payload = records[4].payload;
+    const auto marker = std::search(legacy_text_payload.begin(), legacy_text_payload.end(),
+                                    opacity_marker.begin(), opacity_marker.end());
+    assert(marker != legacy_text_payload.end());
+    const size_t marker_offset = static_cast<size_t>(marker - legacy_text_payload.begin());
+    legacy_text_payload.erase(legacy_text_payload.begin() + static_cast<std::ptrdiff_t>(marker_offset),
+                              legacy_text_payload.begin() + static_cast<std::ptrdiff_t>(marker_offset + 28));
+    const auto legacy_text = DeserializeImportRecord(ImportRecordType::Text, legacy_text_payload);
+    assert(legacy_text.has_value());
+    const auto& default_text_opacity = std::get<ImportTextRecord>(*legacy_text);
+    assert(default_text_opacity.object_opacity == 1.0 && default_text_opacity.fill_opacity == 1.0 &&
+           default_text_opacity.stroke_opacity == 1.0);
 }
 
 void TestClipMaskSurvivesCanonicalRecords() {
@@ -162,6 +187,9 @@ void TestSemanticDecoderRejectsInvalidRecords() {
     path.elements = {{ImportPathVerb::Move, 0, {}}, {ImportPathVerb::Line, 0, {1, 1}}};
     path.elements[1].values[2] = 1;
     assert(!SerializeImportRecord(path)); // Unused command fields must be zero.
+    path.elements[1].values[2] = 0;
+    path.object_opacity = 1.1;
+    assert(!SerializeImportRecord(path)); // Appearance opacity must be normalized.
 
     text.font_size_pt = 12;
     text.font_postscript_name = "NotoSans-Regular";

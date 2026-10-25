@@ -26,6 +26,7 @@
 #include "pikdraw/rendering/software_rasterizer.hpp"
 
 #include <chrono>
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <limits>
@@ -67,16 +68,24 @@ struct ImageCacheKeyHash {
   }
 };
 
-// Per-device image uploads are shared by placements that reference the same
-// immutable pixel storage. New uploads stop before whole-system RAM reaches 90%.
+// Per-device LRU, keyed by immutable pixel storage rather than document
+// revision: moving an image, Undo or editing a path does not re-upload pixels.
 class D2DImageCache {
 public:
-  void clear() { images_.clear(); }
+  explicit D2DImageCache(size_t max_bytes = 256u * 1024u * 1024u,
+                         size_t max_images = 1024)
+      : max_bytes_(max_bytes), max_images_(max_images) {}
+  void clear() { images_.clear(); cached_bytes_ = 0; }
+  void begin_frame() noexcept { memory_pressure_encountered_ = false; }
+  [[nodiscard]] bool memory_pressure_encountered() const noexcept {
+    return memory_pressure_encountered_;
+  }
   [[nodiscard]] size_t cached_image_count() const noexcept { return images_.size(); }
+  [[nodiscard]] size_t cached_bytes() const noexcept { return cached_bytes_; }
+  [[nodiscard]] uint64_t upload_count() const noexcept { return upload_count_; }
 
   ComPtr<ID2D1Bitmap1> get(ID2D1DeviceContext* context,
-                          const document::ImageObject& image, uint64_t revision) {
-    if (revision_ != revision) { clear(); revision_ = revision; }
+                          const document::ImageObject& image, uint64_t /*revision*/) {
     if (!context || image.width_px <= 0 || image.height_px <= 0) return nullptr;
     const auto pixels = image.rgba_pixels();
     const size_t expected_pixels = static_cast<size_t>(image.width_px) *
@@ -85,18 +94,40 @@ public:
         pixels.size() > std::numeric_limits<size_t>::max() / sizeof(uint32_t))
       return nullptr;
     const ImageCacheKey key{pixels.data(), image.width_px, image.height_px};
-    if (const auto it = images_.find(key); it != images_.end()) return it->second;
+    if (auto it = images_.find(key); it != images_.end()) {
+      // Inline legacy buffers are mutable. Compare against the retained copy
+      // so same-address reuse or in-place edits never return stale colors.
+      if ((image.shared_pixels_rgba && image.shared_pixels_rgba == it->second.owner) ||
+          std::equal(pixels.begin(), pixels.end(), it->second.owner->begin())) {
+        it->second.last_use = ++clock_;
+        return it->second.bitmap;
+      }
+      cached_bytes_ -= it->second.bytes;
+      images_.erase(it);
+    }
 
     const size_t bytes = pixels.size() * sizeof(uint32_t);
+    if (bytes > std::numeric_limits<size_t>::max() / 3) return nullptr;
+    const size_t retained_bytes = bytes * (image.shared_pixels_rgba ? 1u : 2u);
+    const bool cacheable = retained_bytes <= max_bytes_ && max_images_ != 0;
+    if (cacheable) {
+      while (!images_.empty() &&
+             (images_.size() >= max_images_ || cached_bytes_ > max_bytes_ - retained_bytes))
+        evict_oldest();
+    }
     // Account for both the temporary premultiplied upload buffer and the
     // persistent Direct2D bitmap when deciding whether this allocation fits.
-    if (bytes > std::numeric_limits<size_t>::max() / 2 ||
-        !has_system_memory_headroom(bytes * 2)) return nullptr;
+    while (!has_system_memory_headroom(bytes * 3) && !images_.empty()) evict_oldest();
+    if (!has_system_memory_headroom(bytes * 3)) {
+      memory_pressure_encountered_ = true;
+      return nullptr;
+    }
 
     std::vector<uint32_t> bgra;
     try {
       bgra.resize(pixels.size());
     } catch (...) {
+      memory_pressure_encountered_ = true;
       return nullptr;
     }
     for (int32_t y = 0; y < image.height_px; ++y) {
@@ -104,9 +135,9 @@ public:
         const auto rgba = pixels[
             static_cast<size_t>(image.height_px - 1 - y) * image.width_px + x];
         const uint32_t a = rgba & 255;
-        const uint32_t r = ((rgba >> 24) & 255) * a / 255;
-        const uint32_t g = ((rgba >> 16) & 255) * a / 255;
-        const uint32_t b = ((rgba >> 8) & 255) * a / 255;
+        const uint32_t r = (((rgba >> 24) & 255) * a + 127) / 255;
+        const uint32_t g = (((rgba >> 16) & 255) * a + 127) / 255;
+        const uint32_t b = (((rgba >> 8) & 255) * a + 127) / 255;
         bgra[static_cast<size_t>(y) * image.width_px + x] =
             (a << 24) | (r << 16) | (g << 8) | b;
       }
@@ -116,26 +147,55 @@ public:
     props.dpiX = props.dpiY = 96;
     ComPtr<ID2D1Bitmap1> bitmap;
     if (FAILED(context->CreateBitmap(D2D1::SizeU(image.width_px, image.height_px),
-        bgra.data(), image.width_px * 4, &props, bitmap.ReleaseAndGetAddressOf())))
+        bgra.data(), image.width_px * 4, &props, bitmap.ReleaseAndGetAddressOf()))) {
+      memory_pressure_encountered_ = true;
       return nullptr;
-    images_.emplace(key, bitmap);
+    }
+    ++upload_count_;
+    if (cacheable) {
+      auto owner = image.shared_pixels_rgba;
+      if (!owner) owner = std::make_shared<const std::vector<uint32_t>>(
+          pixels.begin(), pixels.end());
+      images_.emplace(key, Entry{bitmap, std::move(owner), retained_bytes, ++clock_});
+      cached_bytes_ += retained_bytes;
+    }
     return bitmap;
   }
 private:
+  bool memory_pressure_encountered_{false};
+  struct Entry {
+    ComPtr<ID2D1Bitmap1> bitmap;
+    // Keeps the key's immutable storage alive across snapshot destruction.
+    std::shared_ptr<const std::vector<uint32_t>> owner;
+    size_t bytes{};
+    uint64_t last_use{};
+  };
+  void evict_oldest() {
+    const auto oldest = std::min_element(images_.begin(), images_.end(),
+        [](const auto& lhs, const auto& rhs) {
+          return lhs.second.last_use < rhs.second.last_use;
+        });
+    cached_bytes_ -= oldest->second.bytes;
+    images_.erase(oldest);
+  }
   static bool has_system_memory_headroom(size_t additional_bytes) noexcept {
     MEMORYSTATUSEX status{};
     status.dwLength = sizeof(status);
     if (!GlobalMemoryStatusEx(&status) || status.ullTotalPhys == 0 ||
         status.ullAvailPhys > status.ullTotalPhys) return false;
-    constexpr uint64_t limit_percent = 90;
+    constexpr uint64_t limit_percent = 95;
     const uint64_t threshold = (status.ullTotalPhys / 100) * limit_percent +
         ((status.ullTotalPhys % 100) * limit_percent) / 100;
     const uint64_t used = status.ullTotalPhys - status.ullAvailPhys;
     return used < threshold && static_cast<uint64_t>(additional_bytes) < threshold - used;
   }
 
-  std::unordered_map<ImageCacheKey, ComPtr<ID2D1Bitmap1>, ImageCacheKeyHash> images_;
-  uint64_t revision_{};
+  std::unordered_map<ImageCacheKey, Entry, ImageCacheKeyHash> images_;
+  size_t max_bytes_{};
+  size_t max_images_{};
+  size_t cached_bytes_{};
+  uint64_t clock_{};
+  uint64_t upload_count_{};
 };
 
 class D2DDeviceManager {

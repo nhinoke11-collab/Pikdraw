@@ -1,79 +1,96 @@
-# Contract C5: Native Storage and File Durability
+# Contract C5: Native storage and file durability
 
-Version: 2.3.0
-Status: Native v5 container and gradient schema 1.0 contract finalized; reader accepts v2/v3/v4/v5, writer emits v5
-Producers: modules/storage
-Consumers: core/document, modules/desktop, modules/interop
+Version: 2.7.0 (chunk-streamed atomic save and v25 raster sample deduplication).
+Audited: 2026-10-25 against the working source.
+Status: PKDR v23 remains the compact schema; v24 adds deduplicated encoded-source and
+RGBA8/RGBA16 sample tables, and v24/v25 chunked containers are read for compatibility/current raster saves.
+Producer: core/document/storage. Consumers: desktop, automation, raster and interop.
+Current design suffix: .pr only. Filename extension does not authenticate content.
 
-Implementation audit (2026-10-17): source extends native container to v5, preserving v2/v3/v4 backward compatibility while introducing structured length-framed gradient paint records for PathObject. Independent byte fixtures cover gradient records, stop ordering, hard edges, midpoints, spreads, transform matrices, and legacy migration.
+## 1. Current container and schemas
 
+Source of truth: core/document/include/pikdraw/document/storage/native_format.hpp and
+core/document/src/storage/{native_format.cpp,native_chunk_encode.cpp,native_chunk_decode.cpp,
+byte_codec.hpp,file_io.cpp,object_codec.cpp}.
+Payloads without encoded raster source bytes use schema v23: under 1 MiB they use the legacy
+v23 container, and larger payloads use chunked container v24. When embedded raster source bytes
+exist, schema v24 writes encoded sources and equal RGBA8/RGBA16 samples once in shared tables;
+image records reference them by 1-based indices (0 means no optional source/U16 sample). Container
+v25 carries that schema. Reader accepts v2–v25 and checks magic/version/checksums,
+schema and semantics before publication. V2–v23 headers are 36 bytes: PKDR magic, u32 version,
+u32 flags=0, u64 epoch, u64 revision, u32 payload length, u32 CRC32. V24/v25 retain that prefix,
+use flags=1 and the u32 payload-length sentinel 0xffffffff, then add uncompressed-payload-size:u64
+and chunk-count:u64.
+Each 1 MiB chunk has a 16-byte record (raw size:u32, stored size:u32, codec:u8, reserved[3],
+raw CRC32:u32) followed by STORE or zlib-wrapped DEFLATE bytes. DEFLATE uses the pinned zlib-ng
+compatibility library at Z_BEST_SPEED and is selected only when smaller than STORE.
 
----
+There is no fixed 256 MiB whole-container cap. Reader admission is bounded by half of currently
+available physical memory; v24/v25 use 64-bit aggregate payload/chunk sizes while legacy field counts
+and individual blob lengths retain their u32 wire-width bounds. Object and element caps are now
+u32 wire-width rather than 100,000/1,000,000; string cap remains 16 MiB and field-specific quotas
+remain in their codecs. Atomic save uses `serialize_to` and stages at most one 1 MiB raw chunk before
+writing chunk records to its temporary file. The reader still keeps compressed input and decoded
+payload in memory; its admission check is a resource quota, not streaming file IO.
 
-## 1. Legacy Native File Format (`.pikdraw`, C5 1.0.0)
+| Version milestones | Persisted feature |
+| --- | --- |
+| v3–v5 | Authoring paths, appearance, gradient paints |
+| v6–v10 | Pages, text layout, raster assets, page color/DPI, PowerClip |
+| v11–v18 | PDF source/preview, display units, page settings, ICC resources and paint bindings, path feature specs |
+| v19–v23 | Raster source descriptors/edit graph, import fidelity, text properties, layer properties, artboards |
+| v24 payload / v25 container | Embedded raster source and equal RGBA8/RGBA16 decoded sample deduplication |
 
-The v1 container below is retained as a historical specification only. It is not the layout of the
-current development v3 codec.
+RGBA pixel records can coexist with encoded original source bytes. Atomic save streams payload
+encoding into an exclusive temporary file and patches payload length, chunk count and CRC after the
+last record; `NativeFormat::serialize()` remains the vector-returning API for callers that request a
+complete buffer. Loading still reads the complete file and decodes chunks into a contiguous payload
+before document parsing. A disk-backed descriptor is not by itself a portable embedded resource.
+Raster source and equal decoded sample deduplication are implemented in the v24 payload tables; dedup
+for other asset types, a seekable index, streaming load and lazy asset access remain follow-up work; see
+[PR format](../docs/architecture/native-pr-format.md).
 
-The native file format is a structured binary/compressed container:
-- **Magic Header (8 bytes)**: `0x50 0x4B 0x44 0x52 0x01 0x00 0x00 0x00` (`PKDR\x01\x00\x00\x00`).
-- **Container Version**:
-  - `format_version: uint32_t` (current: 1).
-  - `min_compat_version: uint32_t` (earliest version required to parse the file).
-- **Metadata Section**:
-  - `document_epoch: uint64_t`
-  - `saved_revision: uint64_t`
-  - `created_timestamp: int64_t`
-  - `modified_timestamp: int64_t`
-  - `app_version: string`
-- **Data Payload**: Compressed binary or JSON payload containing the persistent document tree.
-- **Integrity Checksum (Trailing 4 or 32 bytes)**:
-  - CRC32-IEEE or SHA-256 covering all preceding bytes. Files with mismatched checksums are rejected immediately upon open.
+## 2. Save durability and snapshot identity
 
----
+SaveRecoveryService owns atomic_save and low-level load. Desktop/MCP accept .pr design filenames;
+recovery uses internal .pkdr checkpoints. A save takes one immutable snapshot R, writes a temporary
+file in the destination directory, flushes and replaces the destination only on success.
+On failure preserve the old file and remove owned temporary output. Save R must not mark edits R+1
+clean. Do not promise immunity to power/device failure from the API name: crash/flush/disk-full
+fault injection and reopen are required evidence for each supported filesystem/environment.
 
-## 2. Atomic Save Durability Policy
+## 3. Recovery and resource lifecycle
 
-To ensure zero file corruption in the event of unexpected application crash, power outage, or OS kernel freeze:
-1. **Isolated Temp File**: Save data is written to a new temporary file located in the target directory:
-   `<destination_path>.pikdraw.tmp.<PID>.<Epoch>`
-2. **Buffer Flush (`FlushFileBuffers`)**:
-   Prior to closing the temporary file handle, the process issues `FlushFileBuffers` on Windows (or `fsync` on POSIX) to force all pending write caches to non-volatile physical storage.
-3. **Atomic Replace (`ReplaceFileW`)**:
-   The temporary file is atomically swapped into the destination path using Win32 `ReplaceFileW(target, temp, nullptr, REPLACEFILE_IGNORE_MERGE_ERRORS, nullptr, nullptr)`.
-4. **Zero Residual Leftovers**:
-   If any error occurs during write or flush, the temporary file is deleted, and the existing target file remains completely untouched.
+Desktop recovery directory is %LOCALAPPDATA%/PikDraw/Recovery/<session-guid>.
+Checkpoint names/manifests are defined by save_recovery.cpp, not user design suffixes.
+Keep the previous valid checkpoint until the replacement is durable. Normal close and explicit
+discard follow the recovery service policy. Autosave checkpoint serialization runs through bounded
+background jobs over immutable snapshots. Startup scan, selected recovery and UI .pr Open run in
+background jobs but remain full-buffer. Open cancellation is checked during 1 MiB reads and at most
+64 KiB CRC/parse/inflate windows; selected recovery validates its captured identity before tab
+creation. Cancellation latency and snapshot construction are not measured/cooperative. Save is not
+cancelled after the durability request. A startup recovery selection modal exists in the native shell.
+See [implementation plan](../docs/roadmap/performance-storage-automation.md).
 
----
+## 4. Historical schema details: native v4/v5
 
-## 3. Crash Recovery and Autosave Index
+These sections document the older wire layouts for migration fixtures only. They do not select
+the current writer version or override the current source/limits above.
 
-- **Autosave Cadence**:
-  The application saves snapshots of dirty documents at periodic intervals (default: 3 minutes) to an isolated recovery directory:
-  `%APPDATA%/PikDraw/Recovery/<document_uuid>/autosave.pikdraw`
-- **Recovery Index**:
-  An `index.json` maintains the mapping of original file paths to their recovery files, last known revision, and timestamp.
-- **Clean Shutdown Cleanup**:
-  Upon intentional document close or clean application shutdown, recovery files are cleanly removed.
-- **Startup Recovery Prompt**:
-  Upon startup, if orphaned recovery files exist, the user is prompted to restore or discard the autosaved sessions.
+### 4.1 Historical v4 audit
 
-## 4. Drawing-authoring schema and migration
+The table below records the historical v4 implementation for migration fixtures. Current writes and reader acceptance are defined in sections 1–3 above.
 
-### 4.1 Current development v4 audit
-
-The implementation audit below records source behavior only; it does not certify conformance to this proposed contract.
-
-| Item | Current source behavior |
+| Item | Historical v4 behavior |
 | --- | --- |
 | Container header | 36 bytes: four-byte PKDR magic, uint32 format version, uint32 feature flags (currently zero), uint64 document epoch, uint64 revision, uint32 payload length, and uint32 CRC32. The checksum covers header plus payload with its own four bytes treated as zero. |
-| Accepted/written versions | The writer emits v4. The reader accepts legacy v2, authoring-source v3, and current v4; it rejects v1 and unknown versions. |
+| Accepted/written versions | At that milestone the writer emitted v4 and reader accepted v2/v3/v4. Current writes use schema v23 or v24, containers v23–v25, and reader accepts v2–v25. |
 | Compatibility/schema values | In v4, minimum-compatible version 4, authoring-path schema 1.0, and appearance schema 1.0 are payload fields after the length-prefixed UTF-8 document ID; they are not header fields. |
 | Bounds observed in source | 256 MiB file size, 100,000 objects, 1,000,000 path elements, and 10,000 layers, with additional field-specific string/image limits. |
 | v2 path migration | The reader converts legacy path geometry to editable source, assigns stable element IDs, and rejects a path it cannot convert. The v3 writer also assigns stable source IDs when a path lacks authoring source. |
 | Appearance | V2/v3 do not store opacity, blend mode, or the effect graph. Their decoded Path/Text objects receive default appearance in memory; v4 stores those values in framed records. |
 
-The native v1 format in section 1 remains historical. V2-to-editable-path migration, v3 authoring-source decoding, and v4 appearance persistence are distinct steps and must be reported separately.
+Native v1 is rejected; this appendix does not select the current writer version. V2-to-editable-path migration, v3 authoring-source decoding, and v4 appearance persistence are distinct steps and must be reported separately.
 
 ### 4.2 Implemented native v4 appearance schema 1.0
 
@@ -120,7 +137,7 @@ The embedded ColorValue uses the current native color tags and field order: colo
 
 Opacity and shadow opacity are finite and in [0,1]. Sigma values are finite and nonnegative. Offsets are finite. Blend and effect IDs are case-sensitive stable identifiers, never localized labels or numeric enum ordinals. The six schema 1.0 object blend IDs are normal, multiply, screen, overlay, darken, and lighten. Drop Shadow schema 1.0 implies Normal shadow compositing and zero spread; loading it supplies `normal` without changing or rewriting the source record. Schema 1.1 stores its own shadow blend ID. Gaussian Blur supports schema 1.0 only.
 
-There are at most 256 nodes per object and 100,000 nodes per document. An individual appearance record cannot exceed the remaining payload or 256 MiB; an individual node record and parameter payload cannot exceed its containing record or remaining payload. Type IDs are at most 128 UTF-8 bytes, blend IDs at most 32 bytes, and ColorValue strings retain the current 16 MiB cap. Existing file/object/path-element/layer limits continue to apply. All aggregate additions and count-to-byte calculations use checked arithmetic and are validated before allocation.
+There are at most 256 nodes per object and 100,000 nodes per document. An individual appearance record cannot exceed the remaining payload; an individual node record and parameter payload cannot exceed its containing record or remaining payload. Type IDs are at most 128 UTF-8 bytes, blend IDs at most 32 bytes, and ColorValue strings retain the 16 MiB cap. Container reads also obey the adaptive memory quota; format counts retain their u32 representation bounds. All aggregate additions and count-to-byte calculations use checked arithmetic and are validated before allocation.
 
 Appearance schema 1.0 contains no opaque vendor payload and no optional effect node: every stored node is semantically required. Unknown type IDs, unsupported node schema versions, unknown required schema fields, duplicate/zero IDs, invalid UTF-8, invalid ranges, non-finite values, impossible lengths/counts, and unconsumed bytes inside a record reject the whole file before publishing a snapshot. A future non-semantic optional extension may be skipped only if explicitly framed as optional and retained byte-for-byte through load/save; otherwise an unknown extension rejects or opens through a separately implemented read-only/reference workflow and cannot be silently discarded by editable save.
 
@@ -131,7 +148,7 @@ The logical schema and parser/writer field order above are implemented. Exact of
 
 - Opening v3 creates default appearance for each PathObject and TextObject: object/fill/stroke opacity 1, blend Normal, and an empty effect list. Source color alpha remains in ColorValue; the migration does not rewrite source channels or metadata.
 - Opening v2 first uses the existing v2-to-editable-path conversion and stable-ID assignment. If every path is representable, it then supplies the same default appearance. If a path cannot be migrated losslessly, reject the document with its object-specific diagnostic and leave the active document unchanged.
-- Opening does not rewrite the source file. On an explicit successful save, a document loaded from v2 or v3 is written as v4. The migration preserves document/object/path IDs where they already exist, units, transforms, source colors/profiles, font identity, fill/winding, layer order, visibility, and locks. A newly allocated path-element ID is persisted once in v4.
+- Opening does not rewrite the source file. The historical v4 writer saved migrated v2/v3 documents as v4; the current writer saves them as schema v23, or v24 when an embedded raster source table is present. The migration preserves document/object/path IDs where they already exist, units, transforms, source colors/profiles, font identity, fill/winding, layer order, visibility, and locks. A newly allocated path-element ID is persisted once in v4.
 - A v4 file declares minimum-compatible version 4. A v2/v3 reader rejects v4 before document publication. The v4 reader rejects any unknown required schema or feature; it does not reinterpret an unknown appearance as defaults.
 - There is no v4-to-v3 writer. Saving an appearance-bearing document to v2/v3 is forbidden because those formats cannot represent the graph. A future explicit conversion, if ever offered for a document with only default appearance, requires a separate loss report and acceptance gate.
 - v1 lossy files remain rejected under ADR 0005. Failed parse, migration, validation, quota admission, or checksum verification publishes no partial snapshot and leaves the prior file/document untouched.
@@ -181,6 +198,23 @@ Validation and bounds:
 ### 4.6 v2/v3/v4 to v5 migration and compatibility
 
 - Opening v2, v3, or v4 documents loads all paths with `fill_gradient = nullptr`. Their solid `fill` and `has_fill` are preserved.
-- When saved explicitly, documents are written as v4 (if no gradient is present) or v5 (if any gradient paint is present, or by default for all new saves under the v5 writer).
+- The historical v5 writer emitted v5. Current writes use schema v23 or v24; schema v23 uses the v23 container below 1 MiB or v24 above it, while schema v24 uses chunk container v25.
 - Legacy readers (v4 or older) reject v5 files with an unsupported version diagnostic rather than attempting lossy fallback.
+
+## 5. Current source and acceptance boundary
+
+- [Container versions/header](../core/document/include/pikdraw/document/storage/native_format.hpp), [codec quotas](../core/document/src/storage/byte_codec.hpp).
+- [Native format implementation](../core/document/src/storage/native_format.cpp), [save/recovery](../core/document/src/storage/save_recovery.cpp).
+- Regression locations: [storage](../core/document/tests/storage/test_storage.cpp), [fidelity](../core/document/tests/storage/test_storage_fidelity.cpp), [appearance migration](../core/document/tests/storage/test_storage_appearance_migration.cpp).
+
+PKDR v24/v25 compression, chunked atomic-save serialization, and the >256 MiB atomic save/open regression are implemented. Raster
+source and equal RGBA8/RGBA16 sample deduplication are covered by separately allocated source
+round-trip and shared-buffer assertions.
+Atomic save encodes through a bounded 1 MiB payload buffer and writes compressed chunks directly to
+the temporary file; `NativeFormat::serialize()` remains a vector-returning API. Load still reads the full
+container and materializes the decoded payload before parsing. Cancellation polling through reads, CRC,
+parse, DEFLATE and chunk CRC has deterministic storage coverage; actual cancel latency, save/open peak
+memory, progress, large-design UI latency, lazy asset loading, and raster dedup performance still need
+measurement. Import memory admission and native storage admission remain separate quotas. Changing a
+filename suffix alone does not reduce file size or allocations.
 

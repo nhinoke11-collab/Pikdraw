@@ -1,13 +1,21 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "../performance/canvas_trace.hpp"
 #include "../utf8_path.hpp"
+#include "native_window_length_input.hpp"
 
 #include <algorithm>
-#include <iomanip>
 #include <sstream>
 
 namespace pikdraw::desktop {
 
 #ifdef _WIN32
+struct RecoveryScanJobSession {
+    std::vector<document::RecoveryInfo> candidates;
+    bool truncated{false};
+    std::atomic_bool cancel_requested{false};
+    std::atomic_bool completed{false};
+};
+
 namespace {
 struct RecoveryModalLayout {
     int x{};
@@ -56,28 +64,112 @@ std::string NativeWindow::recovery_root_path() const {
     return {utf8.begin(), utf8.end()};
 }
 
-void NativeWindow::scan_recovery_checkpoints(bool show_when_found) {
+void NativeWindow::scan_recovery_checkpoints(bool show_when_found,
+                                             bool force_modal,
+                                             bool only_if_document_idle) {
+    if (recovery_scan_pending_) {
+        recovery_scan_show_when_found_ = recovery_scan_show_when_found_ || show_when_found;
+        recovery_scan_force_modal_ = recovery_scan_force_modal_ || force_modal;
+        recovery_scan_only_if_idle_ = recovery_scan_only_if_idle_ && only_if_document_idle;
+        return;
+    }
+    if (recovery_scan_worker_.joinable()) recovery_scan_worker_.join();
+    record_performance_event(CanvasTraceKind::RecoveryScanBegin);
+
     const auto recovery_root = recovery_root_path();
-    recovery_candidates_ = recovery_root.empty()
-        ? std::vector<document::RecoveryInfo>{}
-        : document::SaveRecoveryService::list_recovery_checkpoints(
-              recovery_root, &recovery_candidates_truncated_);
-    if (recovery_root.empty()) recovery_candidates_truncated_ = false;
+    auto job = std::make_shared<RecoveryScanJobSession>();
+    recovery_scan_job_ = job;
+    recovery_scan_show_when_found_ = show_when_found;
+    recovery_scan_force_modal_ = force_modal;
+    recovery_scan_only_if_idle_ = only_if_document_idle;
+    recovery_scan_user_activity_ = false;
+    recovery_scan_idle_tab_count_ = tabs_.size();
+    recovery_scan_idle_document_id_ = root().document().id();
+    recovery_scan_idle_epoch_ = root().document().epoch();
+    recovery_scan_idle_revision_ = root().document().revision();
+    recovery_scan_idle_view_generation_ = view_generation_;
+    recovery_scan_pending_ = true;
+    const auto notify_window = hwnd_;
+    try {
+        recovery_scan_worker_ = std::thread([job, recovery_root, notify_window] {
+            (void)SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+            try {
+                if (!recovery_root.empty()) {
+                    job->candidates = document::SaveRecoveryService::list_recovery_checkpoints(
+                        recovery_root, &job->truncated, &job->cancel_requested);
+                }
+            } catch (...) {
+                job->candidates.clear();
+                job->truncated = false;
+            }
+            job->completed.store(true, std::memory_order_release);
+            if (notify_window)
+                (void)PostMessageW(notify_window, kRecoveryScanWorkerMessage, 0, 0);
+        });
+    } catch (...) {
+        recovery_scan_job_.reset();
+        recovery_scan_pending_ = false;
+        recovery_candidates_.clear();
+        recovery_candidates_truncated_ = false;
+        show_recovery_modal_ = force_modal;
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Không thể chạy quét phục hồi nền"
+            : "Could not start the background recovery scan";
+        record_performance_event(CanvasTraceKind::RecoveryScanEnd);
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+}
+
+void NativeWindow::handle_recovery_scan_worker_message() {
+    const auto job = recovery_scan_job_;
+    if (!job || !job->completed.load(std::memory_order_acquire)) return;
+    if (recovery_scan_worker_.joinable()) recovery_scan_worker_.join();
+    recovery_candidates_ = std::move(job->candidates);
+    recovery_candidates_truncated_ = job->truncated;
     recovery_selected_index_ = 0;
     recovery_first_visible_ = 0;
     recovery_focus_index_ = 0;
-    show_recovery_modal_ = show_when_found && !recovery_candidates_.empty();
-    if (show_recovery_modal_) {
+    recovery_scan_pending_ = false;
+    recovery_scan_job_.reset();
+
+    const auto& doc = root().document();
+    const bool document_idle = !recovery_scan_user_activity_ &&
+        tabs_.size() == recovery_scan_idle_tab_count_ &&
+        doc.id() == recovery_scan_idle_document_id_ &&
+        doc.epoch() == recovery_scan_idle_epoch_ &&
+        doc.revision() == recovery_scan_idle_revision_ &&
+        view_generation_ == recovery_scan_idle_view_generation_;
+    const bool suppress_startup_modal = recovery_scan_only_if_idle_ && !document_idle;
+    show_recovery_modal_ = !suppress_startup_modal &&
+        (recovery_scan_force_modal_ ||
+         (recovery_scan_show_when_found_ && !recovery_candidates_.empty()));
+    if (show_recovery_modal_ && !recovery_candidates_.empty()) {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Tìm thấy bản tự lưu từ phiên trước · chọn để phục hồi hoặc để sau"
             : "Autosaved documents found · recover one or choose Later";
-    } else if (recovery_candidates_.empty() && show_when_found) {
+    } else if (show_recovery_modal_) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Không tìm thấy bản tự lưu hợp lệ" : "No valid recovery checkpoints found";
+    } else if (suppress_startup_modal && !recovery_candidates_.empty()) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Có bản tự lưu; mở Tệp > Phục hồi bản tự lưu để xem"
+            : "Recovery checkpoints are available under File > Recover Autosave";
+    } else if (recovery_candidates_.empty() && recovery_scan_show_when_found_) {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Không tìm thấy bản tự lưu hợp lệ" : "No valid recovery checkpoints found";
     }
-#ifdef _WIN32
+    record_performance_event(CanvasTraceKind::RecoveryScanEnd);
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
-#endif
+}
+
+void NativeWindow::join_recovery_scan_worker() noexcept {
+    if (recovery_scan_job_)
+        recovery_scan_job_->cancel_requested.store(true, std::memory_order_release);
+    if (recovery_scan_worker_.joinable()) recovery_scan_worker_.join();
+    if (recovery_scan_pending_)
+        record_performance_event(CanvasTraceKind::RecoveryScanEnd);
+    recovery_scan_job_.reset();
+    recovery_scan_pending_ = false;
 }
 
 void NativeWindow::close_recovery_modal() noexcept {
@@ -96,51 +188,7 @@ void NativeWindow::recover_selected_checkpoint() {
             : "This checkpoint is already open in this session";
         return;
     }
-    const auto snapshot = document::SaveRecoveryService::load(candidate.path);
-    if (!snapshot || snapshot->document_id() != candidate.document_id ||
-        snapshot->revision() != candidate.revision ||
-        snapshot->epoch() != candidate.epoch) {
-        status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Bản tự lưu không còn hợp lệ; hãy quét lại danh sách"
-            : "This checkpoint is no longer valid; scan the list again";
-        scan_recovery_checkpoints(false);
-        show_recovery_modal_ = true;
-        return;
-    }
-
-    try {
-        std::ostringstream title;
-        title << (language_ == UILanguage::Vietnamese ? "Phục hồi " : "Recovered ")
-              << candidate.timestamp;
-        create_new_tab(title.str(), candidate.page_width_mm, candidate.page_height_mm);
-        if (!root().document().reset_from_snapshot(snapshot)) {
-            close_tab(active_tab_index_);
-            status_msg_ = language_ == UILanguage::Vietnamese
-                ? "Không thể mở bản tự lưu" : "Could not open the recovery checkpoint";
-            return;
-        }
-        root().document().mark_recovered_unsaved();
-        root().vector_controller().selection().clear();
-        const auto parent = detail::path_from_utf8(candidate.path).parent_path().u8string();
-        active_tab().recovery_directory.assign(parent.begin(), parent.end());
-        active_tab().recovery_epoch = root().document().epoch();
-        active_tab().recovery_revision = root().document().revision();
-        active_tab().recovery_written = true;
-        active_tab().file_path.clear();
-        document_path_.clear();
-        restored_recovery_paths_.insert(candidate.path);
-        close_recovery_modal();
-        fit_page_to_canvas();
-        status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Đã phục hồi vào tab chưa lưu · dùng Lưu thành để chọn tệp chính thức"
-            : "Recovered to an unsaved tab · use Save As to choose its file";
-    } catch (...) {
-        status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Không thể tạo tab phục hồi" : "Could not create a recovery tab";
-    }
-#ifdef _WIN32
-    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
-#endif
+    start_recovery_load(candidate);
 }
 
 void NativeWindow::discard_selected_checkpoint() {
@@ -346,9 +394,10 @@ void NativeWindow::paint_recovery_modal(HDC dc, int width, int height) {
         DrawTextW(dc, id.c_str(), -1, &name, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         std::wostringstream details;
         details << utf8_to_wide(candidate.timestamp) << L" · "
-                << std::fixed << std::setprecision(2)
-                << candidate.page_width_mm << L" × " << candidate.page_height_mm
-                << L" mm · " << candidate.object_count << L" objects · r"
+                << format_length_pair_mm(candidate.page_width_mm,
+                                         candidate.page_height_mm,
+                                         display_length_unit_, 4)
+                << L" · " << candidate.object_count << L" objects · r"
                 << candidate.revision;
         SelectObject(dc, normal_font);
         SetTextColor(dc, muted);

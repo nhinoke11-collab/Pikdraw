@@ -67,20 +67,28 @@ bool TransferV2(
     uint8_t* bytes,
     size_t count,
     bool write,
-    std::chrono::steady_clock::time_point deadline,
-    std::stop_token cancellation = {}) noexcept {
+    std::chrono::steady_clock::time_point& deadline,
+    std::stop_token cancellation,
+    SystemMemoryPressureWaiter& memory_waiter) noexcept {
     ScopedHandle event(CreateEventW(nullptr, TRUE, FALSE, nullptr));
     if (!event.IsValid()) return false;
     while (count > 0) {
+        if (cancellation.stop_requested() ||
+            memory_waiter.WaitForHeadroom(1, cancellation, &deadline) !=
+                SystemMemoryWaitResult::Ready)
+            return false;
         const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
             deadline - std::chrono::steady_clock::now());
-        if (remaining.count() <= 0 || cancellation.stop_requested() ||
-            IsSystemMemoryPressureLimitReached()) return false;
+        if (remaining.count() <= 0) return false;
         ResetEvent(event.Get());
         OVERLAPPED operation{};
         operation.hEvent = event.Get();
         DWORD transferred = 0;
-        const DWORD chunk = static_cast<DWORD>(std::min<size_t>(count, 65536));
+        // A V2 payload cannot exceed IPC_V2_MAX_FRAME_BYTES. Let one overlapped
+        // operation drain as much of that frame as the pipe can deliver instead
+        // of rearming I/O and rechecking RAM for every 64 KiB slice.
+        const DWORD chunk = static_cast<DWORD>(
+            std::min<size_t>(count, IPC_V2_MAX_FRAME_BYTES));
         const BOOL immediate = write
             ? WriteFile(pipe, bytes, chunk, &transferred, &operation)
             : ReadFile(pipe, bytes, chunk, &transferred, &operation);
@@ -93,7 +101,8 @@ bool TransferV2(
                     GetOverlappedResult(pipe, &operation, &transferred, TRUE);
                     return false;
                 }
-                if (IsSystemMemoryPressureLimitReached()) {
+                if (memory_waiter.WaitForHeadroom(1, cancellation, &deadline) !=
+                        SystemMemoryWaitResult::Ready) {
                     CancelIoEx(pipe, &operation);
                     GetOverlappedResult(pipe, &operation, &transferred, TRUE);
                     return false;
@@ -126,18 +135,20 @@ bool ReadV2Payload(
     HANDLE pipe,
     HANDLE process,
     const pikdraw::interop::IpcHeader& header,
-    std::chrono::steady_clock::time_point deadline,
+    std::chrono::steady_clock::time_point& deadline,
     const pikdraw::interop::V2FrameIdentity* expected_identity,
     std::vector<uint8_t>& payload,
     std::string_view& failure,
-    std::stop_token cancellation = {}) noexcept {
+    std::stop_token cancellation,
+    SystemMemoryPressureWaiter& memory_waiter) noexcept {
     using namespace pikdraw::interop;
     if (header.payload_bytes < IPC_V2_IDENTITY_PREFIX_BYTES) {
         failure = "v2 frame omitted identity prefix";
         return false;
     }
     std::array<uint8_t, IPC_V2_IDENTITY_PREFIX_BYTES> prefix_bytes{};
-    if (!TransferV2(pipe, process, prefix_bytes.data(), prefix_bytes.size(), false, deadline, cancellation)) {
+    if (!TransferV2(pipe, process, prefix_bytes.data(), prefix_bytes.size(), false, deadline,
+                    cancellation, memory_waiter)) {
         failure = "v2 identity prefix read failed/timeout";
         return false;
     }
@@ -149,6 +160,12 @@ bool ReadV2Payload(
         failure = "v2 identity prefix mismatch";
         return false;
     }
+    if (memory_waiter.WaitForHeadroom(header.payload_bytes, cancellation, &deadline) !=
+            SystemMemoryWaitResult::Ready) {
+        failure = cancellation.stop_requested() ? "v2 import cancelled"
+            : "system RAM pressure wait timed out after 5 minutes";
+        return false;
+    }
     try {
         payload.resize(header.payload_bytes);
     } catch (...) {
@@ -158,7 +175,8 @@ bool ReadV2Payload(
     std::copy(prefix_bytes.begin(), prefix_bytes.end(), payload.begin());
     const size_t remainder = payload.size() - prefix_bytes.size();
     if (remainder > 0 && !TransferV2(
-            pipe, process, payload.data() + prefix_bytes.size(), remainder, false, deadline, cancellation)) {
+            pipe, process, payload.data() + prefix_bytes.size(), remainder, false, deadline,
+            cancellation, memory_waiter)) {
         failure = "v2 payload read failed/timeout";
         return false;
     }
@@ -246,11 +264,9 @@ bool V2ProposalStreamValidator::Accept(const pikdraw::interop::IpcV2Frame& frame
     if (!ready_) return false;
     if (complete_) return reject("v2 frame followed terminal import end");
     try {
-        const auto packet = SerializeV2Frame(
-            static_cast<MessageType>(frame.header.message_type), frame.header.sequence_id, frame.payload);
         const auto type = static_cast<MessageType>(frame.header.message_type);
         if (type == MessageType::V2ProposalChunk) {
-            const auto chunk = DeserializeV2ProposalChunk(packet);
+            const auto chunk = DeserializeV2ProposalChunkPayload(frame.payload);
             if (!chunk) return reject("invalid v2 proposal record framing or CRC32");
             if (!chunk->job.IsMatching(expected_.job)) return reject("v2 proposal job/source identity mismatch");
             if (chunk->chunk_ordinal != chunk_count_ || chunk->first_record_ordinal != record_count_) {
@@ -261,6 +277,32 @@ bool V2ProposalStreamValidator::Accept(const pikdraw::interop::IpcV2Frame& frame
                 return reject("v2 proposal record or canonical byte quota exceeded");
             }
             if (semantic_ && !semantic_->ConsumeChunk(chunk->canonical_record_bytes, chunk->record_count)) {
+                switch (static_cast<ImportRecordType>(semantic_->failed_record_type)) {
+                case ImportRecordType::Page:
+                    return reject("invalid import Page order, hierarchy, or reference");
+                case ImportRecordType::Layer:
+                    return reject("invalid import Layer order, hierarchy, or reference");
+                case ImportRecordType::Group:
+                    return reject("invalid import Group order, hierarchy, or reference");
+                case ImportRecordType::Path:
+                    return reject("invalid import Path order, hierarchy, or reference");
+                case ImportRecordType::Text:
+                    return reject("invalid import Text order, hierarchy, or reference");
+                case ImportRecordType::RasterImage:
+                case ImportRecordType::RasterImage64:
+                    return reject("invalid import RasterImage order, hierarchy, or reference");
+                case ImportRecordType::RasterImageChunk:
+                    return reject("invalid import RasterImageChunk order, hierarchy, or reference");
+                case ImportRecordType::RasterSourceChunk:
+                case ImportRecordType::RasterSourceChunk64:
+                    if (!semantic_->failed_record_detail.empty())
+                        return reject(semantic_->failed_record_detail);
+                    return reject("invalid import RasterSourceChunk order, hierarchy, or reference");
+                case ImportRecordType::FidelityIssue:
+                    return reject("invalid import fidelity issue reference or order");
+                case ImportRecordType::FidelityReport:
+                    return reject("invalid import fidelity report or incomplete hierarchy");
+                }
                 return reject("invalid import record order, hierarchy, or reference");
             }
             if (!digest_->sha.Update(chunk->canonical_record_bytes)) return reject("v2 canonical SHA-256 update failed");
@@ -271,6 +313,7 @@ bool V2ProposalStreamValidator::Accept(const pikdraw::interop::IpcV2Frame& frame
         }
         if (type != MessageType::V2ImportEnd) return reject("unexpected v2 proposal message type");
 
+        const auto packet = SerializeV2Frame(type, frame.header.sequence_id, frame.payload);
         const auto end = DeserializeV2ImportEnd(packet);
         if (!end) return reject("malformed v2 import end");
         if (!end->job.IsMatching(expected_.job)) return reject("v2 import end job/source identity mismatch");
@@ -298,7 +341,9 @@ bool NegotiateV2WorkerProcess(
     bool has_source_capability,
     std::chrono::milliseconds timeout,
     uint32_t& accepted_features,
-    std::string_view& failure) noexcept {
+    std::string_view& failure,
+    std::stop_token cancellation,
+    SystemMemoryPressureWaiter& memory_waiter) noexcept {
     using namespace pikdraw::interop;
     failure = "none";
     accepted_features = 0;
@@ -315,13 +360,18 @@ bool NegotiateV2WorkerProcess(
             failure = "invalid v2 negotiation features";
             return false;
         }
-        const auto deadline = std::chrono::steady_clock::now() + timeout;
-        if (!TransferV2(stdin_pipe, process, const_cast<uint8_t*>(request.data()), request.size(), true, deadline)) {
-            failure = "v2 negotiation write failed/timeout";
+        auto deadline = std::chrono::steady_clock::now() + timeout;
+        if (!TransferV2(stdin_pipe, process, const_cast<uint8_t*>(request.data()), request.size(), true,
+                        deadline, cancellation, memory_waiter)) {
+            failure = cancellation.stop_requested() ? "v2 import cancelled"
+                : memory_waiter.remaining_wait().count() == 0
+                    ? "system RAM pressure wait timed out after 5 minutes"
+                    : "v2 negotiation write failed/timeout";
             return false;
         }
         IpcHeader header{};
-        if (!TransferV2(stdout_pipe, process, reinterpret_cast<uint8_t*>(&header), sizeof(header), false, deadline) ||
+        if (!TransferV2(stdout_pipe, process, reinterpret_cast<uint8_t*>(&header), sizeof(header), false,
+                        deadline, cancellation, memory_waiter) ||
             !ValidateV2FrameHeader(header) ||
             header.message_type != static_cast<uint16_t>(MessageType::V2NegotiateResponse) ||
             header.sequence_id != 0 || header.payload_bytes > IPC_V2_IDENTITY_PREFIX_BYTES + 16) {
@@ -329,7 +379,8 @@ bool NegotiateV2WorkerProcess(
             return false;
         }
         std::vector<uint8_t> payload;
-        if (!ReadV2Payload(stdout_pipe, process, header, deadline, nullptr, payload, failure)) return false;
+        if (!ReadV2Payload(stdout_pipe, process, header, deadline, nullptr, payload, failure,
+                           cancellation, memory_waiter)) return false;
         std::vector<uint8_t> packet(sizeof(header));
         std::memcpy(packet.data(), &header, sizeof(header));
         packet.insert(packet.end(), payload.begin(), payload.end());
@@ -357,7 +408,8 @@ bool TransactV2ProposalStreamProcess(
     const pikdraw::interop::V2ProposalStreamLimits& limits,
     const std::function<bool(const pikdraw::interop::IpcV2Frame&)>& consumer,
     std::string_view& failure,
-    std::stop_token cancellation) noexcept {
+    std::stop_token cancellation,
+    SystemMemoryPressureWaiter& memory_waiter) noexcept {
     using namespace pikdraw::interop;
     failure = "none";
     if (stdin_pipe == INVALID_HANDLE_VALUE || stdout_pipe == INVALID_HANDLE_VALUE ||
@@ -388,11 +440,12 @@ bool TransactV2ProposalStreamProcess(
             return false;
         }
 
-        const auto deadline = std::chrono::steady_clock::now() + timeout;
-        if (!TransferV2(stdin_pipe, process, const_cast<uint8_t*>(request_bytes.data()), request_bytes.size(), true, deadline, cancellation)) {
+        auto deadline = std::chrono::steady_clock::now() + timeout;
+        if (!TransferV2(stdin_pipe, process, const_cast<uint8_t*>(request_bytes.data()), request_bytes.size(), true,
+                        deadline, cancellation, memory_waiter)) {
             failure = cancellation.stop_requested() ? "v2 import cancelled" :
-                IsSystemMemoryPressureLimitReached()
-                    ? "system RAM reached the 90% import pressure limit"
+                memory_waiter.remaining_wait().count() == 0
+                    ? "system RAM pressure wait timed out after 5 minutes"
                     : "v2 import begin write failed/timeout";
             return false;
         }
@@ -404,24 +457,27 @@ bool TransactV2ProposalStreamProcess(
         }
 
         uint64_t received_bytes = 0;
+        uint64_t memory_wait_frames = 0;
         uint32_t expected_sequence = request_header.sequence_id;
-        for (uint32_t index = 0; index < limits.max_response_frames; ++index) {
+        uint32_t response_frames = 0;
+        while (response_frames < limits.max_response_frames) {
             if (cancellation.stop_requested()) {
                 failure = "v2 import cancelled";
                 return false;
             }
             IpcHeader header{};
-            if (!TransferV2(stdout_pipe, process, reinterpret_cast<uint8_t*>(&header), sizeof(header), false, deadline, cancellation)) {
+            if (!TransferV2(stdout_pipe, process, reinterpret_cast<uint8_t*>(&header), sizeof(header), false,
+                            deadline, cancellation, memory_waiter)) {
                 failure = cancellation.stop_requested() ? "v2 import cancelled" :
-                    IsSystemMemoryPressureLimitReached()
-                        ? "system RAM reached the 90% import pressure limit"
+                    memory_waiter.remaining_wait().count() == 0
+                        ? "system RAM pressure wait timed out after 5 minutes"
                         : "v2 response header failed/timeout";
                 return false;
             }
             const auto type = static_cast<MessageType>(header.message_type);
             if (!ValidateV2FrameHeader(header) || header.sequence_id != expected_sequence ||
                 (type != MessageType::V2ProposalChunk && type != MessageType::V2ImportEnd &&
-                 type != MessageType::V2ErrorResponse)) {
+                 type != MessageType::V2ErrorResponse && type != MessageType::V2MemoryWait)) {
                 failure = "invalid v2 response header/order";
                 return false;
             }
@@ -435,13 +491,39 @@ bool TransactV2ProposalStreamProcess(
             if (!ReadV2Payload(
                     stdout_pipe, process, header, deadline,
                     type == MessageType::V2ErrorResponse ? nullptr : &expected_identity,
-                    payload, failure, cancellation)) {
+                    payload, failure, cancellation, memory_waiter)) {
                 if (cancellation.stop_requested()) failure = "v2 import cancelled";
-                else if (IsSystemMemoryPressureLimitReached())
-                    failure = "system RAM reached the 90% import pressure limit";
+                else if (memory_waiter.remaining_wait().count() == 0)
+                    failure = "system RAM pressure wait timed out after 5 minutes";
                 return false;
             }
             received_bytes += frame_bytes;
+
+            if (type == MessageType::V2MemoryWait) {
+                if (payload.size() != IPC_V2_IDENTITY_PREFIX_BYTES + sizeof(uint64_t) ||
+                    ++memory_wait_frames > limits.max_records + limits.max_chunks + 1) {
+                    failure = "invalid or excessive worker RAM-wait notification";
+                    return false;
+                }
+                uint64_t required_bytes = 0;
+                for (size_t byte = 0; byte < sizeof(required_bytes); ++byte)
+                    required_bytes |= static_cast<uint64_t>(
+                        payload[IPC_V2_IDENTITY_PREFIX_BYTES + byte]) << (byte * 8);
+                if (required_bytes == 0 || required_bytes > SIZE_MAX) {
+                    failure = "worker RAM-wait notification has an invalid allocation size";
+                    return false;
+                }
+                const auto waited = memory_waiter.WaitForHeadroom(
+                    static_cast<size_t>(required_bytes), cancellation, &deadline);
+                if (waited != SystemMemoryWaitResult::Ready) {
+                    failure = waited == SystemMemoryWaitResult::Cancelled
+                        ? "v2 import cancelled"
+                        : "system RAM pressure wait timed out after 5 minutes";
+                    return false;
+                }
+                continue;
+            }
+            ++response_frames;
 
             if (type == MessageType::V2ErrorResponse) {
                 const auto error_packet = SerializeV2Frame(type, header.sequence_id, payload);
@@ -453,14 +535,30 @@ bool TransactV2ProposalStreamProcess(
                 return false;
             }
             IpcV2Frame frame{header, std::move(payload)};
+            const auto semantic_headroom = memory_waiter.WaitForHeadroom(
+                frame.payload.size(), cancellation, &deadline);
+            if (semantic_headroom != SystemMemoryWaitResult::Ready) {
+                failure = semantic_headroom == SystemMemoryWaitResult::Cancelled
+                    ? "v2 import cancelled"
+                    : "system RAM pressure wait timed out after 5 minutes";
+                return false;
+            }
             if (!validator.Accept(frame)) {
                 failure = validator.Failure();
                 return false;
             }
+            if (consumer) {
+                const auto consumer_headroom = memory_waiter.WaitForHeadroom(
+                    frame.payload.size(), cancellation, &deadline);
+                if (consumer_headroom != SystemMemoryWaitResult::Ready) {
+                    failure = consumer_headroom == SystemMemoryWaitResult::Cancelled
+                        ? "v2 import cancelled"
+                        : "system RAM pressure wait timed out after 5 minutes";
+                    return false;
+                }
+            }
             if (consumer && !consumer(frame)) {
-                failure = IsSystemMemoryPressureLimitReached()
-                    ? "system RAM reached the 90% import pressure limit"
-                    : "v2 frame consumer rejected proposal";
+                failure = "v2 frame consumer rejected proposal";
                 return false;
             }
             if (type == MessageType::V2ImportEnd) return validator.IsComplete();

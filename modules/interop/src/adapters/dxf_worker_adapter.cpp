@@ -42,7 +42,7 @@ bool BuildDxfImportRecords(std::span<const uint8_t> source,
     }
     const std::string_view input(reinterpret_cast<const char *>(source.data()),
                                  source.size());
-    const auto imported = DxfImporter::import_from_string(input);
+    auto imported = DxfImporter::import_from_string(input);
     if (!imported.success) {
       diagnostic = imported.error_message.empty() ? "DXF subset rejected source"
                                                   : imported.error_message;
@@ -111,7 +111,7 @@ bool BuildDxfImportRecords(std::span<const uint8_t> source,
     }
     for (const auto id : order) {
       const size_t index = indices.at(id);
-      const auto &path =
+      auto &path =
           std::get<document::PathObject>(imported.objects[index]);
       ImportPathRecord record;
       record.local_id = local_ids.at(id);
@@ -153,6 +153,7 @@ bool BuildDxfImportRecords(std::span<const uint8_t> source,
         records.clear();
         return false;
       }
+      path.path = geometry::Path2D{};
     }
 
     for (const auto &issue : imported.report.issues()) {

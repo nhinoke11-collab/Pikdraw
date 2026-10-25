@@ -2,6 +2,8 @@
 #include "pikdraw/document/document.hpp"
 
 #include <algorithm>
+#include <charconv>
+#include <optional>
 #include <sstream>
 #include <unordered_map>
 
@@ -64,9 +66,15 @@ std::string serialize_dimension_spec(const DimensionObject& dim) {
     return ss.str();
 }
 
-std::optional<DimensionObject> deserialize_dimension_spec(std::string_view spec) {
-    if (spec.rfind("dimension:v1", 0) != 0) {
+std::optional<DimensionObject> deserialize_dimension_spec(
+    std::string_view spec, std::string* error_reason) {
+    if (error_reason) error_reason->clear();
+    const auto fail = [&](const char* reason) -> std::optional<DimensionObject> {
+        if (error_reason) *error_reason = reason;
         return std::nullopt;
+    };
+    if (spec != "dimension:v1" && !spec.starts_with("dimension:v1;")) {
+        return fail("Unsupported dimension specification version");
     }
     std::unordered_map<std::string, std::string> kv;
     size_t start = 0;
@@ -103,6 +111,31 @@ std::optional<DimensionObject> deserialize_dimension_spec(std::string_view spec)
         }
         return def;
     };
+    auto get_enum = [&](const std::string& k, int def, int max_value) -> std::optional<int> {
+        const auto it = kv.find(k);
+        if (it == kv.end()) return def;
+        int value = 0;
+        const auto* begin = it->second.data();
+        const auto* end = begin + it->second.size();
+        const auto parsed = std::from_chars(begin, end, value);
+        if (parsed.ec != std::errc{} || parsed.ptr != end || value < 0 || value > max_value)
+            return std::nullopt;
+        return value;
+    };
+
+    const auto primary_unit = get_enum("unit", static_cast<int>(UnitType::Millimeter),
+                                       static_cast<int>(UnitType::Pica));
+    const auto dual_unit = get_enum("dual_u", static_cast<int>(UnitType::Inch),
+                                    static_cast<int>(UnitType::Pica));
+    const auto angular_unit = get_enum("ang_u", static_cast<int>(AngularUnit::Degrees),
+                                       static_cast<int>(AngularUnit::Radians));
+    const auto arrow_type = get_enum("arr_t",
+        static_cast<int>(geometry::ArrowType::ClosedFilled),
+        static_cast<int>(geometry::ArrowType::Open));
+    if (!primary_unit) return fail("Invalid or unsupported primary dimension unit");
+    if (!dual_unit) return fail("Invalid or unsupported dual dimension unit");
+    if (!angular_unit) return fail("Invalid or unsupported angular dimension unit");
+    if (!arrow_type) return fail("Invalid or unsupported dimension arrow type");
 
     dim.kind = static_cast<DimensionKind>(get_int("kind", 0));
     dim.placement_point.x = get_double("px", 0.0);
@@ -131,7 +164,7 @@ std::optional<DimensionObject> deserialize_dimension_spec(std::string_view spec)
     dim.style.ext_width_mm = get_double("e_w", 0.25);
     dim.style.ext_offset_mm = get_double("e_off", 1.5);
     dim.style.ext_overhang_mm = get_double("e_ext", 2.0);
-    dim.style.arrow_type = static_cast<geometry::ArrowType>(get_int("arr_t", 0));
+    dim.style.arrow_type = static_cast<geometry::ArrowType>(*arrow_type);
     dim.style.arrow_size_mm = get_double("arr_sz", 2.5);
     dim.style.flip_first_arrow = (get_int("flip1", 0) != 0);
     dim.style.flip_second_arrow = (get_int("flip2", 0) != 0);
@@ -143,17 +176,17 @@ std::optional<DimensionObject> deserialize_dimension_spec(std::string_view spec)
     dim.style.basic_frame = (get_int("b_frame", 0) != 0);
     dim.style.fit_mode = static_cast<FitMode>(get_int("fit_m", 0));
     dim.style.baseline_spacing_mm = get_double("bl_sp", 8.0);
-    dim.style.units = static_cast<UnitType>(get_int("unit", 0));
+    dim.style.units = static_cast<UnitType>(*primary_unit);
     dim.style.decimals = get_int("dec", 2);
     dim.style.round_increment_mm = get_double("rnd", 0.0);
     dim.style.decimal_separator = static_cast<DecimalSeparator>(get_int("dec_sep", 0));
     dim.style.show_unit = (get_int("show_u", 1) != 0);
     dim.style.suppress_leading_zeros = (get_int("sup_l", 0) != 0);
     dim.style.suppress_trailing_zeros = (get_int("sup_t", 1) != 0);
-    dim.style.angular_units = static_cast<AngularUnit>(get_int("ang_u", 0));
+    dim.style.angular_units = static_cast<AngularUnit>(*angular_unit);
     dim.style.angular_decimals = get_int("ang_dec", 2);
     dim.style.dual_enabled = (get_int("dual_e", 0) != 0);
-    dim.style.dual_units = static_cast<UnitType>(get_int("dual_u", 3));
+    dim.style.dual_units = static_cast<UnitType>(*dual_unit);
     dim.style.dual_decimals = get_int("dual_dec", 2);
     dim.style.tolerance_mode = static_cast<ToleranceMode>(get_int("tol_m", 0));
     dim.style.tolerance_magnitude = get_double("tol_mag", 0.05);
@@ -243,8 +276,12 @@ std::optional<DimensionObject> get_dimension(const Document& doc, ObjectId id) {
     if (!path) return std::nullopt;
 
     // Deserialization from path->contour_spec ensures perfect snapshot/undo/redo synchronization
-    auto dim_deser = deserialize_dimension_spec(path->contour_spec);
-    if (dim_deser) {
+    if (path->contour_spec.starts_with("dimension:")) {
+        auto dim_deser = deserialize_dimension_spec(path->contour_spec);
+        if (!dim_deser) {
+            DimensionRegistry::instance().remove(id);
+            return std::nullopt;
+        }
         dim_deser->id = id;
         dim_deser->name = path->name;
         dim_deser->transform = path->transform;

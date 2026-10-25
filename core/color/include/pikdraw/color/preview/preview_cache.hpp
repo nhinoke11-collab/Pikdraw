@@ -1,13 +1,15 @@
 #pragma once
 
 #include "pikdraw/color/preview/color_transform.hpp"
-#include <unordered_map>
+#include "pikdraw/color/preview/bounded_lru_cache.hpp"
 #include <cstdint>
 
 namespace pikdraw::color {
 
 class ColorPreviewCache {
 public:
+    static constexpr size_t max_entries = 4096;
+
     ColorPreviewCache() = default;
 
     [[nodiscard]] DeviceRGBA get_or_compute(const ColorValue& val, uint64_t profile_generation);
@@ -17,12 +19,11 @@ public:
 
 private:
     struct CacheKey {
+        ColorValue color;
         uint64_t hash{0};
         uint64_t generation{0};
 
-        bool operator==(const CacheKey& o) const noexcept {
-            return hash == o.hash && generation == o.generation;
-        }
+        bool operator==(const CacheKey& o) const noexcept;
     };
 
     struct KeyHasher {
@@ -31,7 +32,7 @@ private:
         }
     };
 
-    std::unordered_map<CacheKey, DeviceRGBA, KeyHasher> entries_;
+    BoundedLruCache<CacheKey, DeviceRGBA, KeyHasher> entries_{max_entries};
 };
 
 } // namespace pikdraw::color

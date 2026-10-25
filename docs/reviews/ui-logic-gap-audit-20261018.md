@@ -1,5 +1,7 @@
 # Kiểm tra logic đã có nhưng thiếu UI/UX — 18/10/2026
 
+> Các trạng thái có ngày trong tài liệu này là lịch sử của feature. Runtime, định dạng và workflow hiện hành ở docs/START.md, docs/project-state.json và AGENTS.md; không dùng task/lease/handoff làm điều kiện triển khai.
+
 ## Phạm vi và cách xác nhận
 
 Kiểm tra source gốc hiện tại sau R01–R10, giữ nguyên các local edits của phiên khác.
@@ -56,7 +58,7 @@ Kết quả: **4 nhóm A, 5 nhóm B và 2 nhóm C**. Không tính thuật toán 
 
 - **Đã có:** adapter SVG static subset, DXF ASCII 2D `dxf-entities-v1`, worker adapters,
   capability/fidelity reports và tests. Workflow có `import_svg`.
-- **UI đang có:** File > Open chỉ mở native `.pikdraw`; File > Export SVG có thật;
+- **UI đang có:** File > Open chỉ mở native `.pr`; File > Export SVG có thật;
   SVG có thể đi qua clipboard Paste.
 - **Thiếu:** chọn tệp SVG/DXF từ File > Import, option đơn vị theo capability,
   tiến trình/hủy nhập và trình bày lỗi/fidelity report. Không tìm thấy caller DXF trong desktop.

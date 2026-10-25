@@ -6,6 +6,7 @@
 #include "pikdraw/document/document.hpp"
 #include "pikdraw/document/snapshots/document_snapshot.hpp"
 #include "pikdraw/geometry/primitives/bounds.hpp"
+#include "pikdraw/geometry/units/length_unit.hpp"
 
 #include <charconv>
 #include <initializer_list>
@@ -38,6 +39,8 @@ bool parse_target_ids(const JsonValue& value, std::vector<uint64_t>& ids,
                       size_t maximum, std::string& diagnostic);
 bool parse_object_id(const JsonValue& value, std::string_view field_name, uint64_t& id,
                      std::string& diagnostic);
+[[nodiscard]] std::optional<geometry::units::LengthUnit> parse_physical_length_unit(
+    std::string_view suffix) noexcept;
 
 struct ObjectLocation {
     size_t layer_index{0};

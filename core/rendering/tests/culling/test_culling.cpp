@@ -271,6 +271,24 @@ void test_spatial_index_bvh_large_dataset() {
         expect(bvh_results[i].id == linear_results[i].id,
                "BVH order does not match linear painter order");
     }
+
+    Document other_doc("doc-spatial-index-same-revision-test");
+    for (int i = 0; i < kObjectCount; ++i) {
+        PathObject p;
+        p.id = generate_object_id();
+        const double x = 10000.0 + (i % 20) * 100.0;
+        const double y = 10000.0 + (i / 20) * 100.0;
+        p.path = geometry::Path2D::make_rect(x, y, 50.0, 50.0);
+        p.has_stroke = false;
+        other_doc.execute_command(std::make_unique<AddObjectCommand>(p));
+    }
+    const auto other_snapshot = other_doc.current_snapshot();
+    expect(other_snapshot->revision() == snap->revision(),
+           "same-revision cache fixture has different revisions");
+    const auto other_results = index.query_visible_refs(*other_snapshot, view_bounds, 1.0);
+    const auto other_linear = SpatialCuller::query_visible_refs(*other_snapshot, view_bounds, 1.0);
+    expect(other_results.size() == other_linear.size(),
+           "spatial cache was reused across document identities");
 }
 
 void test_damage_tracker_unions() {

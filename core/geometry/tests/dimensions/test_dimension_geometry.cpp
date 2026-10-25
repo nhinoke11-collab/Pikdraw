@@ -130,4 +130,10 @@ PIKDRAW_TEST(multi_leader_and_arrow_paths) {
 
     const auto dot = make_arrow_path(arrow, ArrowType::Dot, 3.0);
     PIKDRAW_ASSERT(!dot.empty());
+
+    const auto open = make_arrow_path(arrow, ArrowType::Open, 3.0);
+    PIKDRAW_ASSERT(open.elements().size() == 3);
+    PIKDRAW_ASSERT(open.elements()[0].verb == PathVerb::MoveTo);
+    PIKDRAW_ASSERT(open.elements()[1].verb == PathVerb::LineTo);
+    PIKDRAW_ASSERT(open.elements()[2].verb == PathVerb::LineTo);
 }

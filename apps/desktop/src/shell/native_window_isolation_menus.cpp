@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "../performance/canvas_trace.hpp"
 #include "../automation/native_window_automation.hpp"
 #include "pikdraw/desktop/actions/action_id.hpp"
 #include "native_window_menus.hpp"
@@ -90,9 +91,16 @@ void NativeWindow::zoom_out() noexcept {
 }
 
 void NativeWindow::fit_page_to_canvas() noexcept {
-    const auto& page = root().document().current_snapshot()->page();
-    const int canvas_width = std::max(1, width_ - 352);
-    const int canvas_height = std::max(1, height_ - 118);
+    if (artboard_overview_enabled()) {
+        fit_artboards_to_canvas();
+        return;
+    }
+    const auto snapshot = root().document().current_snapshot();
+    if (!snapshot) return;
+    const auto& page = snapshot->page();
+    const RECT area = canvas_rect(width_, height_);
+    const int canvas_width = std::max(1, static_cast<int>(area.right - area.left));
+    const int canvas_height = std::max(1, static_cast<int>(area.bottom - area.top));
     const double zoom = std::clamp(
         std::min(static_cast<double>(canvas_width) / page.width_mm,
                  static_cast<double>(canvas_height) / page.height_mm) * 0.9,
@@ -105,6 +113,86 @@ void NativeWindow::fit_page_to_canvas() noexcept {
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 #endif
+}
+
+bool NativeWindow::artboard_overview_enabled() const noexcept {
+    return !tabs_.empty() && active_tab().artboard_overview;
+}
+
+void NativeWindow::fit_artboards_to_canvas() noexcept {
+    const auto snapshot = root().document().current_snapshot();
+    if (!snapshot || snapshot->active_page().artboards.empty()) {
+        fit_page_to_canvas();
+        return;
+    }
+    std::optional<geometry::Rect2D> bounds;
+    for (const auto& artboard : snapshot->active_page().artboards) {
+        const geometry::Rect2D rect{artboard.x_mm, artboard.y_mm,
+                                    artboard.width_mm, artboard.height_mm};
+        bounds = bounds ? bounds->united(rect) : rect;
+    }
+    if (!bounds || bounds->is_empty()) {
+        fit_page_to_canvas();
+        return;
+    }
+    const RECT area = canvas_rect(width_, height_);
+    const int canvas_width = std::max(1, static_cast<int>(area.right - area.left));
+    const int canvas_height = std::max(1, static_cast<int>(area.bottom - area.top));
+    const double zoom = std::clamp(
+        std::min(static_cast<double>(canvas_width) / bounds->width,
+                 static_cast<double>(canvas_height) / bounds->height) * 0.9,
+        0.01, 64.0);
+    auto& camera = root().renderer().camera();
+    camera.set_viewport_size(canvas_width, canvas_height);
+    camera.set_center(bounds->center());
+    camera.set_zoom(zoom);
+    zoom_level_ = static_cast<int>(std::lround(zoom * 100.0));
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+bool NativeWindow::set_active_artboard(document::ArtboardId id) noexcept {
+    const auto snapshot = root().document().current_snapshot();
+    if (!snapshot) return false;
+    const auto& boards = snapshot->active_page().artboards;
+    const auto found = std::find_if(boards.begin(), boards.end(),
+        [id](const auto& artboard) { return artboard.id == id; });
+    if (found == boards.end()) return false;
+    active_tab().active_artboard_id = id;
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+    return true;
+}
+
+void NativeWindow::set_artboard_overview_enabled(bool enabled, bool save_default) noexcept {
+    if (tabs_.empty()) return;
+    active_tab().artboard_overview = enabled;
+    const auto snapshot = root().document().current_snapshot();
+    if (snapshot && !snapshot->active_page().artboards.empty()) {
+        const auto& boards = snapshot->active_page().artboards;
+        const bool active_exists = std::any_of(boards.begin(), boards.end(), [&](const auto& board) {
+            return board.id == active_tab().active_artboard_id;
+        });
+        if (!active_exists) active_tab().active_artboard_id = boards.front().id;
+    }
+    if (save_default) {
+        const auto path = tools::drawing_preferences_path();
+        auto preferences = tools::load_drawing_preferences(path).value;
+        preferences.artboard_overview = enabled;
+        std::string diagnostic;
+        if (!tools::save_drawing_preferences(path, preferences, &diagnostic))
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Đổi chế độ xem nhưng không lưu được mặc định ứng dụng"
+                : "View changed, but the app default could not be saved";
+        else
+            settings_artboard_overview_choice_ = enabled;
+    }
+    fit_page_to_canvas();
+    status_msg_ = language_ == UILanguage::Vietnamese
+        ? (enabled ? "Artboard · tổng quan vùng thiết kế · cùng một artwork" : "Trang · tập trung một trang")
+        : (enabled ? "Artboard overview · shared scene artwork" : "Page focus · one page at a time");
 }
 
 bool NativeWindow::fit_document_content_to_canvas(bool* content_outside_page) noexcept {
@@ -162,6 +250,8 @@ void NativeWindow::open_menu(int menu_id) noexcept {
     open_menu_id_ = menu_id;
     hovered_menu_bar_item_ = menu_id;
     hovered_menu_item_ = -1;
+    open_submenu_action_ = -1;
+    hovered_submenu_item_ = -1;
     show_file_menu_ = false;
     close_page_preset_dropdown();
 #ifdef _WIN32
@@ -174,6 +264,8 @@ void NativeWindow::close_menu() noexcept {
     open_menu_id_ = -1;
     hovered_menu_bar_item_ = -1;
     hovered_menu_item_ = -1;
+    open_submenu_action_ = -1;
+    hovered_submenu_item_ = -1;
     if (was_open) {
 #ifdef _WIN32
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
@@ -292,6 +384,7 @@ void NativeWindow::trigger_export() noexcept {
     constexpr int kActivePageScope = 4202;
     constexpr int kAllPagesScope = 4203;
     constexpr int kCancelScope = 4204;
+    constexpr int kActiveArtboardScope = 4205;
     const bool has_selection =
         !root().vector_controller().selection().selected_ids().empty();
     const std::wstring selection_label = language_ == UILanguage::Vietnamese
@@ -303,10 +396,15 @@ void NativeWindow::trigger_export() noexcept {
     const std::wstring all_label = language_ == UILanguage::Vietnamese
         ? L"Tất cả trang · mỗi trang một SVG\nTạo một tệp riêng cho từng trang"
         : L"All pages · one SVG per page\nCreate a separate file for each page";
+    const std::wstring artboard_label = language_ == UILanguage::Vietnamese
+        ? L"Artboard đang chọn\nXuất artwork dùng chung theo khung Artboard hiện tại"
+        : L"Active Artboard\nExport the shared artwork cropped to this Artboard";
     const std::wstring cancel_label = language_ == UILanguage::Vietnamese ? L"Hủy" : L"Cancel";
     std::vector<TASKDIALOG_BUTTON> buttons;
     if (has_selection) buttons.push_back({kSelectionScope, selection_label.c_str()});
     buttons.push_back({kActivePageScope, page_label.c_str()});
+    if (artboard_overview_enabled() && active_tab().active_artboard_id != document::kInvalidArtboardId)
+        buttons.push_back({kActiveArtboardScope, artboard_label.c_str()});
     buttons.push_back({kAllPagesScope, all_label.c_str()});
     buttons.push_back({kCancelScope, cancel_label.c_str()});
     TASKDIALOGCONFIG config{};
@@ -344,14 +442,16 @@ void NativeWindow::trigger_export() noexcept {
       if (choice == kCancelScope || choice == 0) return;
     const bool selected_objects = choice == kSelectionScope;
     const bool all_pages = choice == kAllPagesScope;
-    export_svg_dialog(selected_objects, all_pages);
+    const bool active_artboard = choice == kActiveArtboardScope;
+    export_svg_dialog(selected_objects, all_pages, active_artboard);
 #else
     status_msg_ = "SVG export requires the Windows desktop file dialog";
 #endif
 }
 
 bool NativeWindow::export_svg_to(const std::string& file_path, bool selected_objects,
-                                 bool allow_replace_existing, bool all_pages) {
+                                 bool allow_replace_existing, bool all_pages,
+                                 bool active_artboard) {
     if (!has_svg_extension(file_path)) {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "SVG cần phần mở rộng .svg; chưa ghi tệp"
@@ -363,7 +463,7 @@ bool NativeWindow::export_svg_to(const std::string& file_path, bool selected_obj
     }
 #ifdef _WIN32
     return start_svg_export(file_path, selected_objects, allow_replace_existing,
-                            all_pages);
+                            all_pages, active_artboard);
 #else
     if (all_pages) {
         status_msg_ = language_ == UILanguage::Vietnamese
@@ -394,112 +494,11 @@ void NativeWindow::create_new_document() {
     open_new_doc_modal();
 }
 
-void NativeWindow::enter_group_isolation(document::ObjectId group_id) {
-    if (!workflow().is_group(group_id))
-        return;
-
-    isolation_stack_.push_back(group_id);
-    const auto snapshot = root().document().current_snapshot();
-    const auto obj = snapshot->objects().get(group_id);
-    if (obj) {
-        if (const auto* grp = std::get_if<document::GroupObject>(&*obj)) {
-            if (grp->is_clipping_container()) {
-                document::ObjectId first_content = document::kInvalidObjectId;
-                for (auto cid : grp->children_ids) {
-                    if (cid != grp->clip->mask_object_id) {
-                        first_content = cid;
-                        break;
-                    }
-                }
-                if (first_content != document::kInvalidObjectId) {
-                    root().vector_controller().selection().select(first_content, vector::SelectionMode::Replace);
-                } else if (!grp->children_ids.empty()) {
-                    root().vector_controller().selection().select(grp->children_ids.front(), vector::SelectionMode::Replace);
-                }
-                status_msg_ = (language_ == UILanguage::Vietnamese)
-                    ? "Chế độ sửa PowerClip / Clipping Mask · Nhấn Esc để kết thúc"
-                    : "PowerClip Isolation: Editing contents · Press Esc to finish";
-            } else {
-                if (!grp->children_ids.empty()) {
-                    root().vector_controller().selection().select(grp->children_ids.front(), vector::SelectionMode::Replace);
-                } else {
-                    root().vector_controller().selection().clear();
-                }
-                status_msg_ = (language_ == UILanguage::Vietnamese)
-                    ? "Chế độ cô lập nhóm: Đang chỉnh sửa bên trong Nhóm · Nhấn Esc để thoát"
-                    : "Group Isolation Mode: Editing inside Group · Press Esc or double-click to exit";
-            }
-        }
-    }
-#ifdef _WIN32
-    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
-#endif
-}
-
-void NativeWindow::exit_group_isolation() {
-    if (isolation_stack_.empty())
-        return;
-
-    auto last_group = isolation_stack_.back();
-    isolation_stack_.pop_back();
-
-    if (isolation_stack_.empty()) {
-        root().vector_controller().selection().select(last_group, vector::SelectionMode::Replace);
-        status_msg_ = (language_ == UILanguage::Vietnamese)
-            ? "Đã thoát chế độ cô lập · Quay lại tài liệu chính"
-            : "Exited Group Isolation Mode · Returned to Main Document";
-    } else {
-        root().vector_controller().selection().select(last_group, vector::SelectionMode::Replace);
-        status_msg_ = (language_ == UILanguage::Vietnamese)
-            ? "Đã thoát ra cấp nhóm cha"
-            : "Returned to parent group level";
-    }
-#ifdef _WIN32
-    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
-#endif
-}
-
-void NativeWindow::exit_all_isolation() {
-    if (isolation_stack_.empty())
-        return;
-
-    auto root_group = isolation_stack_.front();
-    isolation_stack_.clear();
-    root().vector_controller().selection().select(root_group, vector::SelectionMode::Replace);
-    status_msg_ = (language_ == UILanguage::Vietnamese)
-        ? "Đã thoát toàn bộ chế độ cô lập · Tài liệu chính"
-        : "Exited all isolation levels · Main Document";
-#ifdef _WIN32
-    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
-#endif
-}
-
-bool NativeWindow::is_object_in_isolated_group(document::ObjectId id) const {
-    if (!is_in_isolation_mode())
-        return true;
-
-    auto iso_id = *current_isolated_group_id();
-    if (id == iso_id)
-        return true;
-
-    const auto snapshot = root().document().current_snapshot();
-    std::vector<document::ObjectId> desc;
-    std::function<void(document::ObjectId)> collect = [&](document::ObjectId gid) {
-        auto obj = snapshot->objects().get(gid);
-        if (!obj) return;
-        if (const auto* g = std::get_if<document::GroupObject>(&*obj)) {
-            for (auto cid : g->children_ids) {
-                desc.push_back(cid);
-                collect(cid);
-            }
-        }
-    };
-    collect(iso_id);
-    return std::find(desc.begin(), desc.end(), id) != desc.end();
-}
-
 void NativeWindow::handle_double_click(int x, int y) {
     if (is_inline_text_editing_ && is_canvas_point(x, y) && handle_inline_text_mouse(x, y, 3)) return;
+    if (active_dock_tab_ == 1 && x >= width_ - LayersDockMetrics::dock_width && x <= width_) {
+        if (handle_layers_dock_click(x, y, true)) return;
+    }
     if (!is_canvas_point(x, y))
         return;
 
@@ -549,9 +548,58 @@ void NativeWindow::handle_double_click(int x, int y) {
     }
 
     const auto snapshot = root().document().current_snapshot();
-    auto hit_id = vector::SelectionModel::hit_test(pt_world, *snapshot);
+    const double text_tol = 6.0 / std::max(0.01, root().renderer().camera().zoom());
+    std::optional<document::ObjectId> hit_text_id;
+
+    // Double-click on any TextObject activates inline text editing immediately
+    // without requiring the user to switch to Text Tool first.
+    const auto& selected = root().vector_controller().selection().selected_ids();
+    for (const auto id : selected) {
+        const auto obj = snapshot ? snapshot->objects().get(id) : std::nullopt;
+        if (obj && std::holds_alternative<document::TextObject>(*obj)) {
+            const auto* entry = snapshot->hierarchy().find(id);
+            if (entry && snapshot->hierarchy().editable(id)) {
+                if (auto inv = entry->world.inverted()) {
+                    auto local = std::get<document::TextObject>(*obj);
+                    local.transform = {};
+                    auto b = local.bounds();
+                    b.x -= text_tol; b.y -= text_tol; b.width += 2 * text_tol; b.height += 2 * text_tol;
+                    if (b.contains(inv->map_point(pt_world))) {
+                        hit_text_id = id;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if (!hit_text_id && snapshot) {
+        for (auto it = snapshot->objects().all().rbegin(); it != snapshot->objects().all().rend(); ++it) {
+            const auto& [id, obj] = *it;
+            if (const auto* text_obj = std::get_if<document::TextObject>(&obj)) {
+                const auto* entry = snapshot->hierarchy().find(id);
+                if (!entry || !snapshot->hierarchy().editable(id)) continue;
+                if (is_in_isolation_mode() && !is_object_in_isolated_group(id)) continue;
+                if (auto inv = entry->world.inverted()) {
+                    auto local = *text_obj;
+                    local.transform = {};
+                    auto b = local.bounds();
+                    b.x -= text_tol; b.y -= text_tol; b.width += 2 * text_tol; b.height += 2 * text_tol;
+                    if (b.contains(inv->map_point(pt_world))) {
+                        hit_text_id = id;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if (hit_text_id) {
+        start_inline_text_editing(pt_world, *hit_text_id);
+        return;
+    }
+    auto hit_id = vector::SelectionModel::hit_test_in_scope(pt_world,*snapshot,current_isolated_group_id().value_or(0),2.0,isolation_frame_);
 
     if (active_tool_ == 0) {
+        if(hit_id && workflow().is_group(*hit_id)) { enter_group_isolation(*hit_id); return; }
         if (hit_id) {
             auto obj_opt = snapshot->objects().get(*hit_id);
             if (obj_opt && std::holds_alternative<document::TextObject>(*obj_opt)) {
@@ -560,6 +608,14 @@ void NativeWindow::handle_double_click(int x, int y) {
             }
         }
 
+        if (selection_handle_at(x, y) == 9) {
+            custom_pivot_world_.reset();
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "ÄÃ£ Ä‘áº·t láº¡i tÃ¢m xoay vá» chÃ­nh giá»¯a Ä‘á»‘i tÆ°á»£ng"
+                : "Reset rotation pivot to object center";
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
         const auto bounds = root().vector_controller().selection().bounds(*snapshot);
         const bool hit_selection = (hit_id && root().vector_controller().selection().is_selected(*hit_id)) ||
                                    (bounds && bounds->contains(pt_world));
@@ -687,15 +743,21 @@ bool NativeWindow::initialize(const std::string& title) {
             ? "Không thể bật bản phục hồi tự động" : "Could not start auto-recovery timer";
     ShowWindow(hwnd_, SW_SHOW);
     UpdateWindow(hwnd_);
-    scan_recovery_checkpoints();
+    scan_recovery_checkpoints(true, false, true);
+    record_performance_event(CanvasTraceKind::StartupReady);
     return true;
 }
 
 int NativeWindow::run() {
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0)) {
+        if (canvas_trace_ && msg.message >= WM_MOUSEFIRST && msg.message <= WM_MOUSELAST) {
+            pending_trace_event_id_ = next_trace_event_id_++;
+            record_performance_event(CanvasTraceKind::Input, pending_trace_event_id_);
+        }
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
+        pending_trace_event_id_ = 0;
     }
     return static_cast<int>(msg.wParam);
 }

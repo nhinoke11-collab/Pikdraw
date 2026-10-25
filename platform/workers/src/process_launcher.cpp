@@ -39,10 +39,16 @@ bool CreateHostPipe(bool host_writes, ScopedHandle& server, ScopedHandle& child)
 }
 
 bool Transfer(HANDLE pipe, HANDLE process, uint8_t* bytes, size_t count, bool write,
-              std::chrono::steady_clock::time_point deadline) {
+              std::chrono::steady_clock::time_point& deadline,
+              std::stop_token cancellation = {},
+              SystemMemoryPressureWaiter* memory_waiter = nullptr) {
     ScopedHandle event(CreateEventW(nullptr,TRUE,FALSE,nullptr));
     if (!event.IsValid()) return false;
     while (count) {
+        if (cancellation.stop_requested()) return false;
+        if (memory_waiter && memory_waiter->WaitForHeadroom(1, cancellation, &deadline) !=
+                SystemMemoryWaitResult::Ready)
+            return false;
         const auto remaining=std::chrono::duration_cast<std::chrono::milliseconds>(deadline-std::chrono::steady_clock::now());
         if (remaining.count()<=0) return false;
         ResetEvent(event.Get());
@@ -53,7 +59,19 @@ bool Transfer(HANDLE pipe, HANDLE process, uint8_t* bytes, size_t count, bool wr
         if (!complete) {
             if (GetLastError()!=ERROR_IO_PENDING) return false;
             const HANDLE waits[]={event.Get(),process};
-            const DWORD waited=WaitForMultipleObjects(2,waits,FALSE,static_cast<DWORD>(remaining.count()));
+            const DWORD wait_ms = memory_waiter
+                ? static_cast<DWORD>((std::min<int64_t>)(remaining.count(), 100))
+                : static_cast<DWORD>(remaining.count());
+            const DWORD waited=WaitForMultipleObjects(2,waits,FALSE,wait_ms);
+            if (waited == WAIT_TIMEOUT && memory_waiter) {
+                if (memory_waiter->WaitForHeadroom(1, cancellation, &deadline) !=
+                        SystemMemoryWaitResult::Ready) {
+                    CancelIoEx(pipe,&operation);
+                    GetOverlappedResult(pipe,&operation,&transferred,TRUE);
+                    return false;
+                }
+                continue;
+            }
             if (waited!=WAIT_OBJECT_0) {
                 CancelIoEx(pipe,&operation);
                 GetOverlappedResult(pipe,&operation,&transferred,TRUE); // Drain before OVERLAPPED storage expires.
@@ -344,7 +362,8 @@ bool WorkerProcessHost::WaitForExit(std::chrono::milliseconds timeout) noexcept 
 
 bool WorkerProcessHost::TransactRawProcessBytes(
     std::span<const uint8_t> input, uint64_t max_output_bytes,
-    std::chrono::milliseconds timeout, std::vector<uint8_t>& output) {
+    std::chrono::milliseconds timeout, std::vector<uint8_t>& output,
+    std::stop_token cancellation, SystemMemoryPressureWaiter* memory_waiter) {
     output.clear();
     last_transport_failure_ = "none";
     last_worker_exit_code_ = STILL_ACTIVE;
@@ -355,11 +374,15 @@ bool WorkerProcessHost::TransactRawProcessBytes(
         last_transport_failure_ = "raw process stream requires a bounded unsourced AppContainer process";
         return false;
     }
-    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    auto deadline = std::chrono::steady_clock::now() + timeout;
+    SystemMemoryPressureWaiter local_memory_waiter;
+    auto* active_memory_waiter = memory_waiter ? memory_waiter : &local_memory_waiter;
+    auto input_deadline = deadline + kSystemMemoryPressureWaitLimit;
     std::atomic<bool> input_ok{false};
     std::thread input_writer([&] {
         input_ok.store(Transfer(stdin_write_handle_.Get(), process_handle_.Get(),
-            const_cast<uint8_t*>(input.data()), input.size(), true, deadline),
+            const_cast<uint8_t*>(input.data()), input.size(), true,
+            input_deadline, cancellation),
             std::memory_order_relaxed);
         stdin_write_handle_.Close();
     });
@@ -368,16 +391,24 @@ bool WorkerProcessHost::TransactRawProcessBytes(
     bool eof = false;
     std::array<uint8_t, 64 * 1024> buffer{};
     while (!eof && output_ok) {
+        if (cancellation.stop_requested()) {
+            output_ok = false;
+            last_transport_failure_ = "raw process stream cancelled";
+            break;
+        }
+        if (active_memory_waiter->WaitForHeadroom(1, cancellation, &deadline) !=
+                SystemMemoryWaitResult::Ready) {
+            output_ok = false;
+            last_transport_failure_ = cancellation.stop_requested()
+                ? "raw process stream cancelled"
+                : "system RAM pressure wait timed out after 5 minutes";
+            break;
+        }
         const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
             deadline - std::chrono::steady_clock::now());
         if (remaining.count() <= 0) {
             output_ok = false;
             last_transport_failure_ = "raw process stream timed out";
-            break;
-        }
-        if (IsSystemMemoryPressureLimitReached()) {
-            output_ok = false;
-            last_transport_failure_ = "system RAM reached the 90% import pressure limit";
             break;
         }
         ScopedHandle event(CreateEventW(nullptr, TRUE, FALSE, nullptr));
@@ -407,12 +438,16 @@ bool WorkerProcessHost::TransactRawProcessBytes(
                 (std::min<int64_t>)(remaining.count(), 100), MAXDWORD - 1));
             const DWORD waited = WaitForMultipleObjects(2, waits, FALSE, bounded_wait);
             if (waited == WAIT_TIMEOUT) {
-                if (!IsSystemMemoryPressureLimitReached()) continue;
+                const auto memory_result = active_memory_waiter->WaitForHeadroom(
+                    1, cancellation, &deadline);
+                if (memory_result == SystemMemoryWaitResult::Ready) continue;
                 CancelIoEx(stdout_read_handle_.Get(), &operation);
                 DWORD ignored = 0;
                 GetOverlappedResult(stdout_read_handle_.Get(), &operation, &ignored, TRUE);
                 output_ok = false;
-                last_transport_failure_ = "system RAM reached the 90% import pressure limit";
+                last_transport_failure_ = memory_result == SystemMemoryWaitResult::Cancelled
+                    ? "raw process stream cancelled"
+                    : "system RAM pressure wait timed out after 5 minutes";
                 break;
             }
             if (waited == WAIT_OBJECT_0 + 1) {
@@ -491,7 +526,9 @@ bool WorkerProcessHost::IsAlive() const noexcept {
 
 bool WorkerProcessHost::NegotiateV2(
     uint32_t required_features,
-    std::chrono::milliseconds timeout) {
+    std::chrono::milliseconds timeout,
+    SystemMemoryPressureWaiter* memory_waiter,
+    std::stop_token cancellation) {
     last_transport_failure_ = "none";
     last_worker_exit_code_ = STILL_ACTIVE;
     if (v2_negotiated_) {
@@ -501,9 +538,12 @@ bool WorkerProcessHost::NegotiateV2(
     }
     uint32_t accepted = 0;
     std::string_view failure;
+    SystemMemoryPressureWaiter local_memory_waiter;
+    auto& active_memory_waiter = memory_waiter ? *memory_waiter : local_memory_waiter;
     const bool ok = NegotiateV2WorkerProcess(
         stdin_write_handle_.Get(), stdout_read_handle_.Get(), process_handle_.Get(),
-        required_features, has_source_capability_, timeout, accepted, failure);
+        required_features, has_source_capability_, timeout, accepted, failure,
+        cancellation, active_memory_waiter);
     if (!ok) {
         if (process_handle_.IsValid()) (void)GetExitCodeProcess(process_handle_.Get(), &last_worker_exit_code_);
         Terminate();
@@ -520,7 +560,8 @@ bool WorkerProcessHost::TransactV2ProposalStream(
     std::chrono::milliseconds timeout,
     const pikdraw::interop::V2ProposalStreamLimits& limits,
     const std::function<bool(const pikdraw::interop::IpcV2Frame&)>& consumer,
-    std::stop_token cancellation) {
+    std::stop_token cancellation,
+    SystemMemoryPressureWaiter* memory_waiter) {
     using namespace pikdraw::interop;
     last_transport_failure_ = "none";
     last_worker_exit_code_ = STILL_ACTIVE;
@@ -535,10 +576,13 @@ bool WorkerProcessHost::TransactV2ProposalStream(
         return false;
     }
 
+    SystemMemoryPressureWaiter local_memory_waiter;
+    auto& active_memory_waiter = memory_waiter ? *memory_waiter : local_memory_waiter;
     std::string_view failure;
     if (!TransactV2ProposalStreamProcess(
             stdin_write_handle_.Get(), stdout_read_handle_.Get(), process_handle_.Get(),
-            *request, request_bytes, timeout, limits, consumer, failure, cancellation)) {
+            *request, request_bytes, timeout, limits, consumer, failure, cancellation,
+            active_memory_waiter)) {
         if (process_handle_.IsValid()) (void)GetExitCodeProcess(process_handle_.Get(), &last_worker_exit_code_);
         Terminate();
         last_transport_failure_ = failure.data();
@@ -576,7 +620,7 @@ std::optional<std::vector<uint8_t>> WorkerProcessHost::TransactBinaryPayload(
 #endif
         default: return reject("unknown request type");
     }
-    const auto deadline=std::chrono::steady_clock::now()+timeout;
+    auto deadline=std::chrono::steady_clock::now()+timeout;
     if (!Transfer(stdin_write_handle_.Get(),process_handle_.Get(),const_cast<uint8_t*>(request_bytes.data()),
                   request_bytes.size(),true,deadline)) return reject("request write failed/timeout");
     IpcHeader response{};

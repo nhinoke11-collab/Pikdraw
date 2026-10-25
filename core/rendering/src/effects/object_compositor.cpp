@@ -18,6 +18,46 @@
 
 namespace pikdraw::rendering::effects {
 namespace {
+float blend_component_linear(document::BlendMode mode, float backdrop,
+                             float source) noexcept {
+  switch (mode) {
+  case document::BlendMode::Normal:
+    return source;
+  case document::BlendMode::Multiply:
+    return backdrop * source;
+  case document::BlendMode::Screen:
+    return backdrop + source - backdrop * source;
+  case document::BlendMode::Overlay:
+    return backdrop <= 0.5f
+               ? 2.0f * backdrop * source
+               : 1.0f - 2.0f * (1.0f - backdrop) * (1.0f - source);
+  case document::BlendMode::Darken:
+    return std::min(backdrop, source);
+  case document::BlendMode::Lighten:
+    return std::max(backdrop, source);
+  }
+  return backdrop;
+}
+
+void blend_alpha_locked(FilterPixel &pixel, float source_r, float source_g,
+                        float source_b, float amount,
+                        document::BlendMode mode) noexcept {
+  const float alpha = std::clamp(pixel.a, 0.0f, 1.0f);
+  if (alpha <= 0.0f)
+    return;
+  amount = std::clamp(amount, 0.0f, 1.0f);
+  const float inverse_alpha = 1.0f / alpha;
+  const auto channel = [&](float premultiplied, float source) {
+    const float backdrop = std::clamp(premultiplied * inverse_alpha, 0.0f, 1.0f);
+    const float blended = blend_component_linear(
+        mode, backdrop, std::clamp(source, 0.0f, 1.0f));
+    return alpha * (backdrop * (1.0f - amount) + blended * amount);
+  };
+  pixel.r = channel(pixel.r, source_r);
+  pixel.g = channel(pixel.g, source_g);
+  pixel.b = channel(pixel.b, source_b);
+}
+
 bool compose_shadow_under_input(FilterPixel &input,
                                 const FilterPixel &shadow) noexcept {
   if (!std::isfinite(input.r) || !std::isfinite(input.g) ||
@@ -48,7 +88,11 @@ bool render_effect_stack(const document::PathObject &path,
                          const color::IccPreview *preview,
                          size_t *out_peak_gaussian_blur_scratch_capacity_bytes,
                          size_t *out_peak_drop_shadow_scratch_capacity_bytes,
-                         int32_t raster_dpi) {
+                         int32_t raster_dpi, std::string *out_failure = nullptr) {
+  const auto fail = [out_failure](const char *message) {
+    if (out_failure) *out_failure = message;
+    return false;
+  };
   if (path.path.elements().empty())
     return true;
   const auto source_bounds = path.path.bounds();
@@ -70,29 +114,29 @@ bool render_effect_stack(const document::PathObject &path,
   uint64_t work_per_pixel = 0;
   if (!effect_output_bounds(path, appearance, density, output_bounds,
                             work_per_pixel))
-    return false;
+    return fail("Effect parameters exceed the CPU work or geometry budget");
   if (!finite_nonempty_rect(output_bounds))
     return true;
 
   LocalSurface surface;
   if (!make_local_surface(output_bounds, density, surface))
-    return false;
+    return fail("Effect surface exceeds the CPU dimension, pixel, or memory budget");
   const uint64_t pixel_count = static_cast<uint64_t>(surface.width) *
                                static_cast<uint64_t>(surface.height);
   if (work_per_pixel != 0 &&
       pixel_count > kMaxEffectJobWorkUnits / work_per_pixel)
-    return false;
+    return fail("Effect surface exceeds the CPU pixel-tap work budget");
 
   const auto world_output_bounds = path.transform.map_rect(surface.bounds);
   if (!finite_nonempty_rect(world_output_bounds))
-    return false;
+    return fail("Effect output bounds are invalid after object transform");
   int32_t target_left = 0;
   int32_t target_top = 0;
   int32_t target_width = 0;
   int32_t target_height = 0;
   if (!screen_bounds(world_output_bounds, camera, target, target_left,
                      target_top, target_width, target_height))
-    return false;
+    return fail("Effect output cannot be projected into the render target");
   if (target_width <= 0 || target_height <= 0)
     return true;
 
@@ -104,7 +148,7 @@ bool render_effect_stack(const document::PathObject &path,
       surface.width * 4 * static_cast<int32_t>(sizeof(float));
   source_target.premultiplied_rgba = source_pixels.data();
   if (!source_target.is_valid())
-    return false;
+    return fail("Effect source surface is invalid");
 
   const auto local_center = surface.bounds.center();
   const Camera2D local_camera(local_center, surface.density, surface.width,
@@ -114,12 +158,12 @@ bool render_effect_stack(const document::PathObject &path,
   source_path.fill = scale_alpha(path.fill, appearance.fill_opacity);
   source_path.stroke = scale_alpha(path.stroke, appearance.stroke_opacity);
   if (!raster::paint(source_path, local_camera, source_target, preview))
-    return false;
+    return fail("Source path failed to rasterize into the effect surface");
 
   std::vector<FilterPixel> current;
   if (!encoded_to_linear(source_pixels, current) ||
       current.size() != static_cast<size_t>(pixel_count))
-    return false;
+    return fail("Effect source contains invalid or incomplete pixel data");
 
   const auto record_gaussian_peak = [&](size_t additional_bytes) {
     if (!out_peak_gaussian_blur_scratch_capacity_bytes)
@@ -151,9 +195,9 @@ bool render_effect_stack(const document::PathObject &path,
     const bool applied = std::visit(
         [&](const auto &effect) {
           using T = std::decay_t<decltype(effect)>;
-          const double sigma_x_px = effect.sigma_x_mm * surface.density;
-          const double sigma_y_px = effect.sigma_y_mm * surface.density;
           if constexpr (std::is_same_v<T, document::GaussianBlurEffect>) {
+            const double sigma_x_px = effect.sigma_x_mm * surface.density;
+            const double sigma_y_px = effect.sigma_y_mm * surface.density;
             std::vector<FilterPixel> output;
             size_t internal_scratch_capacity_bytes = 0;
             if (gaussian_blur_linear_srgb_sse2(
@@ -168,7 +212,9 @@ bool render_effect_stack(const document::PathObject &path,
             current.swap(output);
             record_gaussian_peak(vector_capacity_bytes(output));
             return true;
-          } else {
+          } else if constexpr (std::is_same_v<T, document::DropShadowEffect>) {
+            const double sigma_x_px = effect.sigma_x_mm * surface.density;
+            const double sigma_y_px = effect.sigma_y_mm * surface.density;
             std::vector<float> alpha(current.size());
             for (size_t index = 0; index < current.size(); ++index)
               alpha[index] = current[index].a;
@@ -220,11 +266,167 @@ bool render_effect_stack(const document::PathObject &path,
                 return false;
             }
             return true;
+          } else if constexpr (std::is_same_v<T, document::FeatherEffect>) {
+            const double radius_px = effect.radius_mm * surface.density;
+            if (radius_px <= 0.0) return true;
+            const double sigma = radius_px * 0.5;
+            std::vector<FilterPixel> alpha_input(current.size());
+            for (size_t index = 0; index < current.size(); ++index) {
+              const float a = current[index].a;
+              alpha_input[index] = {a, a, a, a};
+            }
+            std::vector<FilterPixel> blurred_alpha;
+            size_t scratch = 0;
+            if (gaussian_blur_linear_srgb_sse2(
+                    alpha_input, static_cast<size_t>(surface.width),
+                    static_cast<size_t>(surface.height), sigma, sigma,
+                    blurred_alpha, {}, &scratch) != GaussianBlurStatus::Success)
+              return false;
+            for (size_t index = 0; index < current.size(); ++index) {
+              const float orig_a = current[index].a;
+              if (orig_a <= 0.0f) continue;
+              const float feather_a = std::clamp(blurred_alpha[index].a, 0.0f, orig_a);
+              const float factor = feather_a / orig_a;
+              current[index].r *= factor;
+              current[index].g *= factor;
+              current[index].b *= factor;
+              current[index].a = feather_a;
+            }
+            return true;
+          } else if constexpr (std::is_same_v<T, document::OuterGlowEffect>) {
+            const double radius_px = effect.radius_mm * surface.density;
+            if (radius_px <= 0.0 || effect.opacity <= 0.0) return true;
+            const double sigma = radius_px * 0.5;
+            std::vector<FilterPixel> alpha_input(current.size());
+            for (size_t index = 0; index < current.size(); ++index) {
+              const float a = current[index].a;
+              alpha_input[index] = {a, a, a, a};
+            }
+            std::vector<FilterPixel> blurred_alpha;
+            size_t scratch = 0;
+            if (gaussian_blur_linear_srgb_sse2(
+                    alpha_input, static_cast<size_t>(surface.width),
+                    static_cast<size_t>(surface.height), sigma, sigma,
+                    blurred_alpha, {}, &scratch) != GaussianBlurStatus::Success)
+              return false;
+            const auto tint = preview ? preview->convert(effect.color)
+                                      : color::to_preview_rgba(effect.color);
+            const float tint_r = srgb_to_linear(tint.r);
+            const float tint_g = srgb_to_linear(tint.g);
+            const float tint_b = srgb_to_linear(tint.b);
+            const float opacity = static_cast<float>(effect.opacity) * tint.a;
+            for (size_t index = 0; index < current.size(); ++index) {
+              const float glow_a = blurred_alpha[index].a * opacity * (1.0f - current[index].a);
+              current[index].r += tint_r * glow_a;
+              current[index].g += tint_g * glow_a;
+              current[index].b += tint_b * glow_a;
+              current[index].a += glow_a;
+            }
+            return true;
+          } else if constexpr (std::is_same_v<T, document::InnerGlowEffect>) {
+            const double radius_px = effect.radius_mm * surface.density;
+            if (radius_px <= 0.0 || effect.opacity <= 0.0) return true;
+            const double sigma = radius_px * 0.5;
+            std::vector<FilterPixel> inv_alpha(current.size());
+            for (size_t index = 0; index < current.size(); ++index) {
+              const float inv = std::clamp(1.0f - current[index].a, 0.0f, 1.0f);
+              inv_alpha[index] = {inv, inv, inv, inv};
+            }
+            std::vector<FilterPixel> blurred_inv;
+            size_t scratch = 0;
+            if (gaussian_blur_linear_srgb_sse2(
+                    inv_alpha, static_cast<size_t>(surface.width),
+                    static_cast<size_t>(surface.height), sigma, sigma,
+                    blurred_inv, {}, &scratch) != GaussianBlurStatus::Success)
+              return false;
+            const auto tint = preview ? preview->convert(effect.color)
+                                      : color::to_preview_rgba(effect.color);
+            const float tint_r = srgb_to_linear(tint.r);
+            const float tint_g = srgb_to_linear(tint.g);
+            const float tint_b = srgb_to_linear(tint.b);
+            const float opacity = static_cast<float>(effect.opacity) * tint.a;
+            for (size_t index = 0; index < current.size(); ++index) {
+              const float orig_a = current[index].a;
+              if (orig_a <= 0.0f) continue;
+              const float inner_a = std::clamp(blurred_inv[index].a * opacity, 0.0f, 1.0f);
+              current[index].r = current[index].r * (1.0f - inner_a) + tint_r * inner_a * orig_a;
+              current[index].g = current[index].g * (1.0f - inner_a) + tint_g * inner_a * orig_a;
+              current[index].b = current[index].b * (1.0f - inner_a) + tint_b * inner_a * orig_a;
+            }
+            return true;
+          } else if constexpr (std::is_same_v<T, document::InnerShadowEffect>) {
+            const double dx_px = effect.dx_mm * surface.density;
+            const double dy_px = effect.dy_mm * surface.density;
+            const double sig_x = effect.sigma_x_mm * surface.density;
+            const double sig_y = effect.sigma_y_mm * surface.density;
+            std::vector<float> inv_alpha(current.size());
+            for (size_t index = 0; index < current.size(); ++index)
+              inv_alpha[index] = 1.0f - current[index].a;
+            const auto tint = preview ? preview->convert(effect.color)
+                                      : color::to_preview_rgba(effect.color);
+            DropShadowParameters parameters;
+            parameters.offset_x_px = dx_px;
+            parameters.offset_y_px = dy_px;
+            parameters.sigma_x_px = sig_x;
+            parameters.sigma_y_px = sig_y;
+            parameters.color_r_linear_srgb = srgb_to_linear(tint.r);
+            parameters.color_g_linear_srgb = srgb_to_linear(tint.g);
+            parameters.color_b_linear_srgb = srgb_to_linear(tint.b);
+            parameters.color_alpha = tint.a;
+            parameters.opacity = static_cast<float>(effect.opacity);
+            std::vector<FilterPixel> shadow;
+            size_t scratch = 0;
+            if (drop_shadow_linear_srgb(
+                    inv_alpha, static_cast<size_t>(surface.width),
+                    static_cast<size_t>(surface.height), parameters,
+                    shadow, {}, &scratch) != GaussianBlurStatus::Success)
+              return false;
+            for (size_t index = 0; index < current.size(); ++index) {
+              const float a = current[index].a;
+              if (a <= 0.0f) continue;
+              const float shadow_a = shadow[index].a * a;
+              if (shadow_a <= 0.0f) continue;
+              blend_alpha_locked(current[index],
+                                 parameters.color_r_linear_srgb,
+                                 parameters.color_g_linear_srgb,
+                                 parameters.color_b_linear_srgb,
+                                 shadow_a, effect.blend_mode);
+            }
+            return true;
+          } else if constexpr (std::is_same_v<T, document::ColorOverlayEffect>) {
+            if (effect.opacity <= 0.0) return true;
+            const auto tint = preview ? preview->convert(effect.color)
+                                      : color::to_preview_rgba(effect.color);
+            const float tint_r = srgb_to_linear(tint.r);
+            const float tint_g = srgb_to_linear(tint.g);
+            const float tint_b = srgb_to_linear(tint.b);
+            const float op = static_cast<float>(effect.opacity) * tint.a;
+            for (size_t index = 0; index < current.size(); ++index) {
+              if (current[index].a <= 0.0f) continue;
+              blend_alpha_locked(current[index], tint_r, tint_g, tint_b,
+                                 op, effect.blend_mode);
+            }
+            return true;
           }
         },
         node.parameters);
-    if (!applied)
+    if (!applied) {
+      if (out_failure) {
+        const char *name = std::visit([](const auto &effect) -> const char * {
+          using T = std::decay_t<decltype(effect)>;
+          if constexpr (std::is_same_v<T, document::GaussianBlurEffect>) return "Gaussian Blur";
+          if constexpr (std::is_same_v<T, document::DropShadowEffect>) return "Drop Shadow";
+          if constexpr (std::is_same_v<T, document::FeatherEffect>) return "Feather";
+          if constexpr (std::is_same_v<T, document::OuterGlowEffect>) return "Outer Glow";
+          if constexpr (std::is_same_v<T, document::InnerGlowEffect>) return "Inner Glow";
+          if constexpr (std::is_same_v<T, document::InnerShadowEffect>) return "Inner Shadow";
+          return "Color Overlay";
+        }, node.parameters);
+        *out_failure = std::string(name) +
+            " filter failed pixel validation or exceeded its CPU budget";
+      }
       return false;
+    }
   }
 
   const auto inverse = path.transform.inverted();
@@ -374,13 +576,17 @@ bool render_path_with_appearance(const document::PathObject &path,
                                  const color::IccPreview *preview,
                                  size_t *out_peak_gaussian_blur_scratch_capacity_bytes,
                                  size_t *out_peak_drop_shadow_scratch_capacity_bytes,
-                                 int32_t raster_dpi) {
+                                 int32_t raster_dpi,
+                                 std::string *out_failure) {
+  if (out_failure) out_failure->clear();
   if (out_peak_gaussian_blur_scratch_capacity_bytes)
     *out_peak_gaussian_blur_scratch_capacity_bytes = 0;
   if (out_peak_drop_shadow_scratch_capacity_bytes)
     *out_peak_drop_shadow_scratch_capacity_bytes = 0;
-  if (!target.is_valid() || !valid_appearance(appearance))
+  if (!target.is_valid() || !valid_appearance(appearance)) {
+    if (out_failure) *out_failure = "Invalid render target or appearance data";
     return false;
+  }
   if (is_default_appearance(appearance))
     return raster::paint(path, camera, target, preview);
   if (appearance.object_opacity == 0.0)
@@ -390,10 +596,13 @@ bool render_path_with_appearance(const document::PathObject &path,
       return render_effect_stack(
           path, appearance, camera, target, preview,
           out_peak_gaussian_blur_scratch_capacity_bytes,
-          out_peak_drop_shadow_scratch_capacity_bytes, raster_dpi);
+          out_peak_drop_shadow_scratch_capacity_bytes, raster_dpi,
+          out_failure);
     } catch (const std::bad_alloc &) {
+      if (out_failure) *out_failure = "Effect rendering allocation failed";
       return false;
     } catch (const std::length_error &) {
+      if (out_failure) *out_failure = "Effect rendering buffer length exceeded limits";
       return false;
     }
   }

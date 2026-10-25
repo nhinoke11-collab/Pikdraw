@@ -17,8 +17,11 @@ enum class ToolboxSlotId : int {
     DropShadow = 8,
     Contour = 9,
     Gradient = 10,
-    Dimension = 11,
-    Count = 12
+    Eyedropper = 11,
+    Dimension = 12,
+    Artboard = 13,
+    Annotation = 14,
+    Count = 15
 };
 
 struct ToolboxSlotInfo {

@@ -4,11 +4,13 @@
 #include "pikdraw/desktop/actions/action_dispatcher.hpp"
 #include "native_window_file_menu.hpp"
 #include "native_window_menus.hpp"
+#include "native_window_toolbox.hpp"
 #include "native_window_document_color.hpp"
 #include "native_window_text_properties.hpp"
 #include "native_window_page_presets.hpp"
 #include "native_window_length_input.hpp"
 #include "pikdraw/document/commands/page_commands.hpp"
+#include "pikdraw/document/commands/artboard_commands.hpp"
 #include "pikdraw/document/commands/layer_commands.hpp"
 #include "pikdraw/desktop/shell/native_window_shortcuts_settings.hpp"
 #include "../tools/drawing_tool_controller.hpp"
@@ -62,6 +64,68 @@ bool NativeWindow::is_menu_action_enabled(MenuActionId action) const {
         return root().window().action_dispatcher().is_action_enabled(id);
     const auto& selected = root().vector_controller().selection().selected_ids();
     switch (action) {
+    case MenuActionId::BitmapsCrop:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kBitmapCrop);
+    case MenuActionId::BitmapsConvert:
+        return can_convert_selected_to_bitmap();
+    case MenuActionId::BitmapsExportMaster:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kBitmapExportMaster);
+    case MenuActionId::BitmapsExportCmykMaster:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kBitmapExportCmykMaster);
+    case MenuActionId::BitmapsAssignProfile:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kBitmapAssignProfile);
+    case MenuActionId::BitmapsConvertProfileToSrgb:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kBitmapConvertProfileToSrgb);
+    case MenuActionId::BitmapsExposure:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kBitmapAdjustExposure);
+    case MenuActionId::BitmapsLight:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kBitmapAdjustLight);
+    case MenuActionId::BitmapsColorBalance:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kBitmapAdjustColorBalance);
+    case MenuActionId::BitmapsChannelMixer:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kBitmapAdjustChannelMixer);
+    case MenuActionId::BitmapsLocalExposureMask:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kBitmapLocalExposureMask);
+    case MenuActionId::BitmapsAdjustmentMask:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kBitmapLocalExposureMask);
+    case MenuActionId::BitmapsLevels:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kBitmapAdjustLevels);
+    case MenuActionId::BitmapsHsl:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kBitmapAdjustHsl);
+    case MenuActionId::BitmapsCurves:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kBitmapAdjustCurves);
+    case MenuActionId::BitmapsWhiteBalance:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kBitmapAdjustWhiteBalance);
+    case MenuActionId::BitmapsVibrance:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kBitmapAdjustVibrance);
+    case MenuActionId::BitmapsSelectiveHsl:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kBitmapAdjustSelectiveHsl);
+    case MenuActionId::BitmapsCloneStamp:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kBitmapCloneStamp);
+    case MenuActionId::BitmapsFlipHorizontal:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kBitmapFlipHorizontal);
+    case MenuActionId::BitmapsFlipVertical:
+        return root().window().action_dispatcher().is_action_enabled(
+            actions::ActionId::kBitmapFlipVertical);
     case MenuActionId::ColorConvertActivePageProfile:
         return root().window().action_dispatcher().is_action_enabled(
             actions::ActionId::kColorConvertProfile);
@@ -156,16 +220,32 @@ bool NativeWindow::is_menu_action_enabled(MenuActionId action) const {
         return selected.size() == 1 && (workflow().is_group(selected.front()) || workflow().is_clipping_container(selected.front()));
     case MenuActionId::ObjectIsolationExit:
         return is_in_isolation_mode();
+    case MenuActionId::EffectsAppearanceFocus:
+        return true;
     case MenuActionId::EffectsGaussianBlur:
         return workflow().can_activate_selected_effect(document::GaussianBlurEffect{1.0, 1.0});
+    case MenuActionId::EffectsFeather:
+        return workflow().can_activate_selected_effect(document::FeatherEffect{});
+    case MenuActionId::EffectsDropShadow:
+        return workflow().can_activate_selected_effect(document::DropShadowEffect{});
+    case MenuActionId::EffectsInnerShadow:
+        return workflow().can_activate_selected_effect(document::InnerShadowEffect{});
+    case MenuActionId::EffectsOuterGlow:
+        return workflow().can_activate_selected_effect(document::OuterGlowEffect{});
+    case MenuActionId::EffectsInnerGlow:
+        return workflow().can_activate_selected_effect(document::InnerGlowEffect{});
+    case MenuActionId::EffectsColorOverlay:
+        return workflow().can_activate_selected_effect(document::ColorOverlayEffect{});
     case MenuActionId::EffectsContour:
         return !selected.empty();
     case MenuActionId::EffectsBreakContourApart:
         return (contour_tool_ && contour_tool_->active()) || !selected.empty();
-    case MenuActionId::EffectsDropShadow:
-        return workflow().can_activate_selected_effect(document::DropShadowEffect{});
+    case MenuActionId::EffectsClearSelected:
+        return workflow().can_edit_selected_effect(property_effect_index_);
     case MenuActionId::EffectsClear:
         return workflow().can_clear_selected_effects();
+    case MenuActionId::EffectsClearAll:
+        return workflow().can_clear_all_effects();
     case MenuActionId::LayoutPagePrevious:
     case MenuActionId::LayoutPageNext:
     case MenuActionId::LayoutPageDelete: {
@@ -180,6 +260,26 @@ bool NativeWindow::is_menu_action_enabled(MenuActionId action) const {
         if (action == MenuActionId::LayoutPagePrevious) return index > 0;
         if (action == MenuActionId::LayoutPageNext) return index + 1 < pages.size();
         return pages.size() > 1;
+    }
+    case MenuActionId::LayoutArtboardAdd:
+    case MenuActionId::LayoutArtboardDuplicate:
+    case MenuActionId::LayoutArtboardDelete: {
+        const auto snapshot = root().document().current_snapshot();
+        if (!snapshot || root().document().is_content_locked()) return false;
+        const auto& boards = snapshot->active_page().artboards;
+        if (action == MenuActionId::LayoutArtboardAdd ||
+            action == MenuActionId::LayoutArtboardDuplicate)
+            return boards.size() < 10000;
+        return boards.size() > 1;
+    }
+    case MenuActionId::LayoutArtboardExport: {
+        const auto snapshot = root().document().current_snapshot();
+        if (!snapshot || active_tab().active_artboard_id == document::kInvalidArtboardId)
+            return false;
+        const auto& boards = snapshot->active_page().artboards;
+        return std::any_of(boards.begin(), boards.end(), [&](const auto& board) {
+            return board.id == active_tab().active_artboard_id;
+        });
     }
     case MenuActionId::LayoutUnitMillimeter:
     case MenuActionId::LayoutUnitCentimeter:
@@ -253,6 +353,31 @@ bool NativeWindow::is_menu_action_enabled(MenuActionId action) const {
 
 bool NativeWindow::is_menu_action_checked(MenuActionId action) const noexcept {
     switch (action) {
+    case MenuActionId::ViewPageFocus: return !artboard_overview_enabled();
+    case MenuActionId::ViewArtboardOverview: return artboard_overview_enabled();
+    case MenuActionId::ViewSnapGrid:
+    case MenuActionId::ViewSnapObjects:
+    case MenuActionId::ViewSnapSmartGuides:
+    case MenuActionId::ViewSnapEqualSpacing:
+    case MenuActionId::ViewSnapPage:
+    case MenuActionId::ViewSnapGuides:
+    case MenuActionId::ViewSnapMaster: {
+        if (!drawing_tool_) return false;
+        const auto config = drawing_tool_->snap_config_snapshot();
+        using vector::precision::snap::SnapGroup;
+        using vector::precision::snap::SnapOption;
+        if (action == MenuActionId::ViewSnapGrid)
+            return config.options[static_cast<size_t>(SnapOption::Grid)];
+        if (action == MenuActionId::ViewSnapObjects)
+            return config.groups[static_cast<size_t>(SnapGroup::ObjectPoints)];
+        if (action == MenuActionId::ViewSnapSmartGuides) return config.smart_guides_enabled;
+        if (action == MenuActionId::ViewSnapEqualSpacing) return config.smart_spacing_enabled;
+        if (action == MenuActionId::ViewSnapPage)
+            return config.options[static_cast<size_t>(SnapOption::PageEdge)];
+        if (action == MenuActionId::ViewSnapGuides)
+            return config.options[static_cast<size_t>(SnapOption::Guide)];
+        return config.master_enabled;
+    }
     case MenuActionId::ObjectToggleKeepSource: return keep_source_object_;
     case MenuActionId::ObjectToggleKeepTarget: return keep_target_object_;
     case MenuActionId::TextBold: return font_bold_;
@@ -335,6 +460,8 @@ void NativeWindow::execute_menu_action(int action_id) {
         if (!snapshot) return;
         const auto* page = snapshot->find_page(snapshot->active_page_id());
         if (!page) return;
+        active_tab().active_artboard_id = page->artboards.empty()
+            ? document::kInvalidArtboardId : page->artboards.front().id;
         sync_display_unit_from_active_page();
         active_tab().page_width_mm = page->layout.width_mm;
         active_tab().page_height_mm = page->layout.height_mm;
@@ -384,8 +511,7 @@ void NativeWindow::execute_menu_action(int action_id) {
         if (!dispatcher.get_action(id)) {
             dispatcher.register_action({id, "Phục hồi bản tự lưu", "Recover Autosave", "",
                 [this] {
-                    scan_recovery_checkpoints(true);
-                    if (recovery_candidates_.empty()) show_recovery_modal_ = true;
+                    scan_recovery_checkpoints(true, true);
                 }, nullptr});
         }
         (void)dispatcher.dispatch(id);
@@ -415,6 +541,26 @@ void NativeWindow::execute_menu_action(int action_id) {
         (void)dispatcher.dispatch(id);
         return;
     }
+    case MenuActionId::FileTestPrint: {
+        const std::string id(actions::ActionId::kFileTestPrint);
+        auto& dispatcher = root().window().action_dispatcher();
+        (void)dispatcher.dispatch(id);
+        return;
+    }
+    case MenuActionId::FilePrintTestSheet:
+        (void)root().window().action_dispatcher().dispatch(
+            actions::ActionId::kFilePrintTestSheet);
+        return;
+    case MenuActionId::FileImportMeasurementRun: {
+        const std::string id(actions::ActionId::kFileImportMeasurementRun);
+        (void)root().window().action_dispatcher().dispatch(id);
+        return;
+    }
+    case MenuActionId::FileCompareMeasurementRuns: {
+        const std::string id(actions::ActionId::kFileCompareMeasurementRuns);
+        (void)root().window().action_dispatcher().dispatch(id);
+        return;
+    }
     case MenuActionId::FileToggleGuidelines: toggle_guidelines(); return;
     case MenuActionId::FileClearGuidelines: clear_guidelines(); return;
     case MenuActionId::FileExit: DestroyWindow(hwnd_); return;
@@ -426,6 +572,9 @@ void NativeWindow::execute_menu_action(int action_id) {
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     case MenuActionId::ObjectProperties:
+        open_object_properties_panel();
+        return;
+    case MenuActionId::EffectsAppearanceFocus:
         open_object_properties_panel();
         return;
     case MenuActionId::EditRedo:
@@ -620,6 +769,88 @@ void NativeWindow::execute_menu_action(int action_id) {
     case MenuActionId::ColorConvertActivePageProfile:
         (void)root().window().action_dispatcher().dispatch(actions::ActionId::kColorConvertProfile);
         return;
+    case MenuActionId::BitmapsCrop:
+        (void)root().window().action_dispatcher().dispatch(
+            actions::ActionId::kBitmapCrop);
+        return;
+    case MenuActionId::BitmapsConvert:
+        (void)convert_selected_to_bitmap(300);
+        return;
+    case MenuActionId::BitmapsExportMaster:
+        (void)root().window().action_dispatcher().dispatch(
+            actions::ActionId::kBitmapExportMaster);
+        return;
+    case MenuActionId::BitmapsExportCmykMaster:
+        (void)root().window().action_dispatcher().dispatch(
+            actions::ActionId::kBitmapExportCmykMaster);
+        return;
+    case MenuActionId::BitmapsAssignProfile:
+        (void)root().window().action_dispatcher().dispatch(
+            actions::ActionId::kBitmapAssignProfile);
+        return;
+    case MenuActionId::BitmapsConvertProfileToSrgb:
+        (void)root().window().action_dispatcher().dispatch(
+            actions::ActionId::kBitmapConvertProfileToSrgb);
+        return;
+    case MenuActionId::BitmapsExposure:
+        (void)root().window().action_dispatcher().dispatch(
+            actions::ActionId::kBitmapAdjustExposure);
+        return;
+    case MenuActionId::BitmapsLight:
+        (void)root().window().action_dispatcher().dispatch(
+            actions::ActionId::kBitmapAdjustLight);
+        return;
+    case MenuActionId::BitmapsColorBalance:
+        (void)root().window().action_dispatcher().dispatch(
+            actions::ActionId::kBitmapAdjustColorBalance);
+        return;
+    case MenuActionId::BitmapsChannelMixer:
+        (void)root().window().action_dispatcher().dispatch(
+            actions::ActionId::kBitmapAdjustChannelMixer);
+        return;
+    case MenuActionId::BitmapsLocalExposureMask:
+        (void)root().window().action_dispatcher().dispatch(
+            actions::ActionId::kBitmapLocalExposureMask);
+        return;
+    case MenuActionId::BitmapsAdjustmentMask:
+        edit_selected_bitmap_adjustment_mask();
+        return;
+    case MenuActionId::BitmapsLevels:
+        (void)root().window().action_dispatcher().dispatch(
+            actions::ActionId::kBitmapAdjustLevels);
+        return;
+    case MenuActionId::BitmapsHsl:
+        (void)root().window().action_dispatcher().dispatch(
+            actions::ActionId::kBitmapAdjustHsl);
+        return;
+    case MenuActionId::BitmapsCurves:
+        (void)root().window().action_dispatcher().dispatch(
+            actions::ActionId::kBitmapAdjustCurves);
+        return;
+    case MenuActionId::BitmapsWhiteBalance:
+        (void)root().window().action_dispatcher().dispatch(
+            actions::ActionId::kBitmapAdjustWhiteBalance);
+        return;
+    case MenuActionId::BitmapsVibrance:
+        (void)root().window().action_dispatcher().dispatch(
+            actions::ActionId::kBitmapAdjustVibrance);
+        return;
+    case MenuActionId::BitmapsSelectiveHsl:
+        (void)root().window().action_dispatcher().dispatch(
+            actions::ActionId::kBitmapAdjustSelectiveHsl);
+        return;
+    case MenuActionId::BitmapsCloneStamp:
+        (void)root().window().action_dispatcher().dispatch(
+            actions::ActionId::kBitmapCloneStamp);
+        return;
+    case MenuActionId::BitmapsFlipHorizontal:
+        (void)root().window().action_dispatcher().dispatch(
+            actions::ActionId::kBitmapFlipHorizontal);
+        return;
+    case MenuActionId::BitmapsFlipVertical:
+        (void)root().window().action_dispatcher().dispatch(
+            actions::ActionId::kBitmapFlipVertical);
+        return;
     case MenuActionId::ColorConvertDocumentProfile:
         (void)root().window().action_dispatcher().dispatch(
             actions::ActionId::kColorConvertDocumentProfile);
@@ -662,13 +893,23 @@ void NativeWindow::execute_menu_action(int action_id) {
         return;
     }
     case MenuActionId::ViewFitPage: fit_page_to_canvas(); return;
+    case MenuActionId::ViewPageFocus:
+        set_artboard_overview_enabled(false);
+        return;
+    case MenuActionId::ViewArtboardOverview:
+        set_artboard_overview_enabled(true);
+        return;
+    case MenuActionId::ViewFitArtboards:
+        fit_artboards_to_canvas();
+        return;
     case MenuActionId::ViewToggleGuidelines: toggle_guidelines(); return;
     case MenuActionId::ViewClearGuidelines: clear_guidelines(); return;
     case MenuActionId::ViewProofColors: {
         proof_colors_enabled_ = !proof_colors_enabled_;
         update_color_preview_options();
         const auto* preview = effective_color_preview();
-        if (proof_colors_enabled_ && (!preview || !preview->has_cmyk_transform())) {
+        if (proof_colors_enabled_ &&
+            (!preview || !preview->supports_proofing(proof_intent_))) {
             proof_colors_enabled_ = false;
             update_color_preview_options();
             status_msg_ = language_ == UILanguage::Vietnamese
@@ -687,18 +928,20 @@ void NativeWindow::execute_menu_action(int action_id) {
         gamut_warning_enabled_ = !gamut_warning_enabled_;
         update_color_preview_options();
         const auto* preview = effective_color_preview();
-        if (gamut_warning_enabled_ && (!preview || !preview->has_cmyk_transform())) {
+        if (gamut_warning_enabled_ &&
+            (!preview || !preview->has_cmyk_transform() ||
+             !preview->supports_gamut_check())) {
             gamut_warning_enabled_ = false;
             update_color_preview_options();
             status_msg_ = language_ == UILanguage::Vietnamese
-                ? "Cảnh báo sai khác RGB cần profile CMYK ICC khả dụng; chưa có kết quả đo."
-                : "RGB difference warning needs an available CMYK ICC profile; no measurement is available.";
+                ? "Cảnh báo gamut cần profile CMYK và CMM hỗ trợ kiểm gamut thật."
+                : "Gamut warning needs a CMYK profile and a CMM with gamut-check support.";
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
         status_msg_ = language_ == UILanguage::Vietnamese
-            ? (gamut_warning_enabled_ ? "Cảnh báo sai khác RGB sau proof: BẬT (gần đúng, không phải Delta E)" : "Cảnh báo sai khác RGB: TẮT")
-            : (gamut_warning_enabled_ ? "Proof RGB difference warning: ON (approximate, not Delta E)" : "Proof RGB difference warning: OFF");
+            ? (gamut_warning_enabled_ ? "Cảnh báo màu ngoài gamut ICC: BẬT" : "Cảnh báo gamut: TẮT")
+            : (gamut_warning_enabled_ ? "ICC out-of-gamut warning: ON" : "Gamut warning: OFF");
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
@@ -741,8 +984,17 @@ void NativeWindow::execute_menu_action(int action_id) {
         auto& doc = root().document();
         const auto name = "Page " + std::to_string(doc.pages().size() + 1);
         auto page_layout = document::Page::make_default();
+        const auto& active_layout = doc.page();
+        page_layout.width_mm = active_layout.width_mm;
+        page_layout.height_mm = active_layout.height_mm;
         page_layout.display_length_unit = doc.page().display_length_unit;
         page_layout.display_length_unit_explicit = doc.page().display_length_unit_explicit;
+        page_layout.color_mode = active_layout.color_mode;
+        page_layout.color_profile_name = active_layout.color_profile_name;
+        page_layout.color_profile_resource = active_layout.color_profile_resource;
+        page_layout.raster_dpi = active_layout.raster_dpi;
+        page_layout.color_mode_explicit = active_layout.color_mode_explicit;
+        page_layout.raster_dpi_explicit = active_layout.raster_dpi_explicit;
         const auto result = doc.execute_command(std::make_unique<document::AddPageCommand>(
             document::make_document_page(name, std::move(page_layout))));
         if (!result.success) status_msg_ = result.error_message;
@@ -768,6 +1020,81 @@ void NativeWindow::execute_menu_action(int action_id) {
                                                                     : "Page deleted · Ctrl+Z to undo");
         return;
     }
+    case MenuActionId::LayoutArtboardAdd: {
+        if (active_num_field_ != NumericFieldId::None) cancel_numeric_field();
+        const auto snapshot = root().document().current_snapshot();
+        if (!snapshot) return;
+        const auto& page = snapshot->active_page();
+        double right = 0.0;
+        for (const auto& board : page.artboards)
+            right = std::max(right, board.x_mm + board.width_mm);
+        const auto bounds = geometry::Rect2D{right + 20.0, 0.0,
+            page.layout.width_mm, page.layout.height_mm};
+        auto command = std::make_unique<document::AddArtboardCommand>(page.id,
+            "Artboard " + std::to_string(page.artboards.size() + 1), bounds);
+        const auto id = command->artboard_id();
+        const auto result = root().document().execute_command(std::move(command));
+        if (!result.success) {
+            status_msg_ = result.error_message;
+            return;
+        }
+        (void)set_active_artboard(id);
+        if (artboard_overview_enabled()) fit_artboards_to_canvas();
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đã thêm Artboard · cùng dùng artwork của trang · Ctrl+Z hoàn tác"
+            : "Artboard added · shares this page's artwork · Ctrl+Z undoes";
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    case MenuActionId::LayoutArtboardDuplicate: {
+        if (active_num_field_ != NumericFieldId::None) cancel_numeric_field();
+        const auto page_id = root().document().active_page_id();
+        auto command = std::make_unique<document::DuplicateArtboardCommand>(
+            page_id, active_tab().active_artboard_id);
+        const auto result = root().document().execute_command(std::move(command));
+        if (!result.success) {
+            status_msg_ = result.error_message;
+            return;
+        }
+        const auto updated = root().document().current_snapshot();
+        if (updated && !updated->active_page().artboards.empty())
+            (void)set_active_artboard(updated->active_page().artboards.back().id);
+        if (artboard_overview_enabled()) fit_artboards_to_canvas();
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đã nhân đôi Artboard · artwork dùng chung · Ctrl+Z hoàn tác"
+            : "Artboard duplicated · artwork remains shared · Ctrl+Z undoes";
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    case MenuActionId::LayoutArtboardDelete: {
+        if (active_num_field_ != NumericFieldId::None) cancel_numeric_field();
+        const auto snapshot = root().document().current_snapshot();
+        if (!snapshot) return;
+        const auto& boards = snapshot->active_page().artboards;
+        const auto found = std::find_if(boards.begin(), boards.end(), [&](const auto& board) {
+            return board.id == active_tab().active_artboard_id;
+        });
+        if (found == boards.end()) return;
+        const auto index = static_cast<size_t>(std::distance(boards.begin(), found));
+        const auto next_id = boards[index == 0 ? 1 : index - 1].id;
+        const auto result = root().document().execute_command(
+            std::make_unique<document::DeleteArtboardCommand>(
+                snapshot->active_page_id(), active_tab().active_artboard_id));
+        if (!result.success) {
+            status_msg_ = result.error_message;
+            return;
+        }
+        (void)set_active_artboard(next_id);
+        if (artboard_overview_enabled()) fit_artboards_to_canvas();
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đã xóa Artboard · Ctrl+Z khôi phục"
+            : "Artboard deleted · Ctrl+Z restores it";
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    case MenuActionId::LayoutArtboardExport:
+        export_svg_dialog(false, false, true);
+        return;
     case MenuActionId::LayoutPageA4: select_page_preset(0); return;
     case MenuActionId::LayoutPageA3: select_page_preset(1); return;
     case MenuActionId::LayoutPageBanner: select_page_preset(6); return;
@@ -1016,8 +1343,28 @@ void NativeWindow::execute_menu_action(int action_id) {
         activate_effect(document::GaussianBlurEffect{1.0, 1.0}, "Gaussian Blur", "Gaussian Blur");
         return;
     }
+    case MenuActionId::EffectsFeather: {
+        activate_effect(document::FeatherEffect{}, "Feather", "Làm mềm viền (Feather)");
+        return;
+    }
     case MenuActionId::EffectsDropShadow: {
         activate_effect(document::DropShadowEffect{}, "Drop Shadow", "Drop Shadow");
+        return;
+    }
+    case MenuActionId::EffectsInnerShadow: {
+        activate_effect(document::InnerShadowEffect{}, "Inner Shadow", "Bóng trong (Inner Shadow)");
+        return;
+    }
+    case MenuActionId::EffectsOuterGlow: {
+        activate_effect(document::OuterGlowEffect{}, "Outer Glow", "Phát sáng ngoài (Outer Glow)");
+        return;
+    }
+    case MenuActionId::EffectsInnerGlow: {
+        activate_effect(document::InnerGlowEffect{}, "Inner Glow", "Phát sáng trong (Inner Glow)");
+        return;
+    }
+    case MenuActionId::EffectsColorOverlay: {
+        activate_effect(document::ColorOverlayEffect{}, "Color Overlay", "Phủ màu (Color Overlay)");
         return;
     }
     case MenuActionId::EffectsContour: {
@@ -1028,6 +1375,16 @@ void NativeWindow::execute_menu_action(int action_id) {
         trigger_break_contour_apart();
         return;
     }
+    case MenuActionId::EffectsClearSelected: {
+        if (workflow().can_edit_selected_effect(property_effect_index_)) {
+            workflow().remove_selected_effect(property_effect_index_);
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Đã xóa hiệu ứng được chọn · Ctrl+Z hoàn tác"
+                : "Removed selected effect · Ctrl+Z undoes";
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        return;
+    }
     case MenuActionId::EffectsClear: {
         ribbon_drop_shadow_mode_ = false;
         const bool cleared = workflow().clear_selected_effects();
@@ -1035,6 +1392,17 @@ void NativeWindow::execute_menu_action(int action_id) {
             ? (cleared ? "Đã xóa toàn bộ node hiệu ứng · Opacity và Blend được giữ · Ctrl+Z hoàn tác"
                        : "Không thể xóa hiệu ứng cho vùng chọn hiện tại")
             : (cleared ? "Cleared all effect nodes · Opacity and Blend were preserved · Ctrl+Z undoes"
+                       : "Could not clear effects for the current selection");
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    case MenuActionId::EffectsClearAll: {
+        ribbon_drop_shadow_mode_ = false;
+        const bool cleared = workflow().clear_all_effects();
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? (cleared ? "Đã xóa toàn bộ hiệu ứng diện mạo và contour · Ctrl+Z hoàn tác"
+                       : "Không thể xóa hiệu ứng cho vùng chọn hiện tại")
+            : (cleared ? "Cleared all appearance effects and contour · Ctrl+Z undoes"
                        : "Could not clear effects for the current selection");
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
@@ -1080,20 +1448,29 @@ void NativeWindow::execute_menu_action(int action_id) {
     case MenuActionId::TextFitToPath: fit_text_to_path(); return;
     case MenuActionId::TextStraighten: straighten_text_from_path(); return;
     case MenuActionId::TextReversePath: reverse_text_on_path(); return;
-    case MenuActionId::ToolPick: workflow().cancel_effect_draft(); set_active_tool(0); return;
-    case MenuActionId::ToolNode: workflow().cancel_effect_draft(); set_active_tool(11); return;
-    case MenuActionId::ToolRectangle: workflow().cancel_effect_draft(); set_active_tool(1); return;
-    case MenuActionId::ToolEllipse: workflow().cancel_effect_draft(); set_active_tool(2); return;
-    case MenuActionId::ToolPolygon: workflow().cancel_effect_draft(); set_active_tool(9); return;
-    case MenuActionId::ToolText: workflow().cancel_effect_draft(); set_active_tool(4); return;
-    case MenuActionId::ToolKnife: workflow().cancel_effect_draft(); set_active_tool(5); return;
-    case MenuActionId::ToolLine: workflow().cancel_effect_draft(); set_active_tool(6); return;
-    case MenuActionId::ToolPolyline: workflow().cancel_effect_draft(); set_active_tool(7); return;
-    case MenuActionId::ToolPen: workflow().cancel_effect_draft(); set_active_tool(8); return;
-    case MenuActionId::ToolGradient: workflow().cancel_effect_draft(); set_active_tool(13); return;
+    case MenuActionId::ToolPick: previous_drawing_tool_ = 0; set_active_tool(0); return;
+    case MenuActionId::ToolNode: set_active_tool(11); return;
+    case MenuActionId::ToolRectangle: set_active_tool(1); return;
+    case MenuActionId::ToolEllipse: set_active_tool(2); return;
+    case MenuActionId::ToolPolygon: set_active_tool(9); return;
+    case MenuActionId::ToolText: set_active_tool(4); return;
+    case MenuActionId::ToolKnife: set_active_tool(5); return;
+    case MenuActionId::ToolLine: set_active_tool(6); return;
+    case MenuActionId::ToolPolyline: set_active_tool(7); return;
+    case MenuActionId::ToolPen: set_active_tool(8); return;
+    case MenuActionId::ToolGradient: set_active_tool(13); return;
+    case MenuActionId::ToolEyedropper: set_active_tool(15); return;
+    case MenuActionId::ToolArtboard: set_active_tool(14); return;
     case MenuActionId::ToolCustomizeToolbox: toggle_toolbox_customize_flyout(); return;
-    case MenuActionId::ObjectFillGradient: workflow().cancel_effect_draft(); set_active_tool(13); open_inspector_properties_panel(); return;
+    case MenuActionId::ObjectFillGradient: set_active_tool(13); open_inspector_properties_panel(); return;
     case MenuActionId::WindowProperties: open_inspector_properties_panel(); return;
+    case MenuActionId::ViewSnapProperties:
+        active_dock_tab_ = 0;
+        show_snap_properties_ = true;
+        show_style_inspector_ = false;
+        show_align_panel_ = false;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
     case MenuActionId::WindowAlignDistributePanel: open_align_distribute_panel(); return;
     case MenuActionId::SettingsPreferences: open_settings_modal(); return;
     case MenuActionId::SettingsAiConnections: open_ai_connections_settings(); return;
@@ -1102,14 +1479,43 @@ void NativeWindow::execute_menu_action(int action_id) {
     case MenuActionId::SettingsThemeLight: set_theme(ThemeMode::Light); return;
     case MenuActionId::SettingsLangVi: set_language(UILanguage::Vietnamese); return;
     case MenuActionId::SettingsLangEn: set_language(UILanguage::English); return;
-    case MenuActionId::None:
-    case MenuActionId::FileProperties:
     case MenuActionId::ViewSnapGrid:
     case MenuActionId::ViewSnapObjects:
+    case MenuActionId::ViewSnapSmartGuides:
+    case MenuActionId::ViewSnapEqualSpacing:
+    case MenuActionId::ViewSnapPage:
+    case MenuActionId::ViewSnapGuides:
+    case MenuActionId::ViewSnapMaster: {
+        if (!drawing_tool_) return;
+        bool changed = false;
+        using vector::precision::snap::SnapOption;
+        if (action == MenuActionId::ViewSnapGrid)
+            changed = drawing_tool_->toggle_snap_option(SnapOption::Grid);
+        else if (action == MenuActionId::ViewSnapObjects)
+            changed = drawing_tool_->toggle_snap_objects();
+        else if (action == MenuActionId::ViewSnapSmartGuides)
+            changed = drawing_tool_->toggle_smart_guides();
+        else if (action == MenuActionId::ViewSnapPage)
+            changed = drawing_tool_->toggle_snap_page();
+        else if (action == MenuActionId::ViewSnapGuides)
+            changed = drawing_tool_->toggle_snap_guides();
+        else if (action == MenuActionId::ViewSnapMaster)
+            changed = drawing_tool_->toggle_snap_master();
+        else
+            changed = drawing_tool_->toggle_smart_spacing();
+        if (changed) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Đã cập nhật cấu hình Snap · áp dụng ngay khi kéo/vẽ · Ctrl+Z không đổi cài đặt"
+                : "Snap settings updated · applies to drawing and drag · preferences are outside Undo";
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        return;
+    }
+    case MenuActionId::None:
+    case MenuActionId::FileProperties:
     case MenuActionId::LayoutPageSetup:
     case MenuActionId::EffectsExtrude:
     case MenuActionId::EffectsBevel:
-    case MenuActionId::BitmapsConvert:
     case MenuActionId::BitmapsEdit:
     case MenuActionId::BitmapsTrace:
     case MenuActionId::BitmapsColorMask:
@@ -1138,7 +1544,6 @@ void NativeWindow::activate_toolbox_effect_item(int item) {
     }
     if (item == 4) {
         toolbox_open_group_ = 0;
-        workflow().cancel_effect_draft();
         set_active_tool(13);
         return;
     }
@@ -1160,17 +1565,54 @@ void NativeWindow::activate_toolbox_effect_item(int item) {
 bool NativeWindow::handle_toolbox_key(WPARAM key, bool alt_pressed, bool shift_pressed) {
     if (active_num_field_ != NumericFieldId::None || is_menu_open()) return false;
     if (alt_pressed && key != VK_DOWN) return false;
-
-    const auto set_group_hint = [&]() {
-        const char *group = toolbox_focus_group_ == 1 ? "Quick Shapes"
-                          : toolbox_focus_group_ == 2 ? "Path Drawing" : "Appearance";
-        const char *group_vi = toolbox_focus_group_ == 1 ? "Quick Shapes"
-                             : toolbox_focus_group_ == 2 ? "Đường vẽ" : "Diện mạo";
+    const auto slots = visible_toolbox_slots();
+    if (slots.empty()) return false;
+    toolbox_focus_slot_index_ = std::clamp(toolbox_focus_slot_index_, 0,
+        static_cast<int>(slots.size()) - 1);
+    const auto focused_slot = [&]() { return slots[static_cast<size_t>(toolbox_focus_slot_index_)]; };
+    const auto set_slot_hint = [&]() {
+        const auto slot = focused_slot();
+        const auto info = get_toolbox_slot_info(slot);
+        if ((info.group_id >= 1 && info.group_id <= 3) || info.group_id == 6)
+            toolbox_focus_group_ = info.group_id;
+        const char* name_en = "Tool";
+        const char* name_vi = "Công cụ";
+        switch (slot) {
+        case ToolboxSlotId::Pick: name_en = "Pick Tool"; name_vi = "Công cụ chọn"; break;
+        case ToolboxSlotId::Node: name_en = "Node Tool"; name_vi = "Công cụ Node"; break;
+        case ToolboxSlotId::QuickShapes: name_en = "Quick Shapes"; name_vi = "Hình cơ bản"; break;
+        case ToolboxSlotId::PathDrawing: name_en = "Path Drawing"; name_vi = "Đường vẽ"; break;
+        case ToolboxSlotId::Pan: name_en = "Pan Tool"; name_vi = "Công cụ kéo trượt"; break;
+        case ToolboxSlotId::Text: name_en = "Text Tool"; name_vi = "Công cụ văn bản"; break;
+        case ToolboxSlotId::Knife: name_en = "Knife Tool"; name_vi = "Công cụ dao cắt"; break;
+        case ToolboxSlotId::Blur: name_en = "Appearance"; name_vi = "Diện mạo"; break;
+        case ToolboxSlotId::DropShadow: name_en = "Drop Shadow"; name_vi = "Đổ bóng"; break;
+        case ToolboxSlotId::Contour: name_en = "Contour Tool"; name_vi = "Công cụ Contour"; break;
+        case ToolboxSlotId::Gradient: name_en = "Gradient Tool"; name_vi = "Công cụ chuyển sắc"; break;
+        case ToolboxSlotId::Eyedropper: name_en = "Color Eyedropper"; name_vi = "Hút màu & Sao chép kiểu"; break;
+        case ToolboxSlotId::Dimension: name_en = "Dimension Tool"; name_vi = "Công cụ kích thước"; break;
+        case ToolboxSlotId::Artboard: name_en = "Artboard Tool"; name_vi = "Công cụ Artboard"; break;
+        case ToolboxSlotId::Count: break;
+        }
+        const bool group = info.group_id != 0;
+        const char* suffix_en = group ? " · Enter/Alt+Down opens group" : " · Enter activates";
+        const char* suffix_vi = group ? " · Enter/Alt+Mũi tên xuống mở nhóm" : " · Enter kích hoạt";
         status_msg_ = language_ == UILanguage::Vietnamese
-            ? std::string(group_vi) + " · Tab/Shift+Tab đổi nhóm · Alt+Down mở · Esc trả focus"
-            : std::string(group) + " · Tab/Shift+Tab groups · Alt+Down opens · Esc returns";
+            ? std::string(name_vi) + suffix_vi
+            : std::string(name_en) + suffix_en;
     };
     const auto set_item_hint = [&]() {
+        if (toolbox_focus_group_ == 6) {
+            const int item = std::clamp(toolbox_flyout_index_, 0, 1);
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? (item == 0
+                    ? "Dao cắt Knife · Kéo qua path kín có fill · Enter chọn · Esc đóng"
+                    : "Tẩy vector · Path kín có fill; path mở chưa được hỗ trợ · Enter chọn · Esc đóng")
+                : (item == 0
+                    ? "Knife · Drag across a closed filled path · Enter choose · Esc closes"
+                    : "Vector Eraser · Closed filled paths only; open paths are unsupported · Enter choose · Esc closes");
+            return;
+        }
         const char *labels_en[3][5] = {
             {"Rectangle", "Ellipse", "Polygon", "", ""},
             {"Line", "Polyline", "Pen", "Node", ""},
@@ -1221,10 +1663,12 @@ bool NativeWindow::handle_toolbox_key(WPARAM key, bool alt_pressed, bool shift_p
         }
     };
     const auto open_focused_group = [&]() {
-        toolbox_focus_group_ = std::clamp(toolbox_focus_group_, 1, 3);
+        const auto info = get_toolbox_slot_info(focused_slot());
+        if ((info.group_id < 1 || info.group_id > 3) && info.group_id != 6) return false;
+        toolbox_focus_group_ = info.group_id;
         toolbox_keyboard_focus_ = true;
-        toolbox_open_group_ = toolbox_focus_group_;
-        if (toolbox_open_group_ == 3) {
+        toolbox_open_group_ = info.group_id;
+        if (toolbox_open_group_ == 3 || toolbox_open_group_ == 6) {
             toolbox_flyout_index_ = 0;
         } else {
             const int last = toolbox_open_group_ == 1 ? quick_shapes_last_tool_ : path_drawing_last_tool_;
@@ -1233,28 +1677,59 @@ bool NativeWindow::handle_toolbox_key(WPARAM key, bool alt_pressed, bool shift_p
                 : (last == 6 ? 0 : last == 7 ? 1 : last == 8 ? 2 : 3);
         }
         set_item_hint();
+        return true;
+    };
+    const auto activate_focused_slot = [&]() {
+        const auto slot = focused_slot();
+        const auto info = get_toolbox_slot_info(slot);
+        if (info.group_id != 0) return open_focused_group();
+        toolbox_keyboard_focus_ = false;
+        toolbox_open_group_ = 0;
+        switch (slot) {
+        case ToolboxSlotId::Pick: previous_drawing_tool_ = 0; set_active_tool(0); break;
+        case ToolboxSlotId::Node: set_active_tool(11); break;
+        case ToolboxSlotId::Pan: set_active_tool(3); break;
+        case ToolboxSlotId::Text: set_active_tool(4); break;
+        case ToolboxSlotId::Knife: set_active_tool(5); break;
+        case ToolboxSlotId::Blur: activate_toolbox_effect_item(1); break;
+        case ToolboxSlotId::DropShadow: activate_toolbox_effect_item(2); break;
+        case ToolboxSlotId::Contour: trigger_effects_contour(); break;
+        case ToolboxSlotId::Gradient: set_active_tool(13); break;
+        case ToolboxSlotId::Eyedropper: set_active_tool(15); break;
+        case ToolboxSlotId::Dimension: set_active_tool(10); break;
+        case ToolboxSlotId::Artboard: set_active_tool(14); break;
+        case ToolboxSlotId::QuickShapes:
+        case ToolboxSlotId::PathDrawing:
+        case ToolboxSlotId::Count: break;
+        }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return true;
     };
 
     if (key == VK_TAB) {
         if (!toolbox_keyboard_focus_) {
-            toolbox_focus_group_ = shift_pressed ? 3 : 1;
+            toolbox_focus_slot_index_ = shift_pressed
+                ? static_cast<int>(slots.size()) - 1 : 0;
             toolbox_keyboard_focus_ = true;
         } else {
-            toolbox_focus_group_ = (toolbox_focus_group_ - 1 + (shift_pressed ? 2 : 1) + 3) % 3 + 1;
+            const int count = static_cast<int>(slots.size());
+            toolbox_focus_slot_index_ =
+                (toolbox_focus_slot_index_ + (shift_pressed ? count - 1 : 1)) % count;
         }
         toolbox_open_group_ = 0;
-        set_group_hint();
+        set_slot_hint();
         return true;
     }
 
     if (toolbox_open_group_ > 0) {
         if (key == VK_ESCAPE) {
             toolbox_open_group_ = 0;
-            set_group_hint();
+            set_slot_hint();
             return true;
         }
         if (key == VK_UP || key == VK_DOWN) {
-            const int max_items = toolbox_open_group_ == 3 ? 5
+            const int max_items = toolbox_open_group_ == 6 ? 2
+                : toolbox_open_group_ == 3 ? 5
                 : toolbox_open_group_ == 2 ? 4 : 3;
             toolbox_flyout_index_ = (toolbox_flyout_index_ + (key == VK_UP ? max_items - 1 : 1)) % max_items;
             set_item_hint();
@@ -1266,11 +1741,16 @@ bool NativeWindow::handle_toolbox_key(WPARAM key, bool alt_pressed, bool shift_p
                 activate_toolbox_effect_item(index);
                 return true;
             }
+            if (toolbox_open_group_ == 6) {
+                toolbox_open_group_ = 0;
+                set_active_tool(index == 0 ? 5 : 16);
+                return true;
+            }
             const int tool = toolbox_open_group_ == 1
                 ? (index == 0 ? 1 : index == 1 ? 2 : 9)
                 : (index == 0 ? 6 : index == 1 ? 7 : index == 2 ? 8 : 11);
             toolbox_open_group_ = 0;
-            workflow().cancel_effect_draft(); set_active_tool(tool);
+            set_active_tool(tool);
             return true;
         }
         return false;
@@ -1278,15 +1758,16 @@ bool NativeWindow::handle_toolbox_key(WPARAM key, bool alt_pressed, bool shift_p
 
     if (key == VK_ESCAPE && toolbox_keyboard_focus_) {
         toolbox_keyboard_focus_ = false;
+        toolbox_open_group_ = 0;
         status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Đã trả focus về vùng vẽ · Tab để chọn nhóm toolbox"
-            : "Canvas focus · press Tab to focus a toolbox group";
+            ? "Đã trả focus về vùng vẽ · Tab để chọn công cụ"
+            : "Canvas focus · press Tab to focus a tool";
         return true;
     }
-    if ((alt_pressed && key == VK_DOWN) ||
-        (!alt_pressed && toolbox_keyboard_focus_ && (key == VK_RETURN || key == VK_SPACE))) {
-        open_focused_group();
-        return true;
+    if (toolbox_keyboard_focus_ &&
+        ((alt_pressed && key == VK_DOWN) ||
+         (!alt_pressed && (key == VK_RETURN || key == VK_SPACE)))) {
+        return activate_focused_slot();
     }
     return false;
 }

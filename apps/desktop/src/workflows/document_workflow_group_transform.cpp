@@ -54,29 +54,27 @@ public:
 
         auto page = doc.page();
         auto objects = doc.objects();
-        std::unordered_set<document::ObjectId> found;
-        for (auto& layer : page.layers) {
-            std::vector<document::ObjectId> roots;
-            roots.reserve(layer.object_ids.size());
-            for (const auto id : layer.object_ids) {
-                if (!selected.contains(id)) {
-                    roots.push_back(id);
-                    continue;
-                }
-                const auto object = objects.get(id);
-                const auto* group = object ? std::get_if<document::GroupObject>(&*object) : nullptr;
-                if (!group)
-                    return document::CommandResult::fail("Only top-level groups can be ungrouped");
-                if (layer.locked || !layer.visible || group->locked)
-                    return document::CommandResult::fail("A selected group or its layer is hidden or locked");
-                roots.insert(roots.end(), group->children_ids.begin(), group->children_ids.end());
-                found.insert(id);
-                objects = objects.remove(id);
+        const auto snapshot=doc.current_snapshot();
+        for(auto id:snapshot->hierarchy().roots(groups_)) {
+            const auto* entry=snapshot->hierarchy().find(id);
+            const auto object=objects.get(id);
+            const auto* group=object?std::get_if<document::GroupObject>(&*object):nullptr;
+            if(!entry||!group||group->clip||!snapshot->hierarchy().editable(id))
+                return document::CommandResult::fail("Use Release Clip for PowerClip containers");
+            auto siblings=entry->parent?std::get<document::GroupObject>(*objects.get(entry->parent)).children_ids
+                :page.layers[entry->layer].object_ids;
+            const auto at=std::find(siblings.begin(),siblings.end(),id);
+            const auto index=std::distance(siblings.begin(),at);
+            siblings.erase(at);siblings.insert(siblings.begin()+index,group->children_ids.begin(),group->children_ids.end());
+            for(auto child_id:group->children_ids) {
+                auto child=*objects.get(child_id);
+                std::visit([&](auto& value){value.transform=group->transform*value.transform;},child);
+                objects=objects.set(child_id,child);
             }
-            layer.object_ids = std::move(roots);
+            if(entry->parent){auto parent=std::get<document::GroupObject>(*objects.get(entry->parent));parent.children_ids=siblings;objects=objects.set(parent.id,parent);}
+            else page.layers[entry->layer].object_ids=siblings;
+            objects=objects.remove(id);
         }
-        if (found.size() != selected.size())
-            return document::CommandResult::fail("Only top-level groups can be ungrouped");
 
         before_page_ = doc.page();
         before_objects_ = doc.objects();
@@ -100,64 +98,20 @@ private:
     bool executed_{false};
 };
 
-class SetGroupClipCommand final : public document::DocumentCommand {
-public:
-    SetGroupClipCommand(document::ObjectId group_id, std::optional<document::ClipProperties> clip)
-        : group_id_(group_id), new_clip_(std::move(clip)) {}
-
-    std::string_view name() const noexcept override { return "Set PowerClip Properties"; }
-
-    document::CommandResult execute(document::Document& doc) override {
-        const auto obj = doc.objects().get(group_id_);
-        if (!obj || !std::holds_alternative<document::GroupObject>(*obj))
-            return document::CommandResult::fail("Group not found");
-        auto grp = std::get<document::GroupObject>(*obj);
-        old_clip_ = grp.clip;
-        grp.clip = new_clip_;
-        doc.apply_mutation(doc.page(), doc.objects().set(group_id_, grp));
-        return document::CommandResult::ok();
-    }
-
-    document::CommandResult undo(document::Document& doc) override {
-        const auto obj = doc.objects().get(group_id_);
-        if (!obj || !std::holds_alternative<document::GroupObject>(*obj))
-            return document::CommandResult::fail("Group not found");
-        auto grp = std::get<document::GroupObject>(*obj);
-        grp.clip = old_clip_;
-        doc.apply_mutation(doc.page(), doc.objects().set(group_id_, grp));
-        return document::CommandResult::ok();
-    }
-
-private:
-    document::ObjectId group_id_;
-    std::optional<document::ClipProperties> new_clip_;
-    std::optional<document::ClipProperties> old_clip_;
-};
-
 } // namespace
 
 bool DocumentWorkflow::can_group_selected() const {
-    const auto& selected = root_.vector_controller().selection().selected_ids();
-    if (selected.size() < 2) return false;
-
-    const auto snapshot = root_.document().current_snapshot();
-    const std::unordered_set<document::ObjectId> selected_set(selected.begin(), selected.end());
-    if (selected_set.size() != selected.size()) return false;
-
-    size_t owner_layer = snapshot->page().layers.size();
-    size_t found = 0;
-    for (size_t layer_index = 0; layer_index < snapshot->page().layers.size(); ++layer_index) {
-        const auto& layer = snapshot->page().layers[layer_index];
-        for (const auto id : layer.object_ids) {
-            if (!selected_set.contains(id)) continue;
-            if (owner_layer == snapshot->page().layers.size()) owner_layer = layer_index;
-            if (owner_layer != layer_index) return false;
-            ++found;
-        }
+    const auto snapshot=root_.document().current_snapshot();
+    const auto& ids=root_.vector_controller().selection().selected_ids();
+    if(ids.size()<2||snapshot->is_content_locked())return false;
+    const auto* owner=snapshot->hierarchy().find(ids.front());if(!owner)return false;
+    std::unordered_set<document::ObjectId> unique;
+    for(auto id:ids) {
+        const auto* entry=snapshot->hierarchy().find(id);
+        if(!entry||entry->parent!=owner->parent||entry->layer!=owner->layer||entry->mask||
+            !unique.insert(id).second||!snapshot->hierarchy().editable(id))return false;
     }
-    if (found != selected.size()) return false;
-    const auto& layer = snapshot->page().layers[owner_layer];
-    return !layer.locked && layer.visible;
+    return true;
 }
 
 document::ObjectId DocumentWorkflow::group_selected() {
@@ -234,48 +188,14 @@ bool DocumentWorkflow::is_group(document::ObjectId id) const {
 }
 
 std::optional<document::ObjectId> DocumentWorkflow::find_parent_group(document::ObjectId child_id) const {
-    const auto snapshot = root_.document().current_snapshot();
-    for (const auto& [id, obj_var] : snapshot->objects().all()) {
-        if (const auto* grp = std::get_if<document::GroupObject>(&obj_var)) {
-            if (std::find(grp->children_ids.begin(), grp->children_ids.end(), child_id) != grp->children_ids.end()) {
-                return grp->id;
-            }
-        }
-    }
-    return std::nullopt;
+    const auto snapshot=root_.document().current_snapshot();
+    const auto* entry=snapshot->hierarchy().find(child_id);
+    return entry && entry->parent?std::optional(entry->parent):std::nullopt;
 }
-
 std::optional<geometry::Rect2D> DocumentWorkflow::get_object_bounds(document::ObjectId id) const {
-    const auto snapshot = root_.document().current_snapshot();
-    const auto obj_opt = snapshot->objects().get(id);
-    if (!obj_opt) return std::nullopt;
-
-    if (const auto* path_obj = std::get_if<document::PathObject>(&*obj_opt)) {
-        return path_obj->bounds();
-    }
-    if (const auto* text_obj = std::get_if<document::TextObject>(&*obj_opt)) {
-        return text_obj->bounds();
-    }
-    if (const auto* img_obj = std::get_if<document::ImageObject>(&*obj_opt)) {
-        return img_obj->bounds();
-    }
-    if (const auto* grp = std::get_if<document::GroupObject>(&*obj_opt)) {
-        if (grp->is_clipping_container()) {
-            auto mb = get_object_bounds(grp->clip->mask_object_id);
-            if (mb) return grp->transform.map_rect(*mb);
-        }
-        std::optional<geometry::Rect2D> union_bounds;
-        for (const auto cid : grp->children_ids) {
-            auto cb = get_object_bounds(cid);
-            if (cb) {
-                union_bounds = union_bounds ? union_bounds->united(*cb) : *cb;
-            }
-        }
-        if (union_bounds) {
-            return grp->transform.map_rect(*union_bounds);
-        }
-    }
-    return std::nullopt;
+    const auto snapshot=root_.document().current_snapshot();
+    const auto* entry=snapshot->hierarchy().find(id);
+    return entry?entry->bounds:std::nullopt;
 }
 
 bool DocumentWorkflow::resize_object(document::ObjectId id, double new_w_mm, double new_h_mm) {
@@ -297,19 +217,7 @@ bool DocumentWorkflow::resize_object(document::ObjectId id, double new_w_mm, dou
                        geometry::Transform2D::scale(sx, sy) *
                        geometry::Transform2D::translation(-bounds_opt->x, -bounds_opt->y);
 
-    if (is_group(id)) {
-        std::vector<document::ObjectId> all_targets = { id };
-        collect_all_descendants(id, snapshot->objects(), all_targets);
-        auto composite = std::make_unique<document::CompositeCommand>("Resize Group");
-        for (auto tid : all_targets) {
-            composite->add_command(std::make_unique<document::TransformObjectCommand>(tid, delta));
-        }
-        const auto res = root_.document().execute_command(std::move(composite));
-        sync_status_bar();
-        return res.success;
-    }
-
-    auto cmd = std::make_unique<document::TransformObjectCommand>(id, delta);
+    auto cmd = vector::make_transformed_object_command(id, *snapshot, delta);
     const auto res = root_.document().execute_command(std::move(cmd));
     sync_status_bar();
     return res.success;
@@ -328,19 +236,7 @@ bool DocumentWorkflow::move_object(document::ObjectId id, double new_x_mm, doubl
     const double dy = new_y_mm - bounds_opt->y;
     const auto delta = geometry::Transform2D::translation(dx, dy);
 
-    if (is_group(id)) {
-        std::vector<document::ObjectId> all_targets = { id };
-        collect_all_descendants(id, snapshot->objects(), all_targets);
-        auto composite = std::make_unique<document::CompositeCommand>("Move Group");
-        for (auto tid : all_targets) {
-            composite->add_command(std::make_unique<document::TransformObjectCommand>(tid, delta));
-        }
-        const auto res = root_.document().execute_command(std::move(composite));
-        sync_status_bar();
-        return res.success;
-    }
-
-    auto cmd = std::make_unique<document::TransformObjectCommand>(id, delta);
+    auto cmd = vector::make_transformed_object_command(id, *snapshot, delta);
     const auto res = root_.document().execute_command(std::move(cmd));
     sync_status_bar();
     return res.success;
@@ -355,27 +251,13 @@ bool DocumentWorkflow::transform_selected(const geometry::Transform2D& delta, co
     if (selected.empty())
         return false;
 
-    std::vector<document::ObjectId> targets;
-    std::unordered_set<document::ObjectId> seen;
-    for (const auto target_id : selected) {
-        if (seen.insert(target_id).second) {
-            targets.push_back(target_id);
-            if (is_group(target_id)) {
-                std::vector<document::ObjectId> desc;
-                collect_all_descendants(target_id, snapshot->objects(), desc);
-                for (const auto cid : desc) {
-                    if (seen.insert(cid).second)
-                        targets.push_back(cid);
-                }
-            }
-        }
-    }
+    const auto targets = snapshot->hierarchy().roots(selected);
     if (targets.empty())
         return false;
 
     auto composite = std::make_unique<document::CompositeCommand>(command_name);
     for (const auto target_id : targets) {
-        composite->add_command(std::make_unique<document::TransformObjectCommand>(target_id, delta));
+        composite->add_command(vector::make_transformed_object_command(target_id, *snapshot, delta));
     }
     const auto res = root_.document().execute_command(std::move(composite));
     sync_status_bar();
@@ -433,194 +315,6 @@ bool DocumentWorkflow::rotate_selected_90_ccw(std::optional<geometry::Point2D> p
 
 bool DocumentWorkflow::rotate_selected_180(std::optional<geometry::Point2D> pivot) {
     return rotate_selected_degrees(180.0, pivot);
-}
-
-bool DocumentWorkflow::can_make_clipping_mask_selected() const {
-    const auto& selected = root_.vector_controller().selection().selected_ids();
-    if (selected.size() < 2) return false;
-    return can_group_selected();
-}
-
-bool DocumentWorkflow::is_clipping_container(document::ObjectId id) const {
-    const auto snapshot = root_.document().current_snapshot();
-    const auto obj = snapshot->objects().get(id);
-    if (!obj || !std::holds_alternative<document::GroupObject>(*obj)) return false;
-    return std::get<document::GroupObject>(*obj).is_clipping_container();
-}
-
-document::ObjectId DocumentWorkflow::make_clipping_mask_selected(bool preserve_appearance) {
-    auto& controller = root_.vector_controller();
-    const auto selected = controller.selection().selected_ids();
-    if (selected.size() < 2 || !can_group_selected())
-        return document::kInvalidObjectId;
-
-    const auto snapshot = root_.document().current_snapshot();
-    const auto& page = snapshot->page();
-
-    size_t owner_layer = page.layers.size();
-    size_t max_idx = 0;
-    document::ObjectId topmost_id = document::kInvalidObjectId;
-    for (size_t layer_idx = 0; layer_idx < page.layers.size(); ++layer_idx) {
-        const auto& layer = page.layers[layer_idx];
-        for (size_t idx = 0; idx < layer.object_ids.size(); ++idx) {
-            auto oid = layer.object_ids[idx];
-            if (std::find(selected.begin(), selected.end(), oid) != selected.end()) {
-                owner_layer = layer_idx;
-                if (topmost_id == document::kInvalidObjectId || idx >= max_idx) {
-                    max_idx = idx;
-                    topmost_id = oid;
-                }
-            }
-        }
-    }
-    if (topmost_id == document::kInvalidObjectId || owner_layer >= page.layers.size())
-        return document::kInvalidObjectId;
-
-    document::ObjectId container_id = topmost_id;
-
-    std::vector<document::ObjectId> ordered_children;
-    ordered_children.push_back(container_id);
-    for (auto oid : selected) {
-        if (oid != container_id) {
-            ordered_children.push_back(oid);
-        }
-    }
-
-    const auto group_id = document::generate_object_id();
-    document::GroupObject grp;
-    grp.id = group_id;
-    grp.name = "PowerClip (" + std::to_string(group_id) + ")";
-    grp.children_ids = ordered_children;
-    grp.transform = geometry::Transform2D::identity();
-    grp.visible = true;
-    grp.locked = false;
-
-    document::ClipProperties clip;
-    clip.mask_object_id = container_id;
-    clip.lock_contents_to_frame = true;
-    clip.preserve_frame_appearance = preserve_appearance;
-    clip.fit_mode = document::ClipContentFitMode::CenterContents;
-    clip.is_empty_frame = false;
-    grp.clip = clip;
-
-    auto cmd = std::make_unique<GroupObjectsCommand>(std::move(grp), selected);
-    const auto res = root_.document().execute_command(std::move(cmd));
-    if (res.success) {
-        controller.selection().select(group_id, vector::SelectionMode::Replace);
-        // CorelDRAW standard: auto-center contents into the frame container
-        // so that contents never disappear or remain outside!
-        fit_powerclip_contents(group_id, document::ClipContentFitMode::CenterContents);
-        sync_status_bar();
-        return group_id;
-    }
-    return document::kInvalidObjectId;
-}
-
-bool DocumentWorkflow::release_clipping_mask_selected() {
-    auto& controller = root_.vector_controller();
-    const auto selected = controller.selection().selected_ids();
-    if (selected.empty())
-        return false;
-
-    const auto snapshot = root_.document().current_snapshot();
-    std::vector<document::ObjectId> clips_to_release;
-    for (auto id : selected) {
-        if (is_clipping_container(id)) {
-            clips_to_release.push_back(id);
-        }
-    }
-    if (clips_to_release.empty())
-        return false;
-
-    return ungroup_selected();
-}
-
-document::ObjectId DocumentWorkflow::place_inside_powerclip(
-    document::ObjectId content_id,
-    document::ObjectId frame_id,
-    document::ClipContentFitMode fit_mode) {
-    if (content_id == document::kInvalidObjectId || frame_id == document::kInvalidObjectId || content_id == frame_id)
-        return document::kInvalidObjectId;
-
-    auto& controller = root_.vector_controller();
-    controller.selection().clear();
-    controller.selection().select(content_id, vector::SelectionMode::Add);
-    controller.selection().select(frame_id, vector::SelectionMode::Add);
-
-    auto res_id = make_clipping_mask_selected(true);
-    if (res_id != document::kInvalidObjectId && fit_mode != document::ClipContentFitMode::CurrentPosition) {
-        fit_powerclip_contents(res_id, fit_mode);
-    }
-    return res_id;
-}
-
-bool DocumentWorkflow::fit_powerclip_contents(document::ObjectId group_id, document::ClipContentFitMode mode) {
-    const auto snapshot = root_.document().current_snapshot();
-    const auto obj = snapshot->objects().get(group_id);
-    if (!obj || !std::holds_alternative<document::GroupObject>(*obj)) return false;
-    const auto& grp = std::get<document::GroupObject>(*obj);
-    if (!grp.is_clipping_container()) return false;
-
-    const auto mask_bounds = get_object_bounds(grp.clip->mask_object_id);
-    if (!mask_bounds || mask_bounds->width <= 0 || mask_bounds->height <= 0) return false;
-
-    std::optional<geometry::Rect2D> contents_bounds;
-    for (auto cid : grp.children_ids) {
-        if (cid == grp.clip->mask_object_id) continue;
-        auto cb = get_object_bounds(cid);
-        if (cb) contents_bounds = contents_bounds ? contents_bounds->united(*cb) : *cb;
-    }
-    if (!contents_bounds || contents_bounds->width <= 0 || contents_bounds->height <= 0) return false;
-
-    geometry::Transform2D fit_tx = geometry::Transform2D::identity();
-    const auto mc = mask_bounds->center();
-    const auto cc = contents_bounds->center();
-
-    if (mode == document::ClipContentFitMode::CenterContents) {
-        fit_tx = geometry::Transform2D::translation(mc.x - cc.x, mc.y - cc.y);
-    } else if (mode == document::ClipContentFitMode::FitProportionally) {
-        double s = std::min(mask_bounds->width / contents_bounds->width, mask_bounds->height / contents_bounds->height);
-        fit_tx = geometry::Transform2D::translation(mc.x, mc.y) *
-                 geometry::Transform2D::scale(s, s) *
-                 geometry::Transform2D::translation(-cc.x, -cc.y);
-    } else if (mode == document::ClipContentFitMode::FillProportionally) {
-        double s = std::max(mask_bounds->width / contents_bounds->width, mask_bounds->height / contents_bounds->height);
-        fit_tx = geometry::Transform2D::translation(mc.x, mc.y) *
-                 geometry::Transform2D::scale(s, s) *
-                 geometry::Transform2D::translation(-cc.x, -cc.y);
-    } else if (mode == document::ClipContentFitMode::StretchToFill) {
-        double sx = mask_bounds->width / contents_bounds->width;
-        double sy = mask_bounds->height / contents_bounds->height;
-        fit_tx = geometry::Transform2D::translation(mc.x, mc.y) *
-                 geometry::Transform2D::scale(sx, sy) *
-                 geometry::Transform2D::translation(-cc.x, -cc.y);
-    }
-
-    auto composite = std::make_unique<document::CompositeCommand>("Fit PowerClip Contents");
-    for (auto cid : grp.children_ids) {
-        if (cid == grp.clip->mask_object_id) continue;
-        composite->add_command(std::make_unique<document::TransformObjectCommand>(cid, fit_tx));
-    }
-    auto updated_clip = *grp.clip;
-    updated_clip.fit_mode = mode;
-    composite->add_command(std::make_unique<SetGroupClipCommand>(group_id, updated_clip));
-    const auto res = root_.document().execute_command(std::move(composite));
-    sync_status_bar();
-    return res.success;
-}
-
-bool DocumentWorkflow::set_powerclip_lock_contents(document::ObjectId group_id, bool locked) {
-    const auto snapshot = root_.document().current_snapshot();
-    const auto obj = snapshot->objects().get(group_id);
-    if (!obj || !std::holds_alternative<document::GroupObject>(*obj)) return false;
-    auto grp = std::get<document::GroupObject>(*obj);
-    if (!grp.is_clipping_container()) return false;
-    auto clip = grp.clip;
-    clip->lock_contents_to_frame = locked;
-    auto cmd = std::make_unique<SetGroupClipCommand>(group_id, clip);
-    const auto res = root_.document().execute_command(std::move(cmd));
-    sync_status_bar();
-    return res.success;
 }
 
 } // namespace pikdraw::desktop

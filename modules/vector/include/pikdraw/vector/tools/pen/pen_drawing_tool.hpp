@@ -68,6 +68,7 @@ struct PenDrawingResult {
 /// Mouse dispatch and rendering remain desktop consumers of this model.
 class PenDrawingTool {
 public:
+    void set_destination_owner(document::ObjectId id) noexcept { destination_owner_=id; }
     [[nodiscard]] PenDrawingResult begin(
         document::SnapshotPtr base, size_t target_layer = 0,
         interaction::ToolSessionLimits limits = {});
@@ -194,6 +195,7 @@ private:
     std::vector<AnchorEdit> undo_;
     std::vector<AnchorEdit> redo_;
     size_t target_layer_{0};
+    document::ObjectId destination_owner_{0};
 };
 
 } // namespace pikdraw::vector::tools::pen

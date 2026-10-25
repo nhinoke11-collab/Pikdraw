@@ -1,5 +1,6 @@
 #include "byte_codec.hpp"
 #include "file_io.hpp"
+#include "resource_budget.hpp"
 #include <atomic>
 #include <algorithm>
 #include <chrono>
@@ -7,6 +8,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iterator>
+#include <limits>
 #include <sstream>
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -93,12 +95,15 @@ SaveResult SaveRecoveryService::atomic_save(const std::string &target_path,
   std::filesystem::path temporary;
   bool created = false;
   try {
-    const auto bytes = NativeFormat::serialize(snapshot);
     const auto target = utf8_path(target_path);
     if (target.empty() || target.filename().empty())
       throw std::invalid_argument("Empty native save filename");
     temporary = utf8_path(target_path + temp_suffix());
-    write_and_flush_exclusive(temporary, bytes, options, created);
+    write_and_flush_exclusive_stream(temporary,
+        [&snapshot](const StreamWriteCallback& write,
+                    const StreamPatchCallback& patch) {
+          NativeFormat::serialize_to(snapshot, write, patch);
+        }, options, created);
     inject_failure(options, SaveFaultPoint::BeforeReplace);
     atomic_replace(temporary, target);
     result.success = true;
@@ -116,22 +121,44 @@ SaveResult SaveRecoveryService::atomic_save(const std::string &target_path,
 }
 
 std::shared_ptr<DocumentSnapshot>
-SaveRecoveryService::load(const std::string &path, std::string *out_error) {
+SaveRecoveryService::load(const std::string &path, std::string *out_error,
+                          const std::atomic_bool *cancel_requested) {
   if (out_error)
     out_error->clear();
   try {
+    if (cancel_requested &&
+        cancel_requested->load(std::memory_order_acquire))
+      throw std::runtime_error("Native load cancelled");
     std::ifstream input(utf8_path(path), std::ios::binary | std::ios::ate);
     if (!input)
       throw std::runtime_error("Cannot open native file");
     const auto size = input.tellg();
-    if (size < 36 || size > static_cast<std::streamoff>(max_file_bytes))
-      throw std::length_error("Native file size exceeds allowed range");
+    if (size < 36)
+      throw std::length_error("Native file is shorter than its header");
+    const auto size_bytes = static_cast<uint64_t>(
+        static_cast<std::streamoff>(size));
+    const auto read_budget = native_read_memory_budget_bytes();
+    if (read_budget == 0 || size_bytes > read_budget ||
+        size_bytes > std::numeric_limits<size_t>::max() ||
+        size_bytes > static_cast<uint64_t>(
+            std::numeric_limits<std::streamsize>::max()))
+      throw std::length_error(
+          "Native file exceeds the current available-memory quota");
     input.seekg(0, std::ios::beg);
-    std::vector<uint8_t> bytes(static_cast<size_t>(size));
-    if (!input.read(reinterpret_cast<char *>(bytes.data()),
-                    static_cast<std::streamsize>(bytes.size())))
-      throw std::runtime_error("Native file read incomplete");
-    return NativeFormat::deserialize(bytes.data(), bytes.size(), out_error);
+    std::vector<uint8_t> bytes(static_cast<size_t>(size_bytes));
+    constexpr size_t kReadChunkBytes = 1024u * 1024u;
+    for (size_t offset = 0; offset < bytes.size();) {
+      if (cancel_requested &&
+          cancel_requested->load(std::memory_order_acquire))
+        throw std::runtime_error("Native load cancelled");
+      const auto count = std::min(kReadChunkBytes, bytes.size() - offset);
+      if (!input.read(reinterpret_cast<char *>(bytes.data() + offset),
+                      static_cast<std::streamsize>(count)))
+        throw std::runtime_error("Native file read incomplete");
+      offset += count;
+    }
+    return NativeFormat::deserialize(bytes.data(), bytes.size(), out_error,
+                                     cancel_requested);
   } catch (const std::exception &error) {
     if (out_error)
       *out_error = error.what();
@@ -173,7 +200,8 @@ bool SaveRecoveryService::write_recovery_checkpoint(
 
 std::optional<RecoveryInfo>
 SaveRecoveryService::find_latest_checkpoint(const std::string &recovery_dir,
-                                            const std::string &document_id) {
+                                            const std::string &document_id,
+                                            const std::atomic_bool *cancel_requested) {
   try {
     const auto prefix = recovery_prefix(document_id);
     const auto directory = utf8_path(recovery_dir);
@@ -187,7 +215,12 @@ SaveRecoveryService::find_latest_checkpoint(const std::string &recovery_dir,
       const auto filename = path_utf8(entry.path().filename());
       if (!filename.starts_with(prefix) || entry.path().extension() != ".pkdr")
         continue;
-      const auto snapshot = load(path_utf8(entry.path()));
+      const auto snapshot = load(path_utf8(entry.path()), nullptr,
+                                 cancel_requested);
+      if (cancel_requested &&
+          cancel_requested->load(std::memory_order_acquire)) {
+        return std::nullopt;
+      }
       if (!snapshot || snapshot->document_id() != document_id)
         continue;
       const auto time = entry.last_write_time();
@@ -205,10 +238,16 @@ SaveRecoveryService::find_latest_checkpoint(const std::string &recovery_dir,
 }
 
 std::vector<RecoveryInfo> SaveRecoveryService::list_recovery_checkpoints(
-    const std::string &recovery_root, bool *out_truncated) {
+    const std::string &recovery_root, bool *out_truncated,
+    const std::atomic_bool *cancel_requested) {
   if (out_truncated)
     *out_truncated = false;
   std::vector<RecoveryInfo> candidates;
+  if (cancel_requested && cancel_requested->load(std::memory_order_acquire)) {
+    if (out_truncated)
+      *out_truncated = true;
+    return candidates;
+  }
   try {
     const auto root = utf8_path(recovery_root);
     const auto root_status = std::filesystem::symlink_status(root);
@@ -218,6 +257,7 @@ std::vector<RecoveryInfo> SaveRecoveryService::list_recovery_checkpoints(
 
     size_t scanned = 0;
     bool scan_limit_reached = false;
+    bool scan_cancelled = false;
     const auto inspect_file = [&](const std::filesystem::directory_entry &entry) {
       std::error_code error;
       const auto status = entry.symlink_status(error);
@@ -225,7 +265,13 @@ std::vector<RecoveryInfo> SaveRecoveryService::list_recovery_checkpoints(
           !std::filesystem::is_regular_file(status) ||
           entry.path().extension() != ".pkdr")
         return;
-      const auto snapshot = load(path_utf8(entry.path()));
+      const auto snapshot = load(path_utf8(entry.path()), nullptr,
+                                 cancel_requested);
+      if (cancel_requested &&
+          cancel_requested->load(std::memory_order_acquire)) {
+        scan_cancelled = true;
+        return;
+      }
       if (!snapshot || snapshot->document_id().empty())
         return;
       const auto modified = entry.last_write_time(error);
@@ -239,6 +285,10 @@ std::vector<RecoveryInfo> SaveRecoveryService::list_recovery_checkpoints(
              root, std::filesystem::directory_options::skip_permission_denied,
              error), end;
          !error && it != end; it.increment(error)) {
+      if (cancel_requested && cancel_requested->load(std::memory_order_acquire)) {
+        scan_cancelled = true;
+        break;
+      }
       if (scanned >= kRecoveryScanEntryLimit) {
         scan_limit_reached = true;
         break;
@@ -261,6 +311,10 @@ std::vector<RecoveryInfo> SaveRecoveryService::list_recovery_checkpoints(
                  std::filesystem::directory_options::skip_permission_denied,
                  child_error), child_end;
              !child_error && child != child_end; child.increment(child_error)) {
+          if (cancel_requested && cancel_requested->load(std::memory_order_acquire)) {
+            scan_cancelled = true;
+            break;
+          }
           if (scanned >= kRecoveryScanEntryLimit) {
             scan_limit_reached = true;
             break;
@@ -271,7 +325,7 @@ std::vector<RecoveryInfo> SaveRecoveryService::list_recovery_checkpoints(
             break;
         }
       }
-      if (scan_limit_reached)
+      if (scan_limit_reached || scan_cancelled)
         break;
     }
 
@@ -281,8 +335,10 @@ std::vector<RecoveryInfo> SaveRecoveryService::list_recovery_checkpoints(
                   return left.modified_at > right.modified_at;
                 return left.path > right.path;
               });
-    const bool truncated = scan_limit_reached ||
+    const bool truncated = scan_limit_reached || scan_cancelled ||
                            candidates.size() > kRecoveryCandidateLimit;
+    if (scan_cancelled)
+      candidates.clear();
     if (candidates.size() > kRecoveryCandidateLimit)
       candidates.resize(kRecoveryCandidateLimit);
     if (out_truncated)

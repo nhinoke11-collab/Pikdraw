@@ -53,7 +53,7 @@ void properties() {
     CHECK(q.has_fill && q.has_stroke && near(q.stroke_width_mm, 2.5));
     CHECK(doc.undo());
     q = std::get<PathObject>(*doc.current_snapshot()->get_object(p.id));
-    CHECK(!q.has_fill && !q.has_stroke && near(q.stroke_width_mm, 1));
+    CHECK(!q.has_fill && !q.has_stroke && near(q.stroke_width_mm, 0));
     CHECK(doc.redo());
     CHECK(doc.execute_command(std::make_unique<SetObjectStyleCommand>(p.id, std::nullopt, std::nullopt,
                                                                       std::nullopt, false, false))

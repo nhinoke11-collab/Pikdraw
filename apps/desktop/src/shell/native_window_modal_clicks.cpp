@@ -180,7 +180,7 @@ bool NativeWindow::handle_modal_and_home_mouse_down(int x, int y) {
 
         // Left sidebar tabs (7 categories)
         if (x >= modal_x + 10 && x <= modal_x + 185) {
-            for (int i = 0; i < 7; ++i) {
+            for (int i = 0; i < 8; ++i) {
                 int ty = modal_y + 54 + i * 36;
                 if (y >= ty && y <= ty + 32) {
                     set_settings_tab(i);
@@ -219,19 +219,114 @@ bool NativeWindow::handle_modal_and_home_mouse_down(int x, int y) {
                     if (x >= ax && x <= ax + 85) { set_settings_accent_choice(i); return true; }
                 }
             }
+            // Page-focused versus Artboard overview, below the theme settings.
+            if (y >= modal_y + 388 && y <= modal_y + 424) {
+                if (x >= modal_x + 205 && x <= modal_x + 443) {
+                    set_artboard_overview_enabled(false);
+                    return true;
+                }
+                if (x >= modal_x + 455 && x <= modal_x + 695) {
+                    set_artboard_overview_enabled(true);
+                    return true;
+                }
+            }
         }
 
         // Tab 2: Đơn vị & Bắt điểm (Units & Snapping)
-        if (settings_active_tab_ == 2 && y >= modal_y + 95 && y <= modal_y + 130) {
-            for (int i = 0; i < 4; ++i) {
-                int ux = modal_x + 205 + i * 115;
-                if (x >= ux && x <= ux + 105) { set_settings_unit_choice(i); return true; }
+        if (settings_active_tab_ == 2 && y >= modal_y + 86 && y <= modal_y + 154) {
+            for (int i = 0; i < 8; ++i) {
+                const int ux = modal_x + 205 + (i % 4) * 120;
+                const int uy = modal_y + 86 + (i / 4) * 34;
+                if (x >= ux && x <= ux + 105 && y >= uy && y <= uy + 28) {
+                    set_settings_unit_choice(i);
+                    return true;
+                }
             }
         }
-        if (settings_active_tab_ == 3 && x >= modal_x + 205 && x <= modal_x + 695 &&
-            y >= modal_y + 338 && y <= modal_y + 370) {
-            show_color_profiles();
+        if (settings_active_tab_ == 2 && x >= modal_x + 205 && x <= modal_x + 695 &&
+            y >= modal_y + 297 && y <= modal_y + 324) {
+            if (active_num_field_ != NumericFieldId::None) {
+                commit_numeric_field();
+                if (active_num_field_ != NumericFieldId::None) return true;
+            }
+            start_numeric_input(NumericFieldId::GridSpacing);
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Khoảng lưới theo đơn vị trang; hậu tố đổi đơn vị · Enter lưu · Esc hủy"
+                : "Grid interval uses the page unit; a suffix overrides it · Enter saves · Esc cancels";
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
             return true;
+        }
+        if (settings_active_tab_ == 2 && x >= modal_x + 205 && x <= modal_x + 695 &&
+            y >= modal_y + 331 && y < modal_y + 457 && drawing_tool_) {
+            const int row = (y - (modal_y + 331)) / 21;
+            if (row >= 0 && row < 6) {
+                if (active_num_field_ != NumericFieldId::None) {
+                    commit_numeric_field();
+                    if (active_num_field_ != NumericFieldId::None) return true;
+                }
+                bool changed = row == 0 ? drawing_tool_->toggle_snap_master()
+                    : row == 1 ? drawing_tool_->toggle_snap_objects()
+                    : row == 2 ? drawing_tool_->toggle_smart_guides()
+                    : row == 3 ? drawing_tool_->toggle_smart_spacing()
+                    : row == 4 ? drawing_tool_->toggle_snap_page()
+                               : drawing_tool_->toggle_snap_guides();
+                if (changed) {
+                    status_msg_ = language_ == UILanguage::Vietnamese
+                        ? "Đã cập nhật bắt điểm · áp dụng ngay khi kéo/vẽ"
+                        : "Snapping updated · applies immediately while drawing/moving";
+                    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+                }
+                return true;
+            }
+        }
+        if (settings_active_tab_ == 3) {
+            // Profile manager remains reachable from the Color & ICC page header.
+            if (x >= modal_x + 533 && x <= modal_x + 695 &&
+                y >= modal_y + 56 && y <= modal_y + 82) {
+                show_color_profiles();
+                return true;
+            }
+            const int tac_row_top = modal_y + 274;
+            if (y >= tac_row_top && y <= tac_row_top + 28) {
+                if (x >= modal_x + 205 && x <= modal_x + 287) {
+                    settings_tac_focus_index_ = 0;
+                    if (active_num_field_ != NumericFieldId::None) commit_numeric_field();
+                    if (active_num_field_ == NumericFieldId::None) set_settings_tac_scope_choice(0);
+                    return true;
+                }
+                if (x >= modal_x + 291 && x <= modal_x + 373) {
+                    settings_tac_focus_index_ = 1;
+                    if (active_num_field_ != NumericFieldId::None) commit_numeric_field();
+                    if (active_num_field_ == NumericFieldId::None) set_settings_tac_scope_choice(1);
+                    return true;
+                }
+                if (x >= modal_x + 377 && x <= modal_x + 459) {
+                    settings_tac_focus_index_ = 2;
+                    if (active_num_field_ != NumericFieldId::None) commit_numeric_field();
+                    if (active_num_field_ == NumericFieldId::None) set_settings_tac_scope_choice(2);
+                    return true;
+                }
+                if (x >= modal_x + 467 && x <= modal_x + 543) {
+                    settings_tac_focus_index_ = 3;
+                    start_numeric_input(NumericFieldId::TacLimitPercent);
+                    status_msg_ = language_ == UILanguage::Vietnamese
+                        ? "Ngưỡng TAC thủ công 100–400% · Enter áp dụng · Esc hủy"
+                        : "Manual TAC limit 100–400% · Enter applies · Esc cancels";
+                    return true;
+                }
+                if (x >= modal_x + 563 && x <= modal_x + 629) {
+                    settings_tac_focus_index_ = 4;
+                    if (active_num_field_ != NumericFieldId::None) commit_numeric_field();
+                    if (active_num_field_ == NumericFieldId::None) validate_settings_tac();
+                    return true;
+                }
+                if (x >= modal_x + 635 && x <= modal_x + 695) {
+                    settings_tac_focus_index_ = 5;
+                    if (active_num_field_ != NumericFieldId::None) commit_numeric_field();
+                    if (active_num_field_ == NumericFieldId::None) fix_settings_tac();
+                    return true;
+                }
+            }
         }
 
         // Tab 4: Phím tắt & Thao tác (Shortcuts profile chooser)
@@ -291,7 +386,7 @@ bool NativeWindow::handle_modal_and_home_mouse_down(int x, int y) {
                 set_language(UILanguage::English);
                 set_theme(ThemeMode::Light);
                 settings_accent_choice_ = 0;
-                settings_unit_choice_ = 0;
+                set_settings_unit_choice(0);
                 status_msg_ = (language_ == UILanguage::Vietnamese) ?
                     "Đã khôi phục cấu hình mặc định (Light Mode Silver Tech)" :
                     "Reset preferences to defaults (Light Mode Silver Tech)";
@@ -319,6 +414,7 @@ bool NativeWindow::handle_modal_and_home_mouse_down(int x, int y) {
     }
 
     if (open_menu_id_ >= 0) {
+        if (handle_text_case_submenu_mouse_down(x, y)) return true;
         const auto menu = static_cast<MenuId>(open_menu_id_);
         const int menu_height = get_menu_height(menu);
         constexpr int menu_width = 300;

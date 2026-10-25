@@ -1,6 +1,9 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
-#include "pikdraw/rendering/d2d_backend.hpp"
+#include "native_window_eyedropper.hpp"
+#include "native_window_length_input.hpp"
+#include "native_window_page_navigation.hpp"
 
+#include <algorithm>
 #include <iomanip>
 #include <sstream>
 
@@ -118,65 +121,94 @@ void NativeWindow::paint_status_bar(HDC mem_dc, int w, int h, int status_h) {
     const HGDIOBJ old_status_pen = SelectObject(mem_dc, pen_st_bdr);
     MoveToEx(mem_dc, 0, h - status_h, nullptr);
     LineTo(mem_dc, w, h - status_h);
+    const int status_top = h - page_navigation::kStatusBarHeight;
+    MoveToEx(mem_dc, 0, status_top, nullptr);
+    LineTo(mem_dc, w, status_top);
     SelectObject(mem_dc, old_status_pen);
     DeleteObject(pen_st_bdr);
 
-    SelectObject(mem_dc, font_mono);
-    SetTextColor(mem_dc, col_text_muted);
-    std::wostringstream wcoord;
-    wcoord << L"X: " << std::fixed << std::setprecision(1) << cursor_mm_x_ << L" mm   "
-           << L"Y: " << std::fixed << std::setprecision(1) << cursor_mm_y_ << L" mm";
-    const std::wstring coord_str = wcoord.str();
-    RECT rc_st_coord{16, h - status_h, 210, h};
-    DrawTextW(mem_dc, coord_str.c_str(), -1, &rc_st_coord,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    const auto snapshot = root().document().current_snapshot();
+    if (snapshot && !snapshot->pages().empty()) {
+        const bool artboard_mode = artboard_overview_enabled();
+        const auto& boards = snapshot->active_page().artboards;
+        const size_t item_count = artboard_mode ? boards.size() : snapshot->pages().size();
+        size_t active_index = 0;
+        if (artboard_mode) {
+            const auto active_it = std::find_if(boards.begin(), boards.end(), [&](const auto& board) {
+                return board.id == active_tab().active_artboard_id;
+            });
+            if (active_it != boards.end())
+                active_index = static_cast<size_t>(std::distance(boards.begin(), active_it));
+        } else {
+            const auto active_it = std::find_if(snapshot->pages().begin(), snapshot->pages().end(),
+                [&](const auto& page) { return page.id == snapshot->active_page_id(); });
+            if (active_it != snapshot->pages().end())
+                active_index = static_cast<size_t>(std::distance(snapshot->pages().begin(), active_it));
+        }
+        const auto layout = page_navigation::make_layout(w, item_count, active_index);
+        const int row_top = h - status_h;
+        const auto draw_page_button = [&](page_navigation::Span span, const wchar_t* label,
+                                          bool enabled) {
+            RECT rc{span.left, row_top + 3, span.right, status_top - 3};
+            HBRUSH button_brush = CreateSolidBrush(enabled ? col_btn_bg : col_statusbar);
+            HPEN button_pen = CreatePen(PS_SOLID, 1, enabled ? col_btn_bdr : col_border);
+            const auto prior_pen = SelectObject(mem_dc, button_pen);
+            const auto prior_brush = SelectObject(mem_dc, button_brush);
+            RoundRect(mem_dc, rc.left, rc.top, rc.right, rc.bottom, 4, 4);
+            SelectObject(mem_dc, prior_pen);
+            SelectObject(mem_dc, prior_brush);
+            DeleteObject(button_pen);
+            DeleteObject(button_brush);
+            SetTextColor(mem_dc, enabled ? col_text_white : col_text_muted);
+            DrawTextW(mem_dc, label, -1, &rc,
+                      DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        };
+        draw_page_button(layout.first, L"|<", active_index > 0);
+        draw_page_button(layout.previous, L"<", active_index > 0);
+        draw_page_button(layout.next, L">", active_index + 1 < item_count);
+        draw_page_button(layout.last, L">|", active_index + 1 < item_count);
+        draw_page_button(layout.add, L"+", true);
+        draw_page_button(layout.remove, L"-", item_count > 1);
+
+        SelectObject(mem_dc, font_mono);
+        const std::wstring page_count = (artboard_mode ? L"A " : L"") +
+            std::to_wstring(active_index + 1) + L" / " + std::to_wstring(item_count);
+        RECT count_rc{layout.counter.left, row_top, layout.counter.right, status_top};
+        SetTextColor(mem_dc, col_text_white);
+        DrawTextW(mem_dc, page_count.c_str(), -1, &count_rc,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        SelectObject(mem_dc, font_be_vietnam);
+        for (size_t i = layout.first_visible;
+             i < layout.first_visible + layout.visible_count; ++i) {
+            const auto span = layout.tab(i);
+            const bool active = i == active_index;
+            RECT rc{span.left + 2, row_top + 3, span.right - 2, status_top - 3};
+            HBRUSH tab_brush = CreateSolidBrush(active ? col_btn_bg : col_statusbar);
+            HPEN tab_pen = CreatePen(PS_SOLID, 1, active ? col_teal : col_border);
+            const auto prior_pen = SelectObject(mem_dc, tab_pen);
+            const auto prior_brush = SelectObject(mem_dc, tab_brush);
+            RoundRect(mem_dc, rc.left, rc.top, rc.right, rc.bottom, 4, 4);
+            SelectObject(mem_dc, prior_pen);
+            SelectObject(mem_dc, prior_brush);
+            DeleteObject(tab_pen);
+            DeleteObject(tab_brush);
+            const std::wstring name = utf8_to_wide(artboard_mode
+                ? boards[i].name : snapshot->pages()[i].name);
+            SetTextColor(mem_dc, active ? col_teal : col_text_muted);
+            DrawTextW(mem_dc, name.c_str(), -1, &rc,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+        }
+    }
 
     SelectObject(mem_dc, font_be_vietnam);
-    HBRUSH br_tbadge = CreateSolidBrush(col_btn_bg);
-    HPEN p_tb = CreatePen(PS_SOLID, 1, col_btn_bdr);
-    const HGDIOBJ old_tb_pen = SelectObject(mem_dc, p_tb);
-    const HGDIOBJ old_tb_brush = SelectObject(mem_dc, br_tbadge);
-    RoundRect(mem_dc, 215, h - status_h + 3, 385, h - 3, 5, 5);
-    SelectObject(mem_dc, old_tb_pen);
-    SelectObject(mem_dc, old_tb_brush);
-    DeleteObject(p_tb);
-    DeleteObject(br_tbadge);
-    SetTextColor(mem_dc, col_teal);
-    const wchar_t* thm_badge = is_dark ? L"Theme: Dark" : L"Theme: Light";
-    RECT rc_tbadge{215, h - status_h + 3, 385, h - 3};
-    DrawTextW(mem_dc, thm_badge, -1, &rc_tbadge,
-              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-    HBRUSH br_gbadge = CreateSolidBrush(col_btn_bg);
-    HPEN p_gb = CreatePen(PS_SOLID, 1, col_btn_bdr);
-    const HGDIOBJ old_gb_pen = SelectObject(mem_dc, p_gb);
-    const HGDIOBJ old_gb_brush = SelectObject(mem_dc, br_gbadge);
-    RoundRect(mem_dc, 390, h - status_h + 3, 535, h - 3, 5, 5);
-    SelectObject(mem_dc, old_gb_pen);
-    SelectObject(mem_dc, old_gb_brush);
-    DeleteObject(p_gb);
-    DeleteObject(br_gbadge);
-    SetTextColor(mem_dc, col_teal);
-    const auto& backend = root().renderer().backend();
-    const auto* d2d_backend = dynamic_cast<const rendering::D2DRenderBackend*>(&backend);
-    const wchar_t* gpu_badge = L"Backend: CPU Fallback";
-    if (d2d_backend) {
-        if (d2d_backend->device_status() != rendering::DeviceLossStatus::Healthy)
-            gpu_badge = L"Direct2D: unavailable";
-        else if (d2d_backend->is_hardware_accelerated())
-            gpu_badge = L"GPU: Direct2D 1.1";
-        else
-            gpu_badge = L"Direct2D: WARP";
-    }
-    RECT rc_gbadge{390, h - status_h + 3, 535, h - 3};
-    DrawTextW(mem_dc, gpu_badge, -1, &rc_gbadge,
-              DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
+    const int color_badge_left = std::max(16, w - 385);
+    const int color_badge_right = std::max(color_badge_left + 96, w - 245);
     HBRUSH br_cbadge = CreateSolidBrush(col_btn_bg);
     HPEN p_cb = CreatePen(PS_SOLID, 1, col_btn_bdr);
     const HGDIOBJ old_cb_pen = SelectObject(mem_dc, p_cb);
     const HGDIOBJ old_cb_brush = SelectObject(mem_dc, br_cbadge);
-    RoundRect(mem_dc, 540, h - status_h + 3, 685, h - 3, 5, 5);
+    RoundRect(mem_dc, color_badge_left, status_top + 3, color_badge_right, h - 3, 5, 5);
     SelectObject(mem_dc, old_cb_pen);
     SelectObject(mem_dc, old_cb_brush);
     DeleteObject(p_cb);
@@ -185,26 +217,70 @@ void NativeWindow::paint_status_bar(HDC mem_dc, int w, int h, int status_h) {
     const auto snapshot_cur = root().document().current_snapshot();
     std::wstring color_badge = (snapshot_cur && snapshot_cur->color_mode() == color::DocumentColorMode::Cmyk ? L"CMYK" : L"RGB");
     if (proof_colors_enabled_) color_badge += L" • Proof";
-    if (gamut_warning_enabled_) color_badge += L" • !Gamut";
+    if (gamut_warning_enabled_) color_badge += L" • Gamut";
     if (overprint_preview_enabled_) color_badge += L" • OP";
 
     SetTextColor(mem_dc, (proof_colors_enabled_ || gamut_warning_enabled_ || overprint_preview_enabled_) ? RGB(255, 170, 0) : col_teal);
-    RECT rc_cbadge_txt{540, h - status_h + 3, 685, h - 3};
+    RECT rc_cbadge_txt{color_badge_left, status_top + 3, color_badge_right, h - 3};
     DrawTextW(mem_dc, color_badge.c_str(), -1, &rc_cbadge_txt,
               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
+    int msg_right = color_badge_left - 12;
+    if (hover_color_sample_.valid && w >= 650) {
+        const int inspect_box_w = 175;
+        const int inspect_box_r = color_badge_left - 8;
+        const int inspect_box_l = inspect_box_r - inspect_box_w;
+        msg_right = inspect_box_l - 8;
+
+        RECT rc_ibox{inspect_box_l, status_top + 3, inspect_box_r, h - 3};
+        HBRUSH br_ibox = CreateSolidBrush(col_btn_bg);
+        HPEN p_ibox = CreatePen(PS_SOLID, 1, col_btn_bdr);
+        const HGDIOBJ ob = SelectObject(mem_dc, br_ibox);
+        const HGDIOBJ op = SelectObject(mem_dc, p_ibox);
+        RoundRect(mem_dc, rc_ibox.left, rc_ibox.top, rc_ibox.right, rc_ibox.bottom, 5, 5);
+        SelectObject(mem_dc, ob);
+        SelectObject(mem_dc, op);
+        DeleteObject(p_ibox);
+        DeleteObject(br_ibox);
+
+        RECT rc_iswatch{inspect_box_l + 4, status_top + 5, inspect_box_l + 20, h - 5};
+        COLORREF sample_col = RGB(hover_color_sample_.r, hover_color_sample_.g, hover_color_sample_.b);
+        HBRUSH br_isw = CreateSolidBrush(sample_col);
+        HPEN p_isw = CreatePen(PS_SOLID, 1, col_border);
+        const HGDIOBJ ob2 = SelectObject(mem_dc, br_isw);
+        const HGDIOBJ op2 = SelectObject(mem_dc, p_isw);
+        RoundRect(mem_dc, rc_iswatch.left, rc_iswatch.top, rc_iswatch.right, rc_iswatch.bottom, 3, 3);
+        SelectObject(mem_dc, ob2);
+        SelectObject(mem_dc, op2);
+        DeleteObject(p_isw);
+        DeleteObject(br_isw);
+
+        std::ostringstream read_ss;
+        read_ss << eyedropper_detail::format_sample_color(hover_color_sample_);
+        if (hover_color_sample_.is_bitmap_pixel) {
+            read_ss << " (" << hover_color_sample_.pixel_x << "," << hover_color_sample_.pixel_y << "px)";
+        }
+        SelectObject(mem_dc, font_mono);
+        SetTextColor(mem_dc, col_teal);
+        RECT rc_itxt{inspect_box_l + 24, status_top + 3, inspect_box_r - 4, h - 3};
+        const std::wstring witxt = utf8_to_wide(read_ss.str());
+        DrawTextW(mem_dc, witxt.c_str(), -1, &rc_itxt,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    }
+
+    SelectObject(mem_dc, font_be_vietnam);
     SetTextColor(mem_dc, col_text_white);
     const std::wstring wmsg = utf8_to_wide(status_msg_);
-    RECT rc_st_msg{695, h - status_h, w - 230, h};
+    RECT rc_st_msg{16, status_top, std::max(16, msg_right), h};
     DrawTextW(mem_dc, wmsg.c_str(), -1, &rc_st_msg,
               DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
     SelectObject(mem_dc, font_mono);
     std::wstring wzoom = std::to_wstring(zoom_level_) + L"%";
-    RECT rc_zm_fit{w - 210, h - status_h + 3, w - 145, h - 3};
-    RECT rc_zm_btn_minus{w - 120, h - status_h + 3, w - 95, h - 3};
-    RECT rc_zm_txt{w - 90, h - status_h, w - 50, h};
-    RECT rc_zm_btn_plus{w - 45, h - status_h + 3, w - 20, h - 3};
+    RECT rc_zm_fit{w - 210, status_top + 3, w - 145, h - 3};
+    RECT rc_zm_btn_minus{w - 120, status_top + 3, w - 95, h - 3};
+    RECT rc_zm_txt{w - 90, status_top, w - 50, h};
+    RECT rc_zm_btn_plus{w - 45, status_top + 3, w - 20, h - 3};
 
     HBRUSH br_zm_btn = CreateSolidBrush(col_btn_bg);
     HPEN p_zm = CreatePen(PS_SOLID, 1, col_btn_bdr);

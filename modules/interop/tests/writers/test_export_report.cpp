@@ -31,6 +31,18 @@ void test_complete_receipt_keeps_claims_scoped() {
     assert(report.production == ExportProductionStatus::NotAssessed);
 }
 
+void test_artboard_receipt_requires_and_preserves_bounds() {
+    auto report = complete_report();
+    report.files.front().artboard_id = 9;
+    report.files.front().bounds = pikdraw::geometry::Rect2D{25, 30, 100, 80};
+    assert(validate_export_job_report(report));
+    assert(report.files.front().artboard_id == 9);
+
+    report.files.front().bounds.reset();
+    const auto rejected = validate_export_job_report(report);
+    assert(!rejected && rejected.error == ExportReportError::InvalidFileReceipt);
+}
+
 void test_complete_with_diagnostics_records_loss() {
     auto report = complete_report();
     report.status = ExportJobStatus::CompleteWithDiagnostics;
@@ -74,6 +86,7 @@ void test_rejects_claims_without_evidence_and_false_complete_state() {
 
 int main() {
     test_complete_receipt_keeps_claims_scoped();
+    test_artboard_receipt_requires_and_preserves_bounds();
     test_complete_with_diagnostics_records_loss();
     test_rejects_missing_digest_and_revision_mixing();
     test_rejects_claims_without_evidence_and_false_complete_state();

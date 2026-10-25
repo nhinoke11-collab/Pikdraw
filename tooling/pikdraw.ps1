@@ -4,6 +4,7 @@
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+. (Join-Path $PSScriptRoot 'native/forward.ps1')
 
 $Command = if ($args.Count -gt 0) { [string]$args[0] } else { 'help' }
 $RestArgs = @($args | Select-Object -Skip 1)
@@ -58,22 +59,22 @@ switch ($Command.ToLowerInvariant()) {
     }
 
     'build' {
-        & (Join-Path $PSScriptRoot 'native/build.ps1') @RestArgs
+        Invoke-PikDrawNative (Join-Path $PSScriptRoot 'native/build.ps1') $RestArgs
         exit $LASTEXITCODE
     }
 
     'test' {
-        & (Join-Path $PSScriptRoot 'native/build.ps1') -Test @RestArgs
+        Invoke-PikDrawNative (Join-Path $PSScriptRoot 'native/build.ps1') $RestArgs @{ Test = $true }
         exit $LASTEXITCODE
     }
 
     'check' {
-        & (Join-Path $PSScriptRoot 'native/check.ps1') @RestArgs
+        Invoke-PikDrawNative (Join-Path $PSScriptRoot 'native/check.ps1') $RestArgs
         exit $LASTEXITCODE
     }
 
     'package' {
-        & (Join-Path $PSScriptRoot 'native/package.ps1') @RestArgs
+        Invoke-PikDrawNative (Join-Path $PSScriptRoot 'native/package.ps1') $RestArgs
         exit $LASTEXITCODE
     }
 
@@ -89,23 +90,11 @@ switch ($Command.ToLowerInvariant()) {
     }
 
     'task' {
-        # Legacy stub for backward compatibility
-        if ($RestArgs.Count -gt 0 -and $RestArgs[0] -eq 'list') {
-            Write-Output "[]"
-            exit 0
-        }
-        $stub = [ordered]@{
-            ok      = $true
-            message = "PikDraw uses a streamlined direct workflow. Harness task management is deprecated."
-        }
-        $stub | ConvertTo-Json
-        exit 0
+        throw 'Legacy task commands were removed. Work directly per AGENTS.md; use build -Status for build coordination.'
     }
 
     'context' {
-        # Legacy stub for backward compatibility
-        Write-Output "PikDraw streamlined workflow: Work directly in primary source. See AGENTS.md."
-        exit 0
+        throw 'Legacy context packets were removed. Read AGENTS.md and docs/START.md.'
     }
 
     default {
@@ -115,7 +104,7 @@ switch ($Command.ToLowerInvariant()) {
         Write-Host "Commands:" -ForegroundColor Yellow
         Write-Host "  doctor       Check toolchain, environment, and repository health"
         Write-Host "  build        Build native desktop application and libraries"
-        Write-Host "  test         Build and run native C++ tests (build.ps1 -Test)"
+        Write-Host "  test         Build/run selected tests (-TestTarget), full suite requires -AllTests"
         Write-Host "  check        Run architecture gates and contract suites (check.ps1)"
         Write-Host "  run          Launch the built PikDraw desktop executable"
         Write-Host "  package      Package release desktop, sidecar, and COM server"
@@ -123,7 +112,8 @@ switch ($Command.ToLowerInvariant()) {
         Write-Host "Examples:" -ForegroundColor Gray
         Write-Host "  .\tooling\pikdraw.ps1 doctor"
         Write-Host "  .\tooling\pikdraw.ps1 build"
-        Write-Host "  .\tooling\pikdraw.ps1 test -TestTarget test_svg_dxf_import"
+        Write-Host "  .\tooling\pikdraw.ps1 build -Status"
+        Write-Host "  .\tooling\pikdraw.ps1 test -Submit -TestTarget test_pikdraw_document_storage"
         Write-Host "  .\tooling\pikdraw.ps1 check -Suite architecture"
         Write-Host "  .\tooling\pikdraw.ps1 run"
         exit 0

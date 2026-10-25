@@ -44,6 +44,7 @@ try {
         'README.md',
         'LICENSE',
         'licenses/MIT-foundation.txt',
+        'licenses/LICENSE.txt',
         'docs/AI-Automation-MCP.md',
         'docs/AI-Automation-COM.md',
         'docs/Windows-Package.md',

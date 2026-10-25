@@ -1,8 +1,12 @@
 #include "test_harness.hpp"
 #include "pikdraw/geometry/queries/curve_intersections.hpp"
+#include "pikdraw/geometry/queries/aabb_index.hpp"
 #include "pikdraw/geometry/curves/curve.hpp"
 
 #include <cmath>
+#include <limits>
+#include <utility>
+#include <vector>
 #include <iostream>
 
 using namespace pikdraw::geometry;
@@ -145,4 +149,31 @@ PIKDRAW_TEST(ac_s05_perpendicular_and_tangent) {
         PIKDRAW_ASSERT_NEAR(std::abs(p.point.x), 5.0 * std::sqrt(3.0), 1e-2);
         PIKDRAW_ASSERT(p.residual_mm <= 1e-4);
     }
+}
+
+PIKDRAW_TEST(aabb_index_is_conservative_and_returns_painter_order) {
+    std::vector<AabbIndexEntry> source;
+    source.reserve(1003);
+    for (uint32_t i = 0; i < 1000; ++i) {
+        const double x = static_cast<double>(i % 100) * 20.0;
+        const double y = static_cast<double>(i / 100) * 20.0;
+        source.push_back({static_cast<uint64_t>(i + 1), {x, y, 5.0, 5.0}, i});
+    }
+    source.push_back({2001, {20.0, 0.0, 5.0, 5.0}, 2001});
+    source.push_back({2002, {22.0, 4.0, 0.0, 5.0}, 2002});
+    source.push_back({2003, {std::numeric_limits<double>::quiet_NaN(), 0.0, 5.0, 5.0}, 2003});
+
+    AabbIndex index;
+    PIKDRAW_ASSERT(index.rebuild(std::move(source)));
+    PIKDRAW_ASSERT(index.size() == 1003);
+    const auto matches = index.query({19.0, 0.0, 7.0, 6.0});
+    PIKDRAW_ASSERT(matches.size() == 4);
+    PIKDRAW_ASSERT(matches[0].id == 2);
+    PIKDRAW_ASSERT(matches[1].id == 2001);
+    PIKDRAW_ASSERT(matches[2].id == 2002);
+    PIKDRAW_ASSERT(matches[3].id == 2003);
+
+    const auto remote = index.query({9000.0, 9000.0, 10.0, 10.0});
+    PIKDRAW_ASSERT(remote.size() == 1);
+    PIKDRAW_ASSERT(remote.front().id == 2003);
 }

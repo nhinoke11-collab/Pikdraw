@@ -6,13 +6,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(pikdraw_geometry STATIC
+    src/units/length_unit.cpp
     src/primitives/transform.cpp
     src/curves/curve.cpp
     src/curves/curve_ops.cpp
     src/curves/path.cpp
     src/flattening/flattening.cpp
     src/operations/boolean.cpp
+    src/operations/boolean_polygon.cpp
+    src/operations/path_cut.cpp
     src/operations/offset.cpp
+    src/queries/aabb_index.cpp
     src/queries/curve_intersections.cpp
     src/dimensions/dimension_geometry.cpp
 )
@@ -21,6 +25,7 @@ target_include_directories(pikdraw_geometry PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
+target_link_libraries(pikdraw_geometry PRIVATE pikdraw_clipper2)
 
 if(PIKDRAW_BUILD_TESTS)
     add_executable(test_pikdraw_geometry
@@ -31,6 +36,7 @@ if(PIKDRAW_BUILD_TESTS)
         tests/queries/test_curve_intersections.cpp
         tests/dimensions/test_dimension_geometry.cpp
         tests/operations/test_operations.cpp
+        tests/operations/test_path_cut.cpp
         tests/operations/test_offset.cpp
         tests/operations/test_subset_safety.cpp
         tests/acceptance/test_20m_billboard.cpp

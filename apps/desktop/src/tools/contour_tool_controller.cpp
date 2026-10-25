@@ -65,6 +65,14 @@ double ContourToolController::miter_limit() const noexcept {
     return tool_->miter_limit();
 }
 
+bool ContourToolController::set_arc_tolerance_mm(double tolerance) {
+    return tool_->set_arc_tolerance_mm(tolerance);
+}
+
+double ContourToolController::arc_tolerance_mm() const noexcept {
+    return tool_->arc_tolerance_mm();
+}
+
 bool ContourToolController::apply() {
     return tool_->apply();
 }

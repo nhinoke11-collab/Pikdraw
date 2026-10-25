@@ -28,7 +28,8 @@ bool V2ProposalStreamValidator::SemanticState::Consume(
   if (type == ImportRecordType::Page) {
     const auto *page = std::get_if<ImportPageRecord>(&value);
     const bool page_set = expected_coverage_profile == "pdf-page-set-v3" ||
-        expected_coverage_profile == "ai-pdf-compatible-page-set-v3";
+        expected_coverage_profile == "ai-pdf-compatible-page-set-v3" ||
+        expected_coverage_profile == "pdf-print-source-v1";
     if (!page || (phase != Phase::NeedPage && phase != Phase::Pages) ||
         (pages.empty() ? records_seen != 0 : !page_set) ||
         page->local_id != pages.size() + 1 ||
@@ -43,7 +44,8 @@ bool V2ProposalStreamValidator::SemanticState::Consume(
   } else if (type == ImportRecordType::Layer) {
     const auto *layer = std::get_if<ImportLayerRecord>(&value);
     const bool page_set = expected_coverage_profile == "pdf-page-set-v3" ||
-        expected_coverage_profile == "ai-pdf-compatible-page-set-v3";
+        expected_coverage_profile == "ai-pdf-compatible-page-set-v3" ||
+        expected_coverage_profile == "pdf-print-source-v1";
     if (!layer || (phase != Phase::Pages && phase != Phase::Layers &&
                    phase != Phase::Objects) ||
         phase == Phase::Objects || layer->local_id != next_layer_id ||
@@ -74,14 +76,16 @@ bool V2ProposalStreamValidator::SemanticState::Consume(
     if (!text || !AddObject(text->local_id, text->source_id,
                             ObjectInfo{ObjectKind::Text, {}}))
       return false;
-  } else if (type == ImportRecordType::RasterImage) {
+  } else if (type == ImportRecordType::RasterImage ||
+             type == ImportRecordType::RasterImage64) {
     const auto *image = std::get_if<ImportRasterImageRecord>(&value);
     const bool raster_document = expected_coverage_profile == "raster-rgba8-v1";
     const bool cdr_document = expected_coverage_profile == "cdr-libcdr-svg-v2";
     const bool pdf_document = expected_coverage_profile == "pdf-page-vector-v2" ||
         expected_coverage_profile == "ai-pdf-compatible-vector-v2" ||
         expected_coverage_profile == "pdf-page-set-v3" ||
-        expected_coverage_profile == "ai-pdf-compatible-page-set-v3";
+        expected_coverage_profile == "ai-pdf-compatible-page-set-v3" ||
+        expected_coverage_profile == "pdf-print-source-v1";
     const bool eps_document = expected_coverage_profile == "eps-path-v1";
     if (!image || phase == Phase::Issues || phase == Phase::Report ||
         phase == Phase::Complete || (!raster_document && !cdr_document &&
@@ -133,19 +137,37 @@ bool V2ProposalStreamValidator::SemanticState::Consume(
         chunk->bytes.size() > found->second.total_bytes - found->second.next_byte_offset)
       return false;
     found->second.next_byte_offset += static_cast<uint32_t>(chunk->bytes.size());
-  } else if (type == ImportRecordType::RasterSourceChunk) {
+  } else if (type == ImportRecordType::RasterSourceChunk ||
+             type == ImportRecordType::RasterSourceChunk64) {
     const auto *chunk = std::get_if<ImportRasterSourceChunkRecord>(&value);
-    if (!chunk || phase != Phase::Objects)
+    if (!chunk) {
+      failed_record_detail = "RasterSourceChunk payload did not decode";
       return false;
+    }
+    if (phase != Phase::Objects) {
+      failed_record_detail = "RasterSourceChunk arrived before raster object records";
+      return false;
+    }
     const auto total = raster_source_total_bytes.find(chunk->local_id);
     const auto next = raster_source_next_offsets.find(chunk->local_id);
     if (total == raster_source_total_bytes.end() ||
-        next == raster_source_next_offsets.end() ||
-        chunk->total_bytes != total->second ||
-        chunk->byte_offset != next->second ||
-        chunk->bytes.size() > total->second - next->second)
+        next == raster_source_next_offsets.end()) {
+      failed_record_detail = "RasterSourceChunk references an unknown image payload";
       return false;
-    next->second += static_cast<uint32_t>(chunk->bytes.size());
+    }
+    if (chunk->total_bytes != total->second) {
+      failed_record_detail = "RasterSourceChunk total length differs from image metadata";
+      return false;
+    }
+    if (chunk->byte_offset != next->second) {
+      failed_record_detail = "RasterSourceChunk byte offset is not contiguous";
+      return false;
+    }
+    if (chunk->bytes.size() > total->second - next->second) {
+      failed_record_detail = "RasterSourceChunk extends beyond image source length";
+      return false;
+    }
+    next->second += chunk->bytes.size();
   } else if (type == ImportRecordType::FidelityIssue) {
     const auto *issue = std::get_if<ImportFidelityIssueRecord>(&value);
     if (!issue || issue->severity == ImportFidelitySeverity::Unsupported ||
@@ -198,6 +220,8 @@ bool V2ProposalStreamValidator::SemanticState::Consume(
 
 bool V2ProposalStreamValidator::SemanticState::ConsumeChunk(
     std::span<const uint8_t> bytes, uint32_t expected_count) {
+  failed_record_type = 0;
+  failed_record_detail = {};
   size_t offset = 0;
   uint32_t count = 0;
   while (offset < bytes.size()) {
@@ -216,13 +240,22 @@ bool V2ProposalStreamValidator::SemanticState::ConsumeChunk(
         (static_cast<uint32_t>(bytes[offset + 7]) << 24);
     offset += 8;
     if (flags != 0 || payload_size > bytes.size() - offset || raw_type < 1 ||
-        raw_type > static_cast<uint16_t>(ImportRecordType::RasterSourceChunk))
+        raw_type > static_cast<uint16_t>(ImportRecordType::RasterImage64))
       return false;
     const auto type = static_cast<ImportRecordType>(raw_type);
+    failed_record_type = raw_type;
     const auto value =
         DeserializeImportRecord(type, bytes.subspan(offset, payload_size));
-    if (!value || !Consume(type, *value))
+    if (!value) {
+      if (type == ImportRecordType::RasterSourceChunk ||
+          type == ImportRecordType::RasterSourceChunk64)
+        failed_record_detail = "RasterSourceChunk payload failed codec validation";
       return false;
+    }
+    if (!Consume(type, *value)) {
+      return false;
+    }
+    failed_record_type = 0;
     offset += payload_size;
     ++count;
   }

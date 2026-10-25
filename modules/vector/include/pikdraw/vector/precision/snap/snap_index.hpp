@@ -9,6 +9,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -126,9 +127,10 @@ struct SnapQueryResult {
 
 struct SnapIndexBuildLimits {
     size_t max_entries{2000000};
+    std::function<bool()> should_cancel;
 };
 
-enum class SnapIndexBuildStatus : uint8_t { Success, InvalidSource, EntryLimitExceeded };
+enum class SnapIndexBuildStatus : uint8_t { Success, InvalidSource, EntryLimitExceeded, Cancelled };
 
 class SnapSourceIndex;
 

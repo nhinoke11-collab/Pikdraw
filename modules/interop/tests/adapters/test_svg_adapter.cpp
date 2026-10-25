@@ -169,6 +169,7 @@ void test_rejects_active_external_and_malformed_content() {
         R"(<svg width="10mm" height="10mm"><script>alert(1)</script></svg>)",
         R"(<!DOCTYPE svg [<!ENTITY x SYSTEM "file:///secret">]><svg width="10mm" height="10mm"/>)",
         R"(<svg width="10mm" height="10mm"><image href="https://example.invalid/x.png"/></svg>)",
+        R"(<svg width="10mm" height="10mm"><g opacity="0.5"><rect width="2" height="2"/></g></svg>)",
         R"(<svg width="10mm" height="10mm"><g style="opacity:0.5"><rect width="2" height="2"/></g></svg>)",
         R"(<svg width="10mm" height="10mm"><path style="fill:red" d="M0 0L1 1"/></svg>)",
         R"(<svg width="10mm" height="10mm"><path d="M0 0L1"/></svg>)",
@@ -195,29 +196,42 @@ void test_rejects_source_limits_and_bad_utf8() {
     assert(!bad_encoding.success && bad_encoding.objects.empty());
 }
 
-void test_unsupported_opacity_attributes_are_rejected_before_import() {
-    // The current SVG import profile does not map opacity into Appearance.
-    // Reject each attribute before returning objects so a caller cannot apply
-    // a visually incomplete proposal as if it were a faithful import.
-    const std::pair<const char*, const char*> cases[] = {
-        {R"(<path d="M0 0 L1 1" opacity="0.5"/>)",
-         "unsupported_path_feature"},
-        {R"(<path d="M0 0 L1 1" fill-opacity="0.5"/>)",
-         "unsupported_path_feature"},
-        {R"(<path d="M0 0 L1 1" stroke-opacity="0.5"/>)",
-         "unsupported_path_feature"},
-        {R"(<rect width="1" height="1" opacity="0.5"/>)",
-         "unsupported_rectangle_feature"},
-        {R"(<rect width="1" height="1" fill-opacity="0.5"/>)",
-         "unsupported_rectangle_feature"},
-        {R"(<rect width="1" height="1" stroke-opacity="0.5"/>)",
-         "unsupported_rectangle_feature"},
-        {R"(<text x="0" y="1" opacity="0.5">x</text>)",
-         "unsupported_text_feature"},
-        {R"(<text x="0" y="1" fill-opacity="0.5">x</text>)",
-         "unsupported_text_feature"},
-    };
-    for (const auto& [element, expected_feature] : cases) {
+void test_element_opacity_maps_to_appearance() {
+    const std::string svg = R"(<svg width="10mm" height="10mm">
+        <path id="path-opacity" d="M0 0 L4 0 L4 4 Z" fill="#ff000080"
+            fill-opacity="25%" stroke="#0000ff" stroke-opacity="50%" opacity="75%"/>
+        <rect id="rect-opacity" width="2" height="2" opacity="1.2"
+            fill-opacity="-0.25" stroke-opacity="200%"/>
+        <text id="text-opacity" x="0" y="1" opacity="0.4" fill-opacity="0.6">x</text>
+    </svg>)";
+    const auto result = SvgImporter::import_from_string(svg);
+    assert(result.success);
+    assert(!result.report.has_unsupported());
+    assert(result.objects.size() == 3);
+
+    const auto& path = std::get<PathObject>(result.objects[0]);
+    assert(std::abs(path.appearance.object_opacity - 0.75) < 1e-12);
+    assert(std::abs(path.appearance.fill_opacity - 0.25) < 1e-12);
+    assert(std::abs(path.appearance.stroke_opacity - 0.5) < 1e-12);
+    const auto* path_fill = std::get_if<color::RGBColor>(&path.fill.payload());
+    assert(path_fill && std::abs(path_fill->a - 128.0 / 255.0) < 1e-12);
+
+    const auto& rect = std::get<PathObject>(result.objects[1]);
+    assert(rect.appearance.object_opacity == 1.0);
+    assert(rect.appearance.fill_opacity == 0.0);
+    assert(rect.appearance.stroke_opacity == 1.0);
+
+    const auto& text = std::get<TextObject>(result.objects[2]);
+    assert(std::abs(text.appearance.object_opacity - 0.4) < 1e-12);
+    assert(std::abs(text.appearance.fill_opacity - 0.6) < 1e-12);
+}
+
+void test_invalid_element_opacity_rejects_the_whole_source() {
+    for (const auto& element : {
+        R"(<path d="M0 0 L1 1" opacity="not-a-number"/>)",
+        R"(<rect width="1" height="1" fill-opacity="1e999"/>)",
+        R"(<text x="0" y="1" fill-opacity="auto">x</text>)",
+    }) {
         const auto svg = std::string(
             R"(<svg width="10mm" height="10mm">)") + element + "</svg>";
         const auto result = SvgImporter::import_from_string(svg);
@@ -225,11 +239,7 @@ void test_unsupported_opacity_attributes_are_rejected_before_import() {
         assert(result.objects.empty());
         assert(result.report.has_unsupported());
         assert(result.report.issue_count() == 1);
-        const auto& issue = result.report.issues().front();
-        assert(issue.severity == FidelitySeverity::Unsupported);
-        assert(issue.feature == expected_feature);
-        assert(issue.description.find("unsupported attributes") !=
-               std::string::npos);
+        assert(result.report.issues().front().feature == "invalid_opacity");
     }
 }
 
@@ -314,7 +324,8 @@ int main() {
     test_nested_groups_and_inkscape_layers_are_preserved();
     test_rejects_active_external_and_malformed_content();
     test_rejects_source_limits_and_bad_utf8();
-    test_unsupported_opacity_attributes_are_rejected_before_import();
+    test_element_opacity_maps_to_appearance();
+    test_invalid_element_opacity_rejects_the_whole_source();
     test_lossless_curve_path_adapter();
     test_svg_clip_path_import();
     std::cout << "[test_svg_adapter] All tests passed!\n";

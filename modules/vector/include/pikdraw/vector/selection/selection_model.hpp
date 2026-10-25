@@ -1,6 +1,7 @@
 #pragma once
 #include "pikdraw/document/model/object_id.hpp"
 #include "pikdraw/document/snapshots/document_snapshot.hpp"
+#include <span>
 #include <algorithm>
 #include <optional>
 #include <unordered_set>
@@ -8,7 +9,7 @@
 namespace pikdraw::vector {
 enum class SelectionMode { Replace, Toggle, Add };
 enum class RegionMode { Window, Crossing };
-enum class HitQuality { SourceLines, CurveApproximation, TextApproximation };
+enum class HitQuality { SourceLines, CurveApproximation, TextApproximation, ImageBounds };
 struct HitResult {
     document::ObjectId id;
     HitQuality quality;
@@ -58,11 +59,39 @@ class SelectionModel {
                                                     double tolerance_mm = 2.0,
                                                     bool allow_approximate_text = true,
                                                     HitDiagnostics *diagnostics = nullptr);
+    // Color sampling follows visible painter order and includes locked objects,
+    // since locking prevents edits but does not hide pixels from the canvas.
+    static std::optional<HitResult> hit_test_visible_detail(
+        geometry::Point2D pt_mm, const document::DocumentSnapshot &snapshot,
+        double tolerance_mm = 2.0, bool allow_approximate_text = true,
+        HitDiagnostics *diagnostics = nullptr);
+    static std::optional<document::ObjectId> hit_test_in_scope(
+        geometry::Point2D point, const document::DocumentSnapshot& snapshot,
+        document::ObjectId scope, double tolerance_mm = 2.0, bool frame_only = false);
+    static std::vector<document::ObjectId> scope_roots(
+        const document::DocumentSnapshot& snapshot, document::ObjectId scope, bool frame_only = false);
+    static std::vector<document::ObjectId> query_region_in_scope(
+        const geometry::Rect2D& region, RegionMode mode,
+        const document::DocumentSnapshot& snapshot, document::ObjectId scope);
     static std::optional<document::ObjectId>
     hit_test(geometry::Point2D pt_mm, const document::DocumentSnapshot &snapshot, double tolerance_mm = 2.0) {
         const auto result = hit_test_detail(pt_mm, snapshot, tolerance_mm);
         return result ? std::optional(result->id) : std::nullopt;
     }
+
+  public:
+    // Candidates are validated against the snapshot; callers supply bottom-to-top painter order.
+    [[nodiscard]] static std::vector<document::ObjectId>
+    query_region_candidates(const geometry::Rect2D &region, RegionMode mode,
+                            const document::DocumentSnapshot &snapshot,
+                            std::span<const document::ObjectId> candidates);
+    [[nodiscard]] static std::optional<HitResult>
+    hit_test_detail_candidates(geometry::Point2D pt_mm,
+                               const document::DocumentSnapshot &snapshot,
+                               std::span<const document::ObjectId> candidates,
+                               double tolerance_mm = 2.0,
+                               bool allow_approximate_text = true,
+                               HitDiagnostics *diagnostics = nullptr);
 
   private:
     std::vector<document::ObjectId> selected_ids_;

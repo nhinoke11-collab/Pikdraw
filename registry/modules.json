@@ -131,7 +131,7 @@
     {
       "id": "raster",
       "path": "modules/raster",
-      "status": "planned",
+      "status": "in_progress",
       "dependencies": [
         "document",
         "color"
@@ -143,15 +143,17 @@
       "owned_paths": [
         "modules/raster"
       ],
-      "purpose": "Basic non-destructive image edits, masks and image asset management."
+      "purpose": "Disk-backed raster source assets, bounded tile processing, and non-destructive image editing."
     },
     {
       "id": "production",
       "path": "modules/production",
-      "status": "planned",
+      "status": "in_progress",
       "dependencies": [
         "document",
-        "geometry"
+        "geometry",
+        "color",
+        "raster"
       ],
       "context": [
         "modules/production/README.md",
@@ -160,7 +162,7 @@
       "owned_paths": [
         "modules/production"
       ],
-      "purpose": "CAD 2D annotations, cut/engrave/drill classification, nesting and job outputs."
+      "purpose": "Print output conditions, ICC-managed test-sheet rendering/export and print jobs, plus CAD 2D annotations, cut/engrave/drill classification, nesting and job outputs."
     },
     {
       "id": "scene3d",
@@ -188,6 +190,7 @@
         "document",
         "geometry",
         "color",
+        "raster",
         "typography"
       ],
       "context": [
@@ -243,6 +246,8 @@
         "automation",
         "workers",
         "color",
+        "raster",
+        "production",
         "geometry",
         "typography",
         "mcp-server"

@@ -82,6 +82,7 @@ install(FILES
 )
 install(FILES
     "${CMAKE_SOURCE_DIR}/LICENSES/MIT-foundation.txt"
+    "${CMAKE_SOURCE_DIR}/third_party/licenses/clipper2-2.0.1/LICENSE.txt"
     DESTINATION licenses
     COMPONENT Documentation
 )

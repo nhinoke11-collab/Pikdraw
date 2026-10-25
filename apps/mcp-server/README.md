@@ -59,14 +59,22 @@ Stdio chỉ chứa JSON-RPC line frames; log chẩn đoán không ghi lên stdou
 4. `pikdraw.connect` tạo session theo các scope client yêu cầu và scope app đã cấp.
    `pikdraw.document.create` cũng phải nhận `session_handle` đã được cấp `document.create`;
    bật edit ở app không tự cấp quyền cho mọi session. Dùng `pikdraw.objects.query` để đọc tối đa
-   100 object mỗi trang. Trang tiếp theo phải
-   gửi lại `epoch` và `revision` từ trang đầu; nếu tài liệu đổi, bắt đầu lại từ trang đầu.
+   100 object mỗi trang. Có thể lọc theo `object_id`, `layer_index`, `type` hoặc `region_mm`
+   trước khi phân trang; cursor `v2` được ràng buộc với trang và bộ lọc. Ưu tiên gửi
+   `next_cursor` cùng `epoch` và `revision` từ trang đầu; `offset` và cursor `v1` vẫn được
+   giữ cho client cũ. Nếu tài liệu đổi, bắt đầu lại từ trang đầu.
+   Khi đã có revision trước, `pikdraw.objects.changes` trả tối đa 4.096 IDs đã sửa nếu history còn
+   liên tục và chỉ có thay đổi object tương thích. Nếu `requires_full_query` là true do revision
+   nằm ngoài 128 bước giữ lại, vượt số ID, thay đổi cấu trúc, hoặc Undo/Redo, `changed_ids` rỗng;
+   đồng bộ lại bằng `objects.query`. Dùng `objects.get` với epoch/revision mới để lấy nội dung từng ID.
    Dùng `pikdraw.objects.get` để lấy một object cụ thể theo stable ID, gồm object lồng trong group.
 5. Dùng `pikdraw.font.query` và `pikdraw.text.measure` để chọn mặt chữ có thật, xem fallback,
    glyph tiếng Việt và metric trước khi tạo nội dung. `pikdraw.document.validate` kiểm tra
    bounds trang, safe margin được yêu cầu và text layout; group bounds trả `not_assessed`.
-6. Khi session được cấp `document.create`, `pikdraw.document.create` mở một tab mới theo kích thước
-   mm, không thay tài liệu đang mở; connect lại để nhận session cho tab mới. Khi được cấp
+6. Khi session được cấp `document.create`, `pikdraw.document.create` mở một tab mới theo
+   `page_width_mm/page_height_mm` hoặc `page_width/page_height` kèm `length_unit` vật lý
+   (`mm/cm/m/in/ft/yd/pt/pc`). Kích thước trả về vẫn là mm; thao tác không thay tài liệu đang mở,
+   và cần connect lại để nhận session cho tab mới. Khi được cấp
    `document.edit`, `pikdraw.batch.validate` kiểm tra trước tối đa 256 operation gồm rectangle,
    ellipse, Unicode text, line và polyline có editable nodes/segments. `pikdraw.batch.apply`
    nhận cùng epoch/revision và áp dụng toàn batch trong một transaction Undo. Có thể transform
@@ -78,13 +86,19 @@ Stdio chỉ chứa JSON-RPC line frames; log chẩn đoán không ghi lên stdou
    `pikdraw.history.undo` và `pikdraw.history.redo` hoàn tác/tái áp dụng một transaction nếu
    epoch/revision còn khớp; mỗi lần gọi có receipt và retry an toàn.
    `pikdraw.object.create_rectangle` là lối tắt cho một hình và cũng cần `request_id`,
-   `idempotency_key`, `expected_epoch`, `expected_revision` cùng kích thước mm.
+   `idempotency_key`, `expected_epoch`, `expected_revision` cùng kích thước. Giữ nguyên bộ
+   `x_mm/y_mm/width_mm/height_mm`; có thể dùng `x/y/width/height` kèm `length_unit` là
+   `mm`, `cm`, `m`, `in`, `ft`, `yd`, `pt` hoặc `pc`. Batch create rectangle/ellipse, text
+   position và line/polyline points nhận cùng dạng typed. Batch transform/pivot, duplicate offset
+   và stroke width cũng nhận số kèm `length_unit`; mọi giá trị chuẩn hóa về mm trước khi ghi.
+   `px` bị từ chối nếu request không mang DPI basis. Không trộn trường `*_mm` với trường typed
+   trong cùng operation.
    Cùng key và payload trả lại cùng receipt; payload khác trả `IDEMPOTENCY_CONFLICT`.
    Tối đa 128 receipt cho mỗi session trong RAM; disconnect hoặc khởi động lại app làm
    session hết hạn.
 7. Nếu call write timeout, không tạo key mới ngay. Dùng `pikdraw.request.get` với key cũ,
    đọc lại tài liệu rồi mới quyết định thao tác tiếp.
-8. Khi cấp `file.write`, `pikdraw.file.save` ghi `.pikdraw` vào
+8. Khi cấp `file.write`, `pikdraw.file.save` ghi `.pr` vào
    `%LOCALAPPDATA%\PikDraw\automation\files` bằng save nguyên tử và không ghi đè file đã có.
    Gọi `pikdraw.file.verify_reopen` để nạp lại native snapshot, kiểm page, revision, object
    IDs và kiểu object mà không thay tài liệu đang active. Khi cấp `file.read`, gọi

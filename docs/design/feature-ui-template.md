@@ -2,7 +2,7 @@
 
 **Agent triển khai tự phân tích, điền và quyết định nội dung phiếu. Không giao người dùng điền hoặc chờ họ duyệt từng lựa chọn.**
 Agent sao chép mẫu này vào tài liệu tính năng có tên rõ ràng dưới `docs/design/features/`, hoặc ghi phần tương đương
-trong đặc tả đang có rồi liên kết từ task/handoff. Không tạo bản trùng ở nhiều nơi.
+trong đặc tả đang có và dẫn tới khi báo kết quả. Không tạo bản trùng ở nhiều nơi.
 Đọc [chuẩn UX/UI](ui-ux-standard.md), đối chiếu UI hiện có, tự chọn phương án phù hợp và ghi lý do ngắn.
 Điền mục không áp dụng bằng lý do; tự kiểm đủ nội dung rồi tiếp tục code trong scope, không để quyết định thiết kế trôi nổi khi code.
 Phiếu là bản ghi quyết định và cơ sở review, không là form xin phép hoặc cổng ký duyệt bắt buộc trước code.
@@ -25,9 +25,9 @@ Mẫu là tài liệu, không phải schema task mới và không phải form ru
 | Loại thao tác | Tool có mode / action một lần / toggle / tác vụ bất đồng bộ |
 | Standard toolbar | Icon shortcut nào hoặc lý do không đặt |
 | Toolbox / flyout | Nhóm tool, vị trí, cách mở bằng chuột và bàn phím hoặc không áp dụng |
-| Property bar | Tập thiết lập quan trọng/thường dùng để sửa nhanh, thứ tự và lúc xuất hiện |
-| Properties | Bắt buộc với chức năng nhiều thuộc tính/tùy chọn phụ: bảng/section chứa đầy đủ tham số đã hỗ trợ, nhóm cơ bản/nâng cao; chức năng đơn giản ghi lý do nếu không áp dụng |
-| Mở bảng thuộc tính | Menu hoặc action mở/focus đúng bảng/section; cách truy cập khi dock đóng hoặc bar hẹp; không bắt bảng luôn mở |
+| Property bar | Tối đa 3–5 controls quan trọng nhất để sửa nhanh; KHÔNG đặt chuỗi nút hành động dài; KHÔNG in text hướng dẫn dài; có nút [⚙] mở Properties |
+| Properties | Bắt buộc với chức năng nhiều thuộc tính/tùy chọn phụ: 100% tương tác (không dùng text tĩnh); phân 4 nhóm rõ ràng (Header, Transform, Feature Settings, Action Group); chức năng đơn giản ghi lý do nếu không áp dụng |
+| Mở bảng thuộc tính | Nút [⚙] trên bar hoặc menu mở/focus đúng bảng/section; cách truy cập khi dock đóng hoặc bar hẹp; không bắt bảng luôn mở |
 | Context menu / shortcut | Alias của cùng action; phím thực tế hoặc “chưa gán” |
 | Dialog/panel mới | Có hay không; lý do không tái dùng bề mặt hiện có; đường mở/đóng |
 
@@ -64,8 +64,8 @@ Mỗi field là một dòng; tách giá trị hiển thị, source binding và p
 | Icon SVG | Asset ID/path hiện có hoặc proposed; bộ icon, trạng thái, provenance/license |
 | Label ngắn | Menu, button cần chữ, section, field; message IDs |
 | Accessible name | Tên đọc được của icon và control không có chữ |
-| Tooltip + focus help | Tên, shortcut thực, một câu tác dụng |
-| Status hint từng bước | Bắt đầu → đang thao tác → hoàn tất/hủy; modifier đã kiểm chứng |
+| Tooltip + focus help | Chuẩn 2 dòng: Dòng 1 Tên + Shortcut; Dòng 2 Mô tả hành động trong 1 câu súc tích |
+| Status hint từng bước | Hiển thị tại Botbar: [Hành động hiện tại] · [Phím bổ trợ] · [Hoàn tất/Hủy] |
 | Error/disabled reason | Nguyên nhân và cách tiếp tục |
 | Help đầy đủ | Đường tài liệu/help ID; menu mở; ví dụ 3–5 bước, tham số, sửa lại/hủy và giới hạn |
 

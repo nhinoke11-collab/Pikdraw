@@ -1,5 +1,7 @@
 #include "pikdraw/document/document.hpp"
+#include "pikdraw/document/commands/appearance_commands.hpp"
 #include "pikdraw/document/commands/page_commands.hpp"
+#include "pikdraw/document/commands/artboard_commands.hpp"
 #include <algorithm>
 #include <cassert>
 #include <iostream>
@@ -84,6 +86,123 @@ void test_snapshot_immutability() {
     assert(snap1->object_count() == 1);
     assert(snap1->contains_object(p1.id));
     assert(!snap1->contains_object(p2.id));
+}
+
+void test_touched_object_updates_shared_scene_hierarchy() {
+    constexpr ObjectId child_id = 12'100'001;
+    constexpr ObjectId group_id = 12'100'002;
+    constexpr ObjectId outer_group_id = 12'100'003;
+    PathObject child;
+    child.id = child_id;
+    child.path.move_to({0.0, 0.0});
+    child.path.line_to({10.0, 0.0});
+    child.path.line_to({10.0, 5.0});
+    child.path.line_to({0.0, 5.0});
+    child.path.close();
+    GroupObject group;
+    group.id = group_id;
+    group.children_ids = {child_id};
+    GroupObject outer_group;
+    outer_group.id = outer_group_id;
+    outer_group.children_ids = {group_id};
+
+    auto page = Page::make_default();
+    page.layers.front().object_ids = {outer_group_id};
+    PersistentObjectMap objects;
+    objects = objects.set(child_id, child);
+    objects = objects.set(group_id, group);
+    objects = objects.set(outer_group_id, outer_group);
+    auto document_page = make_document_page("Hierarchy", std::move(page), std::move(objects));
+    const auto page_id = document_page.id;
+    auto initial = std::make_shared<const DocumentSnapshot>(
+        1, 0, std::vector<DocumentPage>{document_page}, page_id, "hierarchy-update");
+    Document doc(*initial);
+    const auto held_snapshot = doc.current_snapshot();
+    const auto* old_group_entry = held_snapshot->hierarchy().find(group_id);
+    const auto* old_outer_entry = held_snapshot->hierarchy().find(outer_group_id);
+    assert(old_group_entry && old_group_entry->bounds);
+    assert(old_outer_entry && old_outer_entry->bounds);
+    assert(old_group_entry->bounds->x == 0.0 && old_group_entry->bounds->width == 10.0);
+    assert(old_outer_entry->bounds->x == 0.0 && old_outer_entry->bounds->width == 10.0);
+
+    const auto moved = geometry::Transform2D::translation(100.0, 20.0);
+    assert(doc.execute_command(std::make_unique<TransformObjectCommand>(child_id, moved)).success);
+    const auto updated_snapshot = doc.current_snapshot();
+    const auto* moved_child = updated_snapshot->hierarchy().find(child_id);
+    const auto* moved_group = updated_snapshot->hierarchy().find(group_id);
+    const auto* moved_outer = updated_snapshot->hierarchy().find(outer_group_id);
+    assert(moved_child && moved_child->bounds);
+    assert(moved_group && moved_group->bounds);
+    assert(moved_outer && moved_outer->bounds);
+    assert(moved_child->bounds->x == 100.0 && moved_child->bounds->y == 20.0);
+    assert(moved_group->bounds->x == 100.0 && moved_group->bounds->y == 20.0);
+    assert(moved_outer->bounds->x == 100.0 && moved_outer->bounds->y == 20.0);
+    assert(held_snapshot->hierarchy().find(child_id)->bounds->x == 0.0);
+    assert(held_snapshot->hierarchy().find(group_id)->bounds->x == 0.0);
+    assert(held_snapshot->hierarchy().find(outer_group_id)->bounds->x == 0.0);
+
+    assert(doc.undo());
+    const auto undone_snapshot = doc.current_snapshot();
+    const auto* undone_group = undone_snapshot->hierarchy().find(outer_group_id);
+    assert(undone_group && undone_group->bounds && undone_group->bounds->x == 0.0);
+    assert(undone_snapshot->hierarchy().shares_storage_with(held_snapshot->hierarchy()));
+
+    assert(doc.redo());
+    const auto redone_snapshot = doc.current_snapshot();
+    assert(redone_snapshot->hierarchy().shares_storage_with(updated_snapshot->hierarchy()));
+}
+
+void test_incremental_snapshot_validation_rejects_stable_id_collisions() {
+    Document doc("incremental-validation-collision");
+    const auto first_effect_id = generate_effect_instance_id();
+    const auto second_effect_id = generate_effect_instance_id();
+    auto first = make_path_with_effect(generate_object_id(), first_effect_id);
+    auto second = make_path_with_effect(generate_object_id(), second_effect_id);
+    assert(doc.execute_command(std::make_unique<AddObjectCommand>(first)).success);
+    assert(doc.execute_command(std::make_unique<AddObjectCommand>(second)).success);
+    const auto before = doc.current_snapshot();
+
+    auto invalid_appearance = first.appearance;
+    invalid_appearance.effects.front().id = second_effect_id;
+    const auto result = doc.execute_command(std::make_unique<SetAppearanceCommand>(
+        std::vector<AppearanceReplacement>{{first.id, invalid_appearance}}));
+    assert(!result.success);
+    assert(doc.current_snapshot() == before);
+    assert(doc.revision() == before->revision());
+}
+
+void test_snapshot_change_log_tracks_edits_and_requests_resync_for_history() {
+    Document doc("snapshot-change-log");
+    PathObject path;
+    path.id = generate_object_id();
+    path.path.move_to({0.0, 0.0});
+    path.path.line_to({10.0, 0.0});
+    assert(doc.execute_command(std::make_unique<AddObjectCommand>(path)).success);
+    const auto after_create = doc.current_snapshot();
+
+    assert(doc.execute_command(std::make_unique<TransformObjectCommand>(
+        path.id, geometry::Transform2D::translation(5.0, 7.0))).success);
+    const auto after_transform = doc.current_snapshot();
+    const auto delta = after_transform->changes_since(after_create->revision());
+    assert(delta.contiguous && !delta.requires_full_query);
+    assert(delta.from_revision == after_create->revision());
+    assert(delta.to_revision == after_transform->revision());
+    assert(delta.changed_ids == std::vector<ObjectId>{path.id});
+
+    const auto before_history = after_transform->revision();
+    assert(doc.undo());
+    const auto after_undo = doc.current_snapshot();
+    const auto history_delta = after_undo->changes_since(before_history);
+    assert(!history_delta.contiguous && history_delta.requires_full_query);
+    assert(history_delta.changed_ids.empty());
+
+    const auto structural_delta = after_undo->changes_since(after_create->revision());
+    assert(!structural_delta.contiguous && structural_delta.requires_full_query);
+    assert(structural_delta.changed_ids.empty());
+
+    const auto current_delta = after_undo->changes_since(after_undo->revision());
+    assert(current_delta.contiguous && !current_delta.requires_full_query &&
+           current_delta.changed_ids.empty());
 }
 
 void test_listener_notification() {
@@ -376,9 +495,68 @@ void test_resize_page_preserves_artwork_and_rejects_invalid_dimensions() {
     assert(before->find_page(page_id)->layout.width_mm == original.width_mm);
 }
 
+void test_artboard_commands_share_scene_objects_and_undo_stably() {
+    Document doc("doc-artboard-command-test");
+    const auto page_id = doc.active_page_id();
+    PathObject object;
+    object.id = generate_object_id();
+    object.path.move_to({10.0, 10.0});
+    object.path.line_to({20.0, 10.0});
+    assert(doc.execute_command(std::make_unique<AddObjectCommand>(object)).success);
+    const auto original_revision = doc.revision();
+    const auto original_board = doc.current_snapshot()->active_page().artboards.front();
+
+    auto add = std::make_unique<AddArtboardCommand>(page_id, "Panel two",
+        geometry::Rect2D{original_board.width_mm + 20.0, 0.0,
+                         original_board.width_mm, original_board.height_mm});
+    const auto added_id = add->artboard_id();
+    assert(doc.execute_command(std::move(add)).success);
+    auto snapshot = doc.current_snapshot();
+    assert(snapshot->active_page().artboards.size() == 2);
+    assert(snapshot->active_page().artboards.back().id == added_id);
+    assert(snapshot->object_count() == 1 && snapshot->contains_object(object.id));
+    assert(doc.revision() == original_revision + 1);
+
+    assert(doc.undo());
+    assert(doc.current_snapshot()->active_page().artboards.size() == 1);
+    assert(doc.redo());
+    assert(doc.current_snapshot()->active_page().artboards.back().id == added_id);
+
+    auto duplicate = std::make_unique<DuplicateArtboardCommand>(page_id, added_id);
+    assert(doc.execute_command(std::move(duplicate)).success);
+    snapshot = doc.current_snapshot();
+    assert(snapshot->active_page().artboards.size() == 3);
+    assert(snapshot->active_page().artboards.back().name == "Panel two copy");
+    assert(snapshot->object_count() == 1 && snapshot->contains_object(object.id));
+    const auto duplicate_id = snapshot->active_page().artboards.back().id;
+    assert(doc.execute_command(std::make_unique<RenameArtboardCommand>(
+        page_id, duplicate_id, "Final output")).success);
+    assert(doc.current_snapshot()->active_page().artboards.back().name == "Final output");
+    assert(doc.execute_command(std::make_unique<SetArtboardBoundsCommand>(
+        page_id, duplicate_id, geometry::Rect2D{5.0, 7.0, 300.0, 200.0})).success);
+    const auto* edited = doc.current_snapshot()->find_page(page_id);
+    assert(edited && edited->artboards.back().x_mm == 5.0 &&
+           !edited->artboards.back().linked_to_page_bounds);
+    assert(doc.execute_command(std::make_unique<DeleteArtboardCommand>(
+        page_id, duplicate_id)).success);
+    assert(doc.current_snapshot()->active_page().artboards.size() == 2);
+    assert(doc.undo());
+    assert(doc.current_snapshot()->active_page().artboards.back().id == duplicate_id);
+    assert(doc.execute_command(std::make_unique<DeleteArtboardCommand>(
+        page_id, added_id)).success);
+    assert(doc.execute_command(std::make_unique<DeleteArtboardCommand>(
+        page_id, duplicate_id)).success);
+    const auto last_id = doc.current_snapshot()->active_page().artboards.front().id;
+    const auto last_delete = doc.execute_command(std::make_unique<DeleteArtboardCommand>(page_id, last_id));
+    assert(!last_delete.success && doc.current_snapshot()->active_page().artboards.size() == 1);
+}
+
 int main() {
     std::cout << "[test_snapshots] Running snapshot tests...\n";
     test_snapshot_immutability();
+    test_touched_object_updates_shared_scene_hierarchy();
+    test_incremental_snapshot_validation_rejects_stable_id_collisions();
+    test_snapshot_change_log_tracks_edits_and_requests_resync_for_history();
     test_listener_notification();
     test_effect_ids_share_document_stable_id_namespace();
     test_document_effect_node_limit();
@@ -386,6 +564,7 @@ int main() {
     test_stable_object_ids_are_unique_across_pages();
     test_page_commands_rename_reorder_and_duplicate_roots();
     test_resize_page_preserves_artwork_and_rejects_invalid_dimensions();
+    test_artboard_commands_share_scene_objects_and_undo_stably();
     std::cout << "[test_snapshots] All tests passed!\n";
     return 0;
 }

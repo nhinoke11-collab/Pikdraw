@@ -476,13 +476,13 @@ bool CompactSvgImages(std::string_view input, std::vector<uint8_t>& packet,
     if (asset.mime_type.size() > UINT32_MAX || asset.bytes.size() > UINT32_MAX ||
         asset.mime_type.size() > kMaxCdrPacketBytes - packet_size - 8 ||
         asset.bytes.size() > kMaxCdrPacketBytes - packet_size - 8 - asset.mime_type.size()) {
-      diagnostic = "CDR compact import package exceeds the bounded 128 MiB profile";
+      diagnostic = "CDR compact import package exceeds the 32-bit bridge packet representation";
       return false;
     }
     packet_size += 8 + asset.mime_type.size() + asset.bytes.size();
   }
   if (packet_size > kMaxCdrPacketBytes || packet_size > UINT32_MAX) {
-    diagnostic = "CDR compact import package exceeds the bounded 128 MiB profile";
+    diagnostic = "CDR compact import package exceeds the 32-bit bridge packet representation";
     return false;
   }
   packet.clear();

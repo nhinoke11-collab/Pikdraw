@@ -18,6 +18,7 @@ function Assert-PikDrawPrimarySource([string]$SourceRoot) {
 }
 
 function Get-PikDrawToolchain {
+    param([switch]$PythonOnly)
     $tools = @{
         Python = $null
         CMake = $null
@@ -62,6 +63,8 @@ function Get-PikDrawToolchain {
             } catch {}
         }
     }
+
+    if ($PythonOnly) { return $tools }
 
     # 2. Discover CMake
     $cmakeCandidates = @()

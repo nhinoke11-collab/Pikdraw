@@ -9,8 +9,17 @@
 namespace pikdraw::interop {
 namespace {
 constexpr uint32_t kMaxRasterPixelBytes = UINT32_MAX;
-constexpr uint32_t kMaxRasterChunkBytes = 256u * 1024u;
-constexpr uint32_t kMaxRasterIccBytes = 256u * 1024u;
+constexpr size_t kMaxRasterChunkBytes = kMaxRasterChunkPayloadBytes;
+constexpr uint32_t kOpacityExtensionMagic = 0x3141504f; // "OPA1" on the wire.
+
+uint64_t expected_raster_bytes(uint32_t width, uint32_t height,
+                               uint8_t bits_per_channel) noexcept {
+    if (bits_per_channel != 8 && bits_per_channel != 16) return 0;
+    const uint64_t pixels = static_cast<uint64_t>(width) * height;
+    const uint64_t bytes_per_pixel = 4u * (bits_per_channel / 8u);
+    if (pixels == 0 || pixels > UINT64_MAX / bytes_per_pixel) return 0;
+    return pixels * bytes_per_pixel;
+}
 
 bool ValidRasterPlacementTransform(bool enabled, const std::array<double, 6>& matrix) {
     if (!enabled) return true;
@@ -49,6 +58,10 @@ bool IsValidRecordUtf8(std::string_view input) {
 
 class RecordWriter final {
 public:
+    explicit RecordWriter(size_t reserve_bytes = 0) {
+        if (reserve_bytes <= IPC_V2_MAX_RECORD_BYTES)
+            data_.reserve(reserve_bytes);
+    }
     bool U8(uint8_t value) { return Integer(value, 1); }
     bool U16(uint16_t value) { return Integer(value, 2); }
     bool U32(uint32_t value) { return Integer(value, 4); }
@@ -88,6 +101,14 @@ public:
         if (!U64(bits)) return false;
         value = std::bit_cast<double>(bits);
         return std::isfinite(value);
+    }
+    [[nodiscard]] bool PeekU32(uint32_t expected) const {
+        if (bytes_.size() < 4) return false;
+        const uint32_t value = static_cast<uint32_t>(bytes_[0]) |
+            (static_cast<uint32_t>(bytes_[1]) << 8) |
+            (static_cast<uint32_t>(bytes_[2]) << 16) |
+            (static_cast<uint32_t>(bytes_[3]) << 24);
+        return value == expected;
     }
     bool String16(std::string& value, size_t maximum, bool allow_empty = false) {
         uint16_t size = 0;
@@ -138,6 +159,28 @@ bool ValidColor(const ImportColorRecord& color) {
         return color.components[2] == 0 && color.components[3] == 0 && color.components[4] == 0;
     }
     return false;
+}
+
+bool ValidOpacity(double opacity) {
+    return std::isfinite(opacity) && opacity >= 0.0 && opacity <= 1.0;
+}
+
+bool WriteOpacityExtension(RecordWriter& writer, double object_opacity,
+                           double fill_opacity, double stroke_opacity) {
+    return ValidOpacity(object_opacity) && ValidOpacity(fill_opacity) &&
+           ValidOpacity(stroke_opacity) && writer.U32(kOpacityExtensionMagic) &&
+           writer.Double(object_opacity) && writer.Double(fill_opacity) &&
+           writer.Double(stroke_opacity);
+}
+
+bool ReadOptionalOpacityExtension(RecordReader& reader, double& object_opacity,
+                                  double& fill_opacity, double& stroke_opacity) {
+    if (!reader.PeekU32(kOpacityExtensionMagic)) return true;
+    uint32_t marker = 0;
+    return reader.U32(marker) && marker == kOpacityExtensionMagic &&
+           reader.Double(object_opacity) && ValidOpacity(object_opacity) &&
+           reader.Double(fill_opacity) && ValidOpacity(fill_opacity) &&
+           reader.Double(stroke_opacity) && ValidOpacity(stroke_opacity);
 }
 
 bool WriteColor(RecordWriter& writer, const ImportColorRecord& color) {
@@ -251,7 +294,32 @@ bool ValidPathSequence(std::span<const ImportPathElementRecord> elements) {
 
 std::optional<CanonicalImportRecord> SerializeImportRecord(const ImportRecordValue& value) {
     try {
-    RecordWriter writer;
+    size_t reserve_bytes = 0;
+    std::visit([&](const auto& record) {
+        using T = std::decay_t<decltype(record)>;
+        if constexpr (std::is_same_v<T, ImportRasterImageChunkRecord> ||
+                      std::is_same_v<T, ImportRasterSourceChunkRecord>)
+            if (record.bytes.size() <= IPC_V2_MAX_RECORD_BYTES - 16)
+                reserve_bytes = 16 + record.bytes.size();
+        if constexpr (std::is_same_v<T, ImportPathRecord>) {
+            const auto color_bytes = [](const ImportColorRecord& color) {
+                return size_t{78} + color.spot_name.size();
+            };
+            if (record.source_id.size() <= 128 && record.name.size() <= 128 &&
+                record.fill.spot_name.size() <= 128 && record.stroke.spot_name.size() <= 128) {
+                const size_t fixed_bytes = 4 + 2 + record.source_id.size() +
+                    2 + record.name.size() + 4 + 8 + 4 +
+                    color_bytes(record.fill) + color_bytes(record.stroke);
+                constexpr size_t kPathElementBytes = 76;
+                if (fixed_bytes <= IPC_V2_MAX_RECORD_BYTES &&
+                    record.elements.size() <=
+                        (IPC_V2_MAX_RECORD_BYTES - fixed_bytes) / kPathElementBytes)
+                    reserve_bytes = fixed_bytes +
+                        record.elements.size() * kPathElementBytes;
+            }
+        }
+    }, value);
+    RecordWriter writer(reserve_bytes);
     ImportRecordType type{};
     const bool success = std::visit([&](const auto& record) {
         using T = std::decay_t<decltype(record)>;
@@ -285,9 +353,10 @@ std::optional<CanonicalImportRecord> SerializeImportRecord(const ImportRecordVal
                    clip_is_child && (record.clip_mask_local_id == 0 ||
                                      writer.U32(record.clip_mask_local_id));
         } else if constexpr (std::is_same_v<T, ImportRasterImageRecord>) {
-            type = ImportRecordType::RasterImage;
-            const uint64_t expected_pixel_bytes =
-                static_cast<uint64_t>(record.width_px) * record.height_px * 4;
+            type = record.source_bytes_size > UINT32_MAX
+                ? ImportRecordType::RasterImage64 : ImportRecordType::RasterImage;
+            const uint64_t expected_pixel_bytes = expected_raster_bytes(
+                record.width_px, record.height_px, record.decoded_bits_per_channel);
             const bool supported_media_type = record.media_type == "image/png" ||
                 record.media_type == "image/jpeg" || record.media_type == "image/tiff" ||
                 record.media_type == "image/bmp" ||
@@ -298,13 +367,14 @@ std::optional<CanonicalImportRecord> SerializeImportRecord(const ImportRecordVal
                 record.decoded_pixel_bytes != expected_pixel_bytes ||
                 record.source_bits_per_pixel == 0 || record.source_bits_per_pixel > 128 ||
                 ((record.source_data_local_id == 0) != (record.source_bytes_size == 0)) ||
-                record.frame_count == 0 || record.frame_count > 256 ||
+                record.frame_count == 0 ||
                 record.frame_index >= record.frame_count ||
                 record.exif_orientation == 0 || record.exif_orientation > 8 ||
                 !std::isfinite(record.dpi_x) || !std::isfinite(record.dpi_y) ||
                 record.dpi_x <= 0 || record.dpi_y <= 0 ||
                 record.dpi_x > 1000000 || record.dpi_y > 1000000 ||
-                record.icc_profile.size() > kMaxRasterIccBytes ||
+                record.icc_profile.size() > kMaxRasterIccProfileBytes ||
+                record.preview_pixel_color_basis > 3 ||
                 !std::isfinite(record.x_mm) || !std::isfinite(record.y_mm) ||
                 !std::isfinite(record.width_mm) || !std::isfinite(record.height_mm) ||
                 !ValidRasterPlacementTransform(record.has_placement_transform,
@@ -332,7 +402,9 @@ std::optional<CanonicalImportRecord> SerializeImportRecord(const ImportRecordVal
                    writer.Double(record.x_mm) && writer.Double(record.y_mm) &&
                    writer.Double(record.width_mm) && writer.Double(record.height_mm) &&
                    writer.U32(record.pixel_data_local_id) &&
-                   (!(record.has_placement_transform || record.source_bytes_size != 0) ||
+                   (!(record.has_placement_transform || record.source_bytes_size != 0 ||
+                      record.preview_pixel_color_basis != 0 ||
+                      record.decoded_bits_per_channel != 8) ||
                     (writer.U8(record.has_placement_transform ? 1 : 0) &&
                      writer.U8(0) && writer.U16(0) &&
                      (!record.has_placement_transform ||
@@ -342,10 +414,13 @@ std::optional<CanonicalImportRecord> SerializeImportRecord(const ImportRecordVal
                        writer.Double(record.placement_transform[3]) &&
                        writer.Double(record.placement_transform[4]) &&
                        writer.Double(record.placement_transform[5]))) &&
-                     (record.source_bytes_size == 0 ||
-                      (record.source_data_local_id != 0 &&
-                       writer.U32(record.source_data_local_id) &&
-                       writer.U32(record.source_bytes_size)))));
+                     writer.U32(record.source_data_local_id) &&
+                     (record.source_bytes_size > UINT32_MAX
+                        ? writer.U64(record.source_bytes_size)
+                        : writer.U32(static_cast<uint32_t>(record.source_bytes_size))) &&
+                     writer.U8(record.preview_pixel_color_basis) &&
+                     (record.decoded_bits_per_channel == 8 ||
+                      writer.U8(record.decoded_bits_per_channel))));
         } else if constexpr (std::is_same_v<T, ImportRasterImageChunkRecord>) {
             type = ImportRecordType::RasterImageChunk;
             if (record.local_id == 0 || record.total_bytes == 0 ||
@@ -359,14 +434,18 @@ std::optional<CanonicalImportRecord> SerializeImportRecord(const ImportRecordVal
                    writer.U32(static_cast<uint32_t>(record.bytes.size())) &&
                    writer.Bytes(record.bytes);
         } else if constexpr (std::is_same_v<T, ImportRasterSourceChunkRecord>) {
-            type = ImportRecordType::RasterSourceChunk;
+            type = record.byte_offset > UINT32_MAX || record.total_bytes > UINT32_MAX
+                ? ImportRecordType::RasterSourceChunk64 : ImportRecordType::RasterSourceChunk;
             if (record.local_id == 0 || record.total_bytes == 0 || record.bytes.empty() ||
                 record.bytes.size() > kMaxRasterChunkBytes ||
                 record.byte_offset > record.total_bytes ||
                 record.bytes.size() > record.total_bytes - record.byte_offset)
                 return false;
-            return writer.U32(record.local_id) && writer.U32(record.byte_offset) &&
-                   writer.U32(record.total_bytes) &&
+            return writer.U32(record.local_id) &&
+                   (type == ImportRecordType::RasterSourceChunk64
+                       ? writer.U64(record.byte_offset) && writer.U64(record.total_bytes)
+                       : writer.U32(static_cast<uint32_t>(record.byte_offset)) &&
+                         writer.U32(static_cast<uint32_t>(record.total_bytes))) &&
                    writer.U32(static_cast<uint32_t>(record.bytes.size())) &&
                    writer.Bytes(record.bytes);
         } else if constexpr (std::is_same_v<T, ImportPathRecord>) {
@@ -374,6 +453,8 @@ std::optional<CanonicalImportRecord> SerializeImportRecord(const ImportRecordVal
             if (record.local_id == 0 || record.winding_rule > 1 || record.elements.empty() ||
                 record.elements.size() > SvgImporter::kMaxPathElements || !std::isfinite(record.stroke_width_mm) ||
                 record.stroke_width_mm < 0 || record.stroke_width_mm > SvgImporter::kMaxPageMillimeters ||
+                !ValidOpacity(record.object_opacity) || !ValidOpacity(record.fill_opacity) ||
+                !ValidOpacity(record.stroke_opacity) ||
                 !ValidColor(record.fill) || !ValidColor(record.stroke) ||
                 !writer.U32(record.local_id) || !writer.String16(record.source_id, 128) ||
                 !writer.String16(record.name, 128) || !writer.U8(record.winding_rule) ||
@@ -382,7 +463,8 @@ std::optional<CanonicalImportRecord> SerializeImportRecord(const ImportRecordVal
                 !WriteColor(writer, record.stroke) || !writer.U32(static_cast<uint32_t>(record.elements.size()))) return false;
             if (!ValidPathSequence(record.elements)) return false;
             for (const auto& element : record.elements) if (!WritePathElement(writer, element)) return false;
-            return true;
+            return WriteOpacityExtension(writer, record.object_opacity, record.fill_opacity,
+                                         record.stroke_opacity);
         } else if constexpr (std::is_same_v<T, ImportTextRecord>) {
             type = ImportRecordType::Text;
             return record.local_id != 0 && record.font_weight >= 100 && record.font_weight <= 900 &&
@@ -391,12 +473,16 @@ std::optional<CanonicalImportRecord> SerializeImportRecord(const ImportRecordVal
                     (record.rotation_degrees <= 270 && record.rotation_degrees % 90 == 0)) &&
                    std::isfinite(record.font_size_pt) && record.font_size_pt > 0 &&
                    record.font_size_pt <= 100000 && std::isfinite(record.x_mm) && std::abs(record.x_mm) <= 1.0e7 &&
-                   std::isfinite(record.y_mm) && std::abs(record.y_mm) <= 1.0e7 && ValidColor(record.fill) &&
+                   std::isfinite(record.y_mm) && std::abs(record.y_mm) <= 1.0e7 &&
+                   ValidOpacity(record.object_opacity) && ValidOpacity(record.fill_opacity) &&
+                   ValidOpacity(record.stroke_opacity) && ValidColor(record.fill) &&
                    writer.U32(record.local_id) && writer.String16(record.source_id, 128) &&
                    writer.String16(record.name, 128) && writer.String16(record.utf8_text, 256 * 1024, true) &&
                    writer.String16(record.font_family, 256) && writer.U16(record.font_weight) &&
                    writer.U8(record.italic ? 1 : 0) && writer.U8(0) && writer.Double(record.font_size_pt) &&
                    writer.Double(record.x_mm) && writer.Double(record.y_mm) && WriteColor(writer, record.fill) &&
+                   WriteOpacityExtension(writer, record.object_opacity, record.fill_opacity,
+                                         record.stroke_opacity) &&
                    ((record.font_postscript_name.empty() && record.rotation_degrees == 0) ||
                     writer.String16(record.font_postscript_name, 256)) &&
                    (record.rotation_degrees == 0 || writer.U16(record.rotation_degrees));
@@ -428,6 +514,50 @@ std::optional<CanonicalImportRecord> SerializeImportRecord(const ImportRecordVal
     } catch (...) {
         return std::nullopt;
     }
+}
+
+namespace {
+std::optional<CanonicalImportRecord> SerializeRasterChunk(
+    ImportRecordType type, uint32_t local_id, uint64_t byte_offset,
+    uint64_t total_bytes, std::span<const uint8_t> bytes) {
+    if (local_id == 0 || total_bytes == 0 || bytes.empty() ||
+        bytes.size() > kMaxRasterChunkBytes || byte_offset > total_bytes ||
+        bytes.size() > total_bytes - byte_offset ||
+        bytes.size() > IPC_V2_MAX_RECORD_BYTES - 16)
+        return std::nullopt;
+    try {
+        RecordWriter writer(16 + bytes.size());
+        if (!writer.U32(local_id) ||
+            (type == ImportRecordType::RasterSourceChunk64
+                ? !writer.U64(byte_offset) || !writer.U64(total_bytes)
+                : byte_offset > UINT32_MAX || total_bytes > UINT32_MAX ||
+                  !writer.U32(static_cast<uint32_t>(byte_offset)) ||
+                  !writer.U32(static_cast<uint32_t>(total_bytes))) ||
+            !writer.U32(static_cast<uint32_t>(bytes.size())) ||
+            !writer.Bytes(bytes))
+            return std::nullopt;
+        return CanonicalImportRecord{type, std::move(writer).Take()};
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+} // namespace
+
+std::optional<CanonicalImportRecord> SerializeRasterImageChunk(
+    uint32_t local_id, uint32_t byte_offset, uint32_t total_bytes,
+    std::span<const uint8_t> bytes) {
+    if (total_bytes > kMaxRasterPixelBytes) return std::nullopt;
+    return SerializeRasterChunk(ImportRecordType::RasterImageChunk, local_id,
+                                byte_offset, total_bytes, bytes);
+}
+
+std::optional<CanonicalImportRecord> SerializeRasterSourceChunk(
+    uint32_t local_id, uint64_t byte_offset, uint64_t total_bytes,
+    std::span<const uint8_t> bytes) {
+    const auto type = byte_offset > UINT32_MAX || total_bytes > UINT32_MAX
+        ? ImportRecordType::RasterSourceChunk64 : ImportRecordType::RasterSourceChunk;
+    return SerializeRasterChunk(type, local_id,
+                                byte_offset, total_bytes, bytes);
 }
 
 std::optional<ImportRecordValue> DeserializeImportRecord(
@@ -483,7 +613,7 @@ std::optional<ImportRecordValue> DeserializeImportRecord(
             return std::nullopt;
         return record;
     }
-    if (type == ImportRecordType::RasterImage) {
+    if (type == ImportRecordType::RasterImage || type == ImportRecordType::RasterImage64) {
         ImportRasterImageRecord record;
         uint8_t orientation_applied = 0, dpi_from_source = 0;
         uint32_t icc_bytes = 0;
@@ -499,8 +629,8 @@ std::optional<ImportRecordValue> DeserializeImportRecord(
             !reader.U8(orientation_applied) || orientation_applied > 1 ||
             !reader.U8(dpi_from_source) || dpi_from_source > 1 ||
             !reader.Double(record.dpi_x) || !reader.Double(record.dpi_y) ||
-            !reader.U32(icc_bytes) || icc_bytes > kMaxRasterIccBytes ||
-            !reader.RawBytes(record.icc_profile, icc_bytes, kMaxRasterIccBytes))
+            !reader.U32(icc_bytes) || icc_bytes > kMaxRasterIccProfileBytes ||
+            !reader.RawBytes(record.icc_profile, icc_bytes, kMaxRasterIccProfileBytes))
             return std::nullopt;
         if (!reader.Done() &&
             (!reader.Double(record.x_mm) || !reader.Double(record.y_mm) ||
@@ -525,15 +655,26 @@ std::optional<ImportRecordValue> DeserializeImportRecord(
                  !reader.Double(record.placement_transform[5])))
                 return std::nullopt;
         }
+        if (!reader.Done()) {
+            uint32_t source_bytes32 = 0;
+            if (!reader.U32(record.source_data_local_id) ||
+                (type == ImportRecordType::RasterImage64
+                    ? !reader.U64(record.source_bytes_size)
+                    : !reader.U32(source_bytes32)))
+                return std::nullopt;
+            if (type == ImportRecordType::RasterImage) record.source_bytes_size = source_bytes32;
+        }
         if (!reader.Done() &&
-            (!reader.U32(record.source_data_local_id) ||
-             !reader.U32(record.source_bytes_size)))
+            (!reader.U8(record.preview_pixel_color_basis) ||
+             record.preview_pixel_color_basis > 3))
+            return std::nullopt;
+        if (!reader.Done() && !reader.U8(record.decoded_bits_per_channel))
             return std::nullopt;
         if (!reader.Done()) return std::nullopt;
         record.orientation_applied = orientation_applied != 0;
         record.dpi_from_source = dpi_from_source != 0;
-        const uint64_t expected_pixel_bytes =
-            static_cast<uint64_t>(record.width_px) * record.height_px * 4;
+        const uint64_t expected_pixel_bytes = expected_raster_bytes(
+            record.width_px, record.height_px, record.decoded_bits_per_channel);
         if ((record.media_type != "image/png" && record.media_type != "image/jpeg" &&
              record.media_type != "image/tiff" && record.media_type != "image/bmp" &&
              record.media_type != "application/x-pikdraw-rgba8") ||
@@ -542,7 +683,7 @@ std::optional<ImportRecordValue> DeserializeImportRecord(
             record.decoded_pixel_bytes != expected_pixel_bytes ||
             record.source_bits_per_pixel == 0 || record.source_bits_per_pixel > 128 ||
             ((record.source_data_local_id == 0) != (record.source_bytes_size == 0)) ||
-            record.frame_count == 0 || record.frame_count > 256 ||
+            record.frame_count == 0 ||
             record.frame_index >= record.frame_count ||
             record.exif_orientation == 0 || record.exif_orientation > 8 ||
             record.dpi_x <= 0 || record.dpi_y <= 0 ||
@@ -567,16 +708,30 @@ std::optional<ImportRecordValue> DeserializeImportRecord(
             return std::nullopt;
         return record;
     }
-    if (type == ImportRecordType::RasterSourceChunk) {
+    if (type == ImportRecordType::RasterSourceChunk ||
+        type == ImportRecordType::RasterSourceChunk64) {
         ImportRasterSourceChunkRecord record;
         uint32_t chunk_bytes = 0;
-        if (!reader.U32(record.local_id) || record.local_id == 0 ||
-            !reader.U32(record.byte_offset) || !reader.U32(record.total_bytes) ||
-            !reader.U32(chunk_bytes) || chunk_bytes == 0 ||
-            chunk_bytes > kMaxRasterChunkBytes ||
-            !reader.RawBytes(record.bytes, chunk_bytes, kMaxRasterChunkBytes) ||
-            !reader.Done() || record.total_bytes == 0 ||
-            record.byte_offset > record.total_bytes ||
+        if (!reader.U32(record.local_id) || record.local_id == 0)
+            return std::nullopt;
+        if (type == ImportRecordType::RasterSourceChunk64) {
+            if (!reader.U64(record.byte_offset) || !reader.U64(record.total_bytes))
+                return std::nullopt;
+        } else {
+            uint32_t offset = 0, total = 0;
+            if (!reader.U32(offset) || !reader.U32(total))
+                return std::nullopt;
+            record.byte_offset = offset;
+            record.total_bytes = total;
+        }
+        if (!reader.U32(chunk_bytes) || chunk_bytes == 0 ||
+            chunk_bytes > kMaxRasterChunkBytes)
+            return std::nullopt;
+        if (!reader.RawBytes(record.bytes, chunk_bytes, kMaxRasterChunkBytes))
+            return std::nullopt;
+        if (!reader.Done())
+            return std::nullopt;
+        if (record.total_bytes == 0 || record.byte_offset > record.total_bytes ||
             chunk_bytes > record.total_bytes - record.byte_offset)
             return std::nullopt;
         return record;
@@ -596,6 +751,8 @@ std::optional<ImportRecordValue> DeserializeImportRecord(
         record.has_stroke = has_stroke != 0;
         record.elements.resize(count);
         for (auto& element : record.elements) if (!ReadPathElement(reader, element)) return std::nullopt;
+        if (!ReadOptionalOpacityExtension(reader, record.object_opacity, record.fill_opacity,
+                                          record.stroke_opacity)) return std::nullopt;
         if (!reader.Done() || !ValidPathSequence(record.elements)) return std::nullopt;
         return record;
     }
@@ -610,6 +767,8 @@ std::optional<ImportRecordValue> DeserializeImportRecord(
             !reader.Double(record.font_size_pt) || record.font_size_pt <= 0 || record.font_size_pt > 100000 ||
             !reader.Double(record.x_mm) || std::abs(record.x_mm) > 1.0e7 ||
             !reader.Double(record.y_mm) || std::abs(record.y_mm) > 1.0e7 || !ReadColor(reader, record.fill) ||
+            !ReadOptionalOpacityExtension(reader, record.object_opacity, record.fill_opacity,
+                                          record.stroke_opacity) ||
             (!reader.Done() && !reader.String16(record.font_postscript_name, 256)) ||
             (!reader.Done() && !reader.U16(record.rotation_degrees)) || !reader.Done() ||
             (record.rotation_degrees != 0 &&

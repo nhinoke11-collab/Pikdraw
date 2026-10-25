@@ -1,13 +1,58 @@
 # Contract C8: Import staging, provenance và fidelity
 
-- Version: 1.0.0 Proposed.
-- Status: contract specification; not implemented by the import runtime.
+- Version: 1.1.0 (đồng bộ source; không đổi enum/wire/storage trong lượt này).
+- Audited: 2026-10-24, source đang làm việc.
+- Status: adapters, host validation, desktop review/apply và native page fidelity reports đã có; full per-element provenance/oracle, source round-trip và production qualification còn giới hạn dưới đây.
 - Producers: per-format adapters in `modules/interop`, supervised by worker host in
   `platform/workers`.
 - Consumers: document writer/storage, renderer, geometry, color, typography, production and
   desktop workflow.
 - Depends on: C1 units/transforms/curves, C2 writer/snapshots/transactions, C4 color/typography,
   C5 native storage, C6 worker isolation/lifecycle.
+
+## 0. Phạm vi hiện có trong source
+
+Pipeline v2 không còn chỉ là proposal: desktop nhận records đã validate, dựng object/page/asset,
+đưa report tới review và áp dụng qua document command hoặc replace lifecycle. Import vào document
+và Open document mới có semantics khác nhau; xem C2. Hủy/loại proposal trước apply không làm bẩn
+document. Bitmap placement có bước preview/click/cancel riêng, không đồng nhất preview với commit.
+
+| Nguồn / representation | Adapter hiện có | Giới hạn cần giữ rõ |
+| --- | --- | --- |
+| SVG static 1.0/1.1 subset | Built-in worker; path/text/group theo subset, một số presentation opacity attributes. | Không phải toàn bộ CSS/filter/mask/gradient. Group opacity và effect/blend không hỗ trợ không được nhận là native tương đương. SVG export có subset riêng. |
+| DXF ASCII `dxf-entities-v1` | LINE/ARC/CIRCLE/LWPOLYLINE 2D, đơn vị tường minh và layer theo profile. | Không có DXF export; blocks/INSERT, paperspace và entities ngoài profile không tự trở thành supported. |
+| PDF / AI PDF-compatible | PDFium, page set editable path/text/image; PDF còn có locked-source intent riêng. | AI authoring/private data không được đọc đầy đủ. Embedded fonts, exact layout, clipping/effects/color và OCG membership còn giới hạn. |
+| CDR RIFF/ZIP | libcdr -> SVG normalization -> native records; embedded bitmaps và geometric clipping groups theo subset. | Không dùng thumbnail làm nội dung import. Một trang theo profile hiện có; version do parser chấp nhận không chứng minh mọi effect của version đó. |
+| EPS | Plain DSC operator allowlist; DOS EPS qua Ghostscript hệ thống cô lập -> PDFium. | Conversion phải được báo; Ghostscript không bundle. Source layers, effects, color và round-trip không được giữ đầy đủ. |
+| PNG/JPEG/TIFF/BMP | WIC -> RGBA8 ImageObject, source metadata/encoded bytes theo profile. | Ảnh không thành vector/CNC geometry. Host còn full-frame buffers; record U64 chưa mở quyền import/save mọi nguồn >4 GiB. |
+
+Adapter/source-version authority là [capability matrix](../modules/interop/src/format_capability_matrix.cpp),
+[interop README](../modules/interop/README.md) và code adapter tương ứng. `SupportedPrototype`
+chỉ là trạng thái subset; boolean `IsFormatSupported` không cấp quyền cho mọi feature.
+PDF locked-source giữ PDF bytes và screen preview riêng; preview cache không phải nội dung editable
+hoặc chứng minh đã có print-quality raster export.
+
+### Report đang lưu thực tế
+
+`ImportFidelityReport` trên page lưu format/profile, source byte count, source page index/dimensions,
+coverage/appearance/editability/production và issues (severity, locator, feature/diagnostic code).
+PKDR từ v20 lưu report; writer hiện là v23, suffix `.pr`. Các enum document thực tế:
+
+| Trục | Enum hiện có |
+| --- | --- |
+| Coverage | Unknown, Partial, Complete |
+| Appearance | Unknown, Partial, Verified |
+| Editability | Unknown, Editable, ExplicitConversion |
+| Production | Unknown, Blocked, Assessed |
+
+Wire worker có enum riêng và phạm vi hẹp hơn; host mapping phải qua
+`make_document_import_report`. Có enum Verified/Assessed không có nghĩa mọi import đạt mức đó.
+Report bền vững hiện không chứa đầy đủ source hash, parser build hash, asset manifest hoặc mapping
+mọi native element. SourceSnapshot/hash/job identity có trong job nhưng không đồng nghĩa tất cả
+đều được lưu trong page report. Full source bytes chỉ được giữ ở các model/profile có hỗ trợ.
+
+Các mục tiếp theo mô tả **semantics đích và yêu cầu consumer**. Chỗ rộng hơn model/report hiện tại
+là việc còn phải triển khai, không phải schema runtime mới đã được bật bởi tài liệu này.
 
 ## 1. Kết quả import là hai trục độc lập
 
@@ -22,8 +67,8 @@ Một report luôn phân loại riêng từng element và toàn document:
 | Production | `verified_for_profile`, `blocked`, `not_assessed` |
 | Export | Target format + exact object/metadata coverage; không suy ra từ import |
 
-Tên enum ở trên là semantics đề xuất; consumer implementation tạo enum/schema có version,
-không rải string khác nhau giữa renderer và UI.
+Tên ở bảng này là taxonomy đích, không phải enum đang serialize. Dùng enum hiện hành ở mục 0
+và adapter mapping; mở rộng taxonomy cần schema/version/consumer review, không rải string mới vào payload.
 
 `complete` chỉ có nghĩa parser hoàn tất format/version scope đã định. Nó **không tự chứng minh**
 feature coverage đầy đủ, appearance pixel-identical, editability hoặc production readiness.
@@ -31,9 +76,10 @@ feature coverage đầy đủ, appearance pixel-identical, editability hoặc pr
 độc lập đã nhận. Parser không được tự khai báo support cấp quyền. `unknown` luôn giữ unknown kể
 cả khi parser trả không có warning.
 
-## 2. Provenance bắt buộc
+## 2. Yêu cầu provenance đầy đủ và phần chưa đạt
 
-Proposal của importer phải kèm:
+Để công bố full provenance, proposal/storage/report cần các trường dưới đây. Hiện job đã có
+identity/hash, còn durable report chỉ có subset nêu ở mục 0; không coi checklist này là đã hoàn tất:
 
 - source content SHA-256 được host tính trên đúng snapshot bytes; source size và mã định dạng
   từ signature + suffix (mismatch là diagnostic, suffix không là parser selector duy nhất);
@@ -79,16 +125,17 @@ Raw parser output chưa phải document object. Pipeline chuẩn:
 4. Host xác thực version/schema/capability/source hash, payload/checksum, count/depth/graph refs,
    IDs local, text/assets sizes, finite scalars, matrix/range, unit conversion, geometry topology,
    enum values, allocations và report completeness. Dữ liệu worker luôn untrusted.
-5. Host prepare document root/index/assets/background preview theo revision staging. Nặng/O(n)
-   chạy background; renderer chưa render tùy ý parser callbacks trong UI.
+5. Host prepare document root/index/assets/preview theo revision staging. Mục tiêu là đưa bước
+   nặng/O(n) khỏi UI; hiện materialization, full-frame buffers và một số bước apply vẫn cần audit
+   hiệu năng. Worker ngoài process không tự chứng minh toàn bộ UI không bị block.
 6. Fidelity policy chọn strict, allow explicit conversion hoặc reference-only theo user action.
    Report/preview tới UI chỉ là staging. Không commit `unknown` như fully supported.
 7. Writer kiểm tra lifecycle epoch, document ID, **strict** base revision, job ID/generation/cancel
    tại commit. Base đổi thì từ chối toàn proposal; không implicit rebase.
-8. Commit root/index/source assets/provenance/diagnostics trong một transaction và một Undo unit.
-   Lỗi giữa chừng, timeout, crash, cancel, mismatch hoặc save failure xóa staging, giữ revision/
-   dirty state/history hiện hữu. Document mới được publish sau staging; xử lý document dirty bằng
-   desktop workflow trước khi thay document hiện tại.
+8. Import edit commit phần content/report được model hỗ trợ trong một transaction/Undo unit.
+   Lỗi trước hoặc trong apply, timeout, crash, cancel hay mismatch phải giữ state trước edit.
+   Open/replace tạo lifecycle mới và có policy dirty-document riêng. Save sau khi import là thao tác
+   riêng theo C5: save thất bại giữ document dirty, không tự rollback một import đã commit.
 
 Kết quả worker cũ sau cancel/undo/close/reopen không bao giờ thay preview hoặc được nhận commit.
 Generation đổi trước khi thu hồi resources; cleanup mọi candidate/reservation. Selection/camera
@@ -96,17 +143,19 @@ chỉ cập nhật khi commit hoàn tất.
 
 ## 5. Giới hạn và profile
 
-Limits host-owned gồm source/spool/decompressed bytes, queue jobs, worker count, payload chunks,
+Các loại ngân sách cần quản lý gồm source/spool/decompressed bytes, queue jobs, worker count, payload chunks,
 objects, groups/depth/cycles, segments, text runs/glyphs, linked assets, decoded image pixels,
 effect scratch surfaces, source archive, output geometry, CPU wall time, commit/working-set target,
 handles, disk, undo and cleanup. Không dùng một trần payload IPC như ngân sách tổng memory.
 
-Admission control tính peak toàn app: host copy + worker decode + intermediate scene + native
+Yêu cầu admission toàn app tính peak: host copy + worker decode + intermediate scene + native
 tree/index + preview/effect surfaces + undo/assets. Coalesce/drop preview updates lỗi thời nhưng
 không drop document commands. Khi hết budget, giảm preview hoặc dừng worker có diagnostic; không
 thay source geometry/quality output để ép pass.
 
-Số quota/deadline release chỉ chốt sau corpus/máy kiểm chứng và task review. Không công bố 60 FPS,
+Hiện C6 có structural/representational bounds và pressure waiter ở ngưỡng 95% RAM, tối đa năm phút
+chờ cộng dồn; nhiều byte quota import đã được bỏ. Đây chưa phải budget/reservation toàn app;
+source/pixel/proposal buffers vẫn có thể cùng resident. Số quota/deadline release cần corpus/máy kiểm chứng. Không công bố 60 FPS,
 thời gian mở mọi file, 512 MiB cứng hoặc “không bao giờ treo” khi chưa có evidence. C6 timeout,
 cancel, quotas và OS containment là gate riêng với fidelity.
 
@@ -133,12 +182,13 @@ Kiểm tra pixel bổ trợ geometry/layer/text/color/topology oracle, không th
 
 ## 7. Capability, version và compatibility
 
-Capability registry do host build/release xác nhận theo adapter/parser hash và fixture catalog.
-Matrix có record riêng cho format/version/import appearance/editability/metadata/production/
-source-export; không dùng một bool `is_supported()` để cấp mọi quyền. User chọn profile “Xem”,
-“Chỉnh sửa” hoặc “Đường sản xuất”; mỗi profile chỉ unlock những điều đã gate.
+Registry hiện có format/version-scope/import/export status, dependency và notes; đây chưa phải
+feature matrix hoàn chỉnh gắn oracle cho từng effect/element. Registry đích cần tách appearance,
+editability, metadata, production và source-export theo parser/build/fixture. Không dùng một bool
+`is_supported()` để cấp mọi quyền. UI profile “Xem/Chỉnh sửa/Đường sản xuất” chỉ được công bố khi
+đúng route và gates đã có; không suy ra ba profile đều hiện diện từ đặc tả này.
 
-Native export/save/reopen là capability riêng. Source file được giữ hash/provenance để recovery,
+Native export/save/reopen là capability riêng. Source hash/provenance được giữ theo capability storage thực tế;
 nhưng PDF/AI/CDR/EPS không có native round-trip nếu adapter writer + fixtures chưa đạt.
 Storage schema version hóa metadata/assets; import retry và mở lần sau không phải re-run parser
 ngẫu nhiên trong document load.
@@ -154,3 +204,12 @@ Mỗi adapter gate theo [import roadmap](../docs/roadmap/import-resilience-20261
 source version/feature, fidelity/editability/export matrix, semantic geometry/color/text/layer,
 import-edit-undo/redo-save/reopen và explicit unsupported outcomes; negative/stale/cancel/fault;
 live sandbox canaries; measured input-to-visible and UI-stall; independent review đúng merged SHA.
+
+## 9. Source authority và phạm vi lần rà soát
+
+- [Worker record/report enums](../modules/interop/include/pikdraw/interop/adapters/svg_worker_adapter.hpp), [durable page report](../core/document/include/pikdraw/document/model/import_fidelity_report.hpp).
+- [Desktop materialization/report mapping](../apps/desktop/src/workflows/document_workflow_import.cpp), [native review/placement](../apps/desktop/src/shell/native_window_import.cpp).
+- [Import command](../core/document/src/commands/import_content_command.cpp), [storage versions](../core/document/include/pikdraw/document/storage/native_format.hpp).
+- [Adapter regression sources](../modules/interop/tests/adapters), [native report/fidelity regression](../core/document/tests/storage/test_storage_fidelity.cpp).
+
+Đây là audit source và sửa tài liệu; không có lượt chạy corpus/native tests mới. Coverage, render, editability, source metadata, export và production phải có evidence riêng cho từng hàng capability.

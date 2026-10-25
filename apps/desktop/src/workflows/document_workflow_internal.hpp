@@ -136,7 +136,7 @@ inline bool valid_effect_parameters(const document::EffectParameters &parameters
                    effect.sigma_x_mm >= 0.0 && effect.sigma_y_mm >= 0.0 &&
                    effect.sigma_x_mm <= geometry::limits::kCanvasMaxMm &&
                    effect.sigma_y_mm <= geometry::limits::kCanvasMaxMm;
-        } else {
+        } else if constexpr (std::is_same_v<T, document::DropShadowEffect>) {
             return std::isfinite(effect.dx_mm) && std::isfinite(effect.dy_mm) &&
                    std::abs(effect.dx_mm) <= geometry::limits::kCanvasMaxMm &&
                    std::abs(effect.dy_mm) <= geometry::limits::kCanvasMaxMm &&
@@ -148,7 +148,38 @@ inline bool valid_effect_parameters(const document::EffectParameters &parameters
                    effect.opacity >= 0.0 && effect.opacity <= 1.0 &&
                    static_cast<uint8_t>(effect.blend_mode) <=
                        static_cast<uint8_t>(document::BlendMode::Lighten);
+        } else if constexpr (std::is_same_v<T, document::FeatherEffect>) {
+            return std::isfinite(effect.radius_mm) && effect.radius_mm >= 0.0 &&
+                   effect.radius_mm <= geometry::limits::kCanvasMaxMm;
+        } else if constexpr (std::is_same_v<T, document::OuterGlowEffect>) {
+            return std::isfinite(effect.radius_mm) && effect.radius_mm >= 0.0 &&
+                   effect.radius_mm <= geometry::limits::kCanvasMaxMm &&
+                   effect.color.is_valid() && std::isfinite(effect.opacity) &&
+                   effect.opacity >= 0.0 && effect.opacity <= 1.0;
+        } else if constexpr (std::is_same_v<T, document::InnerGlowEffect>) {
+            return std::isfinite(effect.radius_mm) && effect.radius_mm >= 0.0 &&
+                   effect.radius_mm <= geometry::limits::kCanvasMaxMm &&
+                   effect.color.is_valid() && std::isfinite(effect.opacity) &&
+                   effect.opacity >= 0.0 && effect.opacity <= 1.0;
+        } else if constexpr (std::is_same_v<T, document::InnerShadowEffect>) {
+            return std::isfinite(effect.dx_mm) && std::isfinite(effect.dy_mm) &&
+                   std::abs(effect.dx_mm) <= geometry::limits::kCanvasMaxMm &&
+                   std::abs(effect.dy_mm) <= geometry::limits::kCanvasMaxMm &&
+                   std::isfinite(effect.sigma_x_mm) && std::isfinite(effect.sigma_y_mm) &&
+                   effect.sigma_x_mm >= 0.0 && effect.sigma_y_mm >= 0.0 &&
+                   effect.sigma_x_mm <= geometry::limits::kCanvasMaxMm &&
+                   effect.sigma_y_mm <= geometry::limits::kCanvasMaxMm &&
+                   effect.color.is_valid() && std::isfinite(effect.opacity) &&
+                   effect.opacity >= 0.0 && effect.opacity <= 1.0 &&
+                   static_cast<uint8_t>(effect.blend_mode) <=
+                       static_cast<uint8_t>(document::BlendMode::Lighten);
+        } else if constexpr (std::is_same_v<T, document::ColorOverlayEffect>) {
+            return effect.color.is_valid() && std::isfinite(effect.opacity) &&
+                   effect.opacity >= 0.0 && effect.opacity <= 1.0 &&
+                   static_cast<uint8_t>(effect.blend_mode) <=
+                       static_cast<uint8_t>(document::BlendMode::Lighten);
         }
+        return false;
     }, parameters);
 }
 
@@ -172,19 +203,20 @@ inline std::optional<geometry::BooleanResult> compute_selected_boolean(
     geometry::BooleanOp op
 ) {
     if (selected.size() != 2 || !is_supported_boolean_operation(op)) return std::nullopt;
-    const auto target_object = snapshot.objects().get(selected[0]);
-    const auto source_object = snapshot.objects().get(selected[1]);
+    const auto* target_object = snapshot.objects().lookup_ref(selected[0]);
+    const auto* source_object = snapshot.objects().lookup_ref(selected[1]);
     if (!target_object || !source_object) return std::nullopt;
-    const auto* target = std::get_if<document::PathObject>(&*target_object);
-    const auto* source = std::get_if<document::PathObject>(&*source_object);
-    if (!target || !source || target->locked || source->locked) return std::nullopt;
+    const auto* target = std::get_if<document::PathObject>(target_object);
+    const auto* source = std::get_if<document::PathObject>(source_object);
+    if (!target || !source || target->locked || source->locked ||
+        !target->has_fill || !source->has_fill) return std::nullopt;
     try {
         auto target_path = target->path.transformed(target->transform);
         auto source_path = source->path.transformed(source->transform);
         auto result = op == geometry::BooleanOp::BackMinusFront
             ? geometry::boolean_paths(source_path, target_path, geometry::BooleanOp::Difference)
             : geometry::boolean_paths(target_path, source_path, op);
-        if (!result.success || result.path.empty()) return std::nullopt;
+        if (!result.success) return std::nullopt;
         return result;
     } catch (const std::exception&) {
         return std::nullopt;
@@ -211,41 +243,27 @@ public:
         if (selected.size() != children_.size())
             return document::CommandResult::fail("Group selection contains duplicate objects");
 
-        size_t owner_layer = page.layers.size();
-        std::vector<size_t> positions;
-        positions.reserve(children_.size());
-        for (size_t layer_index = 0; layer_index < page.layers.size(); ++layer_index) {
-            const auto& layer = page.layers[layer_index];
-            for (size_t index = 0; index < layer.object_ids.size(); ++index) {
-                if (!selected.contains(layer.object_ids[index])) continue;
-                if (owner_layer == page.layers.size()) owner_layer = layer_index;
-                if (owner_layer != layer_index)
-                    return document::CommandResult::fail("Objects must be in the same layer to group");
-                positions.push_back(index);
-            }
+        const document::SceneHierarchy hierarchy(doc.page(),doc.objects());
+        const auto* owner=hierarchy.find(children_.front());
+        if(!owner)return document::CommandResult::fail("Missing group owner");
+        for(auto id:children_) {
+            const auto* entry=hierarchy.find(id);
+            if(!entry||entry->parent!=owner->parent||entry->layer!=owner->layer||entry->mask||
+                !hierarchy.editable(id))return document::CommandResult::fail("Group requires editable siblings");
         }
-        if (positions.size() != children_.size())
-            return document::CommandResult::fail("Only sibling objects can be grouped");
-        auto& layer = page.layers[owner_layer];
-        if (layer.locked || !layer.visible)
-            return document::CommandResult::fail("The selected layer is hidden or locked");
-
-        const auto insertion = *std::min_element(positions.begin(), positions.end());
-        auto& roots = layer.object_ids;
-        std::vector<document::ObjectId> remaining;
-        std::vector<document::ObjectId> ordered_children;
-        remaining.reserve(roots.size() - children_.size() + 1);
-        ordered_children.reserve(children_.size());
-        for (size_t index = 0; index < roots.size(); ++index) {
-            const auto id = roots[index];
-            if (index == insertion) remaining.push_back(group_.id);
-            if (selected.contains(id))
-                ordered_children.push_back(id);
-            else
-                remaining.push_back(id);
+        auto roots=owner->parent?std::get<document::GroupObject>(*objects.get(owner->parent)).children_ids
+            :page.layers[owner->layer].object_ids;
+        std::vector<document::ObjectId> remaining,ordered;
+        bool inserted=false;
+        for(auto id:roots) {
+            if(selected.contains(id)) {if(!inserted){remaining.push_back(group_.id);inserted=true;}ordered.push_back(id);}
+            else remaining.push_back(id);
         }
-        group_.children_ids = std::move(ordered_children);
-        layer.object_ids = std::move(remaining);
+        group_.children_ids=std::move(ordered);
+        if(owner->parent) {
+            auto parent=std::get<document::GroupObject>(*objects.get(owner->parent));parent.children_ids=remaining;
+            objects=objects.set(parent.id,parent);
+        } else page.layers[owner->layer].object_ids=remaining;
 
         before_page_ = doc.page();
         before_objects_ = doc.objects();

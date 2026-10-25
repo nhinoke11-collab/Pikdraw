@@ -201,4 +201,78 @@ private:
     bool executed_{false};
 };
 
+/// Command: Toggle or set layer printable status (Print / CNC Export)
+class SetLayerPrintableCommand final : public DocumentCommand {
+public:
+    SetLayerPrintableCommand(size_t layer_idx, bool printable);
+
+    [[nodiscard]] std::string_view name() const noexcept override { return "Set Layer Printable"; }
+    CommandResult execute(Document& doc) override;
+    CommandResult undo(Document& doc) override;
+
+private:
+    size_t layer_idx_{0};
+    bool printable_{true};
+    bool old_printable_{true};
+    bool executed_{false};
+};
+
+/// Command: Set layer identifying color (swatch / bounding box color)
+class SetLayerColorCommand final : public DocumentCommand {
+public:
+    SetLayerColorCommand(size_t layer_idx, uint32_t color_rgba);
+
+    [[nodiscard]] std::string_view name() const noexcept override { return "Set Layer Color"; }
+    CommandResult execute(Document& doc) override;
+    CommandResult undo(Document& doc) override;
+
+private:
+    size_t layer_idx_{0};
+    uint32_t color_rgba_{0x00F2C3FF};
+    uint32_t old_color_rgba_{0x00F2C3FF};
+    bool executed_{false};
+};
+
+/// Command: Duplicate a layer with all its contained objects (generates new unique IDs)
+class DuplicateLayerCommand final : public DocumentCommand {
+public:
+    explicit DuplicateLayerCommand(size_t source_layer_idx);
+
+    [[nodiscard]] std::string_view name() const noexcept override { return "Duplicate Layer"; }
+    CommandResult execute(Document& doc) override;
+    CommandResult undo(Document& doc) override;
+
+    [[nodiscard]] size_t created_layer_index() const noexcept { return actual_index_; }
+
+private:
+    size_t source_layer_idx_{0};
+    size_t actual_index_{0};
+    Layer created_layer_{};
+    std::vector<std::pair<ObjectId, ObjectVariant>> duplicated_objects_{};
+    bool executed_{false};
+};
+
+/// Command: Move multiple objects to a target layer in a single atomic transaction
+class MoveObjectsToLayerCommand final : public DocumentCommand {
+public:
+    MoveObjectsToLayerCommand(std::vector<ObjectId> ids, size_t target_layer_idx,
+                              std::optional<size_t> insert_at = std::nullopt);
+
+    [[nodiscard]] std::string_view name() const noexcept override { return "Move Objects to Layer"; }
+    CommandResult execute(Document& doc) override;
+    CommandResult undo(Document& doc) override;
+
+private:
+    std::vector<ObjectId> ids_;
+    size_t target_layer_idx_{0};
+    std::optional<size_t> insert_at_;
+    struct SourceLoc {
+        ObjectId id;
+        size_t layer_idx;
+        size_t pos_in_layer;
+    };
+    std::vector<SourceLoc> source_locs_{};
+    bool executed_{false};
+};
+
 } // namespace pikdraw::document

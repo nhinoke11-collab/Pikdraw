@@ -15,6 +15,7 @@ namespace pikdraw::interop {
 enum class ExportScope {
     Selection,
     ActivePage,
+    Artboard,
     PageRange,
     AllPages,
     AllArtwork
@@ -24,6 +25,7 @@ enum class ExportBoundsPolicy {
     Page,
     VisibleArtwork,
     Selection,
+    Artboard,
     ExplicitRectangle
 };
 
@@ -41,6 +43,7 @@ enum class ExportJobError {
     InvalidOptionsSchema,
     InvalidScope,
     InvalidPage,
+    InvalidArtboard,
     InvalidSelection,
     InvalidBounds,
     InvalidOutputTargets
@@ -57,6 +60,7 @@ struct ExportJobRequest {
     ExportTargetMode target_mode{ExportTargetMode::SingleFile};
     std::vector<document::PageId> page_ids;
     std::vector<document::ObjectId> selected_object_ids;
+    std::optional<document::ArtboardId> artboard_id;
     std::optional<geometry::Rect2D> explicit_bounds;
     bool clip_to_page{true};
     std::vector<std::string> output_paths;
@@ -72,6 +76,8 @@ struct ExportOutputTarget {
     std::string path;
     std::vector<document::PageId> page_ids;
     std::vector<document::ObjectId> object_ids;
+    std::optional<document::ArtboardId> artboard_id;
+    std::optional<geometry::Rect2D> bounds;
 };
 
 class ExportJob;
@@ -104,6 +110,9 @@ public:
     }
     [[nodiscard]] const std::vector<document::ObjectId>& selected_object_ids() const noexcept {
         return request_.selected_object_ids;
+    }
+    [[nodiscard]] const std::optional<document::ArtboardId>& artboard_id() const noexcept {
+        return request_.artboard_id;
     }
     [[nodiscard]] const std::optional<geometry::Rect2D>& explicit_bounds() const noexcept {
         return request_.explicit_bounds;

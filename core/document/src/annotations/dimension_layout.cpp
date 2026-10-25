@@ -110,33 +110,47 @@ DimensionLayout evaluate_dimension_layout(const DimensionObject& dim, const Docu
         const std::string text = format_measurement_text(geom.measured_value_mm, dim.style, false);
         layout.formatted_text = apply_template(text, dim.note_template);
         layout.text_position = geom.text_position;
-        layout.text_rotation_rad = geom.text_rotation_rad;
+        layout.text_rotation_rad = (dim.style.text_alignment == DimensionTextAlignment::Horizontal) ? 0.0 : geom.text_rotation_rad;
 
         const double char_w = dim.style.text_size_mm * 0.55;
         const double tw = std::max(6.0, layout.formatted_text.size() * char_w);
         const double th = dim.style.text_size_mm;
-        layout.text_bounds = geometry::Rect2D{geom.text_position.x - tw * 0.5,
-                                              geom.text_position.y - th * 0.5,
-                                              tw, th};
 
         // Lines: dimension line + two extension lines
-        // In AutoCAD/CorelDRAW, the dimension line is split to leave a gap for centered text
-        const double half_gap = (tw * 0.5) + dim.style.text_gap_mm;
+        // If text_position is Above (ISO/TCVN standard), dimension line is continuous and text is above it.
+        // If text_position is Inline (ASME/AutoCAD standard), dimension line is split.
+        geometry::Path2D dim_line;
         const double line_len = std::hypot(geom.dim_line_end.x - geom.dim_line_start.x,
                                            geom.dim_line_end.y - geom.dim_line_start.y);
-        geometry::Path2D dim_line;
-        if (line_len > half_gap * 2.2) {
-            const geometry::Point2D dir{(geom.dim_line_end.x - geom.dim_line_start.x) / line_len,
-                                        (geom.dim_line_end.y - geom.dim_line_start.y) / line_len};
+        if (dim.style.text_position == DimensionTextPosition::Above) {
             dim_line.move_to(geom.dim_line_start);
-            dim_line.line_to(geom.text_position - dir * half_gap);
-            dim_line.move_to(geom.text_position + dir * half_gap);
             dim_line.line_to(geom.dim_line_end);
+            if (line_len > 1e-6) {
+                const geometry::Point2D dir{(geom.dim_line_end.x - geom.dim_line_start.x) / line_len,
+                                            (geom.dim_line_end.y - geom.dim_line_start.y) / line_len};
+                const geometry::Point2D normal{-dir.y, dir.x};
+                const double offset = (th * 0.5) + dim.style.text_gap_mm;
+                layout.text_position = geom.text_position + normal * offset;
+            }
         } else {
-            dim_line.move_to(geom.dim_line_start);
-            dim_line.line_to(geom.dim_line_end);
+            const double half_gap = (tw * 0.5) + dim.style.text_gap_mm;
+            if (line_len > half_gap * 2.2) {
+                const geometry::Point2D dir{(geom.dim_line_end.x - geom.dim_line_start.x) / line_len,
+                                            (geom.dim_line_end.y - geom.dim_line_start.y) / line_len};
+                dim_line.move_to(geom.dim_line_start);
+                dim_line.line_to(geom.text_position - dir * half_gap);
+                dim_line.move_to(geom.text_position + dir * half_gap);
+                dim_line.line_to(geom.dim_line_end);
+            } else {
+                dim_line.move_to(geom.dim_line_start);
+                dim_line.line_to(geom.dim_line_end);
+            }
         }
         layout.lines.push_back(dim_line);
+
+        layout.text_bounds = geometry::Rect2D{layout.text_position.x - tw * 0.5,
+                                              layout.text_position.y - th * 0.5,
+                                              tw, th};
 
         geometry::Path2D ext1;
         ext1.move_to(geom.ext1_start);
@@ -228,6 +242,15 @@ DimensionLayout evaluate_dimension_layout(const DimensionObject& dim, const Docu
         leader.line_to(geom.elbow_point);
         leader.line_to(geom.landing_end);
         layout.lines.push_back(leader);
+
+        // Center Mark (+) for Arc/Circle
+        geometry::Path2D center_mark;
+        constexpr double kMarkLen = 2.5;
+        center_mark.move_to({center.x - kMarkLen, center.y});
+        center_mark.line_to({center.x + kMarkLen, center.y});
+        center_mark.move_to({center.x, center.y - kMarkLen});
+        center_mark.line_to({center.x, center.y + kMarkLen});
+        layout.lines.push_back(center_mark);
 
         layout.arrows.push_back(geometry::make_arrow_path(geom.arrow, dim.style.arrow_type, dim.style.arrow_size_mm));
         layout.text_bounds = geometry::Rect2D{geom.text_position.x, geom.text_position.y - 5.0, 20.0, 10.0};

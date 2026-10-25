@@ -31,10 +31,14 @@ ExportJobReport make_report(const ExportJob& job, const AtomicExportOptions& opt
     report.structure = ExportStructureStatus::Unknown;
     report.production = ExportProductionStatus::NotAssessed;
     report.files.reserve(job.output_targets().size());
-    for (const auto& target : job.output_targets())
-        report.files.push_back({target.path, 0, {}, job.snapshot_revision(),
-                                target.page_ids, target.object_ids,
-                                ExportFileStatus::Skipped});
+    for (const auto& target : job.output_targets()) {
+        ExportFileReceipt receipt{target.path, 0, {}, job.snapshot_revision(),
+                                  target.page_ids, target.object_ids,
+                                  ExportFileStatus::Skipped};
+        receipt.artboard_id = target.artboard_id;
+        receipt.bounds = target.bounds;
+        report.files.push_back(std::move(receipt));
+    }
     return report;
 }
 

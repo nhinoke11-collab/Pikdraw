@@ -1,124 +1,96 @@
 # Kiến trúc PikDraw
 
-Đây là kiến trúc đích và ranh giới thiết kế, không phải bản kê đầy đủ các năng lực hiện có. Runtime hiện tại là C++20 / Win32 Native Shell kết hợp Direct2D 1.1 / D3D11 hardware hoặc WARP qua `ViewportRenderer`: staging/readback toàn frame về BGRA, GDI chép vào backbuffer và vẽ overlays. SoftwareRasterizer là CPU fallback/oracle; Qt 6/Skia và một số workspace vẫn là hướng nghiên cứu. Xem [README](../../README.md), [project state](../project-state.json) và [sơ đồ source](../development/code-organization.md); ADR giữ quyết định và giả thuyết theo thời điểm.
+Đối chiếu source ngày 23/10/2026. [Registry](../../registry/modules.json) là nguồn dependency,
+[project-state](../project-state.json) là snapshot capability. Workflow chỉ ở [AGENTS](../../AGENTS.md).
 
-## Nguyên tắc
+## Luồng runtime hiện tại
 
-PikDraw là ứng dụng desktop có một mô hình tài liệu và nhiều workspace theo công việc. “Super app” ở đây nghĩa là các công cụ vector, in, thi công và 3D liên kết dữ liệu, undo và tài nguyên; mỗi workspace không sở hữu một bản sao tài liệu riêng.
+~~~mermaid
+flowchart LR
+  UI[Win32 input/menu và MCP/COM] --> Q[UI owner: action/workflow/automation]
+  Q --> W[Command/transaction: một writer]
+  W --> D[Document: IDs, pages/artboards, layers, immutable snapshots]
+  D --> R[ViewportRenderer: Direct2D/D3D11 hoặc CPU]
+  R --> B[BGRA readback/cache]
+  B --> G[GDI canvas và overlays]
+  Q --> H[Worker host]
+  H --> P[Parser riêng theo format]
+  P --> V[Host validate proposal/revision]
+  V --> W
+~~~
 
-Các ranh giới lõi:
+MCP networking/stdio/COM là transport; command vẫn tới writer của document.
+Worker không sửa trực tiếp document. Các role không tương ứng một số thread cố định.
+Renderer hiện dựng/readback toàn frame; DamageTracker chỉ giảm phần chép GDI.
+Qt/Skia, GPU present trực tiếp, render tiles và plugin host chưa là runtime sản phẩm.
 
-| Thành phần | Trách nhiệm | Không được làm |
+## Ranh giới module
+
+| Nhóm | Hiện tại | Hướng mở rộng |
 | --- | --- | --- |
-| Foundation/contracts | ID, đơn vị, math cơ bản, lỗi, version, schema, message | Phụ thuộc UI hoặc module nghiệp vụ |
-| Geometry | Bézier, topology, Boolean, offset, spatial index | Gọi UI, sửa document trực tiếp |
-| Document | Nodes, pages, layers, assets, transactions, history, snapshots | Biết widget, GPU hay reader CDR/AI |
-| Text/color services | Shaping, font resolution, color transform qua interface | Sở hữu selection hoặc sửa tài liệu ngầm |
-| Render | Render immutable snapshot, cache, viewport, backend GPU/CPU | Sửa document hoặc phụ thuộc UI widget |
-| Modules | Công cụ vector/raster/CAD/production/3D, commands và contributions | Truy cập private internals của module khác |
-| Interop/workers | Parse, convert, preflight và tác vụ nặng | Ghi vào document đang mở hoặc thực thi lệnh UI |
-| Desktop shell | Dock, workspace, selection, command routing, progress | Chứa thuật toán geometry hoặc logic format |
-| Plugin host/SDK | Extension registry, RPC, capability, lifecycle | Cho plugin ngoài truy cập con trỏ document |
+| core/geometry, color, typography | Hình học, units, màu/profile, font/shaping | Không phụ thuộc desktop hoặc parser bên ngoài |
+| core/document | Commands, snapshots/history, schema v23/v24, chunked v24/v25, streamed atomic save/recovery | Lazy load, shared-asset lifecycle, history budget |
+| core/rendering | D2D hardware/WARP, CPU oracle, BVH, geometry/image cache | Frame scheduling, direct present, region/tile/LOD |
+| modules/vector | Tools/editable effects/precision | Dùng chung model/commands, giữ source curves |
+| modules/raster | Asset store trên đĩa, tile cache/edit graph, source providers cho import và .pr | Decode/render tile, proxy preview và lazy asset integration |
+| modules/interop + platform/workers | Adapter và proposal import theo scope | Parser riêng theo format, validate trước atomic commit |
+| modules/automation + apps/mcp-server/com-server | Semantic queries, batch, revision, quyền, receipts, projection/cursor và bounded object delta | Nested query, subscriptions, job handles có gate |
+| apps/desktop | Win32 input, UI, presenter/workflow và owner queue | Lazy workspace, startup nhỏ, không chứa thuật toán domain |
+| modules/production | Planned | Nesting, vật liệu, machine profile, toolpath/postprocessor |
+| modules/scene3d | Planned | Scene/mesh/camera riêng, nguồn 2D liên kết bằng IDs/revision |
+| packages/plugin-sdk | Planned | Schema/RPC có version; native extension cần ABI review |
 
-Tên thư mục và dependency có hiệu lực ở [module registry](../../registry/modules.json); bảng trên mô tả vai trò kiến trúc, không tạo thêm module trùng chức năng. Foundation/contracts hiện là vai trò schema dùng chung ở `contracts/`, chưa phải một library `core/foundation` đã triển khai.
+CMake liên kết thư viện nội bộ vào desktop EXE; một EXE chính không đo được mức độc lập của module.
+Mỗi module dùng public API theo registry. Không chia sẻ con trỏ mutable document qua plugin/process.
 
-## Hướng phụ thuộc
+## Document dùng chung và công việc nặng
 
-Mũi tên nghĩa là **A được dùng public API của B**; B không import A. IPC nối runtime khác nhau, không phải dependency C++ trực tiếp. Sơ đồ nhóm các feature để dễ đọc; bảng ngay dưới là quan hệ chi tiết có hiệu lực.
+Source geometry dùng mm/binary64, Unicode, source color/ICC, stable IDs và đơn vị hiển thị riêng.
+Nesting/CNC/3D/raster giữ nguồn và tham chiếu source IDs, revision, thuật toán, tolerance.
+Cache/mesh/toolpath là dữ liệu dẫn xuất; không tự thay nội dung authoring khi workspace đổi.
 
-```mermaid
-flowchart TD
-  UI[Desktop shell] --> M[Vector / Raster / Production / Scene3D]
-  UI --> R[Render facade]
-  UI --> H[Worker host]
-  UI --> K[Plugin SDK]
-  UI --> I[Interop adapters]
-  UI --> D[Document public API]
-  M --> D[Document public API]
-  M --> G[Geometry public API]
-  M --> T[Typography public API]
-  M --> C[Color public API]
-  R --> D
-  R --> G
-  R --> T
-  R --> C
-  D --> G
-  D --> T
-  D --> C
-  T --> G
-  I --> D
-  I --> G
-  I --> T
-  I --> C
-  K --> D
-  H --> I
-  H --> K
-```
+UI/writer commit ngắn từ snapshot đã chuẩn bị. Compute/I/O/network chạy executor hoặc worker,
+có progress/cancel và tài nguyên hữu hạn. Trước commit kiểm epoch/revision/job generation;
+kết quả cũ bị từ chối. Không chặn UI trong lúc chờ AI hoặc nesting.
 
-| Module | Dependency được khai báo |
-| --- | --- |
-| geometry, color, contracts | Không có dependency module |
-| typography | geometry |
-| document | geometry, color, typography |
-| rendering | document, geometry, color, typography |
-| vector | document, geometry, typography |
-| raster | document, color |
-| production | document, geometry |
-| scene3d | document, geometry, color |
-| interop | document, geometry, color, typography |
-| plugin-sdk | document |
-| automation | document, vector, geometry, typography |
-| mcp-server | automation |
-| com-server | mcp-server |
-| workers | interop |
-| desktop | document, rendering, vector, interop, automation, workers, color, geometry, typography, mcp-server |
-| harness | Không phụ thuộc module ứng dụng |
+Khởi tạo renderer hiện xảy ra khi tạo document/tab, có D3D/D2D device creation.
+Startup còn đọc settings; recovery scan khởi chạy trên worker ưu tiên thấp sau frame đầu, nhưng
+vẫn full-buffer đọc từng checkpoint và shutdown có thể chờ parse đang chạy. UI `.pr` save/open cũng
+đã chạy nền và áp dụng theo revision; save stream payload vào file tạm, còn open vẫn full-buffer.
+Chưa có số cold/warm startup hoặc input-to-present để xác nhận budget. Module nặng tương lai chỉ
+khởi tạo khi workspace/job cần dùng.
 
-Document dùng kiểu/public API của geometry, color và typography để giữ dữ liệu nhất quán; không gọi mọi phép xử lý nặng khi sửa node. Module thực hiện phép tính từ snapshot rồi gửi transaction đã kiểm tra. Renderer hiện duyệt immutable snapshot qua backend/compositor, không link UI. Gate đối chiếu public header với dependency trực tiếp; `test_dependencies` chỉ cho phép test COM tích hợp dùng automation/desktop, không tạo cạnh runtime từ COM sang UI.
+## Lưu trữ và tài liệu lớn
 
-`platform/workers` là phần host/lifecycle. Executable chuyển đổi hoặc plugin ngoài process nhận schema/RPC contracts; không đồng nghĩa phải link dependency đầy đủ của host hay nhận document pointer. `packages/plugin-sdk` dùng public document DTO khi xây adapter, còn giao diện công khai với plugin ngoài vẫn là schema/RPC. Mọi thay đổi theo sơ đồ phải cập nhật registry cùng ADR nếu vượt phạm vi task.
+File thiết kế chỉ dùng .pr. Payload schema v23 dùng container v23 cho payload dưới 1 MiB,
+hoặc container v24 chia chunk 1 MiB với STORE/DEFLATE và checksum; schema v24 raster tables dùng
+container v25; reader nhận v2–v25. Atomic save stream payload vào file tạm; load vẫn giữ container
+và payload giải nén trong memory. Không còn trần tổng 256 MiB
+hoặc quota cứng 100.000 object/1.000.000 path element. Wire widths và memory quota còn áp dụng.
+ImageObject vẫn ghi RGBA preview và original encoded bytes; descriptor nguồn trên đĩa
+không tự bảo đảm file tự chứa mọi asset. Container version và payload schema là hai version riêng;
+xem trạng thái triển khai trong [PR format](native-pr-format.md), không lấy mô tả version cũ làm hiện trạng.
 
-Không tạo vòng phụ thuộc qua header tiện ích, re-export hoặc manifest thiếu khai báo. Nếu hai module cần dùng chung dữ liệu, đưa contract nhỏ xuống tầng chung hoặc dùng command/event có schema. Chuyển logic chung xuống core phải có ADR; tránh biến core thành nơi gom mọi tính năng.
+Khổ vật lý/DPI vector không đòi buffer bằng toàn trang. Pixel chỉ cấp cho viewport/effect/export region.
+[Định dạng PR](native-pr-format.md) ghi trạng thái đã có của chunk compression và streamed save;
+index, lazy load, dedup ngoài raster source/sample, tùy chọn downsample và migration còn mở.
 
-## Mô hình tài liệu
+## Tích hợp định dạng và plugin
 
-Mỗi node có ID ổn định, type và schema version, transform, style, metadata nguồn và liên kết tài nguyên. Trang, layer, nhóm và instance là các cấu trúc rõ ràng. Nội dung mở rộng dùng typed payload đã đăng ký schema; core không tự suy đoán cấu trúc riêng của plugin.
+Đọc [vector interoperability](vector-resource-interoperability.md), C8/C9.
+PDF/AI-PDF dùng PDFium mapping, CDR dùng libcdr-to-SVG subset; EPS có adapter path hoặc converter riêng,
+SVG/DXF theo capability hiện có. Mỗi format/version/representation có adapter và gate riêng.
+Render, editability, metadata, export round-trip và production phải báo độc lập.
 
-- Chỉ command/transaction public mới thay đổi tài liệu. Một thao tác thành công tạo một đơn vị undo hợp lý; thao tác hủy không để lại thay đổi dở dang.
-- Một writer logic tuần tự công bố snapshot/root/index nhất quán. Render/export/worker chỉ đọc snapshot; job/proposal có document ID/epoch, base revision, object versions và job generation. MVP dùng strict base revision: edit/undo/cancel/close hoặc job replacement làm kết quả cũ vô hiệu; không tự rebase Boolean. Revision tăng đơn điệu cả undo/redo.
-- Đường thiết kế giữ biểu diễn chính xác; tessellation và mesh preview là dữ liệu dẫn xuất. Độ phân giải preview không được làm thay đổi đường cắt gốc.
-- 2D/3D dùng trục/đơn vị có phiên bản. Nguồn và transform đề xuất mm/binary64; renderer trừ camera/tile origin bằng double trước cast float. Sản xuất có error budget/topology checks riêng; integer quantization không bảo đảm sai số cả pipeline. Schema/API chờ spike và consumer review; tỷ lệ preview không đổi kích thước thực.
-- Kích thước thi công, hình đùn và output liên kết bằng ID/revision. Xóa nguồn tạo trạng thái cần sửa có thể thấy được, không âm thầm gắn sang node khác.
-- Node/plugin chưa nhận dạng phải được bảo toàn như dữ liệu opaque và đánh dấu read-only. Không bỏ payload khi lưu tài liệu chỉ vì plugin vắng mặt.
-- Text giữ Unicode/font identity/layout và liên kết outline; màu giữ RGB/CMYK/spot/ICC/overprint. Texture RGBA hoặc PDF nhìn đúng không chứng minh print separations hoặc khả năng sửa chữ.
-- COW/persistent structures theo chunk và shared immutable assets là ứng viên; không clone graph mỗi frame. Camera/selection/drag preview thuộc interaction state. Đo prepare/validate/commit/invalidation và cleanup/history retention, không chỉ pointer publication.
+Plugin/AI nhận snapshot/semantic handles và gửi validated commands; không chạy script tùy ý.
+Quyền explicit có revoke; process isolation/Job Object chưa tự chứng minh filesystem/network sandbox.
+License/entitlement thương mại là application service dự kiến, tách khỏi document schema và asset.
+Private signing key không nằm trong client; offline cache và xác thực không chặn startup UI.
+Hiện chưa có activation, installer/update có chữ ký hoặc commercial release gate đã hoàn tất.
 
-Định dạng hiện tại là container nhị phân `.pikdraw` Native v5 (`kCurrentFormatVersion = 5`), đọc tương thích v2/v3/v4, có checksum và quota. SaveRecoveryService lưu nguyên tử/checkpoint; migration và source metadata có kiểm thử storage. Đề xuất manifest/asset graph mở rộng vẫn cần version/capability riêng, không hạ writer xuống v4 theo mô tả cũ của roadmap.
+## Thứ tự phát triển
 
-## Plugin và worker
-
-**Plugin bên ngoài mặc định chạy ngoài process.** Contract có version negotiation, capability declarations, cancellation, progress, timeout và resource budget. Plugin nhận snapshot/asset handle được cấp, trả command proposal hoặc artifact; host kiểm tra schema, revision, tọa độ hữu hạn và kích thước trước khi commit.
-
-Các extension points ban đầu: command, workspace panel qua host-managed declarative UI, importer/exporter, thao tác xử lý tài liệu và preflight rule. Render/native tool contributions cần design review riêng vì tác động độ trễ và rủi ro ABI.
-
-Không công bố ABI C++ không ổn định như API plugin. SDK công khai trước hết là schema/RPC trung lập ngôn ngữ. Nếu cần extension native, chọn C ABI có version và handle opaque qua ADR; coi code native trong process là trusted component. Không tự động cấp quyền đó cho plugin cộng đồng.
-
-Plugin manifest khai báo ID, version, SDK range, entry point, capabilities, tài nguyên và license. Cài plugin không tự cấp mạng hoặc quyền đọc mọi file. Quyền chỉ cấp theo tác vụ/phạm vi cần thiết; offline là trạng thái vận hành bình thường.
-
-Process isolation giúp giới hạn sự cố, **không tự tạo security sandbox**. Trước khi gọi plugin không tin cậy, cần OS containment, giới hạn filesystem/network và cơ chế broker đã được kiểm chứng; nếu chưa có thì chạy ở chế độ trusted-only và công bố giới hạn. Crash của worker phải trả lỗi tác vụ, giữ tài liệu nguồn và cho phép restart. Lỗi của UI/core vẫn cần autosave và phục hồi.
-
-## Render và tác vụ nặng
-
-Render facade hiện chọn Direct2D hardware/WARP hoặc SoftwareRasterizer. D2D cache target/staging theo kích thước, geometry ở tọa độ object-local và upload ảnh theo ID/revision, tối đa 64 ảnh/256 MiB. Shell nhận BGRA trực tiếp; DamageTracker giới hạn phần chép GDI, GPU vẫn dựng/readback toàn frame. Qt present và Ganesh/Graphite là hướng tương lai. CPU fallback có budget riêng; lỗi GPU giữa frame được báo và từ chối frame chưa hoàn chỉnh, không phát lại để che lỗi. Recoverable device-loss dọn resource/cache trước khôi phục; driver crash/hang chưa có bảo đảm switch CPU.
-
-Spatial index cùng revision có bounds stroke/effects. Object culling không giải quyết zoom-to-fit hoặc một path nhiều segment; khảo sát chunking/LOD và tile cache. Cache key có dependency revision, viewport/scale/DPI/profile, clip/effect và backend generation; compositing order và halo filter phải đúng. Atlas resources/layer caches có memory cap, không là nguồn xuất sản xuất.
-
-Main/UI, logical writer, render owner, compute/I/O executors và worker processes là vai trò, không số thread cố định. Nhập/encode/geometry/preflight/export chạy nền; UI không chờ trong event loop. Scheduler có count/byte/CPU quotas, ưu tiên input/render, coalesce frame/preview lỗi thời nhưng không drop commands. Tính toán cuối kiểm tra lại source revision và error budget. Qt GUI ở main thread; render/present placement chờ spike.
-
-Undo/snapshot/assets/caches/workers có budget và lifecycle; cleanup lớn không chặn input/frame. Save/export chốt một revision và giữ assets nhất quán. Save r hoàn tất không làm sạch edits r+1. Journal/checkpoint/replace có durability policy và fault injection; atomic rename không tự chứng minh chịu mất điện. Autosave không phải backup vĩnh viễn.
-
-Interop chốt version/feature matrix và tách visual/editable/export reports. PDF-compatible AI đọc phần PDF không bảo đảm authoring semantics; CDR import nghiên cứu với libcdr. CDR export/AI native round-trip ngoài MVP; PDF/SVG/tập DXF là output candidates có fixture. EPS/AI non-PDF/SKP cần khảo sát riêng. Kế hoạch feature đọc/chỉnh sửa/render tài nguyên vector phải theo [hướng dẫn tương thích tài nguyên vector](vector-resource-interoperability.md): adapter theo định dạng đưa dữ liệu vào một document model và semantic renderer chung, còn capability được gate theo từng version/representation/feature. Plugin/worker output coi là untrusted, validate quyền/limits/revision trước atomic commit.
-
-## Làm việc và kiểm chứng
-
-Các task dùng source gốc, task board và lease để tránh ghi đè lẫn nhau; xem [START](../START.md) và [protocol](../agents/PROTOCOL.md). Contract/API dùng chung cần review từ consumer liên quan. Chọn kiểm tra theo thay đổi, ghi đúng revision và bằng chứng; harness hoặc build không tự chứng minh fidelity, hiệu năng hay an toàn sandbox. Các giả thuyết kiến trúc nằm trong ADR và roadmap, không tự coi là runtime.
+[Kế hoạch hiệu năng/storage/automation](../roadmap/performance-storage-automation.md) là nơi duy nhất
+đặt thứ tự nâng cấp nền tảng. Feature plan chuyên ngành còn giữ requirements/UI/acceptance riêng.
+Đo baseline trước khi đổi renderer; hoàn thiện memory/asset/storage trước khi quảng bá file lớn,
+sau đó thêm production/3D/AI jobs vào cùng scheduler. Không suy FPS từ CPU redraw hoặc screenshot.

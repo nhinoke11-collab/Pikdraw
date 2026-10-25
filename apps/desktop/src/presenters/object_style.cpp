@@ -8,7 +8,8 @@
 namespace pikdraw::desktop {
 namespace {
 bool same_color(const color::ColorValue &a, const color::ColorValue &b) {
-    if (a.color_space() != b.color_space() || a.overprint().fill != b.overprint().fill ||
+    if (a.color_space() != b.color_space() || !a.has_same_profile_binding(b) ||
+        a.overprint().fill != b.overprint().fill ||
         a.overprint().stroke != b.overprint().stroke)
         return false;
     return std::visit(
@@ -160,7 +161,27 @@ SelectionAppearance selection_appearance(const document::DocumentSnapshot &snaps
                                 first.sigma_x_mm != current->sigma_x_mm;
                             mutable_summary.mixed_sigma_y = mutable_summary.mixed_sigma_y ||
                                 first.sigma_y_mm != current->sigma_y_mm;
+                        } else if constexpr (std::is_same_v<T, document::FeatherEffect>) {
+                            mutable_summary.mixed_sigma_x = mutable_summary.mixed_sigma_x ||
+                                first.radius_mm != current->radius_mm;
+                        } else if constexpr (std::is_same_v<T, document::OuterGlowEffect> ||
+                                            std::is_same_v<T, document::InnerGlowEffect>) {
+                            mutable_summary.mixed_sigma_x = mutable_summary.mixed_sigma_x ||
+                                first.radius_mm != current->radius_mm;
+                            mutable_summary.mixed_opacity = mutable_summary.mixed_opacity ||
+                                first.opacity != current->opacity;
+                            mutable_summary.mixed_color = mutable_summary.mixed_color ||
+                                !same_color_value(first.color, current->color);
+                        } else if constexpr (std::is_same_v<T, document::ColorOverlayEffect>) {
+                            mutable_summary.mixed_opacity = mutable_summary.mixed_opacity ||
+                                first.opacity != current->opacity;
+                            mutable_summary.mixed_color = mutable_summary.mixed_color ||
+                                !same_color_value(first.color, current->color);
+                            mutable_summary.mixed_shadow_blend_mode =
+                                mutable_summary.mixed_shadow_blend_mode ||
+                                first.blend_mode != current->blend_mode;
                         } else {
+                            // DropShadowEffect & InnerShadowEffect
                             mutable_summary.mixed_offset_x = mutable_summary.mixed_offset_x ||
                                 first.dx_mm != current->dx_mm;
                             mutable_summary.mixed_offset_y = mutable_summary.mixed_offset_y ||
@@ -215,6 +236,9 @@ std::string color_description(const color::ColorValue &value) {
                 text << "Gray " << c.gray * 100 << "%";
         },
         value.payload());
+    if (const auto profile = value.profile_resource()) {
+        text << " · ICC " << profile->identity().name;
+    }
     return text.str();
 }
 const std::array<color::ColorValue, 18> &editor_palette(bool cmyk) {

@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <iostream>
+#include <limits>
 #include <memory>
 
 using namespace pikdraw;
@@ -69,6 +70,33 @@ void test_active_page_scope_captures_exact_revision() {
             std::vector<PageId>{snapshot->active_page_id()}));
     assert((built.job->output_targets().front().object_ids ==
             std::vector<ObjectId>{101, 102}));
+}
+
+void test_artboard_scope_captures_id_bounds_and_shared_page_objects() {
+    const auto snapshot = make_snapshot();
+    const auto& board = snapshot->active_page().artboards.front();
+    auto request = request_for("active-artboard");
+    request.scope = ExportScope::Artboard;
+    request.bounds_policy = ExportBoundsPolicy::Artboard;
+    request.artboard_id = board.id;
+    const auto built = build_export_job(snapshot, std::move(request));
+    assert(built && built.job->scope() == ExportScope::Artboard);
+    assert(built.job->artboard_id() == board.id);
+    assert(built.job->pages().size() == 1);
+    assert((built.job->pages().front().object_ids == std::vector<ObjectId>{101, 102}));
+    assert(built.job->output_targets().size() == 1);
+    const auto& target = built.job->output_targets().front();
+    assert(target.artboard_id == board.id);
+    assert(target.bounds.has_value());
+    assert(target.bounds->x == board.x_mm && target.bounds->y == board.y_mm);
+    assert(target.bounds->width == board.width_mm && target.bounds->height == board.height_mm);
+
+    auto missing = request_for("missing-artboard");
+    missing.scope = ExportScope::Artboard;
+    missing.bounds_policy = ExportBoundsPolicy::Artboard;
+    missing.artboard_id = std::numeric_limits<ArtboardId>::max();
+    const auto rejected = build_export_job(snapshot, std::move(missing));
+    assert(!rejected && rejected.error == ExportJobError::InvalidArtboard);
 }
 
 void test_selection_scope_preserves_selection_order_and_batch_targets() {
@@ -173,6 +201,7 @@ void test_rejects_invalid_scopes_bounds_and_target_collisions() {
 
 int main() {
     test_active_page_scope_captures_exact_revision();
+    test_artboard_scope_captures_id_bounds_and_shared_page_objects();
     test_selection_scope_preserves_selection_order_and_batch_targets();
     test_ordered_page_ranges_and_all_artwork();
     test_rejects_invalid_scopes_bounds_and_target_collisions();

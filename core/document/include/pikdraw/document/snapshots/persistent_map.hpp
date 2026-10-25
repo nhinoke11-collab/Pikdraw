@@ -7,6 +7,7 @@
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -26,6 +27,12 @@ class PersistentObjectMap {
         Node(EntryPtr value, NodePtr lhs, NodePtr rhs)
             : entry(std::move(value)), left(std::move(lhs)), right(std::move(rhs)),
               height(1 + std::max(left ? left->height : 0, right ? right->height : 0)) {}
+    };
+    struct Change {
+        ObjectId id;
+        std::shared_ptr<const Change> previous;
+        Change(ObjectId value, std::shared_ptr<const Change> prior)
+            : id(value), previous(std::move(prior)) {}
     };
 
 public:
@@ -102,11 +109,42 @@ public:
     [[nodiscard]] size_t size() const noexcept { return count_; }
     [[nodiscard]] bool empty() const noexcept { return count_ == 0; }
 
+    /// Enables transaction-local touched-ID tracking without changing the
+    /// immutable object tree. Published snapshots should use the untracked map.
+    [[nodiscard]] PersistentObjectMap with_change_tracking() const {
+        PersistentObjectMap result = *this;
+        result.track_changes_ = true;
+        result.changes_.reset();
+        return result;
+    }
+
+    [[nodiscard]] PersistentObjectMap without_change_tracking() const {
+        PersistentObjectMap result = *this;
+        result.track_changes_ = false;
+        result.changes_.reset();
+        return result;
+    }
+
+    [[nodiscard]] std::vector<ObjectId> changed_ids() const {
+        std::vector<ObjectId> result;
+        if (!track_changes_ || !changes_) return result;
+        std::unordered_set<ObjectId> seen;
+        for (auto change = changes_; change; change = change->previous)
+            if (seen.insert(change->id).second) result.push_back(change->id);
+        return result;
+    }
+
+    [[nodiscard]] bool shares_root_with(const PersistentObjectMap& other) const noexcept {
+        return root_ == other.root_;
+    }
+
     [[nodiscard]] PersistentObjectMap set(ObjectId id, ObjectVariant object) const {
         validate_object_source(id, object);
         PersistentObjectMap result;
         result.count_ = count_ + (contains(id) ? 0 : 1);
         result.root_ = insert(root_, std::make_shared<const Entry>(id, std::move(object)));
+        result.track_changes_ = track_changes_;
+        if (track_changes_) result.changes_ = std::make_shared<const Change>(id, changes_);
         return result;
     }
     [[nodiscard]] PersistentObjectMap remove(ObjectId id) const {
@@ -114,6 +152,8 @@ public:
         PersistentObjectMap result;
         result.count_ = count_ - 1;
         result.root_ = erase(root_, id);
+        result.track_changes_ = track_changes_;
+        if (track_changes_) result.changes_ = std::make_shared<const Change>(id, changes_);
         return result;
     }
 
@@ -173,6 +213,8 @@ private:
 
     NodePtr root_;
     size_t count_{0};
+    bool track_changes_{false};
+    std::shared_ptr<const Change> changes_;
 };
 
 } // namespace pikdraw::document

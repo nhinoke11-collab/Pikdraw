@@ -40,6 +40,7 @@ bool valid_scope(ExportScope scope) noexcept {
     switch (scope) {
         case ExportScope::Selection:
         case ExportScope::ActivePage:
+        case ExportScope::Artboard:
         case ExportScope::PageRange:
         case ExportScope::AllPages:
         case ExportScope::AllArtwork:
@@ -53,6 +54,7 @@ bool valid_bounds_policy(ExportBoundsPolicy policy) noexcept {
         case ExportBoundsPolicy::Page:
         case ExportBoundsPolicy::VisibleArtwork:
         case ExportBoundsPolicy::Selection:
+        case ExportBoundsPolicy::Artboard:
         case ExportBoundsPolicy::ExplicitRectangle:
             return true;
     }
@@ -88,6 +90,14 @@ ExportJobBuildResult build_export_job(
     if (!valid_scope(request.scope) || !valid_bounds_policy(request.bounds_policy) ||
         !valid_target_mode(request.target_mode))
         return reject(ExportJobError::InvalidScope, "The export scope or policy is unknown.");
+    const bool artboard_scope = request.scope == ExportScope::Artboard;
+    if (artboard_scope != request.artboard_id.has_value() ||
+        (request.artboard_id && *request.artboard_id == 0) ||
+        (artboard_scope && (request.bounds_policy != ExportBoundsPolicy::Artboard ||
+                            request.target_mode != ExportTargetMode::SingleFile)) ||
+        (!artboard_scope && request.bounds_policy == ExportBoundsPolicy::Artboard))
+        return reject(ExportJobError::InvalidScope,
+                      "Artboard export needs one valid artboard ID, bounds policy and single-file target.");
     if (request.bounds_policy == ExportBoundsPolicy::ExplicitRectangle) {
         if (!request.explicit_bounds || !request.explicit_bounds->is_finite() ||
             request.explicit_bounds->is_empty())
@@ -102,6 +112,7 @@ ExportJobBuildResult build_export_job(
     switch (request.scope) {
         case ExportScope::Selection:
         case ExportScope::ActivePage:
+        case ExportScope::Artboard:
             if (!request.page_ids.empty())
                 return reject(ExportJobError::InvalidScope,
                               "Explicit page IDs are valid only for a page-range export.");
@@ -138,9 +149,20 @@ ExportJobBuildResult build_export_job(
     std::vector<ExportJobPage> resolved_pages;
     resolved_pages.reserve(source_pages.size());
     size_t asset_count = 0;
+    std::optional<document::Artboard> resolved_artboard;
     for (const auto* page : source_pages) {
         ExportJobPage resolved{page->id, {}};
-        if (request.scope == ExportScope::Selection) {
+        if (artboard_scope) {
+            const auto found = std::find_if(page->artboards.begin(), page->artboards.end(),
+                [&](const document::Artboard& board) {
+                    return board.id == *request.artboard_id;
+                });
+            if (found == page->artboards.end())
+                return reject(ExportJobError::InvalidArtboard,
+                              "The selected artboard is not present in the captured page snapshot.");
+            resolved_artboard = *found;
+            resolved.object_ids = page_roots(*page);
+        } else if (request.scope == ExportScope::Selection) {
             if (request.selected_object_ids.empty())
                 return reject(ExportJobError::InvalidSelection,
                               "Selection export requires at least one selected object.");
@@ -201,6 +223,12 @@ ExportJobBuildResult build_export_job(
             target.page_ids.push_back(page.page_id);
             target.object_ids.insert(target.object_ids.end(),
                                      page.object_ids.begin(), page.object_ids.end());
+        }
+        if (resolved_artboard) {
+            target.artboard_id = resolved_artboard->id;
+            target.bounds = geometry::Rect2D{
+                resolved_artboard->x_mm, resolved_artboard->y_mm,
+                resolved_artboard->width_mm, resolved_artboard->height_mm};
         }
         output_targets.push_back(std::move(target));
     } else if (request.target_mode == ExportTargetMode::PerPageBatch) {

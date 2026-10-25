@@ -20,7 +20,11 @@ enum class UnitType : uint8_t {
     Millimeter,
     Centimeter,
     Meter,
-    Inch
+    Inch,
+    Foot,
+    Yard,
+    Point,
+    Pica
 };
 
 enum class DecimalSeparator : uint8_t {

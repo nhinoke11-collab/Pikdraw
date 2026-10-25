@@ -56,12 +56,22 @@ public:
   [[nodiscard]] GradientToolState state() const noexcept { return state_; }
   [[nodiscard]] bool is_editing() const noexcept { return state_ != GradientToolState::Idle; }
   [[nodiscard]] uint64_t draft_generation() const noexcept { return draft_generation_; }
+  [[nodiscard]] GradientHandleHit active_handle() const noexcept { return active_handle_; }
+  [[nodiscard]] uint64_t active_stop_id() const noexcept { return active_stop_id_; }
+  [[nodiscard]] bool last_gesture_below_threshold() const noexcept {
+    return last_gesture_below_threshold_;
+  }
   [[nodiscard]] const document::GradientPaint *draft_paint() const noexcept {
-    return draft_paint_.has_value() ? &*draft_paint_ : nullptr;
+    return draft_paint_.get();
+  }
+  [[nodiscard]] std::shared_ptr<document::GradientPaint> shared_draft_paint() const noexcept {
+    return draft_paint_;
   }
 
   // Pointer gesture handlers (coordinates in target object-local mm)
   void on_pointer_down(geometry::Point2D object_pos, bool shift, bool ctrl, double hit_tolerance_mm = 3.0);
+  void on_pointer_down_with_hit(
+      geometry::Point2D object_pos, GradientHandleHit hit, bool shift, bool ctrl);
   void on_pointer_move(geometry::Point2D object_pos, bool shift, bool ctrl);
   bool on_pointer_up(geometry::Point2D object_pos);
   void on_cancel();
@@ -72,6 +82,7 @@ public:
 
   // Direct edits to draft paint
   bool set_draft_paint(document::GradientPaint paint);
+  bool set_shared_draft_paint(std::shared_ptr<document::GradientPaint> paint);
   bool reverse_stops();
   bool fit_to_object_bounds(const geometry::Rect2D &bounds);
 
@@ -91,10 +102,13 @@ private:
   GradientToolState state_{GradientToolState::Idle};
   uint64_t draft_generation_{1};
 
-  std::optional<document::GradientPaint> draft_paint_;
+  std::shared_ptr<document::GradientPaint> draft_paint_;
   geometry::Point2D drag_start_{0.0, 0.0};
   geometry::Point2D drag_current_{0.0, 0.0};
   GradientHandleHit active_handle_{};
+  uint64_t active_stop_id_{0};
+  bool gesture_moved_{false};
+  bool last_gesture_below_threshold_{false};
   geometry::Rect2D initial_target_bounds_{0.0, 0.0, 100.0, 100.0};
 };
 

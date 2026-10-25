@@ -1,5 +1,6 @@
 #include "pikdraw/vector/tools/contour/contour_tool.hpp"
 #include <algorithm>
+#include <cmath>
 
 namespace pikdraw::vector::tools::contour {
 
@@ -51,6 +52,22 @@ void ContourTool::set_miter_limit(double limit) {
     update_preview();
 }
 
+bool ContourTool::set_arc_tolerance_mm(double tolerance) {
+    if (!std::isfinite(tolerance) ||
+        tolerance < geometry::kContourMinimumArcToleranceMm || tolerance > 1.0) {
+        return false;
+    }
+    arc_tolerance_mm_ = tolerance;
+    update_preview();
+    return true;
+}
+
+double ContourTool::arc_tolerance_mm() const noexcept {
+    if (!std::isfinite(arc_tolerance_mm_))
+        return geometry::kContourDefaultArcToleranceMm;
+    return std::max(arc_tolerance_mm_, geometry::kContourMinimumArcToleranceMm);
+}
+
 void ContourTool::update_preview() {
     if (target_object_id_ == document::kInvalidObjectId) {
         preview_result_ = geometry::ContourResult{};
@@ -76,7 +93,7 @@ void ContourTool::update_preview() {
     req.steps = steps_;
     req.join_type = join_type_;
     req.miter_limit = miter_limit_;
-    req.arc_tolerance_mm = arc_tolerance_mm_;
+    req.arc_tolerance_mm = std::max(arc_tolerance_mm_, geometry::kContourMinimumArcToleranceMm);
 
     preview_result_ = geometry::compute_contour(req);
 }
@@ -91,7 +108,7 @@ bool ContourTool::apply() {
     feat.steps = steps_;
     feat.join_type = join_type_;
     feat.miter_limit = miter_limit_;
-    feat.arc_tolerance_mm = arc_tolerance_mm_;
+    feat.arc_tolerance_mm = std::max(arc_tolerance_mm_, geometry::kContourMinimumArcToleranceMm);
     feat.outline_color = outline_color_;
     feat.fill_color = fill_color_;
     feat.has_outline = has_outline_;

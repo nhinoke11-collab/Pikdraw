@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "native_window_length_input.hpp"
 #include "../tools/drawing_tool_controller.hpp"
 
 #include <algorithm>
@@ -177,11 +178,12 @@ void NativeWindow::paint_drawing_tool_overlays(HDC dc) {
             ? L"LINE" : L"POLYLINE";
         hud << kind << L"  ·  " << state.points.size() << L" nodes";
         if (state.candidate) {
-            hud << L"  ·  X " << std::fixed << std::setprecision(2)
-                << state.candidate->x << L" mm  Y " << state.candidate->y << L" mm";
+            hud << L"  ·  X " << format_mm_display(state.candidate->x, display_length_unit_, 5)
+                << L"  Y " << format_mm_display(state.candidate->y, display_length_unit_, 5);
             if (!state.points.empty()) {
                 const auto delta = *state.candidate - state.points.back();
-                hud << L"  ·  L " << std::hypot(delta.x, delta.y) << L" mm"
+                hud << L"  ·  L " << format_mm_display(
+                        std::hypot(delta.x, delta.y), display_length_unit_, 5)
                     << L"  ∠ " << std::atan2(delta.y, delta.x) *
                         180.0 / 3.14159265358979323846 << L"°";
             }

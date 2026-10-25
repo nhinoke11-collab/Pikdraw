@@ -3,6 +3,7 @@
 #include "pikdraw/interop/adapters/svg_worker_adapter.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -31,10 +32,32 @@ struct PdfSourceManifest {
     std::vector<PdfSourcePageDescriptor> pages;
 };
 
+struct PdfRenderedPageRgba8 {
+    uint32_t width_px{0};
+    uint32_t height_px{0};
+    std::vector<uint8_t> rgba;
+};
+
+using PdfRenderedPageConsumer =
+    std::function<bool(uint32_t, PdfRenderedPageRgba8&&)>;
+
 [[nodiscard]] bool InspectPdfSource(
     std::span<const uint8_t> source,
     PdfSourceManifest& manifest,
     std::string& diagnostic);
+
+/// Renders one page inside the isolated PDF worker at an explicit DPI.
+/// The original source remains authoritative; preview pixels are not print output.
+[[nodiscard]] bool RenderPdfSourcePageRgba8(
+    std::span<const uint8_t> source, uint32_t source_page_index, uint32_t dpi,
+    uint64_t max_pixels, PdfRenderedPageRgba8& rendered, std::string& diagnostic);
+
+/// Renders selected pages with one PDFium document session and releases each
+/// bitmap after the consumer has serialized or retained its pixels.
+[[nodiscard]] bool RenderPdfSourcePagesRgba8(
+    std::span<const uint8_t> source, std::span<const uint32_t> source_page_indices,
+    uint32_t dpi, uint64_t max_pixels_per_page, uint64_t max_total_pixels,
+    const PdfRenderedPageConsumer& consumer, std::string& diagnostic);
 
 /// Imports a single-page PDF representation through PDFium as native C6 path/text records.
 /// AI files use this only for their PDF-compatible representation, never AIPrivateData.
@@ -50,6 +73,14 @@ struct PdfSourceManifest {
 [[nodiscard]] bool BuildPdfPageSetImportRecords(
     std::span<const uint8_t> source,
     bool is_ai_representation,
+    std::vector<CanonicalImportRecord>& records,
+    std::string& diagnostic,
+    std::optional<uint32_t> source_page_index = std::nullopt);
+
+/// Emits only the source page manifest for a PDF-print-locked document.
+/// Page content stays in the original PDF asset; no path/image preview records are created.
+[[nodiscard]] bool BuildPdfSourceManifestImportRecords(
+    std::span<const uint8_t> source,
     std::vector<CanonicalImportRecord>& records,
     std::string& diagnostic,
     std::optional<uint32_t> source_page_index = std::nullopt);

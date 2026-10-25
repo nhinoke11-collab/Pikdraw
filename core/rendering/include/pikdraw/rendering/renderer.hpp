@@ -19,6 +19,7 @@ public:
     [[nodiscard]] const Camera2D& camera() const noexcept { return camera_; }
 
     [[nodiscard]] IRenderBackend& backend() noexcept { return *backend_; }
+    void set_view_context(RenderViewContext context) { backend_->set_view_context(context); }
     void set_backend(std::shared_ptr<IRenderBackend> backend) {
         if (backend) backend_ = std::move(backend);
     }

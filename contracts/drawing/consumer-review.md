@@ -1,5 +1,7 @@
 # D01 consumer impact review
 
+Historical review of the 2026-10-15 candidate baseline. Its "current source" column is not the present runtime state. For the source audit dated 2026-10-24, use the [current C1–C9 index](../README.md) and each contract's source pointers. This file preserves review context and does not override current contracts.
+
 Reviewed against candidate baseline `970273dc35a98cf9fdf4f7e8f3d3f48b5c9fd836` on 2026-10-15.
 This is the coordinator's source-level impact review; it is not an independent external review and does
 not claim that proposed interfaces are implemented.

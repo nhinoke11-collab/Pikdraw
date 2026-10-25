@@ -10,7 +10,7 @@ using namespace pikdraw::desktop;
 namespace {
 
 #ifdef _WIN32
-void force_canvas_paint(NativeWindow &window) {
+bool force_canvas_paint(NativeWindow &window) {
     RECT client{};
     assert(GetClientRect(window.hwnd(), &client) != FALSE);
     const auto canvas = window.canvas_rect(client.right, client.bottom);
@@ -20,9 +20,20 @@ void force_canvas_paint(NativeWindow &window) {
     // NativeWindow WM_PAINT handler that turns it into user-facing status.
     const auto pixels = window.workflow().render_snapshot(
         canvas.right - canvas.left, canvas.bottom - canvas.top);
-    assert(!pixels.empty());
+    const bool rendered = !pixels.empty();
+    if (rendered) {
+        const auto &metric = window.root().renderer().last_metric();
+        std::cerr << "Unexpectedly rendered over-budget effect: zoom="
+                  << window.root().renderer().camera().zoom()
+                  << " objects=" << metric.rendered_objects << "/"
+                  << metric.total_objects << '\n';
+        for (const auto &diagnostic : metric.diagnostics)
+            std::cerr << "Render diagnostic: " << diagnostic.object_id << " "
+                      << diagnostic.error << " " << diagnostic.message << '\n';
+    }
     InvalidateRect(window.hwnd(), nullptr, FALSE);
     SendMessageW(window.hwnd(), WM_PAINT, 0, 0);
+    return rendered;
 }
 
 void test_over_budget_blur_warning_is_localized_and_keeps_source() {
@@ -36,7 +47,7 @@ void test_over_budget_blur_warning_is_localized_and_keeps_source() {
     auto &selection = window.root().vector_controller().selection();
     selection.select(path_id);
     assert(window.workflow().add_selected_effect(
-        pikdraw::document::GaussianBlurEffect{300.0, 300.0}));
+        pikdraw::document::GaussianBlurEffect{500.0, 500.0}));
 
     const auto authored = window.root().document().current_snapshot();
     assert(authored);
@@ -46,23 +57,30 @@ void test_over_budget_blur_warning_is_localized_and_keeps_source() {
     const auto &appearance = std::get<pikdraw::document::PathObject>(*object).appearance;
     assert(appearance.effects.size() == 1);
     assert(std::get<pikdraw::document::GaussianBlurEffect>(
-               appearance.effects.front().parameters).sigma_x_mm == 300.0);
+               appearance.effects.front().parameters).sigma_x_mm == 500.0);
 
-    // Exercise a real limit in either backend: at 64x, the 4-sigma GPU support
-    // exceeds 16384 px as well as the software filter budget. Default fit zoom
-    // only exceeded the old CPU budget and is renderable by Direct2D.
+    // This document uses an explicit 300 DPI raster grid, so the backend renders
+    // at that density even when viewport zoom changes. At 500 mm, the 4-sigma
+    // support exceeds the Direct2D 16384 px budget and the CPU filter budget.
+    // Keep the object centered so culling cannot turn this into a false pass.
     window.root().renderer().camera().set_zoom(64.0);
     window.root().renderer().camera().set_center({52.0, 51.0});
 
     window.set_language(UILanguage::English);
-    force_canvas_paint(window);
+    assert(!force_canvas_paint(window));
     const auto english_status = window.status_message();
+    if (english_status.find("Effect exceeds render limits") == std::string::npos) {
+        std::cerr << "Unexpected EN status: " << english_status << '\n';
+        for (const auto &diagnostic : window.root().renderer().last_metric().diagnostics)
+            std::cerr << "Render diagnostic: " << diagnostic.object_id << " "
+                      << diagnostic.error << " " << diagnostic.message << '\n';
+    }
     assert(english_status.find("Effect exceeds render limits") != std::string::npos);
     assert(window.root().document().current_snapshot() == authored);
     assert(window.root().document().current_snapshot()->revision() == authored_revision);
 
     window.set_language(UILanguage::Vietnamese);
-    force_canvas_paint(window);
+    assert(!force_canvas_paint(window));
     const auto vietnamese_status = window.status_message();
     assert(vietnamese_status.find("Hiệu ứng vượt giới hạn render") != std::string::npos);
     assert(window.root().document().current_snapshot() == authored);

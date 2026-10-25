@@ -13,6 +13,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <unordered_map>
 #include <span>
 #include <string>
 #include <vector>
@@ -93,6 +94,36 @@ void TestPdfInspectionReportsPageRotation() {
     assert(InspectPdfSource(bytes, manifest, diagnostic));
     assert(manifest.exact_page_count == 1);
     assert(manifest.pages.front().rotation_quarters_clockwise == 1);
+}
+
+void TestPdfPagePreviewRendersAtRequestedDpiAndHonorsBudget() {
+    using namespace pikdraw::interop;
+    const auto bytes = MakePdf("1 0 0 rg\n10 10 40 20 re\nf\n", 1, false, 90);
+    PdfRenderedPageRgba8 rendered;
+    std::string diagnostic;
+    assert(RenderPdfSourcePageRgba8(bytes, 0, 36, 10000, rendered, diagnostic));
+    assert(diagnostic.empty());
+    assert(rendered.width_px == 50 && rendered.height_px == 100);
+    assert(rendered.rgba.size() == 50u * 100u * 4u);
+    bool has_coverage = false;
+    bool has_transparent_pixel = false;
+    bool has_red_pixel = false;
+    for (size_t offset = 0; offset < rendered.rgba.size(); offset += 4) {
+        has_red_pixel = has_red_pixel ||
+            (rendered.rgba[offset] > 160 && rendered.rgba[offset + 1] < 80 &&
+             rendered.rgba[offset + 2] < 80 && rendered.rgba[offset + 3] > 160);
+        has_transparent_pixel = has_transparent_pixel || rendered.rgba[offset + 3] == 0;
+    }
+    for (size_t offset = 3; offset < rendered.rgba.size(); offset += 4)
+        has_coverage = has_coverage || rendered.rgba[offset] != 0;
+    assert(has_coverage && has_transparent_pixel && has_red_pixel);
+
+    PdfRenderedPageRgba8 rejected;
+    assert(!RenderPdfSourcePageRgba8(bytes, 0, 36, 100, rejected, diagnostic));
+    assert(diagnostic.find("pixel budget") != std::string::npos);
+    assert(rejected.rgba.empty());
+    assert(!RenderPdfSourcePageRgba8(bytes, 1, 36, 10000, rejected, diagnostic));
+    assert(diagnostic.find("page index") != std::string::npos);
 }
 
 void TestRotatedPdfPageMapsGeometryAndText() {
@@ -399,11 +430,75 @@ void TestPdfPageSetKeepsEveryPageAndBlankPages() {
     assert(selected_blank_page && selected_warning);
 }
 
+void TestPdfPrintSourceManifestKeepsAllPagesWithoutVectorizingContent() {
+    using namespace pikdraw::interop;
+    const auto bytes = MakePdf("0 0 1 rg\n10 10 40 20 re\nf\n", 2, true, 90);
+    std::vector<CanonicalImportRecord> records;
+    std::string diagnostic;
+    assert(BuildPdfSourceManifestImportRecords(bytes, records, diagnostic));
+    assert(diagnostic.empty());
+    std::vector<ImportPageRecord> pages;
+    std::vector<ImportLayerRecord> layers;
+    bool saw_report = false;
+    std::vector<uint32_t> preview_ids;
+    std::unordered_map<uint32_t, uint32_t> chunked_bytes;
+    for (const auto& encoded : records) {
+        const auto decoded = DeserializeImportRecord(encoded.type, encoded.payload);
+        assert(decoded);
+        if (const auto* page = std::get_if<ImportPageRecord>(&*decoded)) {
+            pages.push_back(*page);
+        } else if (const auto* layer = std::get_if<ImportLayerRecord>(&*decoded)) {
+            layers.push_back(*layer);
+        } else if (const auto* report = std::get_if<ImportFidelityReportRecord>(&*decoded)) {
+            saw_report = report->coverage_profile == "pdf-print-source-v1" &&
+                report->issue_count == 0;
+        } else if (const auto* image = std::get_if<ImportRasterImageRecord>(&*decoded)) {
+            assert(image->name == "PDF source screen preview");
+            assert(image->width_px > 0 && image->height_px > 0);
+            assert(image->media_type == "application/x-pikdraw-rgba8");
+            preview_ids.push_back(image->local_id);
+        } else if (const auto* chunk = std::get_if<ImportRasterImageChunkRecord>(&*decoded)) {
+            assert(chunk->total_bytes > 0 && !chunk->bytes.empty());
+            chunked_bytes[chunk->local_id] += static_cast<uint32_t>(chunk->bytes.size());
+        } else {
+            assert(false && "locked source manifest must contain only page previews");
+        }
+    }
+    assert(pages.size() == 2 && pages[0].source_page_index == 0 &&
+           pages[0].rotation_degrees == 90 && !pages[0].blank &&
+           pages[1].source_page_index == 1 && pages[1].blank);
+    assert(std::abs(pages[0].width_mm - 100.0 * 25.4 / 72.0) < 0.01 &&
+           std::abs(pages[0].height_mm - 200.0 * 25.4 / 72.0) < 0.01);
+    assert(layers.size() == 2 && layers[0].locked && layers[1].locked &&
+           layers[0].page_local_id == 1 && layers[1].page_local_id == 2 &&
+           layers[0].object_local_ids == std::vector<uint32_t>{1} &&
+           layers[1].object_local_ids == std::vector<uint32_t>{2});
+    assert((preview_ids == std::vector<uint32_t>{1, 2}));
+    assert(chunked_bytes.size() == 2 && chunked_bytes[1] > 0 && chunked_bytes[2] > 0);
+    assert(saw_report);
+
+    assert(BuildPdfSourceManifestImportRecords(bytes, records, diagnostic, 1));
+    assert(records.size() >= 5);
+    const auto selected_page = DeserializeImportRecord(records.front().type, records.front().payload);
+    assert(selected_page && std::get<ImportPageRecord>(*selected_page).source_page_index == 1 &&
+           std::get<ImportPageRecord>(*selected_page).blank);
+    bool selected_preview = false;
+    for (const auto& encoded : records) {
+        if (encoded.type != ImportRecordType::RasterImage) continue;
+        const auto decoded = DeserializeImportRecord(encoded.type, encoded.payload);
+        assert(decoded);
+        const auto* image = std::get_if<ImportRasterImageRecord>(&*decoded);
+        selected_preview = image && image->local_id == 1;
+    }
+    assert(selected_preview);
+}
+
 } // namespace
 
 int main() {
     TestPdfInspectionReportsExactPagesAndBlankPage();
     TestPdfInspectionReportsPageRotation();
+    TestPdfPagePreviewRendersAtRequestedDpiAndHonorsBudget();
     TestRotatedPdfPageMapsGeometryAndText();
     TestRotatedPageCodecKeepsLegacyManifestPayloadsReadable();
     InspectOptionalLocalPdfCorpus();
@@ -412,6 +507,7 @@ int main() {
     TestMultiPagePdfImportsFirstPageWithLossWarning();
     TestPdfAdapterMaterializesSelectedNonFirstPage();
     TestPdfPageSetKeepsEveryPageAndBlankPages();
+    TestPdfPrintSourceManifestKeepsAllPagesWithoutVectorizingContent();
     std::cout << "test_pdf_worker_adapter: editable PDF vector records and rejection gates passed\n";
     return 0;
 }

@@ -64,7 +64,7 @@ format_capability_matrix.cpp 77feaa4220e4ec9ca2b45c25a5d8cc533603523c76e7e0b208a
 ## 3. Hợp đồng dùng chung và thứ tự giao việc
 
 Đọc [AGENTS](../../AGENTS.md), [START](../START.md), [registry](../../registry/modules.json),
-[protocol](../agents/PROTOCOL.md), [C1](../../contracts/c1-geometry.md), [C2](../../contracts/c2-document.md),
+[workflow](../../AGENTS.md), [C1](../../contracts/c1-geometry.md), [C2](../../contracts/c2-document.md),
 [C5](../../contracts/c5-storage.md), [C7](../../contracts/c7-actions-ui.md), [C8](../../contracts/c8-import-fidelity.md),
 [C9](../../contracts/c9-appearance-effects.md), [UI](../design/ui-ux-standard.md),
 [workspace](../architecture/workspace-layout.md), [interop guidance](../architecture/vector-resource-interoperability.md)
@@ -73,7 +73,7 @@ và [acceptance](../quality/feature-acceptance.md). C8 là spec Proposed; không
 - Chỉ source gốc; không worktree/branch mới; không commit/reset/stash hoặc sửa local edits của task khác.
 - Bảng task trong bốn plan là **catalog đề xuất**, chưa được create/claim và không phải lệnh dispatch agent.
   Việc viết plan không tự cấp quyền chạy bốn agent song song. Nếu được phép sau này, chỉ chạy các owned paths rời nhau.
-- Trước sửa: `task list` → `task create ... --path ...` cụ thể → `task claim` → `context`. Không claim toàn module để tiện.
+- Trước sửa: đọc AGENTS, module README và diff; triển khai trực tiếp, không task/claim/lease/context packet.
 - Single writer, immutable snapshot, một gesture/Apply = một transaction; preview không ghi document.
   Undo/redo tăng revision đơn điệu; cancel/no-op không tạo revision/history. Async luôn kiểm strict stamp trước publish và commit.
 - Hình học local mm/binary64; góc world +X, CCW và +Y up theo C1. Camera/DPI không sửa source.
@@ -109,12 +109,12 @@ Dimensions tuyến tính có thể dùng điểm rõ ràng và snap cơ bản tr
 
 | Nhóm path | Quy tắc |
 | --- | --- |
-| `core/document/.../editable_path.hpp`, `path_commands.hpp`, `command.cpp`, topology mapping | N00/N01 rồi consumer D00/D04 review; một lease sửa tại một thời điểm |
+| `core/document/.../editable_path.hpp`, `path_commands.hpp`, `command.cpp`, topology mapping | N00/N01 rồi consumer D00/D04 review; một người sửa tại một thời điểm |
 | `core/document/.../object.hpp`, snapshots/validation/clone/storage, C2/C5 | C02 và D00/D01 tuần tự; kiểm version mới nhất, không cùng tự chọn v5 |
 | `core/geometry/.../curve*`, C1 | N/S/C dùng read-only; mutation qua task shared riêng, không tranh file |
 | `apps/desktop/.../native_window*`, action registry, menu, localization, SVG registry | Tích hợp N05, C04, S04, D03/D05 tuần tự; controller mới riêng không thay quyền sửa shared shell |
-| CMakeLists/registry/contracts/project-state | Coordinator/integrator claim riêng; consumer khai source/target cần thêm trong handoff |
-| New feature implementation/test files | Có thể tách nếu được cho phép và leases không overlap, kể cả parent-directory lease |
+| CMakeLists/registry/contracts/project-state | Sửa tuần tự; consumer nêu source/target cần thêm trong kết quả |
+| New feature implementation/test files | Chia theo domain khi được giao nhiều agent; không sửa chồng file |
 
 Các tính năng Boolean tổng quát, Fillet/Chamfer, driving solver, 3D, CAM/G-code và auto-stitch tự động nằm ngoài đợt này.
 
@@ -127,13 +127,13 @@ các dòng wildcard/shorthand trong bảng phải mở thành owned paths cụ t
 
 | Người nhận | Chỉ dẫn thực thi |
 | --- | --- |
-| Agent Node | Đọc plan 01 và master; bắt đầu N00, bàn giao representation/semantic vectors rồi mới N01. Không sửa snap/contour/schema annotation trong lease Node |
+| Agent Node | Đọc plan 01 và master; bắt đầu N00, bàn giao representation/semantic vectors rồi mới N01. Không sửa snap/contour/schema annotation trong phạm vi Node |
 | Agent Contour | Đọc plan 02 và master; bắt đầu C00, bàn giao kernel/license/error/topology decision. Không enable UI live contour trước C01/C02 gates |
 | Agent Snap | Đọc plan 03 và master; bắt đầu S00/S01, giữ basic snap và F3 panel. Không bypass numeric locks hoặc nhận nghiệm chưa đủ residual/bound/stamp |
 | Agent Dimensions | Đọc plan 04 và master; bắt đầu D00, chốt source refs/layout/schema và consumers. Nhận native và export bằng từng mốc; không chờ PDF/CAD app để nghiên cứu native |
 
 Output mỗi task: actual changed paths, semantic/API delta, acceptance cases thực chạy, exact commands/results,
-snapshot/hash, limitation và task tiếp theo. Nếu dependency chưa đạt/lease đang giữ, làm phần độc lập trong scope
+snapshot/hash, limitation và task tiếp theo. Nếu dependency chưa đạt hoặc file đang được sửa, làm phần độc lập trong scope
 và ghi blocker cụ thể; không tự sửa file của owner khác. Chỉ coordinator tích hợp shared paths và cập nhật trạng thái.
 
 ## 4. Interop: ranh giới chung cho cả bốn plan
@@ -160,18 +160,15 @@ export về format và đạt sản xuất là sáu kết quả cần ghi riêng
   New test targets trong plan phải đăng ký CMake trước; kiểm test name hiện tại vì executable và CTest name có thể khác.
 - Tách CPU query/compute/offscreen khỏi present/FPS/input-to-visible. Các ngân sách trong plan là mục tiêu đề xuất cần đo,
   không phải kết quả hay chuẩn của Adobe/Corel/Autodesk. Không suy CNC từ offset/preview; cần profile và vật liệu/máy riêng.
-- Source/exe hash, cấu hình, command, số test thực chạy, fixture/oracle, giới hạn và thao tác native chưa chạy đều phải có trong handoff.
+- Source/exe hash, cấu hình, command, số test thực chạy, fixture/oracle, giới hạn và thao tác native chưa chạy đều phải báo trực tiếp.
   Giữ regression có ích; dọn output/log/fixture thử một lần do chính task tạo.
-- Không đổi `project-state` thành implemented khi chỉ có plan. Khi task được tích hợp, coordinator claim state,
-  ghi specification hoặc capability đúng gate và giữ các limitations. Lúc viết tài liệu này, `docs/project-state.json`
-  đang do `basic-effects-gaussian-bounded-parallel-20261017` giữ lease, nên không sửa path đó.
+- Không đổi `project-state` thành implemented khi chỉ có plan. Khi tích hợp xong, cập nhật snapshot
+  capability đúng gate và giữ các limitations; tối đa 8.000 byte, không nối lịch sử.
 
-```powershell
-./tooling/pikdraw.ps1 task list
-# Create/claim đúng task con và những file cần sửa theo plan; không copy nguyên một lease module.
-./tooling/pikdraw.ps1 context --task-id TASK
-./tooling/pikdraw.ps1 handoff --task-id TASK --owner OWNER --head HEAD --summary 'Ket qua thuc te' --test 'Lenh va ket qua' --next-step 'Review source snapshot va gate con mo'
-```
+~~~powershell
+./tooling/native/build.ps1
+# Chọn -Test -TestTarget và -TestRegex đúng module vừa sửa theo docs/development/native-build.md.
+~~~
 
 ## 6. Tài liệu chính thức đã tra ngày 17/10/2026
 

@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string_view>
 
@@ -71,7 +72,77 @@ V2ImportBegin BeginFor(const SourceSnapshot& source) {
 }
 
 V2ProposalStreamLimits Limits() {
-    return V2ProposalStreamLimits{8192, 1024, 16, 16, 17};
+    return V2ProposalStreamLimits{
+        std::numeric_limits<uint64_t>::max(),
+        std::numeric_limits<uint64_t>::max(),
+        IPC_MAX_OBJECTS,
+        IPC_MAX_OBJECTS,
+        IPC_MAX_OBJECTS + 1};
+}
+
+void TestSystemMemoryPressureWaiter() {
+    std::vector<bool> wait_states;
+    size_t probes = 0;
+    size_t sleeps = 0;
+    size_t requested_bytes = 0;
+    SystemMemoryPressureWaiter waiter(
+        std::chrono::milliseconds(500),
+        [&](bool waiting) { wait_states.push_back(waiting); },
+        [&] { return ++probes <= 2 ? size_t{0} : size_t{4096}; },
+        [&](std::chrono::milliseconds) { ++sleeps; },
+        [&](size_t required) { requested_bytes = required; });
+    auto active_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    const auto original_deadline = active_deadline;
+    Require(waiter.WaitForHeadroom(1024, {}, &active_deadline) ==
+                SystemMemoryWaitResult::Ready,
+            "memory pressure waiter did not resume after RAM headroom returned");
+    Require(wait_states == std::vector<bool>{true, false} && sleeps == 2,
+            "memory pressure wait state transitions were not reported once");
+    Require(requested_bytes == 1024,
+            "memory pressure wait did not report the blocked allocation size");
+    Require(active_deadline - original_deadline == std::chrono::milliseconds(200),
+            "memory pressure wait consumed the normal worker timeout");
+
+    SystemMemoryPressureWaiter timed_out(
+        std::chrono::milliseconds(250), {}, [] { return size_t{0}; },
+        [](std::chrono::milliseconds) {});
+    Require(timed_out.WaitForHeadroom(1) == SystemMemoryWaitResult::TimedOut &&
+                timed_out.remaining_wait() == std::chrono::milliseconds::zero(),
+            "memory pressure wait did not stop at its configured timeout");
+
+    bool headroom_available = false;
+    size_t cumulative_sleeps = 0;
+    std::stop_source first_wait_cancel;
+    SystemMemoryPressureWaiter cumulative_wait(
+        std::chrono::milliseconds(250), {},
+        [&] { return headroom_available ? size_t{4096} : size_t{0}; },
+        [&](std::chrono::milliseconds) {
+            ++cumulative_sleeps;
+            if (cumulative_sleeps == 1) first_wait_cancel.request_stop();
+        });
+    Require(cumulative_wait.WaitForHeadroom(1024, first_wait_cancel.get_token()) ==
+                SystemMemoryWaitResult::Cancelled &&
+                cumulative_wait.remaining_wait() == std::chrono::milliseconds(150),
+            "cancelled first pressure wait did not retain its cumulative allowance");
+    headroom_available = true;
+    Require(cumulative_wait.WaitForHeadroom(1024) == SystemMemoryWaitResult::Ready,
+            "shared waiter did not resume when RAM headroom returned");
+    headroom_available = false;
+    Require(cumulative_wait.WaitForHeadroom(1024) == SystemMemoryWaitResult::TimedOut &&
+                cumulative_wait.remaining_wait() == std::chrono::milliseconds::zero() &&
+                cumulative_sleeps == 3,
+            "repeated pressure waits did not share one cumulative five-minute allowance");
+
+    std::stop_source cancellation;
+    cancellation.request_stop();
+    SystemMemoryPressureWaiter cancelled(
+        std::chrono::milliseconds(250), {}, [] { return size_t{0}; },
+        [](std::chrono::milliseconds) {});
+    Require(cancelled.WaitForHeadroom(1, cancellation.get_token()) ==
+                SystemMemoryWaitResult::Cancelled,
+            "caller cancellation was not observed during RAM backpressure");
+    Require(kSystemMemoryPressureWaitLimit == std::chrono::minutes(5),
+            "production memory pressure wait limit is not five minutes");
 }
 
 bool StartNegotiated(
@@ -393,6 +464,60 @@ void TestPdfPageSetHostSemantics(const SourceSnapshot& source) {
             "host accepted a page-set layer without explicit page ownership");
 }
 
+void TestPdfPrintSourceManifestHostSemantics(const SourceSnapshot& source) {
+    auto expected = BeginFor(source);
+    expected.format_id = "PDF";
+    expected.profile_id = "pdf-print-source-v1";
+    V2ProposalStreamValidator validator(expected, 64 * 1024, 128, 4);
+    Require(validator.IsReady(), "PDF print-source manifest profile was not registered");
+
+    ImportPageRecord first{100, 50};
+    first.local_id = 1;
+    first.source_page_index = 0;
+    first.name = "PDF Page 1";
+    first.rotation_degrees = 90;
+    first.has_manifest_metadata = true;
+    ImportPageRecord blank{70, 120};
+    blank.local_id = 2;
+    blank.source_page_index = 1;
+    blank.name = "PDF Page 2";
+    blank.blank = true;
+    blank.has_manifest_metadata = true;
+    ImportLayerRecord first_layer{1, "pdf-source-page-1", "PDF Source", true, true, {}};
+    first_layer.page_local_id = 1;
+    first_layer.has_page_association = true;
+    ImportLayerRecord blank_layer{2, "pdf-source-page-2", "PDF Source", true, true, {}};
+    blank_layer.page_local_id = 2;
+    blank_layer.has_page_association = true;
+    ImportFidelityReportRecord report;
+    report.coverage_profile = expected.profile_id;
+    const std::vector<ImportRecordValue> values{first, blank, first_layer, blank_layer, report};
+
+    V2ProposalChunk chunk;
+    chunk.job = expected.job;
+    for (const auto& value : values) {
+        const auto record = SerializeImportRecord(value);
+        Require(record && AppendV2ProposalRecord(chunk.canonical_record_bytes,
+            static_cast<uint16_t>(record->type), record->payload),
+            "could not encode locked PDF source-manifest records");
+        ++chunk.record_count;
+    }
+    chunk.checksum_crc32 = V2ProposalRecordsCrc32(chunk.canonical_record_bytes);
+    Require(validator.Accept(MakeFrame(SerializeV2ProposalChunk(chunk, 1))),
+            "host rejected a locked PDF page manifest");
+    V2ImportEnd end;
+    end.job = expected.job;
+    end.chunk_count = 1;
+    end.record_count = chunk.record_count;
+    end.canonical_bytes = chunk.canonical_record_bytes.size();
+    end.fidelity_report_complete = true;
+    Require(Digest(chunk.canonical_record_bytes, end.canonical_sha256),
+            "could not hash locked PDF page-manifest records");
+    Require(validator.Accept(MakeFrame(SerializeV2ImportEnd(end, 2))) &&
+                validator.IsComplete(),
+            "host did not complete a locked PDF source-manifest stream");
+}
+
 void TestRasterChunkHostSemantics(const SourceSnapshot& source) {
     auto expected = BeginFor(source);
     expected.format_id = "PNG";
@@ -484,6 +609,28 @@ void TestRasterChunkHostSemantics(const SourceSnapshot& source) {
 void TestPositiveStream(const SourceSnapshot& source) {
     WorkerProcessHost host;
     Require(StartNegotiated(host, source, L"--test-v2-stream-good"), "v2 fixture negotiation failed");
+    const auto expected = BeginFor(source);
+    const auto request = SerializeV2ImportBegin(expected, 1);
+    size_t callbacks = 0;
+    const bool complete = host.TransactV2ProposalStream(
+        request, std::chrono::seconds(2), Limits(), [&](const IpcV2Frame& frame) {
+            ++callbacks;
+            if (frame.header.sequence_id != callbacks) return false;
+            if (frame.header.message_type == static_cast<uint16_t>(MessageType::V2ProposalChunk)) {
+                const auto view = DeserializeV2ProposalChunkPayload(frame.payload);
+                return view && view->job.IsMatching(expected.job) &&
+                       view->record_count == 1 && !view->canonical_record_bytes.empty();
+            }
+            return frame.header.message_type == static_cast<uint16_t>(MessageType::V2ImportEnd);
+        });
+    Require(complete && callbacks == 2, "valid v2 stream did not complete atomically");
+    host.Terminate();
+}
+
+void TestMemoryWaitStreamNotification(const SourceSnapshot& source) {
+    WorkerProcessHost host;
+    Require(StartNegotiated(host, source, L"--test-v2-stream-memory-wait"),
+            "RAM-wait fixture negotiation failed");
     const auto request = SerializeV2ImportBegin(BeginFor(source), 1);
     size_t callbacks = 0;
     const bool complete = host.TransactV2ProposalStream(
@@ -493,7 +640,8 @@ void TestPositiveStream(const SourceSnapshot& source) {
                    (frame.header.message_type == static_cast<uint16_t>(MessageType::V2ProposalChunk) ||
                     frame.header.message_type == static_cast<uint16_t>(MessageType::V2ImportEnd));
         });
-    Require(complete && callbacks == 2, "valid v2 stream did not complete atomically");
+    Require(complete && callbacks == 2,
+            "host did not resume the proposal stream after a RAM-wait notification");
     host.Terminate();
 }
 
@@ -579,10 +727,13 @@ int main() {
         const std::array<uint8_t, 9> crc_probe{'1', '2', '3', '4', '5', '6', '7', '8', '9'};
         Require(V2ProposalRecordsCrc32(crc_probe) == 0xCBF43926u, "CRC32 known vector mismatch");
 
+        TestSystemMemoryPressureWaiter();
         TestPositiveStream(*source);
+        TestMemoryWaitStreamNotification(*source);
         TestSvgHierarchyHostSemantics(*source);
         TestDxfProfileHostSemantics(*source);
         TestPdfPageSetHostSemantics(*source);
+        TestPdfPrintSourceManifestHostSemantics(*source);
         TestRasterChunkHostSemantics(*source);
         for (const auto* mode : {
                  L"--test-v2-stream-gap", L"--test-v2-stream-oversize", L"--test-v2-stream-quota",

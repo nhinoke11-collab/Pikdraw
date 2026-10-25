@@ -48,34 +48,38 @@ void GradientTool::set_spread(document::GradientSpread spread) {
 
 void GradientTool::init_draft_from_targets() {
   if (target_ids_.empty()) {
-    draft_paint_ = std::nullopt;
+    draft_paint_.reset();
     return;
   }
 
   const auto snapshot = document_.current_snapshot();
   const auto obj_variant = snapshot->get_object(target_ids_.front());
   if (!obj_variant || !std::holds_alternative<document::PathObject>(*obj_variant)) {
-    draft_paint_ = std::nullopt;
+    draft_paint_.reset();
     return;
   }
 
   const auto &po = std::get<document::PathObject>(*obj_variant);
-  initial_target_bounds_ = po.bounds();
+  // Gradient geometry is authored in path-local coordinates. The object
+  // transform is applied by the sampler after this paint transform.
+  initial_target_bounds_ = po.path.bounds();
   if (initial_target_bounds_.width <= 0.0 || initial_target_bounds_.height <= 0.0) {
     initial_target_bounds_ = geometry::Rect2D{0.0, 0.0, 100.0, 100.0};
   }
 
   if (po.fill_gradient) {
-    draft_paint_ = *po.fill_gradient;
+    draft_paint_ = std::make_shared<document::GradientPaint>(*po.fill_gradient);
     kind_ = draft_paint_->kind;
     spread_ = draft_paint_->spread;
   } else {
     if (kind_ == document::GradientKind::Linear) {
-      draft_paint_ = document::GradientPaint::make_default_linear(
-          document::allocate_gradient_paint_id(), initial_target_bounds_);
+      draft_paint_ = std::make_shared<document::GradientPaint>(
+          document::GradientPaint::make_default_linear(
+              document::allocate_gradient_paint_id(), initial_target_bounds_));
     } else {
-      draft_paint_ = document::GradientPaint::make_default_radial(
-          document::allocate_gradient_paint_id(), initial_target_bounds_);
+      draft_paint_ = std::make_shared<document::GradientPaint>(
+          document::GradientPaint::make_default_radial(
+              document::allocate_gradient_paint_id(), initial_target_bounds_));
     }
     draft_paint_->spread = spread_;
   }
@@ -145,15 +149,27 @@ GradientHandleHit GradientTool::hit_test_handles(geometry::Point2D object_pos, d
 }
 
 void GradientTool::on_pointer_down(geometry::Point2D object_pos, bool shift, bool ctrl, double hit_tolerance_mm) {
+  on_pointer_down_with_hit(
+      object_pos, hit_test_handles(object_pos, hit_tolerance_mm), shift, ctrl);
+}
+
+void GradientTool::on_pointer_down_with_hit(
+    geometry::Point2D object_pos, GradientHandleHit hit, bool shift, bool ctrl) {
   (void)shift;
   (void)ctrl;
-  const auto hit = hit_test_handles(object_pos, hit_tolerance_mm);
   if (hit.kind != GradientHandleKind::None) {
     state_ = GradientToolState::DraggingHandle;
     active_handle_ = hit;
+    active_stop_id_ = 0;
+    if ((hit.kind == GradientHandleKind::Stop || hit.kind == GradientHandleKind::Midpoint) &&
+        draft_paint_ && hit.stop_index < draft_paint_->stops.size()) {
+      active_stop_id_ = draft_paint_->stops[hit.stop_index].id;
+    }
     drag_start_ = object_pos;
     drag_current_ = object_pos;
   } else {
+    active_handle_ = {};
+    active_stop_id_ = 0;
     state_ = GradientToolState::CreatingDrag;
     drag_start_ = object_pos;
     drag_current_ = object_pos;
@@ -161,10 +177,15 @@ void GradientTool::on_pointer_down(geometry::Point2D object_pos, bool shift, boo
       init_draft_from_targets();
     }
   }
+  gesture_moved_ = false;
+  last_gesture_below_threshold_ = false;
   draft_generation_++;
 }
 
 void GradientTool::on_pointer_move(geometry::Point2D object_pos, bool shift, bool ctrl) {
+  if (state_ != GradientToolState::Idle &&
+      std::hypot(object_pos.x - drag_start_.x, object_pos.y - drag_start_.y) > 1e-6)
+    gesture_moved_ = true;
   if (state_ == GradientToolState::CreatingDrag) {
     drag_current_ = object_pos;
     update_creating_drag(object_pos, shift, ctrl);
@@ -255,26 +276,37 @@ void GradientTool::update_handle_drag(geometry::Point2D current, bool shift) {
   }
   case GradientHandleKind::Stop: {
     const auto inv = mat.inverted();
-    if (inv && active_handle_.stop_index < draft_paint_->stops.size()) {
+    const auto stop = std::find_if(draft_paint_->stops.begin(), draft_paint_->stops.end(),
+        [&](const auto& item) { return item.id == active_stop_id_; });
+    if (inv && active_stop_id_ != 0 && stop != draft_paint_->stops.end()) {
       const auto q = inv->map_point(current);
       const double new_offset = std::clamp(q.x, 0.0, 1.0);
-      draft_paint_->stops[active_handle_.stop_index].offset = new_offset;
+      stop->offset = new_offset;
       // Keep sorted by offset while preserving stable IDs
       std::stable_sort(draft_paint_->stops.begin(), draft_paint_->stops.end(),
                        [](const auto &a, const auto &b) { return a.offset < b.offset; });
+      const auto moved = std::find_if(draft_paint_->stops.begin(), draft_paint_->stops.end(),
+          [&](const auto& item) { return item.id == active_stop_id_; });
+      if (moved != draft_paint_->stops.end())
+        active_handle_.stop_index = static_cast<size_t>(moved - draft_paint_->stops.begin());
     }
     break;
   }
   case GradientHandleKind::Midpoint: {
     const auto inv = mat.inverted();
-    if (inv && active_handle_.stop_index + 1 < draft_paint_->stops.size()) {
+    const auto left_stop = std::find_if(draft_paint_->stops.begin(), draft_paint_->stops.end(),
+        [&](const auto& item) { return item.id == active_stop_id_; });
+    const size_t left_index = left_stop == draft_paint_->stops.end()
+        ? draft_paint_->stops.size()
+        : static_cast<size_t>(left_stop - draft_paint_->stops.begin());
+    if (inv && active_stop_id_ != 0 && left_index + 1 < draft_paint_->stops.size()) {
       const auto q = inv->map_point(current);
-      const double s0 = draft_paint_->stops[active_handle_.stop_index].offset;
-      const double s1 = draft_paint_->stops[active_handle_.stop_index + 1].offset;
+      const double s0 = draft_paint_->stops[left_index].offset;
+      const double s1 = draft_paint_->stops[left_index + 1].offset;
       const double seg_len = s1 - s0;
       if (seg_len > 1e-6) {
         const double t = (q.x - s0) / seg_len;
-        draft_paint_->stops[active_handle_.stop_index].midpoint_to_next = std::clamp(t, 0.05, 0.95);
+        draft_paint_->stops[left_index].midpoint_to_next = std::clamp(t, 0.05, 0.95);
       }
     }
     break;
@@ -290,28 +322,43 @@ bool GradientTool::on_pointer_up(geometry::Point2D object_pos) {
     if (dist < kMinDragDistanceMm) {
       // Under drag threshold: do not commit gradient implicitly (AC-G08)
       state_ = GradientToolState::Idle;
+      gesture_moved_ = false;
+      last_gesture_below_threshold_ = true;
       draft_generation_++;
       return false;
     }
     const bool ok = commit();
     state_ = GradientToolState::Idle;
+    active_stop_id_ = 0;
+    gesture_moved_ = false;
     draft_generation_++;
     return ok;
   }
 
   if (state_ == GradientToolState::DraggingHandle) {
+    if (!gesture_moved_) {
+      state_ = GradientToolState::Idle;
+      active_stop_id_ = 0;
+      draft_generation_++;
+      return false;
+    }
     const bool ok = commit();
     state_ = GradientToolState::Idle;
+    active_stop_id_ = 0;
+    gesture_moved_ = false;
     draft_generation_++;
     return ok;
   }
 
   state_ = GradientToolState::Idle;
+  gesture_moved_ = false;
   return false;
 }
 
 void GradientTool::on_cancel() {
   state_ = GradientToolState::Idle;
+  active_stop_id_ = 0;
+  gesture_moved_ = false;
   draft_generation_++;
   init_draft_from_targets();
 }
@@ -320,6 +367,20 @@ bool GradientTool::set_draft_paint(document::GradientPaint paint) {
   if (const auto err = paint.validation_error()) {
     return false;
   }
+  if (draft_paint_) {
+    *draft_paint_ = std::move(paint);
+  } else {
+    draft_paint_ = std::make_shared<document::GradientPaint>(std::move(paint));
+  }
+  kind_ = draft_paint_->kind;
+  spread_ = draft_paint_->spread;
+  draft_generation_++;
+  return true;
+}
+
+bool GradientTool::set_shared_draft_paint(
+    std::shared_ptr<document::GradientPaint> paint) {
+  if (!paint || paint->validation_error()) return false;
   draft_paint_ = std::move(paint);
   kind_ = draft_paint_->kind;
   spread_ = draft_paint_->spread;
@@ -329,7 +390,7 @@ bool GradientTool::set_draft_paint(document::GradientPaint paint) {
 
 bool GradientTool::reverse_stops() {
   if (!draft_paint_) return false;
-  draft_paint_ = draft_paint_->with_reversed_stops();
+  *draft_paint_ = draft_paint_->with_reversed_stops();
   draft_generation_++;
   return true;
 }
@@ -356,12 +417,18 @@ bool GradientTool::commit() {
 
   std::vector<document::FillPaintReplacement> replacements;
   replacements.reserve(target_ids_.size());
-  auto grad_ptr = std::make_shared<const document::GradientPaint>(*draft_paint_);
   for (const auto id : target_ids_) {
+    document::GradientPaint paint = *draft_paint_;
+    std::vector<uint64_t> stop_ids;
+    stop_ids.reserve(paint.stops.size());
+    for (size_t i = 0; i < paint.stops.size(); ++i)
+      stop_ids.push_back(document::allocate_gradient_stop_id());
+    paint = paint.clone_with_new_ids(document::allocate_gradient_paint_id(), stop_ids);
+    auto grad_ptr = std::make_shared<const document::GradientPaint>(std::move(paint));
     replacements.push_back(document::FillPaintReplacement{
         id,
         true,
-        color::RGBColor{0.0, 0.0, 0.0, 1.0},
+        grad_ptr->stops.front().color,
         grad_ptr
     });
   }

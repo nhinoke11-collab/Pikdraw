@@ -1,36 +1,67 @@
-# PikDraw agent instructions
+# Quy tắc làm việc PikDraw
 
-## Quy trình làm việc tinh gọn (Streamlined Workflow)
+Đây là nguồn duy nhất cho workflow của Codex, Claude và các agent khác trong repo.
+CLAUDE.md/GEMINI.md chỉ dẫn tới file này; tài liệu feature và roadmap không được đặt workflow khác.
 
-- Làm việc trực tiếp trong source gốc: C:/Users/Administrator/Downloads/PikDraw. Không tạo worktree, clone hay nhánh task riêng.
-- Tuyệt đối loại bỏ chu trình harness hành chính rườm rà (task create/claim/handoff/lease). Triển khai trực tiếp và linh hoạt theo yêu cầu người dùng.
-- Cho phép Git commit rõ ràng sau khi hoàn thành tính năng và test pass (`tooling/native/build.ps1 -Test`), giúp working tree sạch sẽ, tránh dồn ứ hàng chục file dirty chưa commit.
-- Giữ nguyên local edits của người dùng; không tự ý reset, stash hoặc xóa code đang viết dở khi chưa được người dùng xác nhận.
+## Source và build
 
-## Mã và hành vi
+- Làm trực tiếp tại source gốc C:/Users/CK ART STAGE/Downloads/PikDraw. Không tạo worktree, clone hoặc nhánh task.
+- Thực hiện yêu cầu trực tiếp; không yêu cầu task create/claim/handoff/lease hay nạp context packet hành chính.
+- Đọc Git status trước khi sửa. Giữ local edits; không reset, stash, clean hoặc ghi đè code của người dùng.
+- Native build/test qua tooling/native/build.ps1, dùng chung khóa .agent/native-build.lock và build/win-dev.
+  App duy nhất: build/win-dev/apps/desktop/pikdraw.exe. Không xóa khóa của tiến trình đang chạy.
+- Build giữ cấu hình hiện có theo mặc định. Chọn test theo target; full suite phải dùng -AllTests.
+  Nhiều task dùng -Status/-Submit và mã yêu cầu chung; yêu cầu đang chờ thì theo dõi -Wait, không gửi lại.
+  Hàng đợi là tự động, không thêm thủ tục claim/lease. Cú pháp và retry xem docs/development/native-build.md.
+- Trong vòng sửa thường dùng Auto; gom kiểm tra Release thành một đợt, tránh đảo Debug/Release theo từng task.
+  Tiến độ Ninja là số bước khác chi phí, không suy phần trăm thời gian hoặc ETA từ số file/phút.
+- Chọn target/test đúng phạm vi. Commit chỉ phần đã hoàn thành và kiểm chứng khi có thể tách khỏi local edits khác.
 
-- Runtime desktop hiện tại là C++20 / Win32 Native Shell: Direct2D 1.1 / D3D11 hardware hoặc WARP dựng canvas qua ViewportRenderer; frame được staging/readback về pixel buffer rồi GDI chép vào backbuffer và vẽ overlays. SoftwareRasterizer là CPU fallback/oracle. Qt 6 và Skia vẫn là thiết kế định hướng chờ toolchain đồng nhất ABI.
-- Đọc registry/modules.json để biết dependency. Core/module không phụ thuộc ngược vào apps/desktop.
-- Document writes đi qua command/transaction và một writer logic. Giữ stable IDs, undo/redo, đơn vị thật, Unicode, màu nguồn và metadata. Async result phải bị từ chối khi revision/epoch/job generation đã cũ.
-- Importer và plugin ngoài process trả dữ liệu chưa tin cậy; host kiểm tra capability, kích thước, revision và nội dung trước khi áp dụng.
-- **Ngưỡng độ dài file (Tối đa 2000 dòng)**: Mỗi file code chuẩn tối đa **2000 dòng** (khuyến nghị 300–1800 dòng). **Tuyệt đối không nối đuôi (append)** tính năng mới vào các file đã vượt 2000 dòng; phải tách file theo nhóm tính năng/domain rõ ràng. Xem `docs/development/code-organization.md` và `docs/roadmap/architecture-remediation-plan-20261018.md`.
+## Kiến trúc và dữ liệu
 
-## Lập kế hoạch tính năng dùng tài nguyên vector
+- registry/modules.json quyết định dependency. Core/module không phụ thuộc apps/desktop.
+- Runtime: C++20/Win32, Direct2D 1.1/D3D11 hardware hoặc WARP, đọc frame về BGRA rồi GDI trình bày.
+  SoftwareRasterizer là fallback/oracle. Qt/Skia chưa phải runtime; không bắt buộc đổi framework để thêm module.
+- Document writes qua command/transaction và một logical writer. Giữ IDs, Undo/Redo, đơn vị thật,
+  Unicode, màu/profile, metadata và revision. Snapshot/asset bất biến; async kiểm epoch/revision/generation trước commit.
+- Importer/plugin output là dữ liệu chưa tin cậy: kiểm schema, capability, kích thước, số lượng và nội dung trước áp dụng.
+- Tính toán nặng phải có cancellation, quota và progress; không chờ worker/network/AI trong UI event loop.
+- File thiết kế chỉ dùng .pr. Extension không cấp capability hoặc xác nhận schema.
+  Payload schema v23 dùng container v23 dưới 1 MiB hoặc container chunk v24 với STORE/DEFLATE.
+  Schema v24 deduplicate encoded source và buffer RGBA8/RGBA16 giống nhau trong container chunk v25; reader nhận v2–v25. Không còn trần toàn file 256 MiB hoặc quota cứng
+  100k object/1m path element; wire widths và memory quota vẫn giới hạn dữ liệu đọc.
+  Streaming trực tiếp, index và lazy assets trong docs/architecture/native-pr-format.md chưa triển khai.
+- Mỗi file code tối đa 2000 dòng, khuyến nghị 300–1800. Tách theo domain trước khi thêm tính năng vào file quá dài.
+  Xem docs/development/code-organization.md.
 
-Khi lập kế hoạch hoặc đặc tả cho chức năng đọc/nhập, chỉnh sửa, render, chuyển đổi hay dùng tài nguyên vector tải từ mạng, phải đọc [hướng dẫn tương thích tài nguyên vector](docs/architecture/vector-resource-interoperability.md) và đối chiếu C8/C9 cùng capability hiện tại. Phạm vi thường gồm PDF, AI, CDR, EPS, SVG và DXF; nêu rõ định dạng nào liên quan hoặc không áp dụng.
+## Đọc tài liệu theo việc
 
-Plan phải mô tả adapter riêng theo định dạng/phiên bản đưa dữ liệu vào mô hình tài liệu trung lập, rồi dùng chung semantics command/edit/render của PikDraw ở nơi đã kiểm chứng. Ghi ma trận version/representation/feature và tách kết quả xem/render, editability, metadata nguồn, export round-trip và khả năng sản xuất. “Dùng chung thuật toán” nghĩa là dùng chung model và semantics sau khi normalize, không phải ép mọi định dạng qua một parser hoặc converter có thể làm mất nghĩa.
+Bắt đầu bằng docs/START.md và registry/module liên quan; chỉ mở contract/feature cần dùng.
+docs/project-state.json là snapshot hiện hành, tối đa 8000 byte, không phải nhật ký.
+docs/README.md chỉ mục nguồn hiện tại; roadmap/ADR cũ chỉ dùng làm ngữ cảnh, phải đối chiếu source.
 
-## Thay đổi giao diện
+Với vector PDF/AI/CDR/EPS/SVG/DXF, đọc docs/architecture/vector-resource-interoperability.md và C8/C9.
+Plan nêu adapter theo format/version/representation, đưa vào document trung lập rồi dùng chung semantics
+đã kiểm chứng. Báo riêng render, editability, provenance, source export round-trip và production.
+Nêu định dạng không áp dụng; không ép tất cả qua một parser làm mất nghĩa.
 
-Với thay đổi UI, đọc docs/design/ui-ux-standard.md và đối chiếu docs/architecture/workspace-layout.md. Ghi feature spec hoặc nội dung tương đương: đường menu, action ID, vị trí toolbox/toolbar, contextual property bar và Properties, phạm vi/trạng thái field, icon SVG, label ngắn, tooltip/focus help, status hint và hướng dẫn dùng. Ghi rõ mục không áp dụng. Dùng bề mặt hiện có; HTML/SVG cũ chỉ là tư liệu. Agent tự quyết định lựa chọn thường lệ trong scope và tiếp tục triển khai, không chờ người dùng điền form hay duyệt trước.
+Với UI, đọc docs/design/ui-ux-standard.md và docs/architecture/workspace-layout.md.
+Spec ghi menu/action ID, toolbox/toolbar, property bar/Properties, field scopes/states, SVG icon,
+label, tooltip/focus help, status hint và hướng dẫn dùng; mục không áp dụng ghi rõ.
+Dùng bề mặt hiện có, agent tự quyết định lựa chọn thường lệ và tiếp tục triển khai.
 
-## Kiểm tra, ghi log ngắn gọn và bàn giao
+## Test và dọn output bắt buộc
 
-- Chạy kiểm tra đúng mục tiêu thay đổi. Build/test native qua `tooling/native/build.ps1`; ưu tiên chỉ định `-Test -TestTarget <target_name> -TestRegex <regex>` thay vì build lại toàn bộ test suite. App chuẩn là `build/win-dev/apps/desktop/pikdraw.exe`.
-- Với thay đổi hành vi, ưu tiên mở rộng test hiện có của module thay vì tạo file test `.cpp` rời rạc mới. Sau khi kiểm tra, xóa ngay test source dùng một lần, ảnh chụp `.bmp`/`.png` tạm, fixture/output/log tạm. Xem docs/quality/feature-acceptance.md.
-- **Báo cáo và cập nhật trạng thái**:
-  - Báo cáo kết quả trực tiếp, súc tích cho người dùng kèm các lệnh kiểm tra và bằng chứng thực tế. Không tạo phiếu handoff hay tài liệu snapshot trung gian.
-  - `docs/project-state.json` chỉ lưu trạng thái snapshot hiện hành (tối đa 8.000 byte); **tuyệt đối không nối đuôi (append) nhật ký lịch sử từng ngày hay bảng số liệu dài** vào `project-state.json`.
-- Báo đúng lệnh, kết quả, giới hạn và paths đã đổi. Không suy ra UX, performance, fidelity hoặc containment từ harness pass.
-- Tài liệu hướng người dùng viết bằng tiếng Việt; hợp đồng kỹ thuật ngắn gọn có thể dùng tiếng Anh.
+- Ưu tiên mở rộng regression test của module. Test có giá trị tiếp tục ở trong suite; không xóa cả tests/.
+- Probe/source dùng một lần, ảnh chụp, fixture tự sinh, file thiết kế test, dump, trace và log tạm phải xóa
+  sau khi đã đọc và báo kết quả, kể cả lượt test thất bại. Sửa test để tự dọn khi thoát/exception.
+- Output mới đặt trong build/win-dev/test-output/<run-id> hoặc thư mục tạm riêng có owner;
+  dùng biến PIKDRAW_TEST_OUTPUT_DIR khi runner cung cấp. Không tạo output test ở root/source/docs.
+- Runner dọn thư mục output của lượt CTest thành công. Khi thất bại đọc log cần thiết, sửa lỗi và
+  dọn phần còn lại bằng tooling/native/clean-test-artifacts.ps1. Không giữ dump lặp làm tài liệu.
+- Chỉ xóa path đã xác minh nằm trong workspace/output riêng và đã xác định là generated.
+  Không xóa fixture dùng lại, test đã đăng ký, source, toolchain, build cache/binary canonical,
+  dữ liệu khách hàng, backup hay recovery của người dùng.
+- Báo trực tiếp lệnh, kết quả, paths thay đổi và giới hạn. Không tạo handoff/snapshot trung gian;
+  không suy ra FPS/UX/fidelity/containment từ build hoặc test không đo các thuộc tính đó.
+- Tài liệu hướng người dùng viết tiếng Việt; contract kỹ thuật có thể dùng tiếng Anh.

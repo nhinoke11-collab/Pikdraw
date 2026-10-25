@@ -44,6 +44,7 @@ struct PenHandleNumericConstraints {
 /// It does not own document writes; commits still use PenDrawingTool commands.
 class PenToolController {
 public:
+    void set_destination_owner(document::ObjectId id) noexcept { tool_.set_destination_owner(id); }
     explicit PenToolController(document::Document& document) noexcept
         : document_(document) {}
 

@@ -6,6 +6,7 @@ option(PIKDRAW_BUILD_TESTS "Build native test targets and ctest runner" OFF)
 option(PIKDRAW_ENABLE_SANITIZERS "Enable address and undefined sanitizers if available" OFF)
 option(PIKDRAW_REQUIRE_M1_TARGETS "Require Milestone M1 module targets to be present" OFF)
 option(PIKDRAW_FORCE_SOFTWARE "Enforce pure software 2D rendering path for testing" OFF)
+option(PIKDRAW_ENABLE_PCH "Enable precompiled headers for fast incremental builds" ON)
 
 # Export compile commands for IDEs (clangd, vscode)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile commands" FORCE)

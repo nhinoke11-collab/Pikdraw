@@ -30,18 +30,40 @@ void expect_error(numeric::ErrorCode actual, numeric::ErrorCode expected, const 
 void quantity_vectors() {
     auto inch = numeric::parse_length_mm("1in");
     auto points = numeric::parse_length_mm("72pt");
+    auto meters = numeric::parse_length_mm("1m");
+    auto feet = numeric::parse_length_mm("1ft");
+    auto yards = numeric::parse_length_mm("1yd");
+    auto picas = numeric::parse_length_mm("6pc");
+    auto eighth_inch = numeric::parse_length_mm("1/8in");
+    auto mixed_fraction = numeric::parse_length_mm("1 1/2in");
+    auto mixed_units = numeric::parse_length_mm("5ft+6in");
     auto centimeters = numeric::parse_length_mm("1cm");
     auto expression = numeric::parse_length_mm("2*125mm");
     auto parenthesized = numeric::parse_length_mm("(100mm+20mm)/2");
     auto bare = numeric::parse_length_mm("12.5");
     auto angle = numeric::parse_angle_degrees("1.5707963267948966rad");
 
-    check(inch && points && centimeters && expression && parenthesized && bare && angle,
+    check(inch && points && meters && feet && yards && picas && eighth_inch && mixed_fraction && mixed_units &&
+          centimeters && expression && parenthesized && bare && angle,
           "valid unit and expression inputs parse");
     if (inch)
         near(*inch.value, 25.4, 1e-12, "one inch converts to 25.4 mm");
     if (points)
         near(*points.value, 25.4, 1e-12, "72 points convert to one inch");
+    if (meters)
+        near(*meters.value, 1000.0, 1e-12, "one meter converts to 1000 mm");
+    if (feet)
+        near(*feet.value, 304.8, 1e-12, "one international foot converts to 304.8 mm");
+    if (yards)
+        near(*yards.value, 914.4, 1e-12, "one yard converts to 914.4 mm");
+    if (picas)
+        near(*picas.value, 25.4, 1e-12, "six picas convert to one inch");
+    if (eighth_inch)
+        near(*eighth_inch.value, 3.175, 1e-12, "fractional inch parses");
+    if (mixed_fraction)
+        near(*mixed_fraction.value, 38.1, 1e-12, "mixed number fraction parses as one and a half inches");
+    if (mixed_units)
+        near(*mixed_units.value, 1676.4, 1e-12, "mixed feet and inch expression parses");
     if (centimeters)
         near(*centimeters.value, 10.0, 1e-12, "one centimeter converts to 10 mm");
     if (expression)
@@ -62,6 +84,26 @@ void quantity_vectors() {
     auto mismatch = numeric::parse_length_mm("2deg");
     expect_error(mismatch.diagnostic.code, numeric::ErrorCode::WrongDimension,
                  "angle cannot be consumed as a length");
+
+    numeric::ParseOptions inches;
+    inches.default_length_unit = pikdraw::geometry::units::LengthUnit::Inch;
+    const auto bare_in_inches = numeric::parse_length_mm("2.5", inches);
+    const auto explicit_mm_in_inches = numeric::parse_length_mm("25.4mm", inches);
+    check(bare_in_inches && explicit_mm_in_inches, "field unit context and explicit suffix parse");
+    if (bare_in_inches)
+        near(*bare_in_inches.value, 63.5, 1e-12, "bare value follows its inch field context");
+    if (explicit_mm_in_inches)
+        near(*explicit_mm_in_inches.value, 25.4, 1e-12, "explicit suffix overrides the field context");
+
+    const auto pixel_without_dpi = numeric::parse_length_mm("1px");
+    expect_error(pixel_without_dpi.diagnostic.code, numeric::ErrorCode::MissingUnitContext,
+                 "pixel length requires explicit DPI");
+    numeric::ParseOptions pixels;
+    pixels.pixel_dpi = 96.0;
+    const auto css_pixel = numeric::parse_length_mm("96px", pixels);
+    check(static_cast<bool>(css_pixel), "pixel length parses with a DPI context");
+    if (css_pixel)
+        near(*css_pixel.value, 25.4, 1e-12, "96 pixels at 96 DPI convert to one inch");
 }
 
 void point_vectors() {
@@ -131,6 +173,7 @@ void rejects_invalid_or_unsafe_inputs() {
     auto nan = numeric::parse_quantity("NaN");
     auto infinity = numeric::parse_quantity("Inf");
     auto divide_zero = numeric::parse_quantity("10mm/0");
+    auto mixed_fraction_zero = numeric::parse_length_mm("1 1/0in");
     auto mixed_add = numeric::parse_quantity("10mm+2deg");
     auto mixed_multiply = numeric::parse_quantity("2mm*3cm");
     auto overflow_literal = numeric::parse_quantity("1e309mm");
@@ -158,6 +201,8 @@ void rejects_invalid_or_unsafe_inputs() {
     expect_error(nan.diagnostic.code, numeric::ErrorCode::NonFiniteValue, "NaN is rejected explicitly");
     expect_error(infinity.diagnostic.code, numeric::ErrorCode::NonFiniteValue, "infinity is rejected explicitly");
     expect_error(divide_zero.diagnostic.code, numeric::ErrorCode::DivisionByZero, "division by zero is rejected");
+    expect_error(mixed_fraction_zero.diagnostic.code, numeric::ErrorCode::DivisionByZero,
+                 "mixed fraction with a zero denominator is rejected");
     expect_error(mixed_add.diagnostic.code, numeric::ErrorCode::WrongDimension,
                  "addition of length and angle is rejected");
     expect_error(mixed_multiply.diagnostic.code, numeric::ErrorCode::WrongDimension,

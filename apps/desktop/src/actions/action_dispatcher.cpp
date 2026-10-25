@@ -15,7 +15,22 @@ void ActionDispatcher::register_action(ActionDescriptor desc) {
     if (default_shortcuts_.find(id) == default_shortcuts_.end()) {
         default_shortcuts_[id] = desc.shortcut;
     }
+
+    const auto existing = actions_.find(id);
+    if (existing != actions_.end() && !existing->second.shortcut.empty() &&
+        existing->second.shortcut != desc.shortcut) {
+        const auto old_binding = shortcut_map_.find(existing->second.shortcut);
+        if (old_binding != shortcut_map_.end() && old_binding->second == id)
+            shortcut_map_.erase(old_binding);
+    }
     if (!desc.shortcut.empty()) {
+        const auto conflict = shortcut_map_.find(desc.shortcut);
+        if (conflict != shortcut_map_.end() && conflict->second != id) {
+            const auto previous_action = actions_.find(conflict->second);
+            if (previous_action != actions_.end())
+                previous_action->second.shortcut.clear();
+            shortcut_map_.erase(conflict);
+        }
         shortcut_map_[desc.shortcut] = id;
     }
     actions_[id] = std::move(desc);
@@ -55,13 +70,22 @@ bool ActionDispatcher::clear_action_shortcut(std::string_view action_id) {
 
 void ActionDispatcher::reset_to_default_shortcuts() {
     shortcut_map_.clear();
-    for (auto& [id, desc] : actions_) {
+    for (const auto& id : action_order_) {
+        auto action_it = actions_.find(id);
+        if (action_it == actions_.end()) continue;
+        auto& desc = action_it->second;
         auto def_it = default_shortcuts_.find(id);
         const std::string def_sc = (def_it != default_shortcuts_.end()) ? def_it->second : "";
-        desc.shortcut = def_sc;
-        if (!def_sc.empty()) {
-            shortcut_map_[def_sc] = id;
+        if (def_sc.empty()) {
+            desc.shortcut.clear();
+            continue;
         }
+        if (shortcut_map_.find(def_sc) != shortcut_map_.end()) {
+            desc.shortcut.clear();
+            continue;
+        }
+        desc.shortcut = def_sc;
+        shortcut_map_[def_sc] = id;
     }
 }
 
@@ -102,13 +126,16 @@ bool ActionDispatcher::dispatch(std::string_view action_id) {
     if (desc.is_enabled && !desc.is_enabled()) {
         return false;
     }
+    if (!desc.handler) {
+        return false;
+    }
 
     last_dispatched_id_ = desc.id;
+    if (history_.size() == max_dispatch_history)
+        history_.erase(history_.begin());
     history_.push_back(desc.id);
 
-    if (desc.handler) {
-        desc.handler();
-    }
+    desc.handler();
     return true;
 }
 

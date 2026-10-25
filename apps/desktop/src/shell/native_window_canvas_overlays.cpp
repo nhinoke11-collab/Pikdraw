@@ -5,6 +5,7 @@
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/gradient_tool_controller.hpp"
 #include "../tools/dimension_tool_controller.hpp"
+#include "../tools/annotation/annotation_tool_controller.hpp"
 #include "native_gdiplus_api.hpp"
 #include "native_window_length_input.hpp"
 
@@ -1002,13 +1003,17 @@ void NativeWindow::paint_dimension_canvas_overlay(HDC dc, const RECT& area) {
 void NativeWindow::paint_gradient_canvas_overlay(HDC dc, const RECT& area) {
     if (!gradient_tool_ || !gradient_tool_->active())
         return;
+    if (gradient_tool_->target_objects().size() != 1)
+        return;
 
     const auto* paint = gradient_tool_->active_draft_paint();
     if (!paint) return;
 
     const auto& camera = root().renderer().camera();
     const auto screen = [&](geometry::Point2D pt) {
-        const auto local = camera.world_to_screen(pt);
+        const auto world = gradient_tool_->object_to_world(pt);
+        if (!world) return POINT{area.right + 64, area.bottom + 64};
+        const auto local = camera.world_to_screen(*world);
         return POINT{area.left + static_cast<LONG>(std::lround(local.x)),
                      area.top + static_cast<LONG>(std::lround(local.y))};
     };
@@ -1353,9 +1358,10 @@ void NativeWindow::paint_canvas_rulers(HDC dc, int width, int height) {
     const COLORREF tick = theme_ == ThemeMode::CyberDark ? RGB(82, 98, 118) : RGB(100, 116, 139);
     const COLORREF text = theme_ == ThemeMode::CyberDark ? RGB(171, 185, 202) : RGB(71, 85, 105);
     HBRUSH base_brush = CreateSolidBrush(base);
+    const int tb_w = toolbox_width();
     RECT top_ruler{area.left, 102, area.right, area.top};
-    RECT left_ruler{52, area.top, area.left, area.bottom};
-    RECT corner{52, 102, area.left, area.top};
+    RECT left_ruler{tb_w, area.top, area.left, area.bottom};
+    RECT corner{tb_w, 102, area.left, area.top};
     FillRect(dc, &top_ruler, base_brush);
     FillRect(dc, &left_ruler, base_brush);
     FillRect(dc, &corner, base_brush);
@@ -1370,7 +1376,7 @@ void NativeWindow::paint_canvas_rulers(HDC dc, int width, int height) {
     SetTextColor(dc, text);
     const auto unit_label = NativeWindow::utf8_to_wide(
         std::string(display_length_unit_suffix(display_length_unit_)));
-    TextOutW(dc, 55, 104, unit_label.c_str(), static_cast<int>(unit_label.size()));
+    TextOutW(dc, tb_w + 3, 104, unit_label.c_str(), static_cast<int>(unit_label.size()));
     const double left_world = camera.screen_to_world({0.0f, 0.0f}).x;
     const double right_world = camera.screen_to_world(
         {static_cast<float>(area.right - area.left), 0.0f}).x;
@@ -1393,7 +1399,7 @@ void NativeWindow::paint_canvas_rulers(HDC dc, int width, int height) {
     const double top_world = camera.screen_to_world({0.0f, 0.0f}).y;
     const double first_y = std::floor(bottom_world / minor_y) * minor_y;
     const int saved = SaveDC(dc);
-    IntersectClipRect(dc, 52, area.top, area.left, area.bottom);
+    IntersectClipRect(dc, tb_w, area.top, area.left, area.bottom);
     HFONT vertical_font = CreateFontW(10, 0, 900, 900, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
@@ -1447,6 +1453,122 @@ void NativeWindow::paint_canvas_rulers(HDC dc, int width, int height) {
     SelectObject(dc, old_font);
     SelectObject(dc, old_pen);
     DeleteObject(line);
+}
+
+void NativeWindow::paint_annotation_canvas_overlay(HDC dc, const RECT& area) {
+    if (!annotation_tool_ || !annotation_tool_->active() || !annotation_tool_->has_preview())
+        return;
+
+    const auto& camera = root().renderer().camera();
+    const auto screen = [&](geometry::Point2D pt) {
+        const auto local = camera.world_to_screen(pt);
+        return POINT{area.left + static_cast<LONG>(std::lround(local.x)),
+                     area.top + static_cast<LONG>(std::lround(local.y))};
+    };
+
+    const int saved = SaveDC(dc);
+    SetBkMode(dc, TRANSPARENT);
+
+    const COLORREF col_accent = RGB(0, 242, 195);
+    const COLORREF col_bg = theme_ == ThemeMode::CyberDark ? RGB(15, 23, 42) : RGB(255, 255, 255);
+    const COLORREF col_text = theme_ == ThemeMode::CyberDark ? RGB(255, 255, 255) : RGB(30, 41, 59);
+
+    auto draw_path = [&](const geometry::Path2D& path, COLORREF col, int pen_style) {
+        HPEN pen = CreatePen(pen_style, 1, col);
+        HGDIOBJ old_pen = SelectObject(dc, pen);
+        POINT start_pt{0, 0};
+        for (const auto& el : path.elements()) {
+            if (el.verb == geometry::PathVerb::MoveTo) {
+                start_pt = screen(el.pt);
+                MoveToEx(dc, start_pt.x, start_pt.y, nullptr);
+            } else if (el.verb == geometry::PathVerb::LineTo) {
+                const POINT p = screen(el.pt);
+                LineTo(dc, p.x, p.y);
+            } else if (el.verb == geometry::PathVerb::Close) {
+                LineTo(dc, start_pt.x, start_pt.y);
+            }
+        }
+        SelectObject(dc, old_pen);
+        DeleteObject(pen);
+    };
+
+    if (annotation_tool_->mode() == tools::AnnotationToolMode::DetailView) {
+        const auto& dv_layout = annotation_tool_->preview_detail_view_layout();
+        draw_path(dv_layout.marker_path, col_accent, PS_DOT);
+        draw_path(dv_layout.frame_path, col_accent, PS_SOLID);
+        draw_path(dv_layout.connector_path, col_accent, PS_DOT);
+
+        if (!dv_layout.formatted_label.empty()) {
+            const POINT lp = screen(dv_layout.label_origin);
+            std::wstring wlabel(dv_layout.formatted_label.begin(), dv_layout.formatted_label.end());
+            ensure_ui_fonts();
+            SelectObject(dc, font_secondary_);
+            SIZE text_size{0, 0};
+            GetTextExtentPoint32W(dc, wlabel.c_str(), static_cast<int>(wlabel.size()), &text_size);
+            RECT text_rc{lp.x - text_size.cx / 2 - 4, lp.y - text_size.cy / 2 - 2,
+                         lp.x + text_size.cx / 2 + 4, lp.y + text_size.cy / 2 + 2};
+            HBRUSH bg_brush = CreateSolidBrush(col_bg);
+            HPEN border_pen = CreatePen(PS_SOLID, 1, col_accent);
+            HGDIOBJ old_brush = SelectObject(dc, bg_brush);
+            HGDIOBJ old_pen = SelectObject(dc, border_pen);
+            RoundRect(dc, text_rc.left, text_rc.top, text_rc.right, text_rc.bottom, 4, 4);
+            SelectObject(dc, old_brush);
+            SelectObject(dc, old_pen);
+            DeleteObject(bg_brush);
+            DeleteObject(border_pen);
+
+            SetTextColor(dc, col_text);
+            DrawTextW(dc, wlabel.c_str(), -1, &text_rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        }
+    } else {
+        const auto& ann_layout = annotation_tool_->preview_annotation_layout();
+        draw_path(ann_layout.leader_path, col_accent, PS_SOLID);
+
+        if (!ann_layout.arrow_path.empty()) {
+            HBRUSH arr_brush = CreateSolidBrush(col_accent);
+            HPEN arr_pen = CreatePen(PS_SOLID, 1, col_accent);
+            HGDIOBJ old_brush = SelectObject(dc, arr_brush);
+            HGDIOBJ old_pen = SelectObject(dc, arr_pen);
+            std::vector<POINT> pts;
+            for (const auto& el : ann_layout.arrow_path.elements()) {
+                if (el.verb == geometry::PathVerb::MoveTo || el.verb == geometry::PathVerb::LineTo) {
+                    pts.push_back(screen(el.pt));
+                }
+            }
+            if (pts.size() >= 3) {
+                Polygon(dc, pts.data(), static_cast<int>(pts.size()));
+            }
+            SelectObject(dc, old_brush);
+            SelectObject(dc, old_pen);
+            DeleteObject(arr_brush);
+            DeleteObject(arr_pen);
+        }
+
+        if (!ann_layout.formatted_text.empty()) {
+            const POINT tp = screen(ann_layout.text_origin);
+            std::wstring wtext(ann_layout.formatted_text.begin(), ann_layout.formatted_text.end());
+            ensure_ui_fonts();
+            SelectObject(dc, font_secondary_);
+            SIZE text_size{0, 0};
+            GetTextExtentPoint32W(dc, wtext.c_str(), static_cast<int>(wtext.size()), &text_size);
+            RECT text_rc{tp.x, tp.y - text_size.cy, tp.x + text_size.cx + 6, tp.y + 4};
+            HBRUSH bg_brush = CreateSolidBrush(col_bg);
+            HPEN border_pen = CreatePen(PS_SOLID, 1, col_accent);
+            HGDIOBJ old_brush = SelectObject(dc, bg_brush);
+            HGDIOBJ old_pen = SelectObject(dc, border_pen);
+            RoundRect(dc, text_rc.left, text_rc.top, text_rc.right, text_rc.bottom, 4, 4);
+            SelectObject(dc, old_brush);
+            SelectObject(dc, old_pen);
+            DeleteObject(bg_brush);
+            DeleteObject(border_pen);
+
+            SetTextColor(dc, col_text);
+            RECT draw_rc{text_rc.left + 3, text_rc.top + 2, text_rc.right - 3, text_rc.bottom - 2};
+            DrawTextW(dc, wtext.c_str(), -1, &draw_rc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        }
+    }
+
+    RestoreDC(dc, saved);
 }
 
 #endif

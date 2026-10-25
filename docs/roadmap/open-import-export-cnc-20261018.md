@@ -1,7 +1,9 @@
 # Kế hoạch Open, Import, Export và trao đổi vector phục vụ CNC
 
+> Các trạng thái có ngày trong tài liệu này là lịch sử của feature. Runtime, định dạng và workflow hiện hành ở docs/START.md, docs/project-state.json và AGENTS.md; không dùng task/lease/handoff làm điều kiện triển khai.
+
 Ngày: 18/10/2026. Trạng thái: **đang triển khai tuần tự; đã có Hợp đồng C10 và kiến trúc ExportJob/AtomicExport; chưa nghiệm thu toàn bộ định dạng hoặc profile CNC**.
-Task tài liệu: `plan-file-interop-cnc-20261018`. Source: `C:/Users/Administrator/Downloads/PikDraw`.
+Task tài liệu: `plan-file-interop-cnc-20261018`. Source: `C:/Users/CK ART STAGE/Downloads/PikDraw`.
 Baseline Git: `1847e1011b45c85cf2de24df937b28621c08b54c` cộng working tree hiện hữu tại thời điểm khảo sát; có thay đổi của task khác.
 Tài liệu này bổ sung phạm vi UX, raster, export và CNC cho roadmap `import-resilience-20261016.md`; dùng khảo sát source mới bên dưới thay cho bảng hiện trạng cũ.
 
@@ -12,19 +14,19 @@ Tài liệu này bổ sung phạm vi UX, raster, export và CNC cho roadmap `imp
 - **F02–F03 — Document model và worker readiness:** snapshot đa trang và native storage v6/v7/v8 đã hoàn thành; lưu trữ đối tượng `ImageObject` giữ toàn vẹn source bytes, ICC profile, media type, DPI, bit depth và orientation. Dependency audit xác nhận WIC là Windows codec nội tại; PDFium/libcdr/Ghostscript đang trong hàng đợi pin build/license cách ly.
 - **F04 — Nền tảng File workflow và Atomic Export:** đã xây dựng hạ tầng `ExportJob` theo snapshot bất biến, `ExportOptions` có kiểm tra kiểu/phạm vi, `ExportReport` phân tách 7 trục đánh giá, và `AtomicExport` (ghi file tạm `.pikdraw-export-tmp-*`, flush, kiểm tra đọc lại qua validator độc lập rồi đổi tên nguyên tử qua `MoveFileExW`). Desktop UI đã tích hợp luồng xuất SVG tại `apps/desktop/src/shell/native_window_svg_export.cpp`, nối phím tắt Ctrl+E và menu.
 - **F05 — Raster nền tảng:** WIC decoder allowlist chạy trong AppContainer worker; PNG/JPEG/TIFF single-frame SDR được chuyển thành `ImageObject` RGBA8 an toàn với giới hạn 4M pixels/16 MiB. Native format v8 lưu trữ đầy đủ thuộc tính ảnh. Đang mở rộng sang xuất raster: schema encoder (JPEG quality/subsampling, PNG lossless/RGBA, TIFF single-frame LZW/Deflate), cơ chế tiling/streaming có effect halo chống tràn RAM và color pipeline bảo toàn sRGB/ICC.
-- **Khả năng runtime hiện tại:** Open native mở `.pikdraw`; Import nhận subset tĩnh SVG/DXF 2D và ảnh PNG/JPEG/TIFF (prototype SDR RGBA8). Export SVG đã chạy thực tế từ selection hoặc từng trang. Các định dạng PDF, CDR, AI, EPS, DXF export và CNC profile tiếp tục giữ trạng thái từ chối rõ ràng cho đến khi vượt qua từng gate kiểm định độc lập.
+- **Khả năng runtime hiện tại:** Open native mở `.pr`; Import nhận subset tĩnh SVG/DXF 2D và ảnh PNG/JPEG/TIFF (prototype SDR RGBA8). Export SVG đã chạy thực tế từ selection hoặc từng trang. Các định dạng PDF, CDR, AI, EPS, DXF export và CNC profile tiếp tục giữ trạng thái từ chối rõ ràng cho đến khi vượt qua từng gate kiểm định độc lập.
 - **F06–F11:** lộ trình triển khai tuần tự theo kế hoạch chi tiết bên dưới. Mỗi adapter bắt buộc có dependency lock, bộ fixture kiểm định, test round-trip độc lập và báo cáo không mất mát ngầm trước khi công bố hỗ trợ.
 
 ## 1. Phạm vi và kết quả người dùng cần
 
-- **Open / Ctrl+O:** mở `.pikdraw`, PDF, CDR, AI, SVG, EPS, DXF và ảnh thành tài liệu mới, đúng kích thước/đơn vị; giữ tài liệu đang làm trong tab riêng.
+- **Open / Ctrl+O:** mở `.pr`, PDF, CDR, AI, SVG, EPS, DXF và ảnh thành tài liệu mới, đúng kích thước/đơn vị; giữ tài liệu đang làm trong tab riêng.
 - **Import / Ctrl+I:** nhập một hoặc nhiều file vào tài liệu hiện tại; chọn trang, kích thước, vị trí và chế độ giữ nội dung; có preview, Cancel và Undo một bước duy nhất.
 - **Export / Ctrl+E:** JPG/JPEG, PNG, TIF/TIFF, SVG, EPS, DXF, PDF; chọn đối tượng, trang hiện tại, dải trang, toàn bộ trang hoặc mỗi đối tượng/trang một file riêng biệt.
 - **Giữ hiệu ứng tối đa:** kiểm riêng hiển thị, chỉnh sửa, dữ liệu nguồn, xuất ngược và độ chính xác sản xuất. Phần chưa giữ được phải có chỉ báo và lựa chọn trước khi nhận/xuất.
 - **CNC:** ưu tiên DXF và SVG có kích thước vật lý 1:1, đường cong chính xác trong ngân sách dung sai, topology đúng; EPS/PDF bổ sung cho thiết bị/CAM đã được kiểm chứng.
 - `dfx` trong yêu cầu được hiểu là **DXF**. File có đuôi `.dfx` chỉ được đề nghị nhận như DXF khi kiểm tra nội dung phù hợp; không tạo một format DFX mới.
 - Ảnh mở rộng: BMP và WebP ở đợt sau; GIF chỉ ảnh tĩnh/frame được chọn. PSD/RAW/HEIF/AVIF, DWG, 3D CAD, G-code và điều khiển máy không nằm trong đợt này.
-- AI/CDR trong phạm vi bắt buộc là **Open và Import**. Export AI/CDR gốc cần writer/SDK và gate riêng, không giả lập bằng đổi đuôi PDF/SVG. Lưu chỉnh sửa đầy đủ dùng `.pikdraw`.
+- AI/CDR trong phạm vi bắt buộc là **Open và Import**. Export AI/CDR gốc cần writer/SDK và gate riêng, không giả lập bằng đổi đuôi PDF/SVG. Lưu chỉnh sửa đầy đủ dùng `.pr`.
 
 Mục tiêu nghiệm thu là không mất nội dung hoặc đổi geometry âm thầm trong profile được công bố. Không thể cam kết mọi phiên bản AI/CDR, plugin và hiệu ứng độc quyền đều vừa giống tuyệt đối vừa sửa nguyên bản. Khi không có đường giữ nội dung đủ bằng chứng, phải báo giới hạn thay vì mở một bản thiếu chi tiết rồi thông báo thành công.
 
@@ -34,7 +36,7 @@ Khảo sát dưới đây ghi lại baseline lúc soạn kế hoạch; phần �
 
 | Thành phần hiện tại | Bằng chứng source | Khoảng thiếu cần xử lý |
 | --- | --- | --- |
-| Open native | `apps/desktop/src/shell/native_window_files.cpp`: filter `.pikdraw`, gọi `open_native` | Chưa có dispatcher mở định dạng ngoài; hiện hỏi bỏ tài liệu dirty rồi thay nội dung |
+| Open native | `apps/desktop/src/shell/native_window_files.cpp`: filter `.pr`, gọi `open_native` | Chưa có dispatcher mở định dạng ngoài; hiện hỏi bỏ tài liệu dirty rồi thay nội dung |
 | Export UI | Cùng file có `export_svg_dialog`; `native_window_shortcuts.cpp` nối Ctrl+E vào dialog này | Đã có nền tảng `ExportJob`/`SVGExporter`; cần dialog Export đa định dạng/phạm vi |
 | Import và shortcut | `native_window_import.cpp`, `native_window_shortcuts.cpp` | Ctrl+I mở worker SVG/DXF/Raster; các định dạng ngoài allowlist bị từ chối rõ ràng |
 | Capability | `modules/interop/src/format_capability_matrix.cpp`, `modules/interop/README.md` | SVG static subset nhập/xuất prototype; DXF ASCII 2D chỉ nhập prototype; PDF/AI/CDR/EPS bị từ chối; Raster import prototype |
@@ -83,7 +85,7 @@ Tất cả ô dưới là **phạm vi đề xuất cần gate**, không thay cap
 | PDF 1.4-1.7; PDF 2.0 gate sau | Chọn trang/dải, MediaBox/TrimBox/CropBox | Native vector có oracle; phần phức tạp giữ reference có bằng chứng | Boxes, UserUnit, fonts, ICC, OCG, source locator | PDF vector/print profile; không tái tạo authoring AI | Chỉ geometry profile đã kiểm; scan không tự thành đường cắt |
 | AI PDF-compatible | Nhận diện `%PDF-1.5`, dùng adapter PDF | Sửa theo dữ liệu PDF hiện hữu | Giữ source bytes/hash, không bịa layers/artboards | Xuất SVG/PDF/EPS/DXF; chưa có AI native round-trip | Kiểm geometry và scale riêng |
 | AI legacy PostScript / không PDF | Nhánh legacy chỉ khi signature hợp lệ | Converted có report; authoring chưa đọc không nhận editable | Version nhận diện được; unknown giữ unknown | Chưa thuộc scope ghi | Chặn production nếu geometry chưa qua kiểm |
-| CDR RIFF (v11–X4) & ZIP (X5–2024) | libcdr/librevenge worker, whitelist theo version | Native khi semantics đúng; PowerClip/lens/mesh giữ reference | Giữ units, pages, order, source ID, fonts, colors | Không claim ghi CDR; .pikdraw lưu chỉnh sửa | Chỉ contours/units/transforms đã kiểm |
+| CDR RIFF (v11–X4) & ZIP (X5–2024) | libcdr/librevenge worker, whitelist theo version | Native khi semantics đúng; PowerClip/lens/mesh giữ reference | Giữ units, pages, order, source ID, fonts, colors | Không claim ghi CDR; .pr lưu chỉnh sửa | Chỉ contours/units/transforms đã kiểm |
 | EPS PostScript Level 2/3 | PostScript worker riêng, chuyển 2 bước qua PDF | Converted representation; giữ vector khi parser thực xuất vector | BoundingBox/HiResBoundingBox, fonts, version chain | EPS vector theo profile; flatten transparency có lựa chọn | Chỉ profile vector đã đối chiếu CAM; preview không là đường cắt |
 | SVG Design | XML/CSS/tree/use, gradient, clip, text, ảnh | Đối tượng native đầy đủ thuộc tính hiển thị | IDs, viewBox, units, CSS styles, metadata | Xuất SVG giữ đầy đủ style và phân cấp nhóm | Không dùng trực tiếp cho CNC nếu chứa style phức tạp |
 | SVG CNC | Paths phẳng, kích thước mm, viewBox nhất quán | Chuyển đổi text thành outlines thật, loại bỏ filter/style | Tọa độ chuẩn hóa, layer Cut/Score/Engrave | Xuất SVG CNC tối giản, độ chính xác tọa độ theo sai số mm | Kích thước 1:1, đường khép kín, topology đúng |
@@ -170,7 +172,7 @@ Ba chế độ xử lý mất mát cho người dùng:
 5. Với file Raster: kiểm tra DPI và kích thước pixel; cho phép xác nhận độ phân giải.
 6. Hiển thị bảng tóm tắt fidelity và preview trước khi nạp.
 7. Mở thành tài liệu mới trong tab riêng biệt, giữ nguyên tài liệu đang làm việc ở tab cũ.
-8. File mở từ định dạng ngoài được đánh dấu là tài liệu chuyển đổi chưa có đường lưu native; thao tác Ctrl+S đầu tiên bắt buộc mở Save As để lưu file `.pikdraw`, tuyệt đối không ghi đè lên file nguồn gốc.
+8. File mở từ định dạng ngoài được đánh dấu là tài liệu chuyển đổi chưa có đường lưu native; thao tác Ctrl+S đầu tiên bắt buộc mở Save As để lưu file `.pr`, tuyệt đối không ghi đè lên file nguồn gốc.
 
 ### Luồng Import (Ctrl+I)
 
@@ -358,7 +360,7 @@ Lộ trình chia thành 12 gói công việc độc lập. Mỗi gói sở hữu
 
 | ID | Kịch bản kiểm thử (Given / When) | Tiêu chí xác minh bắt buộc (Then / Verify) |
 | --- | --- | --- |
-| **AC01** | Tab đang có bản vẽ chưa lưu; nhấn Ctrl+O mở file vector ngoài | Tab cũ giữ nguyên vẹn; tab mới mở thành công; Ctrl+S đầu tiên bắt buộc Save As `.pikdraw`, không ghi đè nguồn |
+| **AC01** | Tab đang có bản vẽ chưa lưu; nhấn Ctrl+O mở file vector ngoài | Tab cũ giữ nguyên vẹn; tab mới mở thành công; Ctrl+S đầu tiên bắt buộc Save As `.pr`, không ghi đè nguồn |
 | **AC02** | Đang có bản vẽ; nhấn Ctrl+I chọn file, rê chuột xem khung dây, click đặt | Phím tắt mở Import (không kích hoạt Italic); đối tượng đặt đúng vị trí/kích thước thật; đúng một bước Undo |
 | **AC03** | Tác vụ Import/Export đang chạy; người dùng nhấn Esc hoặc đóng tab | Quá trình hủy ngay lập tức; dọn dẹp sạch file tạm; không tạo đối tượng rác trong tài liệu; không rò rỉ tiến trình |
 | **AC04** | Nhập file PDF/AI/CDR/EPS chứa hiệu ứng độc quyền và font chữ thiếu | Bảng fidelity nêu rõ thuộc tính không hỗ trợ; cho phép chọn giữ diện mạo hoặc outline; không âm thầm làm mất chi tiết |
@@ -408,18 +410,18 @@ flowchart LR
 
 ### 16.1 Bước 1: Nâng cấp Open Dispatcher (`apps/desktop/src/shell/native_window_files.cpp`)
 
-- **Hiện trạng gây lỗi:** Hàm `NativeWindow::open_document_dialog()` hardcode filter `kPikdrawFilter` (`*.pikdraw`) và chuyển thẳng đường dẫn vào `workflow().open_native()`. Khi người dùng chọn "All files" và click vào file `.cdr`, `.ai`, `.pdf`, `.svg`, `.dxf`, hàm nạp native thất bại và văng thông báo *"Không thể mở tệp PikDraw"*.
+- **Hiện trạng gây lỗi:** Hàm `NativeWindow::open_document_dialog()` hardcode filter `kPikdrawFilter` (`*.pr`) và chuyển thẳng đường dẫn vào `workflow().open_native()`. Khi người dùng chọn "All files" và click vào file `.cdr`, `.ai`, `.pdf`, `.svg`, `.dxf`, hàm nạp native thất bại và văng thông báo *"Không thể mở tệp PikDraw"*.
 - **Giải pháp lập trình cụ thể:**
   1. Cập nhật bộ lọc tệp (`dialog.lpstrFilter`) bổ sung rõ danh mục định dạng:
-     `L"Tất cả tệp hỗ trợ (*.pikdraw;*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff)\0*.pikdraw;*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff\0..."`
+     `L"Tất cả tệp hỗ trợ (*.pr;*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff)\0*.pr;*.svg;*.dxf;*.png;*.jpg;*.jpeg;*.tif;*.tiff\0..."`
   2. Bổ sung bộ điều hướng định dạng (Format Dispatcher):
-     - Nếu đuôi mở rộng là `.pikdraw`: giữ nguyên luồng `workflow().open_native(utf8_path)`.
+     - Nếu đuôi mở rộng là `.pr`: giữ nguyên luồng `workflow().open_native(utf8_path)`.
      - Nếu đuôi mở rộng là `.svg`, `.dxf`, `.png`, `.jpg`, `.jpeg`, `.tif`, `.tiff`:
        - Tạo một `DocumentTab` mới thông qua `add_tab()`.
        - Chạy tiến trình nạp nền (Import Worker) đưa đối tượng vào tab mới này.
        - Căn chỉnh canvas vừa vặn trang giấy (`fit_page_to_canvas()`).
        - Đặt tiêu đề tab theo tên tệp (ví dụ: `s11.dxf`, `banner.svg`).
-       - Đặt trạng thái `file_path = ""` để khi nhấn `Ctrl+S`, hệ thống mở hộp thoại `Save As` lưu thành `.pikdraw`, tuyệt đối không ghi đè lên file nguồn gốc.
+       - Đặt trạng thái `file_path = ""` để khi nhấn `Ctrl+S`, hệ thống mở hộp thoại `Save As` lưu thành `.pr`, tuyệt đối không ghi đè lên file nguồn gốc.
 - **Kết quả:** Ngay lập tức người dùng nhấn `Ctrl+O` có thể mở được các file DXF, SVG, và ảnh PNG/JPG/TIFF vào các tab làm việc độc lập mà không bị báo lỗi.
 
 ### 16.2 Bước 2: Triển khai Bộ nạp nhanh CDR (CDR Quick Extractor) cho Gói F09

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pikdraw/geometry/primitives/transform.hpp"
+#include "pikdraw/geometry/units/length_unit.hpp"
 #include <cstddef>
 #include <optional>
 #include <string_view>
@@ -24,6 +25,8 @@ enum class ErrorCode {
     ExpressionTooDeep,
     InvalidSyntax,
     UnknownUnit,
+    MissingUnitContext,
+    InvalidUnitContext,
     WrongDimension,
     InvalidOperation,
     DivisionByZero,
@@ -51,6 +54,14 @@ struct ParseResult {
 
 struct ParseOptions {
     char decimal_separator{'.'};
+    geometry::units::LengthUnit default_length_unit{geometry::units::LengthUnit::Millimeter};
+    std::optional<double> pixel_dpi;
+
+    ParseOptions() = default;
+    ParseOptions(char separator,
+                 geometry::units::LengthUnit length_unit = geometry::units::LengthUnit::Millimeter,
+                 std::optional<double> dpi = std::nullopt)
+        : decimal_separator(separator), default_length_unit(length_unit), pixel_dpi(dpi) {}
 };
 
 struct Quantity {

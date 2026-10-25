@@ -4,6 +4,8 @@
 #include "pikdraw/document/model/object.hpp"
 
 #include <cassert>
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <iostream>
@@ -12,6 +14,27 @@
 using namespace pikdraw::desktop;
 
 namespace {
+
+void use_cpu_renderer(NativeWindow &window) {
+    window.root().renderer().set_backend(
+        std::make_shared<pikdraw::rendering::SoftwareRasterizer>());
+}
+
+struct ScopedTestOutputDirectory {
+    std::filesystem::path path;
+
+    explicit ScopedTestOutputDirectory(const char *prefix) {
+        const auto nonce = std::chrono::steady_clock::now().time_since_epoch().count();
+        path = std::filesystem::temp_directory_path() /
+               (std::string(prefix) + std::to_string(nonce));
+        std::filesystem::create_directories(path);
+    }
+
+    ~ScopedTestOutputDirectory() {
+        std::error_code error;
+        std::filesystem::remove_all(path, error);
+    }
+};
 
 pikdraw::document::Appearance appearance_of(const NativeWindow &window,
                                              pikdraw::document::ObjectId id) {
@@ -27,10 +50,19 @@ pikdraw::document::Appearance appearance_of(const NativeWindow &window,
 
 void test_effect_tool_reactivation_and_shadow_drag() {
     NativeWindow window(1440, 900);
+    use_cpu_renderer(window);
     const auto path_id = window.workflow().add_rectangle(
         30.0, 36.0, 72.0, 44.0, "#80b8dc", "#28445e", 1.0);
     auto& selection = window.root().vector_controller().selection();
     selection.select(path_id);
+
+    const auto before_properties =
+        window.root().document().current_snapshot()->revision();
+    window.execute_menu_action(
+        static_cast<int>(MenuActionId::EffectsAppearanceFocus));
+    assert(window.style_inspector_visible());
+    assert(window.root().document().current_snapshot()->revision() ==
+           before_properties);
 
     const auto shadow_action = static_cast<int>(MenuActionId::EffectsDropShadow);
     window.execute_menu_action(shadow_action);
@@ -195,8 +227,93 @@ void test_effect_tool_reactivation_and_shadow_drag() {
     assert(appearance_of(window, second_id).effects.empty());
 }
 
+void test_extended_effect_add_preview_and_stack_blend() {
+    NativeWindow window(1440, 900);
+    use_cpu_renderer(window);
+    const auto path_id = window.workflow().add_rectangle(
+        30.0, 36.0, 72.0, 44.0, "#80b8dc", "#28445e", 1.0);
+    window.root().vector_controller().selection().select(path_id);
+    window.root().renderer().camera().set_center({66.0, 58.0});
+    window.root().renderer().camera().set_zoom(2.0);
+    const auto initial = window.root().document().current_snapshot();
+    const auto baseline_pixels = window.workflow().render_snapshot(256, 192);
+    assert(baseline_pixels.size() == 256u * 192u * 4u);
+
+    assert(window.workflow().begin_selected_effect_draft(
+        pikdraw::document::FeatherEffect{1.5}));
+    assert(window.workflow().set_effect_draft_preview(true));
+    const auto preview = window.workflow().snapshot_for_canvas();
+    assert(preview && preview != initial);
+    const auto preview_object = preview->objects().get(path_id);
+    assert(preview_object &&
+           std::holds_alternative<pikdraw::document::PathObject>(*preview_object));
+    const auto &preview_node =
+        std::get<pikdraw::document::PathObject>(*preview_object)
+            .appearance.effects.front();
+    assert(preview_node.schema_minor ==
+           pikdraw::document::kExtendedEffectNodeSchemaMinor);
+    const auto preview_pixels = window.workflow().render_snapshot(256, 192);
+    if (preview_pixels.empty()) {
+        std::cerr << "Extended effect preview render failed: zoom="
+                  << window.root().renderer().camera().zoom() << '\n';
+        for (const auto &diagnostic : window.root().renderer().last_metric().diagnostics)
+            std::cerr << "Render diagnostic: " << diagnostic.object_id << " "
+                      << diagnostic.error << " " << diagnostic.message << '\n';
+    }
+    assert(preview_pixels.size() == 256u * 192u * 4u);
+    assert(window.root().renderer().last_metric().diagnostics.empty());
+    assert(!std::equal(preview_pixels.begin(), preview_pixels.end(),
+                       baseline_pixels.begin(), baseline_pixels.end()));
+    window.workflow().cancel_effect_draft();
+    assert(window.workflow().snapshot_for_canvas() == initial);
+
+    assert(window.workflow().add_selected_effect(
+        pikdraw::document::ColorOverlayEffect{
+            pikdraw::color::RGBColor{0.2, 0.8, 0.3, 1.0}, 0.8}));
+    assert(window.workflow().add_selected_effect(
+        pikdraw::document::FeatherEffect{0.5}));
+    auto object = window.root().document().current_snapshot()->objects().get(path_id);
+    assert(object && std::holds_alternative<pikdraw::document::PathObject>(*object));
+    const auto &effects =
+        std::get<pikdraw::document::PathObject>(*object).appearance.effects;
+    assert(effects.size() == 2 &&
+           effects[0].schema_minor ==
+               pikdraw::document::kExtendedEffectNodeSchemaMinor &&
+           effects[1].schema_minor ==
+               pikdraw::document::kExtendedEffectNodeSchemaMinor);
+    assert(window.workflow().can_set_selected_effect_blend_mode(
+        0, pikdraw::document::BlendMode::Multiply));
+    assert(window.workflow().set_selected_effect_blend_mode(
+        0, pikdraw::document::BlendMode::Multiply));
+    object = window.root().document().current_snapshot()->objects().get(path_id);
+    const auto &updated_effects =
+        std::get<pikdraw::document::PathObject>(*object).appearance.effects;
+    assert(std::get<pikdraw::document::ColorOverlayEffect>(
+               updated_effects[0].parameters).blend_mode ==
+           pikdraw::document::BlendMode::Multiply);
+    assert(std::holds_alternative<pikdraw::document::FeatherEffect>(
+        updated_effects[1].parameters));
+}
+
+void test_active_backend_capability_gates_effect_authoring() {
+    NativeWindow window(1440, 900);
+    const auto path_id = window.workflow().add_rectangle(
+        18.0, 22.0, 48.0, 32.0, "#80b8dc", "#28445e", 1.0);
+    window.root().vector_controller().selection().select(path_id);
+    const pikdraw::document::EffectParameters effect =
+        pikdraw::document::FeatherEffect{1.0};
+    const bool backend_supports =
+        window.root().renderer().backend().supports_effect(effect);
+    assert(window.workflow().can_add_selected_effect(effect) == backend_supports);
+    if (!backend_supports) {
+        assert(!window.workflow().add_selected_effect(effect));
+        assert(appearance_of(window, path_id).effects.empty());
+    }
+}
+
 void test_non_normal_shadow_must_be_last_enabled_effect() {
     NativeWindow window(1440, 900);
+    use_cpu_renderer(window);
     const auto path_id = window.workflow().add_rectangle(
         20.0, 24.0, 64.0, 48.0, "#c08040", "#302010", 0.5);
     window.root().vector_controller().selection().select(path_id);
@@ -229,6 +346,7 @@ void test_non_normal_shadow_must_be_last_enabled_effect() {
 
 void test_shadow_blend_property_and_reactivation_edit_existing_node() {
     NativeWindow window(1440, 900);
+    use_cpu_renderer(window);
     const auto path_id = window.workflow().add_rectangle(
         30.0, 36.0, 72.0, 44.0, "#80b8dc", "#28445e", 1.0);
     window.root().vector_controller().selection().select(path_id);
@@ -391,13 +509,11 @@ void test_properties_draft_preview_buttons_and_localized_captures() {
     assert(window.workflow().effect_draft()->preview_enabled);
     assert(window.root().document().current_snapshot() == before);
 
-    const auto capture_dir = std::filesystem::temp_directory_path() /
-                             "pikdraw-effect-draft-test-20261017";
-    std::filesystem::create_directories(capture_dir);
+    ScopedTestOutputDirectory capture_dir("pikdraw-effect-draft-test-");
     window.set_language(UILanguage::English);
-    window.capture_screenshot_bmp((capture_dir / "effect-draft-preview-english.bmp").string());
+    window.capture_screenshot_bmp((capture_dir.path / "effect-draft-preview-english.bmp").string());
     window.set_language(UILanguage::Vietnamese);
-    window.capture_screenshot_bmp((capture_dir / "effect-draft-preview-vietnamese.bmp").string());
+    window.capture_screenshot_bmp((capture_dir.path / "effect-draft-preview-vietnamese.bmp").string());
     window.set_language(UILanguage::English);
 
     scroll = window.style_inspector_scroll_offset();
@@ -409,6 +525,7 @@ void test_properties_draft_preview_buttons_and_localized_captures() {
 
 void test_drop_shadow_property_bar_ribbon() {
     NativeWindow window(1440, 900);
+    use_cpu_renderer(window);
     const auto path_id = window.workflow().add_rectangle(
         20.0, 20.0, 60.0, 40.0, "#336699", "#112233", 1.0);
     window.root().vector_controller().selection().select(path_id);
@@ -438,8 +555,10 @@ void test_drop_shadow_property_bar_ribbon() {
     // 4. Click Toggle Object button at x = 820, y = 80
     window.handle_mouse_down(820, 80);
 
-    // 5. Toggle back to shadow ribbon via "◐ Bóng" button
-    window.handle_mouse_down(700, 80);
+    // 5. Toggle back using the actual dynamic shadow button location. The
+    // rectangle-specific controls and transform buttons precede this control.
+    constexpr int shadow_button_x = 535 + 98 + 80 + 28 + 68 + 86 + 130 + 10;
+    window.handle_mouse_down(shadow_button_x, 80);
 
     // 6. Click Clear Shadow button at x = 750, y = 80
     const auto rev_before_clear = window.root().document().current_snapshot()->revision();
@@ -469,6 +588,10 @@ int main() {
     test_properties_draft_preview_buttons_and_localized_captures();
     std::cerr << "Running test 6: test_drop_shadow_property_bar_ribbon" << std::endl;
     test_drop_shadow_property_bar_ribbon();
+    std::cerr << "Running test 7: test_extended_effect_add_preview_and_stack_blend" << std::endl;
+    test_extended_effect_add_preview_and_stack_blend();
+    std::cerr << "Running test 8: test_active_backend_capability_gates_effect_authoring" << std::endl;
+    test_active_backend_capability_gates_effect_authoring();
     std::cout << "[PASS] test_pikdraw_effect_draft\n";
     return 0;
 }

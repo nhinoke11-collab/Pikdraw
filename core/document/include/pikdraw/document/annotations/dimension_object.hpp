@@ -67,6 +67,7 @@ struct DimensionObject {
 };
 
 [[nodiscard]] std::string serialize_dimension_spec(const DimensionObject& dim);
-[[nodiscard]] std::optional<DimensionObject> deserialize_dimension_spec(std::string_view spec);
+[[nodiscard]] std::optional<DimensionObject> deserialize_dimension_spec(
+    std::string_view spec, std::string* error_reason = nullptr);
 
 } // namespace pikdraw::document

@@ -92,7 +92,7 @@ không sao vào tài liệu hoặc Git.
 - [PDFium public API](https://pdfium.googlesource.com/pdfium/+/refs/heads/main/public/fpdf_edit.h): loại đối tượng và precision ở ranh giới API.
 - [libxml2 parser options](https://gnome.pages.gitlab.gnome.org/libxml2/html/parser_8h.html): external entity và DTD controls.
 - [Ghostscript vector devices](https://ghostscript.readthedocs.io/en/latest/VectorDevices.html), [SAFER](https://ghostscript.readthedocs.io/en/latest/Use.html#dsafer) và [Artifex licensing](https://artifex.com/licensing).
-- [C6](../../contracts/c6-workers.md), [document/runtime](../architecture/document-runtime.md), [foundation spike C](../roadmap/foundation-spikes.md#spike-c--interop-và-containment) và [quality gates](../quality/gates.md).
+- [C6](../../contracts/c6-workers.md), [document/runtime](../architecture/document-runtime.md), [kế hoạch tích hợp](../roadmap/performance-storage-automation.md) và [quality gates](../quality/gates.md).
 
 Nguồn upstream được tra ngày 2026-10-16; đường dẫn main/latest là tài liệu tham khảo,
 không phải dependency lock. Bản build triển khai phải lưu commit/tag và license thực tế.

@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -117,7 +118,12 @@ WorkerLaunchConfig ConfigFor(const SourceSnapshot &source) {
 }
 
 V2ProposalStreamLimits Limits() {
-  return {20 * 1024 * 1024, 16 * 1024 * 1024, 40002, 64, 65};
+  return {
+      std::numeric_limits<uint64_t>::max(),
+      std::numeric_limits<uint64_t>::max(),
+      IPC_MAX_OBJECTS,
+      IPC_MAX_OBJECTS,
+      IPC_MAX_OBJECTS + 1};
 }
 
 struct RunResult final {

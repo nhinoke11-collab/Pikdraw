@@ -1,4 +1,5 @@
 #include "pikdraw/document/commands/layer_commands.hpp"
+#include "pikdraw/document/model/clone_utils.hpp"
 #include <algorithm>
 
 namespace pikdraw::document {
@@ -14,7 +15,7 @@ CommandResult AddLayerCommand::execute(Document& doc) {
     if (actual_index_ > page.layers.size()) {
         actual_index_ = page.layers.size();
     }
-    Layer new_layer{name_.empty() ? "Layer " + std::to_string(page.layers.size() + 1) : name_, true, false, {}};
+    Layer new_layer{name_.empty() ? "Layer " + std::to_string(page.layers.size() + 1) : name_, true, false, true, default_layer_color(actual_index_), {}};
     page.layers.insert(page.layers.begin() + static_cast<std::ptrdiff_t>(actual_index_), std::move(new_layer));
     doc.apply_mutation(std::move(page), doc.objects());
     executed_ = true;
@@ -495,6 +496,244 @@ CommandResult RenameObjectCommand::undo(Document& doc) {
 
     PersistentObjectMap map = doc.objects().set(id_, updated);
     doc.apply_mutation(doc.page(), std::move(map));
+    executed_ = false;
+    return CommandResult::ok();
+}
+
+// --- SetLayerPrintableCommand ---
+
+SetLayerPrintableCommand::SetLayerPrintableCommand(size_t layer_idx, bool printable)
+    : layer_idx_(layer_idx), printable_(printable) {}
+
+CommandResult SetLayerPrintableCommand::execute(Document& doc) {
+    Page page = doc.page();
+    if (layer_idx_ >= page.layers.size()) {
+        return CommandResult::fail("Invalid layer index for printable change");
+    }
+    old_printable_ = page.layers[layer_idx_].printable;
+    if (old_printable_ == printable_) {
+        return CommandResult::no_change();
+    }
+    page.layers[layer_idx_].printable = printable_;
+    doc.apply_mutation(std::move(page), doc.objects());
+    executed_ = true;
+    return CommandResult::ok();
+}
+
+CommandResult SetLayerPrintableCommand::undo(Document& doc) {
+    if (!executed_) {
+        return CommandResult::fail("Cannot undo unexecuted SetLayerPrintableCommand");
+    }
+    Page page = doc.page();
+    if (layer_idx_ >= page.layers.size()) {
+        return CommandResult::fail("Invalid layer index on undo printable");
+    }
+    page.layers[layer_idx_].printable = old_printable_;
+    doc.apply_mutation(std::move(page), doc.objects());
+    executed_ = false;
+    return CommandResult::ok();
+}
+
+// --- SetLayerColorCommand ---
+
+SetLayerColorCommand::SetLayerColorCommand(size_t layer_idx, uint32_t color_rgba)
+    : layer_idx_(layer_idx), color_rgba_(color_rgba) {}
+
+CommandResult SetLayerColorCommand::execute(Document& doc) {
+    Page page = doc.page();
+    if (layer_idx_ >= page.layers.size()) {
+        return CommandResult::fail("Invalid layer index for color change");
+    }
+    old_color_rgba_ = page.layers[layer_idx_].color_rgba;
+    if (old_color_rgba_ == color_rgba_) {
+        return CommandResult::no_change();
+    }
+    page.layers[layer_idx_].color_rgba = color_rgba_;
+    doc.apply_mutation(std::move(page), doc.objects());
+    executed_ = true;
+    return CommandResult::ok();
+}
+
+CommandResult SetLayerColorCommand::undo(Document& doc) {
+    if (!executed_) {
+        return CommandResult::fail("Cannot undo unexecuted SetLayerColorCommand");
+    }
+    Page page = doc.page();
+    if (layer_idx_ >= page.layers.size()) {
+        return CommandResult::fail("Invalid layer index on undo color");
+    }
+    page.layers[layer_idx_].color_rgba = old_color_rgba_;
+    doc.apply_mutation(std::move(page), doc.objects());
+    executed_ = false;
+    return CommandResult::ok();
+}
+
+// --- DuplicateLayerCommand ---
+
+DuplicateLayerCommand::DuplicateLayerCommand(size_t source_layer_idx)
+    : source_layer_idx_(source_layer_idx) {}
+
+CommandResult DuplicateLayerCommand::execute(Document& doc) {
+    Page page = doc.page();
+    if (source_layer_idx_ >= page.layers.size()) {
+        return CommandResult::fail("Invalid source layer index for duplication");
+    }
+
+    const auto& src_layer = page.layers[source_layer_idx_];
+    actual_index_ = source_layer_idx_ + 1;
+    duplicated_objects_.clear();
+
+    PersistentObjectMap map = doc.objects();
+    const auto snapshot = doc.current_snapshot();
+    const auto cloned = clone_hierarchy(src_layer.object_ids, *snapshot);
+    const auto& new_object_ids = cloned.top_level_cloned_ids;
+    duplicated_objects_.reserve(cloned.cloned_objects.size());
+    for (const auto& object : cloned.cloned_objects) {
+        const ObjectId new_id = std::visit([](const auto& obj) { return obj.id; }, object);
+        duplicated_objects_.emplace_back(new_id, object);
+        map = map.set(new_id, object);
+    }
+
+    created_layer_ = Layer{
+        src_layer.name + " Copy",
+        src_layer.visible,
+        false, // duplicated layer is unlocked by default
+        src_layer.printable,
+        default_layer_color(actual_index_),
+        new_object_ids
+    };
+
+    page.layers.insert(page.layers.begin() + static_cast<std::ptrdiff_t>(actual_index_), created_layer_);
+    doc.apply_mutation(std::move(page), std::move(map));
+    executed_ = true;
+    return CommandResult::ok();
+}
+
+CommandResult DuplicateLayerCommand::undo(Document& doc) {
+    if (!executed_) {
+        return CommandResult::fail("Cannot undo unexecuted DuplicateLayerCommand");
+    }
+    Page page = doc.page();
+    if (actual_index_ >= page.layers.size()) {
+        return CommandResult::fail("Invalid layer index on undo duplicate");
+    }
+
+    PersistentObjectMap map = doc.objects();
+    for (const auto& [id, _] : duplicated_objects_) {
+        map = map.remove(id);
+    }
+
+    page.layers.erase(page.layers.begin() + static_cast<std::ptrdiff_t>(actual_index_));
+    doc.apply_mutation(std::move(page), std::move(map));
+    executed_ = false;
+    return CommandResult::ok();
+}
+
+// --- MoveObjectsToLayerCommand ---
+
+MoveObjectsToLayerCommand::MoveObjectsToLayerCommand(
+    std::vector<ObjectId> ids, size_t target_layer_idx,
+    std::optional<size_t> insert_at)
+    : ids_(std::move(ids)), target_layer_idx_(target_layer_idx),
+      insert_at_(insert_at) {}
+
+CommandResult MoveObjectsToLayerCommand::execute(Document& doc) {
+    Page page = doc.page();
+    if (target_layer_idx_ >= page.layers.size()) {
+        return CommandResult::fail("Target layer index out of bounds");
+    }
+    if (page.layers[target_layer_idx_].locked) {
+        return CommandResult::fail("Cannot move objects to a locked layer");
+    }
+    if (ids_.empty()) {
+        return CommandResult::no_change();
+    }
+
+    source_locs_.clear();
+    std::vector<std::vector<ObjectId>> original_order;
+    original_order.reserve(page.layers.size());
+    for (const auto& layer : page.layers)
+        original_order.push_back(layer.object_ids);
+
+    for (ObjectId id : ids_) {
+        bool already_recorded = false;
+        for (const auto& loc : source_locs_)
+            if (loc.id == id) { already_recorded = true; break; }
+        if (already_recorded) continue;
+
+        for (size_t layer_idx = 0; layer_idx < page.layers.size(); ++layer_idx) {
+            auto& layer_ids = page.layers[layer_idx].object_ids;
+            const auto found = std::find(layer_ids.begin(), layer_ids.end(), id);
+            if (found == layer_ids.end()) continue;
+            const size_t position = static_cast<size_t>(found - layer_ids.begin());
+            source_locs_.push_back({id, layer_idx, position});
+            layer_ids.erase(found);
+            break;
+        }
+    }
+
+    if (source_locs_.empty()) {
+        return CommandResult::no_change();
+    }
+
+    auto& target_ids = page.layers[target_layer_idx_].object_ids;
+    size_t insertion = insert_at_.value_or(target_ids.size());
+    if (insert_at_) {
+        for (const auto& loc : source_locs_)
+            if (loc.layer_idx == target_layer_idx_ && loc.pos_in_layer < *insert_at_ && insertion > 0)
+                --insertion;
+    }
+    insertion = std::min(insertion, target_ids.size());
+    for (const auto& loc : source_locs_) {
+        target_ids.insert(target_ids.begin() + static_cast<std::ptrdiff_t>(insertion), loc.id);
+        ++insertion;
+    }
+
+    bool changed = false;
+    for (size_t i = 0; i < page.layers.size(); ++i) {
+        if (page.layers[i].object_ids != original_order[i]) {
+            changed = true;
+            break;
+        }
+    }
+    if (!changed) {
+        source_locs_.clear();
+        return CommandResult::no_change();
+    }
+
+    doc.apply_mutation(std::move(page), doc.objects());
+    executed_ = true;
+    return CommandResult::ok();
+}
+
+CommandResult MoveObjectsToLayerCommand::undo(Document& doc) {
+    if (!executed_) {
+        return CommandResult::fail("Cannot undo unexecuted MoveObjectsToLayerCommand");
+    }
+    Page page = doc.page();
+    if (target_layer_idx_ >= page.layers.size()) {
+        return CommandResult::fail("Target layer index out of bounds on undo");
+    }
+
+    auto& target_ids = page.layers[target_layer_idx_].object_ids;
+    for (const auto& loc : source_locs_) {
+        const auto it = std::find(target_ids.begin(), target_ids.end(), loc.id);
+        if (it != target_ids.end()) target_ids.erase(it);
+    }
+    auto ordered_locs = source_locs_;
+    std::sort(ordered_locs.begin(), ordered_locs.end(),
+        [](const SourceLoc& a, const SourceLoc& b) {
+            return a.layer_idx < b.layer_idx ||
+                (a.layer_idx == b.layer_idx && a.pos_in_layer < b.pos_in_layer);
+        });
+    for (const auto& loc : ordered_locs) {
+        if (loc.layer_idx >= page.layers.size()) continue;
+        auto& src_ids = page.layers[loc.layer_idx].object_ids;
+        const size_t insert_pos = std::min(loc.pos_in_layer, src_ids.size());
+        src_ids.insert(src_ids.begin() + static_cast<std::ptrdiff_t>(insert_pos), loc.id);
+    }
+
+    doc.apply_mutation(std::move(page), doc.objects());
     executed_ = false;
     return CommandResult::ok();
 }

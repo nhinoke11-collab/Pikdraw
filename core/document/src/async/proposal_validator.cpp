@@ -36,16 +36,25 @@ ProposalStatus Document::validate_and_commit_proposal(AsyncProposal proposal) {
     if (metadata.document_id != document_id_ || metadata.epoch != epoch_)
         return ProposalStatus::EpochMismatch;
     if (metadata.base_revision != revision_) return ProposalStatus::StaleRevision;
-    if (metadata.target_page_id != kInvalidPageId &&
-        std::none_of(pages_.begin(), pages_.end(), [&](const auto& page) {
-            return page.id == metadata.target_page_id;
-        }))
+    const auto target_page = metadata.target_page_id == kInvalidPageId
+        ? pages_.end()
+        : std::find_if(pages_.begin(), pages_.end(), [&](const auto& page) {
+              return page.id == metadata.target_page_id;
+          });
+    if (metadata.target_page_id != kInvalidPageId && target_page == pages_.end())
         return ProposalStatus::ExecutionFailed;
     const auto job = jobs_.find(metadata.job_id);
     if (job == jobs_.end() || job->second != metadata.job_generation)
         return ProposalStatus::JobCancelled;
-    for (const auto id : metadata.target_object_ids)
-        if (!current_objects_.contains(id)) return ProposalStatus::ExecutionFailed;
+    if (!metadata.target_object_ids.empty()) {
+        if (target_page == pages_.end() ||
+            metadata.target_page_id != active_page_id_ ||
+            metadata.page_navigation_generation != page_navigation_generation_)
+            return ProposalStatus::StalePageContext;
+        for (const auto id : metadata.target_object_ids)
+            if (!target_page->objects.contains(id))
+                return ProposalStatus::ExecutionFailed;
+    }
     for (const auto& command : proposal.commands)
         if (!command) return ProposalStatus::ExecutionFailed;
     if (proposal.commands.empty()) {
@@ -56,6 +65,23 @@ ProposalStatus Document::validate_and_commit_proposal(AsyncProposal proposal) {
     for (auto& command : proposal.commands) composite->add_command(std::move(command));
     const auto result = execute_command(std::move(composite));
     if (!result.success) return ProposalStatus::ExecutionFailed;
+    return ProposalStatus::Accepted;
+}
+
+ProposalStatus Document::replace_from_proposal(AsyncProposalMetadata metadata,
+                                                 SnapshotPtr snapshot) {
+    try { require_idle_writer(); }
+    catch (...) { return ProposalStatus::ExecutionFailed; }
+    if (!snapshot) return ProposalStatus::ExecutionFailed;
+    if (metadata.document_id != document_id_ || metadata.epoch != epoch_)
+        return ProposalStatus::EpochMismatch;
+    if (metadata.base_revision != revision_) return ProposalStatus::StaleRevision;
+    const auto job = jobs_.find(metadata.job_id);
+    if (job == jobs_.end() || job->second != metadata.job_generation)
+        return ProposalStatus::JobCancelled;
+    if (!metadata.target_object_ids.empty()) return ProposalStatus::ExecutionFailed;
+    if (!reset_from_snapshot(std::move(snapshot)))
+        return ProposalStatus::ExecutionFailed;
     return ProposalStatus::Accepted;
 }
 

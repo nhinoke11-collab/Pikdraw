@@ -1,10 +1,12 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
 #include "pikdraw/desktop/shell/native_window_layers_dock.hpp"
+#include "native_window_layers_tree.hpp"
 #include <string>
 #include <vector>
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
+#include <cctype>
 
 namespace pikdraw::desktop {
 
@@ -30,6 +32,35 @@ static void draw_eye(HDC dc, int cx, int cy, bool visible, COLORREF col) {
         // Strike-through line for hidden
         MoveToEx(dc, cx - 5, cy + 4, nullptr);
         LineTo(dc, cx + 5, cy - 4);
+    }
+
+    SelectObject(dc, old_brush);
+    SelectObject(dc, old_pen);
+    DeleteObject(pen);
+}
+
+static void draw_printer(HDC dc, int cx, int cy, bool printable, COLORREF col) {
+    HPEN pen = CreatePen(PS_SOLID, 1, col);
+    HGDIOBJ old_pen = SelectObject(dc, pen);
+    HGDIOBJ old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+
+    // Top paper sheet
+    Rectangle(dc, cx - 3, cy - 6, cx + 4, cy - 2);
+    // Printer main body
+    RoundRect(dc, cx - 6, cy - 2, cx + 7, cy + 4, 2, 2);
+    // Bottom output paper
+    MoveToEx(dc, cx - 3, cy + 4, nullptr);
+    LineTo(dc, cx - 3, cy + 6);
+    LineTo(dc, cx + 4, cy + 6);
+    LineTo(dc, cx + 4, cy + 4);
+
+    if (!printable) {
+        HPEN strike_pen = CreatePen(PS_SOLID, 2, RGB(239, 68, 68));
+        SelectObject(dc, strike_pen);
+        MoveToEx(dc, cx - 6, cy + 5, nullptr);
+        LineTo(dc, cx + 6, cy - 5);
+        SelectObject(dc, old_pen);
+        DeleteObject(strike_pen);
     }
 
     SelectObject(dc, old_brush);
@@ -144,13 +175,55 @@ void paint_layers_panel_dock(NativeWindow& win, HDC mem_dc, int insp_x, int cont
     auto& state = win.layers_dock_state();
 
     // 1. Header Title
-    RECT rc_head = { insp_x + 14, content_y + 4, w - 14, content_y + 24 };
+    RECT rc_head = { insp_x + 14, content_y + 2, w - 14, content_y + 20 };
     SetTextColor(mem_dc, col_teal);
     DrawTextW(mem_dc, is_vi ? L"LỚP & ĐỐI TƯỢNG" : L"LAYERS & OBJECTS", -1,
               &rc_head, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
 
-    // 2. Filter Buttons Bar (y: content_y + 26 .. content_y + 48)
-    const int filter_bar_y = content_y + 26;
+    // 2. Search Box (y: content_y + 22 .. content_y + 44)
+    const int search_y = content_y + 22;
+    RECT rc_search = { insp_x + 10, search_y, w - 10, search_y + 20 };
+    HBRUSH s_br = CreateSolidBrush(col_btn_bg);
+    HPEN s_pn = CreatePen(PS_SOLID, 1, state.search_active ? col_teal : col_border);
+    HGDIOBJ op_s = SelectObject(mem_dc, s_pn);
+    HGDIOBJ ob_s = SelectObject(mem_dc, s_br);
+    RoundRect(mem_dc, rc_search.left, rc_search.top, rc_search.right, rc_search.bottom, 4, 4);
+    SelectObject(mem_dc, ob_s);
+    SelectObject(mem_dc, op_s);
+    DeleteObject(s_pn);
+    DeleteObject(s_br);
+
+    // Search Glass icon
+    HPEN glass_pn = CreatePen(PS_SOLID, 1, col_text_muted);
+    HGDIOBJ op_g = SelectObject(mem_dc, glass_pn);
+    HGDIOBJ ob_g = SelectObject(mem_dc, GetStockObject(NULL_BRUSH));
+    Ellipse(mem_dc, rc_search.left + 6, search_y + 4, rc_search.left + 14, search_y + 12);
+    MoveToEx(mem_dc, rc_search.left + 12, search_y + 10, nullptr);
+    LineTo(mem_dc, rc_search.left + 16, search_y + 14);
+    SelectObject(mem_dc, ob_g);
+    SelectObject(mem_dc, op_g);
+    DeleteObject(glass_pn);
+
+    // Search Query / Placeholder
+    RECT rc_s_text = { rc_search.left + 20, search_y, rc_search.right - 20, search_y + 20 };
+    if (state.search_query.empty()) {
+        SetTextColor(mem_dc, col_text_muted);
+        DrawTextW(mem_dc, is_vi ? L"Tìm kiếm (#ID)..." : L"Search objects (#ID)...", -1,
+                  &rc_s_text, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    } else {
+        SetTextColor(mem_dc, col_text_white);
+        std::wstring wquery = win.utf8_to_wide(state.search_query);
+        if (state.search_active) wquery += L"|";
+        DrawTextW(mem_dc, wquery.c_str(), -1, &rc_s_text, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        // Clear cross '✖'
+        RECT rc_s_clear = { rc_search.right - 16, search_y, rc_search.right - 4, search_y + 20 };
+        SetTextColor(mem_dc, col_text_muted);
+        DrawTextW(mem_dc, L"×", -1, &rc_s_clear, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    }
+
+    // 3. Filter Buttons Bar (y: content_y + 46 .. content_y + 66)
+    const int filter_bar_y = content_y + 46;
     const int filter_btn_w = (w - insp_x - 24) / 5;
     const wchar_t* filter_labels_en[] = {L"All", L"Path", L"Text", L"Img", L"Grp"};
     const wchar_t* filter_labels_vi[] = {L"Tất cả", L"Nét", L"Chữ", L"Ảnh", L"Nhóm"};
@@ -175,7 +248,7 @@ void paint_layers_panel_dock(NativeWindow& win, HDC mem_dc, int insp_x, int cont
         DrawTextW(mem_dc, lbl, -1, &rc_btn, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
 
-    // 3. Footer Action Bar (y: h - status_h - 32 .. h - status_h - 4)
+    // 4. Footer Action Bar (y: h - status_h - 30 .. h - status_h - 6)
     const int footer_y = h - status_h - 30;
     const int footer_btn_w = (w - insp_x - 24) / 5;
     const wchar_t* footer_labels_en[] = {L"+ Layer", L"Group", L"Up ▲", L"Dn ▼", L"Del 🗑"};
@@ -205,12 +278,11 @@ void paint_layers_panel_dock(NativeWindow& win, HDC mem_dc, int insp_x, int cont
         DrawTextW(mem_dc, lbl, -1, &rc_fb, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     }
 
-    // 4. Hierarchical Virtual Tree
-    const int tree_top = filter_bar_y + 26;
+    // 5. Hierarchical Virtual Tree
+    const int tree_top = filter_bar_y + 24;
     const int tree_bottom = footer_y - 6;
     const int row_h = LayersDockMetrics::row_height;
 
-    // Clip rect to prevent drawing outside tree viewport
     HRGN clip_rgn = CreateRectRgn(insp_x + 6, tree_top, w - 6, tree_bottom);
     SelectClipRgn(mem_dc, clip_rgn);
 
@@ -221,13 +293,23 @@ void paint_layers_panel_dock(NativeWindow& win, HDC mem_dc, int insp_x, int cont
     for (size_t layer_idx = 0; layer_idx < layers.size(); ++layer_idx) {
         const auto& layer = layers[layer_idx];
         const bool is_layer_collapsed = state.collapsed_layers.count(layer_idx) > 0;
+        const bool is_active_layer = (state.active_layer_index == layer_idx);
+
+        // Check if layer has any selected child
+        bool layer_has_selection = false;
+        for (auto cid : layer.object_ids) {
+            if (std::find(selection.begin(), selection.end(), cid) != selection.end()) {
+                layer_has_selection = true;
+                break;
+            }
+        }
 
         // Layer Row
         if (current_y + row_h >= tree_top && current_y <= tree_bottom) {
             RECT row_rc = { insp_x + 8, current_y, w - 8, current_y + row_h };
 
-            HBRUSH row_br = CreateSolidBrush(col_btn_bg);
-            HPEN row_pn = CreatePen(PS_SOLID, 1, col_border);
+            HBRUSH row_br = CreateSolidBrush(is_active_layer ? col_active_tab : col_btn_bg);
+            HPEN row_pn = CreatePen(PS_SOLID, 1, is_active_layer ? col_teal : col_border);
             HGDIOBJ op = SelectObject(mem_dc, row_pn);
             HGDIOBJ ob = SelectObject(mem_dc, row_br);
             RoundRect(mem_dc, row_rc.left, row_rc.top, row_rc.right, row_rc.bottom, 3, 3);
@@ -236,32 +318,74 @@ void paint_layers_panel_dock(NativeWindow& win, HDC mem_dc, int insp_x, int cont
             DeleteObject(row_pn);
             DeleteObject(row_br);
 
-            // Expand/collapse arrow
-            draw_triangle(mem_dc, row_rc.left + 8, current_y + row_h / 2, !is_layer_collapsed, col_teal);
+            // Left Layer Color Swatch bar (4px)
+            const COLORREF layer_swatch_col = RGB(
+                (layer.color_rgba >> 24) & 0xFF,
+                (layer.color_rgba >> 16) & 0xFF,
+                (layer.color_rgba >> 8) & 0xFF
+            );
+            HBRUSH c_br = CreateSolidBrush(layer_swatch_col);
+            RECT c_rc = { row_rc.left + 1, row_rc.top + 2, row_rc.left + 5, row_rc.bottom - 2 };
+            FillRect(mem_dc, &c_rc, c_br);
+            DeleteObject(c_br);
 
-            // Eye icon
-            draw_eye(mem_dc, row_rc.left + 22, current_y + row_h / 2, layer.visible,
+            // Expand/collapse arrow
+            draw_triangle(mem_dc, row_rc.left + 12, current_y + row_h / 2, !is_layer_collapsed, col_teal);
+
+            // Eye icon (Visible)
+            draw_eye(mem_dc, row_rc.left + 24, current_y + row_h / 2, layer.visible,
                      layer.visible ? col_teal : col_text_muted);
 
-            // Lock icon
-            draw_lock(mem_dc, row_rc.left + 38, current_y + row_h / 2, layer.locked,
+            // Printer icon (Printable)
+            draw_printer(mem_dc, row_rc.left + 38, current_y + row_h / 2, layer.printable,
+                         layer.printable ? col_teal : col_text_muted);
+
+            // Lock icon (Locked)
+            draw_lock(mem_dc, row_rc.left + 52, current_y + row_h / 2, layer.locked,
                       layer.locked ? col_amber : col_text_muted);
 
-            // Layer Name
-            std::wostringstream l_name;
-            l_name << win.utf8_to_wide(layer.name) << L" (" << layer.object_ids.size() << L")";
-            RECT name_rc = { row_rc.left + 52, current_y, row_rc.right - 20, current_y + row_h };
-            SetTextColor(mem_dc, layer.visible ? col_text_white : col_text_muted);
-            DrawTextW(mem_dc, l_name.str().c_str(), -1, &name_rc,
-                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+            // Layer Name or Inline Rename Edit Box
+            if (state.rename_layer_idx.has_value() && *state.rename_layer_idx == layer_idx) {
+                RECT edit_rc = { row_rc.left + 64, current_y + 2, row_rc.right - 24, current_y + row_h - 2 };
+                HBRUSH e_br = CreateSolidBrush(col_header);
+                HPEN e_pn = CreatePen(PS_SOLID, 1, col_teal);
+                HGDIOBJ op_e = SelectObject(mem_dc, e_pn);
+                HGDIOBJ ob_e = SelectObject(mem_dc, e_br);
+                Rectangle(mem_dc, edit_rc.left, edit_rc.top, edit_rc.right, edit_rc.bottom);
+                SelectObject(mem_dc, ob_e);
+                SelectObject(mem_dc, op_e);
+                DeleteObject(e_pn);
+                DeleteObject(e_br);
+
+                SetTextColor(mem_dc, col_text_white);
+                std::wstring edit_str = win.utf8_to_wide(state.rename_buffer) + L"|";
+                DrawTextW(mem_dc, edit_str.c_str(), -1, &edit_rc,
+                          DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            } else {
+                std::wostringstream l_name;
+                l_name << win.utf8_to_wide(layer.name) << L" (" << layer.object_ids.size() << L")";
+                if (is_active_layer) l_name << L" *";
+                RECT name_rc = { row_rc.left + 64, current_y, row_rc.right - 24, current_y + row_h };
+                SetTextColor(mem_dc, is_active_layer ? col_teal : layer.visible ? col_text_white : col_text_muted);
+                DrawTextW(mem_dc, l_name.str().c_str(), -1, &name_rc,
+                          DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+            }
+
+            // Selection Proxy Square at right edge
+            if (layer_has_selection) {
+                HBRUSH dot_br = CreateSolidBrush(layer_swatch_col);
+                RECT dot_rc = { row_rc.right - 14, current_y + 7, row_rc.right - 4, current_y + 17 };
+                FillRect(mem_dc, &dot_rc, dot_br);
+                DeleteObject(dot_br);
+            }
         }
         current_y += row_h + 2;
 
         if (is_layer_collapsed) continue;
 
         // Children of layer (drawn in reverse stacking order: topmost object first)
-        for (int obj_i = static_cast<int>(layer.object_ids.size()) - 1; obj_i >= 0; --obj_i) {
-            const auto obj_id = layer.object_ids[static_cast<size_t>(obj_i)];
+        for(const auto& tree_row:layer_tree_rows(*snapshot,layer,state)) {
+            const auto obj_id=tree_row.id;
             const auto obj_opt = objects_map.get(obj_id);
             if (!obj_opt) continue;
 
@@ -271,11 +395,7 @@ void paint_layers_panel_dock(NativeWindow& win, HDC mem_dc, int insp_x, int cont
             const bool is_image = std::holds_alternative<document::ImageObject>(obj_var);
             const int glyph_type = is_group ? 3 : is_text ? 1 : is_image ? 2 : 0;
 
-            // Apply filter
-            if (state.filter == LayerFilterType::Path && (is_text || is_image || is_group)) continue;
-            if (state.filter == LayerFilterType::Text && !is_text) continue;
-            if (state.filter == LayerFilterType::Image && !is_image) continue;
-            if (state.filter == LayerFilterType::Group && !is_group) continue;
+            if (!layer_tree_row_matches(*snapshot, tree_row, state)) continue;
 
             const bool obj_visible = std::visit([](const auto& o) { return o.visible; }, obj_var);
             const bool obj_locked = std::visit([](const auto& o) { return o.locked; }, obj_var);
@@ -283,7 +403,7 @@ void paint_layers_panel_dock(NativeWindow& win, HDC mem_dc, int insp_x, int cont
             const bool is_selected = std::find(selection.begin(), selection.end(), obj_id) != selection.end();
 
             if (current_y + row_h >= tree_top && current_y <= tree_bottom) {
-                RECT row_rc = { insp_x + 18, current_y, w - 8, current_y + row_h };
+                RECT row_rc = { insp_x + 18 + int(tree_row.depth)*12, current_y, w - 8, current_y + row_h };
 
                 if (is_selected) {
                     HBRUSH sel_br = CreateSolidBrush(col_active_tab);
@@ -297,6 +417,8 @@ void paint_layers_panel_dock(NativeWindow& win, HDC mem_dc, int insp_x, int cont
                     DeleteObject(sel_br);
                 }
 
+                if(is_group)draw_triangle(mem_dc,row_rc.left-5,current_y+row_h/2,!state.collapsed_groups.contains(obj_id),col_text_muted);
+
                 // Eye
                 draw_eye(mem_dc, row_rc.left + 10, current_y + row_h / 2, obj_visible,
                          obj_visible ? col_teal : col_text_muted);
@@ -309,24 +431,65 @@ void paint_layers_panel_dock(NativeWindow& win, HDC mem_dc, int insp_x, int cont
                 draw_type_glyph(mem_dc, glyph_type, row_rc.left + 42, current_y + row_h / 2,
                                 is_selected ? col_teal : col_text_muted);
 
-                // Name + (#ID)
-                std::wostringstream o_name;
-                o_name << win.utf8_to_wide(obj_name) << L" (#" << obj_id << L")";
-                RECT name_rc = { row_rc.left + 54, current_y, row_rc.right - 22, current_y + row_h };
-                SetTextColor(mem_dc, is_selected ? col_teal : obj_visible ? col_text_white : col_text_muted);
-                DrawTextW(mem_dc, o_name.str().c_str(), -1, &name_rc,
-                          DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                // Name / Inline Rename Edit Box
+                if (state.rename_object_id.has_value() && *state.rename_object_id == obj_id) {
+                    RECT edit_rc = { row_rc.left + 54, current_y + 2, row_rc.right - 24, current_y + row_h - 2 };
+                    HBRUSH e_br = CreateSolidBrush(col_header);
+                    HPEN e_pn = CreatePen(PS_SOLID, 1, col_teal);
+                    HGDIOBJ op_e = SelectObject(mem_dc, e_pn);
+                    HGDIOBJ ob_e = SelectObject(mem_dc, e_br);
+                    Rectangle(mem_dc, edit_rc.left, edit_rc.top, edit_rc.right, edit_rc.bottom);
+                    SelectObject(mem_dc, ob_e);
+                    SelectObject(mem_dc, op_e);
+                    DeleteObject(e_pn);
+                    DeleteObject(e_br);
+
+                    SetTextColor(mem_dc, col_text_white);
+                    std::wstring edit_str = win.utf8_to_wide(state.rename_buffer) + L"|";
+                    DrawTextW(mem_dc, edit_str.c_str(), -1, &edit_rc,
+                              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+                } else {
+                    std::wostringstream o_name;
+                    if(tree_row.mask)o_name << (is_vi?L"Khung · ":L"Frame · ");
+                    else if(tree_row.depth)o_name << (is_vi?L"Nội dung · ":L"Contents · ");
+                    o_name << win.utf8_to_wide(obj_name) << L" (#" << obj_id << L")";
+                    RECT name_rc = { row_rc.left + 54, current_y, row_rc.right - 22, current_y + row_h };
+                    SetTextColor(mem_dc, is_selected ? col_teal : obj_visible ? col_text_white : col_text_muted);
+                    DrawTextW(mem_dc, o_name.str().c_str(), -1, &name_rc,
+                              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+                }
 
                 // Selection Proxy Dot/Square at right edge
                 if (is_selected) {
-                    HBRUSH dot_br = CreateSolidBrush(col_teal);
-                    RECT dot_rc = { row_rc.right - 14, current_y + 8, row_rc.right - 6, current_y + 16 };
+                    const COLORREF swatch_col = RGB(
+                        (layer.color_rgba >> 24) & 0xFF,
+                        (layer.color_rgba >> 16) & 0xFF,
+                        (layer.color_rgba >> 8) & 0xFF
+                    );
+                    HBRUSH dot_br = CreateSolidBrush(swatch_col);
+                    RECT dot_rc = { row_rc.right - 14, current_y + 7, row_rc.right - 6, current_y + 15 };
                     FillRect(mem_dc, &dot_rc, dot_br);
                     DeleteObject(dot_br);
                 }
             }
             current_y += row_h + 1;
         }
+    }
+
+    // Drag insertion indicator line
+    if (state.is_dragging && state.drag_current_y >= tree_top && state.drag_current_y <= tree_bottom) {
+        HPEN drag_pn = CreatePen(PS_SOLID, 2, col_teal);
+        HGDIOBJ op_d = SelectObject(mem_dc, drag_pn);
+        MoveToEx(mem_dc, insp_x + 8, state.drag_current_y, nullptr);
+        LineTo(mem_dc, w - 8, state.drag_current_y);
+        // Small circle at start of line
+        HBRUSH c_br = CreateSolidBrush(col_teal);
+        HGDIOBJ ob_d = SelectObject(mem_dc, c_br);
+        Ellipse(mem_dc, insp_x + 6, state.drag_current_y - 3, insp_x + 12, state.drag_current_y + 3);
+        SelectObject(mem_dc, ob_d);
+        SelectObject(mem_dc, op_d);
+        DeleteObject(c_br);
+        DeleteObject(drag_pn);
     }
 
     state.total_content_height = std::max(0, current_y + state.scroll_offset_y - tree_top);

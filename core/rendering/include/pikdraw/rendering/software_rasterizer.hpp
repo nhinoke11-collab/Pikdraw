@@ -2,7 +2,7 @@
 
 #include "pikdraw/color/preview/color_transform.hpp"
 #include "pikdraw/rendering/backend.hpp"
-#include "pikdraw/rendering/culling.hpp"
+#include "pikdraw/rendering/spatial_index.hpp"
 
 namespace pikdraw::rendering {
 
@@ -11,6 +11,8 @@ namespace pikdraw::rendering {
 class SoftwareRasterizer : public IRenderBackend {
 public:
   SoftwareRasterizer() = default;
+  [[nodiscard]] bool supports_effect(
+      const document::EffectParameters &) const noexcept override { return true; }
   bool set_color_preview(std::shared_ptr<const color::IccPreview> preview) override {
     preview_ = std::move(preview);
     return true;
@@ -18,6 +20,10 @@ public:
   bool set_canvas_background(color::DeviceRGBA color) override {
     background_ = color;
     return true;
+  }
+
+  void set_render_page_background(bool enabled) noexcept {
+    render_page_background_ = enabled;
   }
 
   [[nodiscard]] color::DeviceRGBA canvas_background() const noexcept {
@@ -48,6 +54,8 @@ private:
   DeviceLossStatus loss_status_{DeviceLossStatus::Healthy};
   std::shared_ptr<const color::IccPreview> preview_;
   color::DeviceRGBA background_{18, 20, 26, 255};
+  bool render_page_background_{true};
+  SpatialIndex spatial_index_;
 };
 
 } // namespace pikdraw::rendering

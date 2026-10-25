@@ -9,6 +9,7 @@ namespace pikdraw::document {
 namespace {
 
 bool same_color_payload(const color::ColorValue& lhs, const color::ColorValue& rhs) {
+    if (!lhs.has_same_profile_binding(rhs)) return false;
     if (lhs.payload().index() != rhs.payload().index()) {
         return false;
     }

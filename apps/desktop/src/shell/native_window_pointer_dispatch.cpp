@@ -5,6 +5,7 @@
 #include "native_window_file_menu.hpp"
 #include "native_window_menus.hpp"
 #include "native_window_page_presets.hpp"
+#include "native_window_length_input.hpp"
 #include "../tools/drawing_tool_controller.hpp"
 #include "../tools/pen_tool_controller.hpp"
 #include "../tools/node_tool_controller.hpp"
@@ -55,6 +56,10 @@ void NativeWindow::handle_mouse_down(int x, int y) {
 }
 
 void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
+    if (import_placement_active() && active_tab().id == import_placement_->target_tab_id) {
+        (void)place_pending_import_at(x, y);
+        return;
+    }
     if (is_font_picker_open()) {
         if (font_picker_->handle_mouse_down(x, y)) {
             if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
@@ -94,6 +99,20 @@ void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
                 return;
         }
     }
+    if (active_num_field_ == NumericFieldId::RasterExposureEv) {
+        const auto& selected = root().vector_controller().selection().selected_ids();
+        const bool single_editable = selected.size() == 1 && can_edit_selected_bitmap(true);
+        const bool on_property_bar = single_editable && y >= 66 && y <= 102 &&
+            x >= 720 && x <= 844 && x + 124 <= w - 280;
+        const bool on_properties_field = single_editable && active_dock_tab_ == 0 &&
+            !show_style_inspector_ && !show_align_panel_ &&
+            x >= w - 280 + 14 && x <= w - 14 && y >= 250 && y <= 276;
+        if (!on_property_bar && !on_properties_field) {
+            commit_numeric_field();
+            if (active_num_field_ == NumericFieldId::RasterExposureEv)
+                return;
+        }
+    }
     if (active_num_field_ == NumericFieldId::FillOpacity ||
         active_num_field_ == NumericFieldId::StrokeOpacity) {
         if (!style_numeric_field_at(x, y)) {
@@ -102,11 +121,13 @@ void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
                 return;
         }
     }
-    if (active_num_field_ == NumericFieldId::EffectSigmaX ||
-        active_num_field_ == NumericFieldId::EffectSigmaY ||
-        active_num_field_ == NumericFieldId::EffectOffsetX ||
-        active_num_field_ == NumericFieldId::EffectOffsetY ||
-        active_num_field_ == NumericFieldId::EffectOpacity) {
+    if (active_num_field_ == NumericFieldId::BlurSigmaX ||
+        active_num_field_ == NumericFieldId::BlurSigmaY ||
+        active_num_field_ == NumericFieldId::ShadowFeatherX ||
+        active_num_field_ == NumericFieldId::ShadowFeatherY ||
+        active_num_field_ == NumericFieldId::ShadowOffsetX ||
+        active_num_field_ == NumericFieldId::ShadowOffsetY ||
+        active_num_field_ == NumericFieldId::ShadowOpacity) {
         if (!style_numeric_field_at(x, y)) {
             commit_numeric_field();
             if (active_num_field_ != NumericFieldId::None)
@@ -125,71 +146,10 @@ void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
     if (handle_workspace_chrome_mouse_down(x, y, modifiers))
         return;
 
-    const auto& current_sel = root().vector_controller().selection().selected_ids();
-    if (current_sel.size() == 1 && workflow().is_clipping_container(current_sel.front())) {
-        const auto clip_id = current_sel.front();
-        const auto snap = root().document().current_snapshot();
-        if (auto b = root().vector_controller().selection().bounds(*snap)) {
-            const auto area = canvas_rect(w, h);
-            const auto rect = selection_ui::screen_bounds(root().renderer().camera(), *b, area);
-            int bar_w = 264, bar_h = 28;
-            int bar_x = rect.left;
-            if (bar_x + bar_w > area.right - 10) bar_x = area.right - bar_w - 10;
-            if (bar_x < area.left + 10) bar_x = area.left + 10;
-            int bar_y = rect.top - bar_h - 8;
-            if (bar_y < area.top + 8) bar_y = rect.top + 8;
+    if (!show_style_inspector_ && !show_align_panel_ && active_dock_tab_ == 0 && active_tool_ == 0 &&
+        handle_powerclip_controls(x,y,w-AlignPanelMetrics::dock_width+14,138,w-14,true)) return;
 
-            if (x >= bar_x && x <= bar_x + bar_w && y >= bar_y && y <= bar_y + bar_h) {
-                if (x >= bar_x + 4 && x < bar_x + 52) { // 1. Edit
-                    enter_group_isolation(clip_id);
-                    return;
-                }
-                if (x >= bar_x + 56 && x < bar_x + 84) { // 2. Select Contents
-                    enter_group_isolation(clip_id);
-                    return;
-                }
-                if (x >= bar_x + 88 && x < bar_x + 116) { // 3. Extract Contents
-                    if (workflow().release_clipping_mask_selected()) {
-                        status_msg_ = (language_ == UILanguage::Vietnamese) ? "Đã trích xuất nội dung PowerClip" : "Extracted PowerClip Contents";
-                        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
-                    }
-                    return;
-                }
-                if (x >= bar_x + 120 && x < bar_x + 148) { // 4. Toggle Lock
-                    const auto* grp = std::get_if<document::GroupObject>(snap->objects().lookup_ref(clip_id));
-                    const bool locked = grp && grp->clip ? grp->clip->lock_contents_to_frame : true;
-                    workflow().set_powerclip_lock_contents(clip_id, !locked);
-                    status_msg_ = (language_ == UILanguage::Vietnamese)
-                        ? (!locked ? "Đã khóa vị trí nội dung vào khung PowerClip" : "Đã mở khóa nội dung khỏi khung PowerClip")
-                        : (!locked ? "Locked contents to PowerClip frame" : "Unlocked contents from PowerClip frame");
-                    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
-                    return;
-                }
-                if (x >= bar_x + 152 && x <= bar_x + bar_w - 4) { // 5. Fit Contents Dropdown
-                    POINT pt{bar_x + 152, bar_y + bar_h};
-                    ClientToScreen(hwnd_, &pt);
-                    HMENU hFit = CreatePopupMenu();
-                    AppendMenuW(hFit, MF_STRING, static_cast<UINT_PTR>(MenuActionId::ObjectPowerClipFitCenter),
-                                language_ == UILanguage::Vietnamese ? L"Căn giữa (Center Contents)" : L"Center Contents");
-                    AppendMenuW(hFit, MF_STRING, static_cast<UINT_PTR>(MenuActionId::ObjectPowerClipFitProp),
-                                language_ == UILanguage::Vietnamese ? L"Vừa khít giữ tỷ lệ (Fit Proportionally)" : L"Fit Proportionally");
-                    AppendMenuW(hFit, MF_STRING, static_cast<UINT_PTR>(MenuActionId::ObjectPowerClipFillProp),
-                                language_ == UILanguage::Vietnamese ? L"Phủ đầy khung (Fill Proportionally)" : L"Fill Proportionally");
-                    AppendMenuW(hFit, MF_STRING, static_cast<UINT_PTR>(MenuActionId::ObjectPowerClipStretch),
-                                language_ == UILanguage::Vietnamese ? L"Kéo giãn vừa khung (Stretch to Fill)" : L"Stretch to Fill");
-                    TrackPopupMenuEx(hFit, TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, hwnd_, nullptr);
-                    DestroyMenu(hFit);
-                    return;
-                }
-                return;
-            }
-        }
-    }
-
-
-    // Direct-manipulation handle for the currently focused Drop Shadow. The workflow
-    // keeps the whole drag in an edit draft and commits a single appearance command.
-    const auto& effect_ids = root().vector_controller().selection().selected_ids();
+    const auto effect_ids = root().vector_controller().selection().selected_ids();
     const auto effect_snapshot = root().document().current_snapshot();
     if ((modifiers & MK_LBUTTON) != 0 && active_tool_ == 0 && !workflow().has_effect_draft() &&
         effect_ids.size() == 1 && effect_snapshot &&
@@ -218,9 +178,10 @@ void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
                     drag_start_y_ = y;
                     resize_handle_ = -2;
                     ribbon_drop_shadow_mode_ = true;
+                    const auto ctrl_step = format_mm_display_utf8(0.5, display_length_unit_, 4);
                     status_msg_ = language_ == UILanguage::Vietnamese
-                        ? "Kéo bóng · Shift: góc 15° · Ctrl: bước 0.5mm · thả chuột lưu · Esc hủy"
-                        : "Drag shadow · Shift: 15° · Ctrl: 0.5mm step · release saves · Esc cancels";
+                        ? "Kéo bóng · Shift: góc 15° · Ctrl: bước " + ctrl_step + " · thả chuột lưu · Esc hủy"
+                        : "Drag shadow · Shift: 15° · Ctrl step " + ctrl_step + " · release saves · Esc cancels";
                     if (hwnd_) SetCapture(hwnd_);
                     InvalidateRect(hwnd_, nullptr, FALSE);
                     return;
@@ -229,7 +190,7 @@ void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
             }
         }
     }
-    if ((active_tool_ == 0 || active_tool_ == 1) && node_tool_) {
+    if (active_tool_ == 0 && node_tool_) {
         document::ObjectId rect_id;
         if (is_selected_rectangle(&rect_id)) {
             if (node_tool_->target_object() != rect_id) {
@@ -253,6 +214,10 @@ void NativeWindow::handle_mouse_down(int x, int y, unsigned modifiers) {
             return;
         return;
     }
+    if (active_tool_ == 15 && is_canvas_point(x, y)) {
+        if (handle_eyedropper_mouse_down(x, y, modifiers))
+            return;
+    }
     handle_canvas_mouse_down(x, y, modifiers);
 }
 
@@ -263,16 +228,64 @@ void NativeWindow::handle_mouse_move(int x, int y) {
 void NativeWindow::handle_mouse_move(int x, int y, unsigned modifiers) {
     last_canvas_pointer_x_ = x;
     last_canvas_pointer_y_ = y;
+    if (raster_dock_drag_control_ != 0) {
+        if (handle_raster_dock_interactive_mouse_move(x, y))
+            return;
+    }
+    if (is_canvas_point(x, y)) {
+        if (handle_eyedropper_mouse_move(x, y, modifiers)) {
+            if (active_tool_ == 15 && hwnd_) {
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            }
+        }
+    } else if (hover_color_sample_.valid) {
+        hover_color_sample_.valid = false;
+        if (active_tool_ == 15 && hwnd_) {
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+    }
+    if (import_placement_active() && active_tab().id == import_placement_->target_tab_id) {
+        const std::string color_hint = language_ == UILanguage::Vietnamese
+            ? " · giữ ICC nguồn · màu xem trước chưa xác minh"
+            : " · source ICC kept · preview color unverified";
+        if (is_canvas_point(x, y)) {
+            import_placement_->pointer_world = canvas_to_world(x, y);
+            import_placement_->pointer_valid = true;
+            const std::string position = format_mm_display_utf8(
+                    import_placement_->pointer_world.x, display_length_unit_, 3) + ", " +
+                format_mm_display_utf8(import_placement_->pointer_world.y,
+                                       display_length_unit_, 3);
+            status_msg_ = (language_ == UILanguage::Vietnamese
+                ? "Vị trí góc trên trái: " : "Top-left position: ") + position +
+                (language_ == UILanguage::Vietnamese
+                    ? " · nhấp để đặt · Esc hủy" : " · click to place · Esc cancels") +
+                color_hint;
+        } else {
+            import_placement_->pointer_valid = false;
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Đưa con trỏ vào canvas · nhấp để đặt · Esc để hủy"
+                : "Move into the canvas · click to place · Esc cancels";
+            status_msg_ += color_hint;
+        }
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
     bool prev_visible = tooltip_.visible;
     std::wstring prev_text = tooltip_.text;
 
     if (toolbox_open_group_ > 0) {
         const int group_row = toolbox_open_group_ == 1 ? get_visible_row_for_slot(ToolboxSlotId::QuickShapes)
-                            : toolbox_open_group_ == 2 ? get_visible_row_for_slot(ToolboxSlotId::PathDrawing) : 6;
+                            : toolbox_open_group_ == 2 ? get_visible_row_for_slot(ToolboxSlotId::PathDrawing)
+                            : toolbox_open_group_ == 3 ? get_visible_row_for_slot(ToolboxSlotId::Blur)
+                            : toolbox_open_group_ == 4 ? get_visible_row_for_slot(ToolboxSlotId::Gradient)
+                            : toolbox_open_group_ == 5 ? get_visible_row_for_slot(ToolboxSlotId::Eyedropper)
+                            : get_visible_row_for_slot(ToolboxSlotId::Knife);
         const int flyout_top = 112 + (group_row >= 0 ? group_row : 1) * 42;
-        const int flyout_height = toolbox_open_group_ == 3 ? 174
+        const int flyout_height = toolbox_open_group_ == 6 ? 90
+            : toolbox_open_group_ == 3 ? 174
             : toolbox_open_group_ == 2 ? 145 : 116;
-        const int max_items = toolbox_open_group_ == 3 ? 5
+        const int max_items = toolbox_open_group_ == 6 ? 2
+            : toolbox_open_group_ == 3 ? 5
             : toolbox_open_group_ == 2 ? 4 : 3;
         if (x >= 54 && x <= 242 && y >= flyout_top + 26 && y < flyout_top + flyout_height) {
             const int item = (y - flyout_top - 26) / 29;
@@ -321,7 +334,9 @@ void NativeWindow::handle_mouse_move(int x, int y, unsigned modifiers) {
         }
     }
 
-    if (open_menu_id_ >= 0) {
+    if (open_menu_id_ >= 0 && handle_text_case_submenu_mouse_move(x, y)) {
+        // The nested Change Case popup owns hover and focus within its two panels.
+    } else if (open_menu_id_ >= 0) {
         const int top_item = get_menu_bar_item_at(x, y, 38);
         if (top_item >= 0 && top_item != open_menu_id_) {
             open_menu(top_item);
@@ -430,15 +445,15 @@ void NativeWindow::handle_mouse_move(int x, int y, unsigned modifiers) {
                 : "Shadow preview is invalid · document unchanged";
         } else {
             drag_preview_delta_ = {shadow.dx_mm, shadow.dy_mm};
-            std::ostringstream values;
-            values << std::fixed << std::setprecision(1)
-                   << shadow.dx_mm << ", " << shadow.dy_mm << " mm";
+            const std::string values = format_mm_display_utf8(shadow.dx_mm, display_length_unit_, 5) +
+                ", " + format_mm_display_utf8(shadow.dy_mm, display_length_unit_, 5);
             std::string mod_hints;
             if ((modifiers & MK_SHIFT) != 0) mod_hints += " · Shift: 15°";
-            if ((modifiers & MK_CONTROL) != 0) mod_hints += " · Ctrl: 0.5mm";
+            if ((modifiers & MK_CONTROL) != 0)
+                mod_hints += " · Ctrl: " + format_mm_display_utf8(0.5, display_length_unit_, 4);
             status_msg_ = language_ == UILanguage::Vietnamese
-                ? "Lệch bóng X, Y: " + values.str() + mod_hints + " · Enter lưu · Esc hủy"
-                : "Shadow offset X, Y: " + values.str() + mod_hints + " · Enter applies · Esc cancels";
+                ? "Lệch bóng X, Y: " + values + mod_hints + " · Enter lưu · Esc hủy"
+                : "Shadow offset X, Y: " + values + mod_hints + " · Enter applies · Esc cancels";
         }
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
         return;
@@ -448,18 +463,16 @@ void NativeWindow::handle_mouse_move(int x, int y, unsigned modifiers) {
         const auto world_pt = canvas_to_world(x, y);
         if (drag_guideline_orientation_ == GuidelineOrientation::Horizontal) {
             drag_guideline_pos_mm_ = world_pt.y;
-            std::ostringstream ss;
-            ss << std::fixed << std::setprecision(1) << drag_guideline_pos_mm_;
+            const auto value = format_mm_display_utf8(drag_guideline_pos_mm_, display_length_unit_, 5);
             status_msg_ = (language_ == UILanguage::Vietnamese)
-                ? (selected_guideline_index_ >= 0 ? "Dời đường gióng ngang Y: " + ss.str() + " mm" : "Đường gióng ngang Y: " + ss.str() + " mm")
-                : (selected_guideline_index_ >= 0 ? "Move horizontal guideline Y: " + ss.str() + " mm" : "Horizontal guideline Y: " + ss.str() + " mm");
+                ? (selected_guideline_index_ >= 0 ? "Dời đường gióng ngang Y: " + value : "Đường gióng ngang Y: " + value)
+                : (selected_guideline_index_ >= 0 ? "Move horizontal guideline Y: " + value : "Horizontal guideline Y: " + value);
         } else {
             drag_guideline_pos_mm_ = world_pt.x;
-            std::ostringstream ss;
-            ss << std::fixed << std::setprecision(1) << drag_guideline_pos_mm_;
+            const auto value = format_mm_display_utf8(drag_guideline_pos_mm_, display_length_unit_, 5);
             status_msg_ = (language_ == UILanguage::Vietnamese)
-                ? (selected_guideline_index_ >= 0 ? "Dời đường gióng dọc X: " + ss.str() + " mm" : "Đường gióng dọc X: " + ss.str() + " mm")
-                : (selected_guideline_index_ >= 0 ? "Move vertical guideline X: " + ss.str() + " mm" : "Vertical guideline X: " + ss.str() + " mm");
+                ? (selected_guideline_index_ >= 0 ? "Dời đường gióng dọc X: " + value : "Đường gióng dọc X: " + value)
+                : (selected_guideline_index_ >= 0 ? "Move vertical guideline X: " + value : "Vertical guideline X: " + value);
         }
         if (selected_guideline_index_ >= 0 && selected_guideline_index_ < static_cast<int>(guidelines_.size())) {
             guidelines_[selected_guideline_index_].position_mm = drag_guideline_pos_mm_;
@@ -474,6 +487,10 @@ void NativeWindow::handle_mouse_move(int x, int y, unsigned modifiers) {
 
     if ((active_tool_ == 11 || is_corner_dragging_in_pick_tool_) && node_tool_ && node_tool_->active() && !is_panning_ &&
         handle_node_pointer_move(x, y, modifiers))
+        return;
+
+    if (gradient_ramp_drag_kind_ != GradientRampDragKind::None &&
+        handle_gradient_ramp_pointer_move(x, y))
         return;
 
     if (active_tool_ == 13 && gradient_tool_ && gradient_tool_->active() && !is_panning_ &&
@@ -497,6 +514,10 @@ void NativeWindow::handle_mouse_up(int x, int y) {
 }
 
 void NativeWindow::handle_mouse_up(int x, int y, unsigned modifiers) {
+    if (raster_dock_drag_control_ != 0) {
+        if (handle_raster_dock_interactive_mouse_up(x, y))
+            return;
+    }
     if (resize_handle_ == -2) {
         const bool moved = std::hypot(x - drag_start_x_, y - drag_start_y_) >= 3.0;
         bool applied = false;
@@ -545,16 +566,17 @@ void NativeWindow::handle_mouse_up(int x, int y, unsigned modifiers) {
 
         if (selected_guideline_index_ >= 0 && selected_guideline_index_ < static_cast<int>(guidelines_.size())) {
             const int moving_index = selected_guideline_index_;
-            selected_guideline_index_ = -1;
+            // Keep selected_guideline_index_ so user can delete or inspect it
             const bool inside = (drag_guideline_orientation_ == GuidelineOrientation::Horizontal)
                 ? (y >= area.top && y <= area.bottom)
                 : (x >= area.left && x <= area.right);
             if (inside) {
                 guidelines_[moving_index].position_mm = drag_guideline_pos_mm_;
                 status_msg_ = (language_ == UILanguage::Vietnamese)
-                    ? "Đã dời vị trí thước gióng" : "Moved guideline position";
+                    ? "Đã chọn thước gióng · Nhấn Delete để xóa" : "Selected guideline · Press Delete to remove";
             } else {
                 guidelines_.erase(guidelines_.begin() + moving_index);
+                selected_guideline_index_ = -1;
                 status_msg_ = (language_ == UILanguage::Vietnamese)
                     ? "Đã xóa thước gióng kéo ra ngoài bản vẽ" : "Deleted guideline dragged off-canvas";
             }
@@ -565,6 +587,7 @@ void NativeWindow::handle_mouse_up(int x, int y, unsigned modifiers) {
         if (drag_guideline_orientation_ == GuidelineOrientation::Horizontal) {
             if (y >= area.top && y <= area.bottom) {
                 add_guideline(GuidelineOrientation::Horizontal, world_pt.y);
+                selected_guideline_index_ = static_cast<int>(guidelines_.size()) - 1;
             } else {
                 status_msg_ = (language_ == UILanguage::Vietnamese)
                     ? "Đã hủy kéo đường gióng"
@@ -573,6 +596,7 @@ void NativeWindow::handle_mouse_up(int x, int y, unsigned modifiers) {
         } else {
             if (x >= area.left && x <= area.right) {
                 add_guideline(GuidelineOrientation::Vertical, world_pt.x);
+                selected_guideline_index_ = static_cast<int>(guidelines_.size()) - 1;
             } else {
                 status_msg_ = (language_ == UILanguage::Vietnamese)
                     ? "Đã hủy kéo đường gióng"
@@ -603,6 +627,9 @@ void NativeWindow::handle_mouse_up(int x, int y, unsigned modifiers) {
         return;
     }
     is_corner_dragging_in_pick_tool_ = false;
+    if (gradient_ramp_drag_kind_ != GradientRampDragKind::None &&
+        handle_gradient_ramp_pointer_up(x, y))
+        return;
     if (handle_gradient_pointer_up(x, y, modifiers))
         return;
     if (drawing_tool_ && drawing_tool_->active())

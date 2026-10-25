@@ -8,7 +8,7 @@ Responsibility: process launch, isolated source snapshots, bounded IPC, resource
 
 Protocol and proposal data are untrusted. Validate sizes, framing, hashes, job identity, epoch/revision and semantics before atomic document application. Timeout or invalid responses terminate the worker scope; partial proposals never commit. Job Objects alone do not prove OS containment; retain live canary evidence and do not claim parser or plug-in acceptance from protocol tests.
 
-Build through `tooling/native/build.ps1`. Keep workers independent of desktop UI. See [worker scope rules](AGENTS.md) and [sandbox evidence policy](../../docs/roadmap/foundation-spikes.md).
+Build through `tooling/native/build.ps1`. Keep workers independent of desktop UI. See [worker scope rules](AGENTS.md) and [sandbox evidence policy](../../docs/roadmap/performance-storage-automation.md).
 
 Latest focused local evidence (2026-10-18): `test_pikdraw_workers_live_containment`,
 `test_pikdraw_worker_v2_integrity`, and `test_pikdraw_workers_policy` passed 3/3. The live run

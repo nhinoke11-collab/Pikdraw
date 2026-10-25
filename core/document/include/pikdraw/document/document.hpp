@@ -85,6 +85,8 @@ public:
 
     /// Validates background worker proposal against strict base revision and commits atomically
     ProposalStatus validate_and_commit_proposal(AsyncProposal proposal);
+    /// Replaces the document only if the asynchronous Open job still targets its current state.
+    ProposalStatus replace_from_proposal(AsyncProposalMetadata metadata, SnapshotPtr snapshot);
 
     /// Adds a listener invoked whenever a new immutable snapshot is published
     void add_snapshot_listener(SnapshotListener listener);
@@ -93,6 +95,8 @@ public:
     void apply_mutation(Page page, PersistentObjectMap objects);
     /// Replaces page roots as part of an executing command.
     void apply_page_collection(std::vector<DocumentPage> pages, PageId active_page_id);
+    /// Restores immutable roots already validated by a committed snapshot in Undo/Redo.
+    void restore_committed_snapshot(const DocumentSnapshot& snapshot);
     /// Changes the visible page without creating an edit or undo record.
     [[nodiscard]] bool set_active_page(PageId page_id);
 

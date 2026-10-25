@@ -1,10 +1,14 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "pikdraw/raster/edit_preview_service.hpp"
+#include "../performance/canvas_trace.hpp"
+#include "native_window_page_navigation.hpp"
 #include "../tools/drawing_tool_controller.hpp"
 #include "../tools/pen_tool_controller.hpp"
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/gradient_tool_controller.hpp"
 #include "../tools/dimension_tool_controller.hpp"
+#include "../tools/annotation/annotation_tool_controller.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -50,7 +54,9 @@ void draw_outline(HDC dc, const rendering::Camera2D& camera,
 } // namespace
 
 RECT NativeWindow::canvas_rect(int width, int height) const noexcept {
-    return RECT{72, 122, std::max(72, width - 280), std::max(122, height - 26)};
+    const int left_margin = toolbox_width() + 20;
+    return RECT{left_margin, 122, std::max(left_margin, width - inspector_width()),
+                std::max(122, height - page_navigation::kBottomChromeHeight)};
 }
 
 bool NativeWindow::is_canvas_point(int x, int y) const noexcept {
@@ -76,19 +82,34 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
 
     auto& camera = root().renderer().camera();
     camera.set_viewport_size(canvas_width, canvas_height);
-    const auto snapshot = workflow().snapshot_for_canvas();
+    synchronize_powerclip_view();
+    const rendering::RenderViewContext clip_view{current_isolated_group_id().value_or(0), isolation_generation_, isolation_reveal_, isolation_frame_};
+    root().renderer().set_view_context(clip_view);
+    auto snapshot = workflow().snapshot_for_canvas();
     if (!snapshot)
         return;
+    if (active_tool_ == 13 && gradient_tool_ && gradient_tool_->active())
+        snapshot = gradient_tool_->preview_snapshot_for_canvas(std::move(snapshot));
+    if (raster_preview_service_) {
+        const HWND notify_window = hwnd_;
+        raster_preview_service_->request(snapshot, [notify_window] {
+            if (notify_window)
+                (void)PostMessageW(notify_window, kRasterPreviewWorkerMessage, 0, 0);
+        });
+    }
 
+    if (!canvas_overlay_only_) {
     const bool view_is_stable = canvas_cache_valid_
         && cached_canvas_dc_ && cached_canvas_bmp_
         && canvas_width == cached_canvas_w_
         && canvas_height == cached_canvas_h_
-        && color_preview_ == cached_canvas_profile_
+        && effective_color_preview_owner() == cached_canvas_profile_
         && camera.zoom() == cached_zoom_
         && camera.center().x == cached_camera_x_
         && camera.center().y == cached_camera_y_
-        && theme_ == cached_theme_;
+        && theme_ == cached_theme_
+        && artboard_overview_enabled() == cached_artboard_overview_
+        && active_tab().active_artboard_id == cached_active_artboard_id_;
     if (view_is_stable && cached_canvas_snapshot_
         && snapshot != cached_canvas_snapshot_) {
         damage_tracker_.update(*cached_canvas_snapshot_, *snapshot, camera.zoom());
@@ -102,12 +123,15 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
         || canvas_width != cached_canvas_w_
         || canvas_height != cached_canvas_h_
         || snapshot != cached_canvas_snapshot_
-        || color_preview_ != cached_canvas_profile_
+        || effective_color_preview_owner() != cached_canvas_profile_
         || snapshot->revision() != cached_revision_
         || camera.zoom() != cached_zoom_
         || camera.center().x != cached_camera_x_
         || camera.center().y != cached_camera_y_
-        || theme_ != cached_theme_;
+        || theme_ != cached_theme_
+        || artboard_overview_enabled() != cached_artboard_overview_
+        || active_tab().active_artboard_id != cached_active_artboard_id_
+        || clip_view != cached_clip_view_;
 
     if (cache_needs_rebuild) {
         if (!cached_canvas_dc_) {
@@ -138,8 +162,9 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
         // be mistaken for the previous reusable buffer contents.
         const int raster_w = dip(canvas_width), raster_h = dip(canvas_height);
         const size_t expected = static_cast<size_t>(raster_w) * raster_h * 4;
-        bool frame_rendered = false;
-        if (static_cast<uint64_t>(raster_w) * static_cast<uint64_t>(raster_h)
+        bool frame_rendered = direct_present_frame_;
+        if (!direct_present_frame_ &&
+            static_cast<uint64_t>(raster_w) * static_cast<uint64_t>(raster_h)
             <= 33554432ULL) {
             if (reusable_bgra_buffer_.size() != expected)
                 reusable_bgra_buffer_.resize(expected, 0);
@@ -148,66 +173,108 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
             render_target.bgra_pixels = reinterpret_cast<uint32_t*>(reusable_bgra_buffer_.data());
             const auto logical_camera = camera;
             camera.set_zoom(camera.zoom() * dpi_scale_);
+            if (canvas_trace_) record_performance_event(CanvasTraceKind::RenderBegin,
+                active_trace_event_id_, active_trace_frame_id_);
             frame_rendered = root().renderer().render_frame(*snapshot, render_target);
+            if (canvas_trace_) record_performance_event(CanvasTraceKind::RenderEnd,
+                active_trace_event_id_, active_trace_frame_id_);
             camera = logical_camera;
         }
-        if (frame_rendered) {
-            BITMAPINFO bitmap{};
-            bitmap.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-            bitmap.bmiHeader.biWidth = raster_w;
-            bitmap.bmiHeader.biHeight = -raster_h;
-            bitmap.bmiHeader.biPlanes = 1;
-            bitmap.bmiHeader.biBitCount = 32;
-            bitmap.bmiHeader.biCompression = BI_RGB;
-            StretchDIBits(cached_canvas_dc_, 0, 0, canvas_width, canvas_height,
-                          0, 0, raster_w, raster_h,
-                          reusable_bgra_buffer_.data(), &bitmap,
-                          DIB_RGB_COLORS, SRCCOPY);
-        } else {
-            SetBkMode(cached_canvas_dc_, TRANSPARENT);
-            SetTextColor(cached_canvas_dc_, RGB(180, 90, 80));
-            const wchar_t* error = language_ == UILanguage::Vietnamese
-                ? L"Không thể dựng một số đối tượng của tài liệu."
-                : L"Some document objects could not be rendered.";
-            TextOutW(cached_canvas_dc_, 18, 18, error, static_cast<int>(wcslen(error)));
+        if (!direct_present_frame_) {
+            if (frame_rendered) {
+                BITMAPINFO bitmap{};
+                bitmap.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+                bitmap.bmiHeader.biWidth = raster_w;
+                bitmap.bmiHeader.biHeight = -raster_h;
+                bitmap.bmiHeader.biPlanes = 1;
+                bitmap.bmiHeader.biBitCount = 32;
+                bitmap.bmiHeader.biCompression = BI_RGB;
+                StretchDIBits(cached_canvas_dc_, 0, 0, canvas_width, canvas_height,
+                              0, 0, raster_w, raster_h,
+                              reusable_bgra_buffer_.data(), &bitmap,
+                              DIB_RGB_COLORS, SRCCOPY);
+            } else {
+                SetBkMode(cached_canvas_dc_, TRANSPARENT);
+                SetTextColor(cached_canvas_dc_, RGB(180, 90, 80));
+                const wchar_t* error = language_ == UILanguage::Vietnamese
+                    ? L"Không thể dựng một số đối tượng của tài liệu."
+                    : L"Some document objects could not be rendered.";
+                TextOutW(cached_canvas_dc_, 18, 18, error, static_cast<int>(wcslen(error)));
+            }
         }
 
-        // Draw page shadow onto cached canvas
-        const auto page_top_left = camera.world_to_screen({0.0, snapshot->page().height_mm});
-        const auto page_bottom_right = camera.world_to_screen({snapshot->page().width_mm, 0.0});
-        const int page_left = static_cast<int>(std::floor(page_top_left.x));
-        const int page_top = static_cast<int>(std::floor(page_top_left.y));
-        const int page_right = static_cast<int>(std::ceil(page_bottom_right.x));
-        const int page_bottom = static_cast<int>(std::ceil(page_bottom_right.y));
-        HBRUSH shadow = CreateSolidBrush(theme_ == ThemeMode::CyberDark
-            ? RGB(24, 28, 36) : RGB(148, 163, 184));
-        RECT shadow_right{page_right, page_top + 6, page_right + 6, page_bottom + 6};
-        RECT shadow_bottom{page_left + 6, page_bottom, page_right + 6, page_bottom + 6};
-        FillRect(cached_canvas_dc_, &shadow_right, shadow);
-        FillRect(cached_canvas_dc_, &shadow_bottom, shadow);
-        DeleteObject(shadow);
+        if (!artboard_overview_enabled()) {
+            // Draw page shadow and border in focused Page view.
+            const auto page_top_left = camera.world_to_screen({0.0, snapshot->page().height_mm});
+            const auto page_bottom_right = camera.world_to_screen({snapshot->page().width_mm, 0.0});
+            const int page_left = static_cast<int>(std::floor(page_top_left.x));
+            const int page_top = static_cast<int>(std::floor(page_top_left.y));
+            const int page_right = static_cast<int>(std::ceil(page_bottom_right.x));
+            const int page_bottom = static_cast<int>(std::ceil(page_bottom_right.y));
+            HBRUSH shadow = CreateSolidBrush(theme_ == ThemeMode::CyberDark
+                ? RGB(24, 28, 36) : RGB(148, 163, 184));
+            RECT shadow_right{page_right, page_top + 6, page_right + 6, page_bottom + 6};
+            RECT shadow_bottom{page_left + 6, page_bottom, page_right + 6, page_bottom + 6};
+            FillRect(cached_canvas_dc_, &shadow_right, shadow);
+            FillRect(cached_canvas_dc_, &shadow_bottom, shadow);
+            DeleteObject(shadow);
 
-        // Draw crisp 1px page border so white paper sheet is clearly delimited
-        HPEN page_border = CreatePen(PS_SOLID, 1, theme_ == ThemeMode::CyberDark
-            ? RGB(50, 56, 68) : RGB(203, 213, 225));
-        HGDIOBJ old_pen = SelectObject(cached_canvas_dc_, page_border);
-        HGDIOBJ old_brush = SelectObject(cached_canvas_dc_, GetStockObject(NULL_BRUSH));
-        Rectangle(cached_canvas_dc_, page_left, page_top, page_right + 1, page_bottom + 1);
-        SelectObject(cached_canvas_dc_, old_brush);
-        SelectObject(cached_canvas_dc_, old_pen);
-        DeleteObject(page_border);
+            HPEN page_border = CreatePen(PS_SOLID, 1, theme_ == ThemeMode::CyberDark
+                ? RGB(50, 56, 68) : RGB(203, 213, 225));
+            HGDIOBJ old_pen = SelectObject(cached_canvas_dc_, page_border);
+            HGDIOBJ old_brush = SelectObject(cached_canvas_dc_, GetStockObject(NULL_BRUSH));
+            Rectangle(cached_canvas_dc_, page_left, page_top, page_right + 1, page_bottom + 1);
+            SelectObject(cached_canvas_dc_, old_brush);
+            SelectObject(cached_canvas_dc_, old_pen);
+            DeleteObject(page_border);
+        } else {
+            const auto old_brush = SelectObject(cached_canvas_dc_, GetStockObject(NULL_BRUSH));
+            for (const auto& artboard : snapshot->active_page().artboards) {
+                const bool active = artboard.id == active_tab().active_artboard_id;
+                const RECT rect = screen_rect(camera,
+                    {artboard.x_mm, artboard.y_mm, artboard.width_mm, artboard.height_mm}, 0, 0);
+                HPEN border = CreatePen(PS_SOLID, active ? 2 : 1, active
+                    ? (theme_ == ThemeMode::CyberDark ? RGB(0, 242, 195) : RGB(0, 125, 105))
+                    : (theme_ == ThemeMode::CyberDark ? RGB(105, 150, 185) : RGB(80, 116, 150)));
+                const auto prior_pen = SelectObject(cached_canvas_dc_, border);
+                Rectangle(cached_canvas_dc_, rect.left, rect.top, rect.right + 1, rect.bottom + 1);
+                SelectObject(cached_canvas_dc_, prior_pen);
+                DeleteObject(border);
+                RECT label{rect.left + 3, std::max<LONG>(0, rect.top - 18),
+                           rect.left + 180, rect.top};
+                SetBkMode(cached_canvas_dc_, OPAQUE);
+                SetBkColor(cached_canvas_dc_, canvas_background_colorref());
+                SetTextColor(cached_canvas_dc_, active
+                    ? (theme_ == ThemeMode::CyberDark ? RGB(0, 242, 195) : RGB(0, 105, 90))
+                    : (theme_ == ThemeMode::CyberDark ? RGB(180, 205, 220) : RGB(55, 75, 95)));
+                const auto name = utf8_to_wide(artboard.name);
+                DrawTextW(cached_canvas_dc_, name.c_str(), -1, &label,
+                    DT_LEFT | DT_BOTTOM | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+            }
+            SelectObject(cached_canvas_dc_, old_brush);
+        }
 
         // Update cached parameters
+        cached_clip_view_ = clip_view;
         cached_revision_ = snapshot->revision();
         cached_canvas_snapshot_ = snapshot;
-        cached_canvas_profile_ = color_preview_;
+        cached_canvas_profile_ = effective_color_preview_owner();
         cached_zoom_ = camera.zoom();
         cached_camera_x_ = camera.center().x;
         cached_camera_y_ = camera.center().y;
         cached_canvas_w_ = canvas_width;
         cached_canvas_h_ = canvas_height;
         cached_theme_ = theme_;
-        canvas_cache_valid_ = frame_rendered;
+        cached_artboard_overview_ = artboard_overview_enabled();
+        cached_active_artboard_id_ = active_tab().active_artboard_id;
+        canvas_cache_valid_ = frame_rendered && !direct_present_frame_;
+        if (canvas_cache_valid_ && active_tool_ == 15 &&
+            is_canvas_point(last_canvas_pointer_x_, last_canvas_pointer_y_)) {
+            // Re-sample after rebuilding the frame so the hover readout never
+            // keeps showing source paint values when the displayed pixel changed.
+            hover_color_sample_ = sample_canvas_color_at(
+                last_canvas_pointer_x_, last_canvas_pointer_y_);
+        }
         if (frame_rendered)
             damage_tracker_.clear_damage();
         else
@@ -217,48 +284,17 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
     // Fast blit from cached memory DC to destination DC!
     BitBlt(dc, area.left, area.top, canvas_width, canvas_height,
            cached_canvas_dc_, 0, 0, SRCCOPY);
+    }
 
     const int saved = SaveDC(dc);
     IntersectClipRect(dc, area.left, area.top, area.right, area.bottom);
+
+    paint_artboard_canvas_overlay(dc, area);
 
     for (const auto id : root().vector_controller().selection().selected_ids()) {
         if (const auto bounds = workflow().get_object_bounds(id))
             draw_outline(dc, camera, *bounds, area.left, area.top,
                          RGB(14, 165, 233), PS_DOT, false);
-    }
-
-    if (is_in_isolation_mode()) {
-        auto iso_id = *current_isolated_group_id();
-        for (const auto& [id, obj_var] : snapshot->objects().all()) {
-            if (!is_object_in_isolated_group(id) && !std::holds_alternative<document::GroupObject>(obj_var)) {
-                if (auto b = workflow().get_object_bounds(id)) {
-                    RECT obj_rc = screen_rect(camera, *b, area.left, area.top);
-                    InflateRect(&obj_rc, 4, 4);
-                    RECT clipped{};
-                    if (IntersectRect(&clipped, &obj_rc, &area)) {
-                        HDC mem_wash = CreateCompatibleDC(dc);
-                        HBITMAP mem_bmp = CreateCompatibleBitmap(dc, 1, 1);
-                        HGDIOBJ old_bmp = SelectObject(mem_wash, mem_bmp);
-                        COLORREF wash_col = (theme_ == ThemeMode::CyberDark) ? RGB(68, 72, 80) : RGB(255, 255, 255);
-                        SetPixel(mem_wash, 0, 0, wash_col);
-                        BLENDFUNCTION bf{};
-                        bf.BlendOp = AC_SRC_OVER;
-                        bf.SourceConstantAlpha = 180;
-                        AlphaBlend(dc, clipped.left, clipped.top, clipped.right - clipped.left, clipped.bottom - clipped.top,
-                                   mem_wash, 0, 0, 1, 1, bf);
-                        SelectObject(mem_wash, old_bmp);
-                        DeleteObject(mem_bmp);
-                        DeleteDC(mem_wash);
-                    }
-                }
-            }
-        }
-
-        // Draw faint dashed bounding box for the isolated group
-        if (auto iso_bounds = workflow().get_object_bounds(iso_id)) {
-            draw_outline(dc, camera, *iso_bounds, area.left, area.top,
-                         RGB(100, 116, 139), PS_DASH, false);
-        }
     }
 
     if (is_dragging_ && drag_preview_bounds_) {
@@ -353,7 +389,8 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
             }, *object);
         });
     const bool effect_render_error = draft_preview_error || authored_effect_error;
-    const bool icc_error = color_preview_ && color_preview_->conversion_failure_count() > 0;
+    const auto* preview = effective_color_preview();
+    const bool icc_error = preview && preview->conversion_failure_count() > 0;
     if (errors > 0 || icc_error) {
         const wchar_t* warning = effect_render_error ? (language_ == UILanguage::Vietnamese
             ? (draft_preview_error
@@ -457,6 +494,18 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
     paint_canvas_guidelines(dc, width, height);
     paint_canvas_rulers(dc, width, height);
     paint_selection_overlay(dc);
+    paint_smart_guide_overlay(dc, canvas_rect(width, height));
+    paint_import_placement_overlay(dc);
+}
+
+void NativeWindow::paint_canvas_overlay_layer(HDC dc, int width, int height) {
+    struct RestoreOverlayOnly {
+        bool& flag;
+        bool previous;
+        ~RestoreOverlayOnly() { flag = previous; }
+    } restore{canvas_overlay_only_, canvas_overlay_only_};
+    canvas_overlay_only_ = true;
+    paint_document_canvas(dc, width, height);
 }
 
 void NativeWindow::paint_drawing_overlay(HDC dc) {
@@ -471,6 +520,8 @@ void NativeWindow::paint_drawing_overlay(HDC dc) {
     paint_drawing_tool_overlays(dc);
     if (active_tool_ == 13 && gradient_tool_ && gradient_tool_->active())
         paint_gradient_canvas_overlay(dc, canvas_rect(width_, height_));
+    if (active_tool_ == 17 && annotation_tool_ && annotation_tool_->active())
+        paint_annotation_canvas_overlay(dc, canvas_rect(width_, height_));
 }
 
 #endif

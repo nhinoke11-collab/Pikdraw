@@ -30,10 +30,10 @@
 | Điều khiển | Kiểu / miền | Trạng thái & Thao tác | Commit / Undo |
 | --- | --- | --- | --- |
 | Mẫu ▾ (Presets) | Menu / chu kỳ 6 mẫu chuẩn | Dưới-Phải, Dưới-Trái, Trên-Phải, Trên-Trái, Tỏa bóng, Đổ đậm | Áp dụng tức thì vào bản nháp/document; 1 bước Undo |
-| X: (Offset X) | Số mm, ±1.000.000 | `NumericFieldId::EffectOffsetX`; nhập trực tiếp trên ribbon | Enter xác nhận, Tab chuyển ô, Esc hủy; Undo phục hồi |
-| Y: (Offset Y) | Số mm, ±1.000.000 | `NumericFieldId::EffectOffsetY`; nhập trực tiếp trên ribbon | Như Offset X |
-| Nhòe: (Feather / Sigma) | Số mm, 0–1.000.000 | `NumericFieldId::EffectSigmaX`; chỉnh độ mờ biên | Như Offset X |
-| Mờ: (Opacity) | Phần trăm, 0–100% | `NumericFieldId::EffectOpacity`; độ đậm nhạt của bóng | Như Offset X |
+| X: (Offset X) | Chiều dài theo đơn vị trang, ±giới hạn hình học | `NumericFieldId::ShadowOffsetX`; nhập trực tiếp trên ribbon | Enter xác nhận, Tab chuyển ô, Esc hủy; Undo phục hồi |
+| Y: (Offset Y) | Chiều dài theo đơn vị trang, ±giới hạn hình học | `NumericFieldId::ShadowOffsetY`; nhập trực tiếp trên ribbon | Như Offset X |
+| Nhòe (Feather) | Chiều dài theo đơn vị trang, 0–giới hạn hình học | `NumericFieldId::ShadowFeatherX`; chỉnh độ nhòe biên của Shadow, tách khỏi `BlurSigmaX/Y` | Như Offset X |
+| Mờ: (Opacity) | Phần trăm, 0–100% | `NumericFieldId::ShadowOpacity`; độ đậm nhạt của bóng | Như Offset X |
 | ■ Màu (Color) | Swatch màu RGB | Bấm để mở hộp thoại `edit_source_color` chọn màu | Cập nhật màu nguồn; 1 bước Undo |
 | Chế độ hòa trộn | Chu kỳ 6 mode | Normal → Multiply → Screen → Overlay → Darken → Lighten | Chuyển chế độ tức thì; 1 bước Undo |
 | ✕ Xóa (Clear) | Nút đỏ | Xóa hiệu ứng Drop Shadow khỏi đối tượng | 1 bước Undo; chuyển về thanh Vật thể |

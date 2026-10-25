@@ -80,7 +80,9 @@ void write_object(Writer &writer, const ObjectVariant &value,
                   bool include_authoring_source,
                   const EditablePath *source_override,
                   bool include_appearance,
-                  bool include_gradient) {
+                  bool include_gradient,
+                  const ProfileResourceIndexMap *profile_indices,
+                  bool include_image_pixels) {
   writer.u8(static_cast<uint8_t>(value.index()));
   std::visit(
       [&](const auto &object) {
@@ -91,8 +93,8 @@ void write_object(Writer &writer, const ObjectVariant &value,
         writer.flag(object.locked);
         using T = std::decay_t<decltype(object)>;
         if constexpr (std::is_same_v<T, PathObject>) {
-          write_color(writer, object.fill);
-          write_color(writer, object.stroke);
+          write_color(writer, object.fill, profile_indices);
+          write_color(writer, object.stroke, profile_indices);
           writer.f64(object.stroke_width_mm);
           writer.flag(object.has_fill);
           writer.flag(object.has_stroke);
@@ -108,9 +110,9 @@ void write_object(Writer &writer, const ObjectVariant &value,
             write_editable_path(writer, *source);
           }
           if (include_appearance)
-            write_appearance(writer, object.appearance);
+            write_appearance(writer, object.appearance, profile_indices);
           if (include_gradient)
-            write_gradient(writer, object.fill_gradient);
+            write_gradient(writer, object.fill_gradient, profile_indices);
         } else if constexpr (std::is_same_v<T, TextObject>) {
           writer.str(object.text);
           writer.str(object.font.family_name);
@@ -120,9 +122,9 @@ void write_object(Writer &writer, const ObjectVariant &value,
           writer.f64(object.font.size_pt);
           writer.f64(object.position.x);
           writer.f64(object.position.y);
-          write_color(writer, object.fill);
+          write_color(writer, object.fill, profile_indices);
           if (include_appearance)
-            write_appearance(writer, object.appearance);
+            write_appearance(writer, object.appearance, profile_indices);
         } else if constexpr (std::is_same_v<T, GroupObject>) {
           writer.count(object.children_ids.size(), max_objects);
           for (auto id : object.children_ids)
@@ -138,9 +140,11 @@ void write_object(Writer &writer, const ObjectVariant &value,
           writer.f64(object.bounds_rect.height);
           writer.u32(static_cast<uint32_t>(object.width_px));
           writer.u32(static_cast<uint32_t>(object.height_px));
-          writer.count(object.rgba_pixels().size(), max_image_pixels);
-          for (auto px : object.rgba_pixels())
-            writer.u32(px);
+          if (include_image_pixels) {
+            writer.count(object.rgba_pixels().size(), max_image_pixels);
+            for (auto px : object.rgba_pixels())
+              writer.u32(px);
+          }
           writer.flag(object.clip_path.has_value());
           if (object.clip_path)
             write_path(writer, *object.clip_path);
@@ -150,13 +154,15 @@ void write_object(Writer &writer, const ObjectVariant &value,
 }
 
 ObjectVariant read_object(Reader &reader, uint32_t &remaining_elements,
-                          bool include_authoring_source) {
+                          bool include_authoring_source,
+                          bool include_profile_bindings,
+                          bool include_image_pixels) {
   const auto type = reader.u8();
   if (type == 0) {
     PathObject object;
     read_common(reader, object);
-    object.fill = read_color(reader);
-    object.stroke = read_color(reader);
+    object.fill = read_color(reader, include_profile_bindings);
+    object.stroke = read_color(reader, include_profile_bindings);
     object.stroke_width_mm = reader.f64();
     object.has_fill = reader.flag();
     object.has_stroke = reader.flag();
@@ -184,7 +190,7 @@ ObjectVariant read_object(Reader &reader, uint32_t &remaining_elements,
     object.font.italic = reader.flag();
     object.font.size_pt = reader.f64();
     object.position = {reader.f64(), reader.f64()};
-    object.fill = read_color(reader);
+    object.fill = read_color(reader, include_profile_bindings);
     return object;
   }
   if (type == 2) {
@@ -211,13 +217,17 @@ ObjectVariant read_object(Reader &reader, uint32_t &remaining_elements,
       throw std::invalid_argument("Invalid native image pixel dimensions");
     object.width_px = static_cast<int32_t>(width_px);
     object.height_px = static_cast<int32_t>(height_px);
-    const auto count = reader.count(max_image_pixels, sizeof(uint32_t));
     const auto expected_pixels = static_cast<uint64_t>(width_px) * height_px;
-    if (count != expected_pixels)
-      throw std::invalid_argument("Native image pixel count does not match dimensions");
-    object.pixels_rgba.reserve(count);
-    for (uint32_t i = 0; i < count; ++i)
-      object.pixels_rgba.push_back(reader.u32());
+    if (include_image_pixels) {
+      const auto count = reader.count(max_image_pixels, sizeof(uint32_t));
+      if (count != expected_pixels)
+        throw std::invalid_argument("Native image pixel count does not match dimensions");
+      auto pixels = std::make_shared<std::vector<uint32_t>>();
+      pixels->reserve(count);
+      for (uint32_t i = 0; i < count; ++i)
+        pixels->push_back(reader.u32());
+      object.shared_pixels_rgba = std::move(pixels);
+    }
     if (reader.flag())
       object.clip_path = read_path(reader, remaining_elements);
     return object;

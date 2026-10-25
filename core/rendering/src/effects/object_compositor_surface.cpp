@@ -150,7 +150,7 @@ color::ColorValue scale_alpha(const color::ColorValue &source,
 bool valid_effect_node(const document::EffectNode &node) {
   if (node.id == document::kInvalidEffectInstanceId ||
       node.schema_version != document::kBasicEffectNodeSchemaVersion ||
-      node.schema_minor > document::kDropShadowBlendSchemaMinor)
+      node.schema_minor > document::kExtendedEffectNodeSchemaMinor)
     return false;
   return std::visit(
       [&node](const auto &effect) {
@@ -162,7 +162,7 @@ bool valid_effect_node(const document::EffectNode &node) {
                  effect.sigma_y_mm >= 0.0 &&
                  effect.sigma_x_mm <= geometry::limits::kCanvasMaxMm &&
                  effect.sigma_y_mm <= geometry::limits::kCanvasMaxMm;
-        } else {
+        } else if constexpr (std::is_same_v<T, document::DropShadowEffect>) {
           return std::isfinite(effect.dx_mm) &&
                  std::isfinite(effect.dy_mm) &&
                  std::abs(effect.dx_mm) <= geometry::limits::kCanvasMaxMm &&
@@ -174,9 +174,36 @@ bool valid_effect_node(const document::EffectNode &node) {
                  effect.sigma_y_mm <= geometry::limits::kCanvasMaxMm &&
                  effect.color.is_valid() && unit_interval(effect.opacity) &&
                  blend_source_over(effect.blend_mode, {}, {}).has_value() &&
-                 (node.schema_minor == document::kDropShadowBlendSchemaMinor ||
+                 (node.schema_minor >= document::kDropShadowBlendSchemaMinor ||
                   effect.blend_mode == document::BlendMode::Normal);
+        } else if constexpr (std::is_same_v<T, document::FeatherEffect>) {
+          return std::isfinite(effect.radius_mm) && effect.radius_mm >= 0.0 &&
+                 effect.radius_mm <= geometry::limits::kCanvasMaxMm;
+        } else if constexpr (std::is_same_v<T, document::OuterGlowEffect>) {
+          return std::isfinite(effect.radius_mm) && effect.radius_mm >= 0.0 &&
+                 effect.radius_mm <= geometry::limits::kCanvasMaxMm &&
+                 effect.color.is_valid() && unit_interval(effect.opacity);
+        } else if constexpr (std::is_same_v<T, document::InnerGlowEffect>) {
+          return std::isfinite(effect.radius_mm) && effect.radius_mm >= 0.0 &&
+                 effect.radius_mm <= geometry::limits::kCanvasMaxMm &&
+                 effect.color.is_valid() && unit_interval(effect.opacity);
+        } else if constexpr (std::is_same_v<T, document::InnerShadowEffect>) {
+          return std::isfinite(effect.dx_mm) &&
+                 std::isfinite(effect.dy_mm) &&
+                 std::abs(effect.dx_mm) <= geometry::limits::kCanvasMaxMm &&
+                 std::abs(effect.dy_mm) <= geometry::limits::kCanvasMaxMm &&
+                 std::isfinite(effect.sigma_x_mm) &&
+                 std::isfinite(effect.sigma_y_mm) && effect.sigma_x_mm >= 0.0 &&
+                 effect.sigma_y_mm >= 0.0 &&
+                 effect.sigma_x_mm <= geometry::limits::kCanvasMaxMm &&
+                 effect.sigma_y_mm <= geometry::limits::kCanvasMaxMm &&
+                 effect.color.is_valid() && unit_interval(effect.opacity) &&
+                 blend_source_over(effect.blend_mode, {}, {}).has_value();
+        } else if constexpr (std::is_same_v<T, document::ColorOverlayEffect>) {
+          return effect.color.is_valid() && unit_interval(effect.opacity) &&
+                 blend_source_over(effect.blend_mode, {}, {}).has_value();
         }
+        return false;
       },
       node.parameters);
 }
@@ -256,15 +283,18 @@ bool effect_output_bounds(const document::PathObject &path,
           double radius_y = 0.0;
           uint64_t taps_x = 0;
           uint64_t taps_y = 0;
-          if (!gaussian_support(effect.sigma_x_mm, density, radius_x, taps_x) ||
-              !gaussian_support(effect.sigma_y_mm, density, radius_y, taps_y))
-            return false;
           if constexpr (std::is_same_v<T, document::GaussianBlurEffect>) {
+            if (!gaussian_support(effect.sigma_x_mm, density, radius_x, taps_x) ||
+                !gaussian_support(effect.sigma_y_mm, density, radius_y, taps_y))
+              return false;
             if (!expand_rect(bounds, radius_x, radius_y))
               return false;
             work_per_pixel += taps_x + taps_y;
             return work_per_pixel <= kMaxEffectJobWorkUnits;
-          } else {
+          } else if constexpr (std::is_same_v<T, document::DropShadowEffect>) {
+            if (!gaussian_support(effect.sigma_x_mm, density, radius_x, taps_x) ||
+                !gaussian_support(effect.sigma_y_mm, density, radius_y, taps_y))
+              return false;
             auto shadow = bounds;
             if (!expand_rect(shadow, radius_x, radius_y) ||
                 !translate_rect(shadow, effect.dx_mm, effect.dy_mm))
@@ -274,6 +304,35 @@ bool effect_output_bounds(const document::PathObject &path,
               return false;
             bounds = combined;
             work_per_pixel += taps_x + taps_y + 5;
+            return work_per_pixel <= kMaxEffectJobWorkUnits;
+          } else if constexpr (std::is_same_v<T, document::FeatherEffect>) {
+            // Feather blurs the alpha mask with sigma = radius / 2. Keep the
+            // source surface padded by the full kernel support so the edge
+            // result does not depend on the allocation boundary, and account
+            // for the actual separable taps before allocating the surface.
+            if (!gaussian_support(effect.radius_mm * 0.5, density,
+                                  radius_x, taps_x) ||
+                !gaussian_support(effect.radius_mm * 0.5, density,
+                                  radius_y, taps_y) ||
+                !expand_rect(bounds, radius_x, radius_y))
+              return false;
+            work_per_pixel += taps_x + taps_y;
+            return work_per_pixel <= kMaxEffectJobWorkUnits;
+          } else if constexpr (std::is_same_v<T, document::OuterGlowEffect>) {
+            if (!gaussian_support(effect.radius_mm, density, radius_x, taps_x))
+              return false;
+            if (!expand_rect(bounds, radius_x, radius_x))
+              return false;
+            work_per_pixel += taps_x * 2 + 5;
+            return work_per_pixel <= kMaxEffectJobWorkUnits;
+          } else if constexpr (std::is_same_v<T, document::InnerGlowEffect>) {
+            work_per_pixel += 15;
+            return work_per_pixel <= kMaxEffectJobWorkUnits;
+          } else if constexpr (std::is_same_v<T, document::InnerShadowEffect>) {
+            work_per_pixel += 20;
+            return work_per_pixel <= kMaxEffectJobWorkUnits;
+          } else if constexpr (std::is_same_v<T, document::ColorOverlayEffect>) {
+            work_per_pixel += 2;
             return work_per_pixel <= kMaxEffectJobWorkUnits;
           }
         },

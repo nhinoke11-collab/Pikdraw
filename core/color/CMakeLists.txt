@@ -7,13 +7,15 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(pikdraw_color STATIC
     src/values/color_value.cpp
+    src/profiles/profile_resource.cpp
     src/profiles/profile_registry.cpp
     src/preview/color_transform.cpp
     src/preview/preview_cache.cpp
     src/preview/icc_preview.cpp
+    src/preview/profile_color_transform.cpp
 )
 if(WIN32)
-    target_link_libraries(pikdraw_color PRIVATE mscms)
+    target_link_libraries(pikdraw_color PRIVATE mscms bcrypt)
 endif()
 
 target_include_directories(pikdraw_color PUBLIC

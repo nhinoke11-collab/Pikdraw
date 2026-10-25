@@ -1,4 +1,5 @@
 #include "pikdraw/document/document.hpp"
+#include "pikdraw/document/commands/path_commands.hpp"
 #include "pikdraw/document/storage/native_format.hpp"
 #include "pikdraw/document/storage/save_recovery.hpp"
 #include "../../src/storage/byte_codec.hpp"
@@ -342,6 +343,16 @@ void appearance_survives_native_v4_path_and_text_roundtrip() {
   blur.id = 71001;
   blur.parameters = GaussianBlurEffect{0.125, 1.75};
   path.appearance.effects.push_back(blur);
+  EffectNode feather_node;
+  feather_node.id = 71002;
+  feather_node.schema_minor = kExtendedEffectNodeSchemaMinor;
+  feather_node.parameters = FeatherEffect{2.5};
+  path.appearance.effects.push_back(feather_node);
+  EffectNode outer_glow_node;
+  outer_glow_node.id = 71003;
+  outer_glow_node.schema_minor = kExtendedEffectNodeSchemaMinor;
+  outer_glow_node.parameters = OuterGlowEffect{3.0, color::RGBColor{1.0, 0.8, 0.1, 1.0}, 0.85};
+  path.appearance.effects.push_back(outer_glow_node);
   check(document.execute_command(std::make_unique<AddObjectCommand>(path)).success,
         "add appearance path");
 
@@ -361,6 +372,33 @@ void appearance_survives_native_v4_path_and_text_roundtrip() {
   shadow.color.set_overprint({true, false});
   shadow.opacity = 0.55;
   shadow.blend_mode = BlendMode::Screen;
+  EffectNode inner_glow_node;
+  inner_glow_node.id = 72002;
+  inner_glow_node.schema_minor = kExtendedEffectNodeSchemaMinor;
+  inner_glow_node.parameters = InnerGlowEffect{1.5, color::RGBColor{0.9, 0.9, 1.0, 1.0}, 0.65};
+  text.appearance.effects.push_back(inner_glow_node);
+  EffectNode inner_shadow_node;
+  inner_shadow_node.id = 72003;
+  inner_shadow_node.schema_minor = kExtendedEffectNodeSchemaMinor;
+  InnerShadowEffect inner_shadow;
+  inner_shadow.dx_mm = 1.0;
+  inner_shadow.dy_mm = -1.0;
+  inner_shadow.sigma_x_mm = 0.5;
+  inner_shadow.sigma_y_mm = 0.5;
+  inner_shadow.color = color::RGBColor{0.1, 0.1, 0.1, 1.0};
+  inner_shadow.opacity = 0.7;
+  inner_shadow.blend_mode = BlendMode::Multiply;
+  inner_shadow_node.parameters = inner_shadow;
+  text.appearance.effects.push_back(inner_shadow_node);
+  EffectNode overlay_node;
+  overlay_node.id = 72004;
+  overlay_node.schema_minor = kExtendedEffectNodeSchemaMinor;
+  ColorOverlayEffect overlay;
+  overlay.color = color::RGBColor{0.8, 0.2, 0.2, 1.0};
+  overlay.opacity = 0.5;
+  overlay.blend_mode = BlendMode::Overlay;
+  overlay_node.parameters = overlay;
+  text.appearance.effects.push_back(overlay_node);
   EffectNode shadow_node;
   shadow_node.id = 72001;
   shadow_node.schema_minor = kDropShadowBlendSchemaMinor;
@@ -370,7 +408,7 @@ void appearance_survives_native_v4_path_and_text_roundtrip() {
         "add appearance text");
 
   const auto bytes = NativeFormat::serialize(*document.current_snapshot());
-  check(bytes.size() > 36 && bytes[4] == kCurrentFormatVersion,
+  check(bytes.size() > 36 && bytes[4] == kArtboardsFormatVersion,
         "appearance document did not save as the current native format");
   std::string error;
   const auto reopened = NativeFormat::deserialize(bytes.data(), bytes.size(), &error);
@@ -381,22 +419,33 @@ void appearance_survives_native_v4_path_and_text_roundtrip() {
             restored_path.appearance.fill_opacity == 0.4 &&
             restored_path.appearance.stroke_opacity == 0.8 &&
             restored_path.appearance.blend_mode == BlendMode::Overlay &&
-            restored_path.appearance.effects.size() == 1 &&
-            restored_path.appearance.effects.front().id == blur.id &&
+            restored_path.appearance.effects.size() == 3 &&
+            restored_path.appearance.effects[0].id == blur.id &&
             std::get<GaussianBlurEffect>(
-                restored_path.appearance.effects.front().parameters)
-                    .sigma_x_mm == 0.125,
+                restored_path.appearance.effects[0].parameters)
+                    .sigma_x_mm == 0.125 &&
+            restored_path.appearance.effects[1].id == feather_node.id &&
+            std::get<FeatherEffect>(
+                restored_path.appearance.effects[1].parameters)
+                    .radius_mm == 2.5 &&
+            restored_path.appearance.effects[2].id == outer_glow_node.id &&
+            std::get<OuterGlowEffect>(
+                restored_path.appearance.effects[2].parameters)
+                    .radius_mm == 3.0 &&
+            std::get<OuterGlowEffect>(
+                restored_path.appearance.effects[2].parameters)
+                    .opacity == 0.85,
         "Path appearance changed through v4 container roundtrip");
   const auto &restored_shadow = std::get<DropShadowEffect>(
-      restored_text.appearance.effects.front().parameters);
+      restored_text.appearance.effects.back().parameters);
   const auto &restored_spot =
       std::get<color::SpotColor>(restored_shadow.color.payload());
   check(restored_text.text == text.text &&
             restored_text.appearance.object_opacity == 0.9 &&
             restored_text.appearance.fill_opacity == 0.7 &&
             restored_text.appearance.blend_mode == BlendMode::Darken &&
-            restored_text.appearance.effects.front().id == shadow_node.id &&
-            restored_text.appearance.effects.front().schema_minor ==
+            restored_text.appearance.effects.back().id == shadow_node.id &&
+            restored_text.appearance.effects.back().schema_minor ==
                 kDropShadowBlendSchemaMinor &&
             restored_shadow.dx_mm == -1.25 &&
             restored_shadow.sigma_y_mm == 1.25 &&
@@ -404,8 +453,46 @@ void appearance_survives_native_v4_path_and_text_roundtrip() {
             restored_shadow.blend_mode == BlendMode::Screen &&
             restored_spot.spot_name == "PANTONE 青" &&
             restored_spot.tint == 0.35 && restored_spot.overprint &&
-            restored_shadow.color.overprint().fill,
-        "Text appearance or spot shadow source changed through v4");
+            restored_shadow.color.overprint().fill &&
+            restored_text.appearance.effects.size() == 4 &&
+            restored_text.appearance.effects[0].id == inner_glow_node.id &&
+            std::get<InnerGlowEffect>(
+                restored_text.appearance.effects[0].parameters)
+                    .radius_mm == 1.5 &&
+            restored_text.appearance.effects[1].id == inner_shadow_node.id &&
+            std::get<InnerShadowEffect>(
+                restored_text.appearance.effects[1].parameters)
+                    .blend_mode == BlendMode::Multiply &&
+            restored_text.appearance.effects[2].id == overlay_node.id &&
+            std::get<ColorOverlayEffect>(
+                restored_text.appearance.effects[2].parameters)
+                    .blend_mode == BlendMode::Overlay,
+        "Text appearance or extended effects changed through v4");
+}
+
+void extended_effects_reject_legacy_node_schema() {
+  const std::array<EffectParameters, 5> extended_effects{
+      FeatherEffect{}, OuterGlowEffect{}, InnerGlowEffect{},
+      InnerShadowEffect{}, ColorOverlayEffect{}};
+  uint64_t object_id = 73000;
+  for (const auto &parameters : extended_effects) {
+    for (uint32_t minor : {kBasicEffectNodeSchemaMinor,
+                           kDropShadowBlendSchemaMinor}) {
+      Document document("extended-effect-schema-guard");
+      PathObject path;
+      path.id = object_id++;
+      path.path = geometry::Path2D::make_rect(1, 2, 10, 8);
+      EffectNode node;
+      node.id = object_id++;
+      node.schema_minor = minor;
+      node.parameters = parameters;
+      path.appearance.effects.push_back(node);
+      const auto result = document.execute_command(
+          std::make_unique<AddObjectCommand>(std::move(path)));
+      check(!result.success,
+            "extended effect with a legacy node schema was committed");
+    }
+  }
 }
 
 void authoring_source_roundtrip_and_legacy_migration() {
@@ -431,7 +518,7 @@ void authoring_source_roundtrip_and_legacy_migration() {
         "add analytic source path");
 
   const auto bytes = NativeFormat::serialize(*doc.current_snapshot());
-  check(bytes.size() > 36 && bytes[4] == kCurrentFormatVersion,
+  check(bytes.size() > 36 && bytes[4] == kArtboardsFormatVersion,
         "native writer did not emit the current container version");
   std::string error;
   const auto reopened =
@@ -519,7 +606,7 @@ void authoring_source_roundtrip_and_legacy_migration() {
             migrated_v3_path.appearance.effects.empty(),
         "v3 migration did not create default appearance");
   const auto v3_saved_as_v4 = NativeFormat::serialize(*from_v3);
-  check(v3_saved_as_v4[4] == kCurrentFormatVersion &&
+  check(v3_saved_as_v4[4] == kArtboardsFormatVersion &&
             NativeFormat::deserialize(v3_saved_as_v4.data(),
                                       v3_saved_as_v4.size(), &error),
         "explicit save of v3 did not migrate to current format");

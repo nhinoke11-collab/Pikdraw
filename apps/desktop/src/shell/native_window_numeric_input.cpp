@@ -4,6 +4,8 @@
 #include "native_window_menus.hpp"
 #include "native_window_page_presets.hpp"
 #include "native_window_text_properties.hpp"
+#include "native_window_numeric_field_descriptor.hpp"
+#include "native_window_length_input.hpp"
 #include "native_canvas_frame.hpp"
 #ifdef _WIN32
 #include "../clipboard/native_clipboard.hpp"
@@ -23,12 +25,87 @@
 #include <cmath>
 #include <stdexcept>
 #include <limits>
+#include <string_view>
 
 namespace pikdraw::desktop {
+namespace {
+template <typename Callback>
+struct ScopeExit {
+    Callback callback;
+    ~ScopeExit() { callback(); }
+};
+template <typename Callback>
+ScopeExit(Callback) -> ScopeExit<Callback>;
+} // namespace
 
 void NativeWindow::start_numeric_input(NumericFieldId field) {
     if (active_num_field_ == field)
         return;
+    const std::string page_unit(display_length_unit_suffix(display_length_unit_));
+    const auto image_pixel_dpi = [&]() -> std::optional<double> {
+        if (field != NumericFieldId::ObjectWidth && field != NumericFieldId::ObjectHeight)
+            return std::nullopt;
+        const auto& ids = root().vector_controller().selection().selected_ids();
+        if (ids.size() != 1) return std::nullopt;
+        const auto snapshot = root().document().current_snapshot();
+        if (!snapshot) return std::nullopt;
+        const auto object = snapshot->objects().get(ids.front());
+        if (!object) return std::nullopt;
+        const auto* image = std::get_if<document::ImageObject>(&*object);
+        if (!image) return std::nullopt;
+        return image_source_axis_dpi(image->source.dpi_x, image->source.dpi_y,
+            image->source.dpi_from_source, image->source.exif_orientation,
+            image->source.orientation_applied, field == NumericFieldId::ObjectWidth);
+    }();
+    const bool physical_length_field = numeric_field_is_length(field);
+    const ScopeExit format_seed_for_display_unit{[this, field, physical_length_field, page_unit] {
+        if (!physical_length_field || active_num_field_ != field || num_input_buffer_.empty()) return;
+        const auto ends_with = [this](std::string_view suffix) {
+            return num_input_buffer_.size() >= suffix.size() &&
+                num_input_buffer_.compare(num_input_buffer_.size() - suffix.size(), suffix.size(), suffix) == 0;
+        };
+        const bool has_explicit_unit = ends_with("mm") || ends_with("cm") || ends_with("in") ||
+            ends_with("ft") || ends_with("yd") || ends_with("pt") || ends_with("pc") || ends_with("px") ||
+            ends_with("m");
+        if (has_explicit_unit) return;
+        try {
+            size_t parsed = 0;
+            const double seeded_mm = std::stod(num_input_buffer_, &parsed);
+            if (parsed == num_input_buffer_.size() && std::isfinite(seeded_mm)) {
+                num_input_buffer_ = format_mm_input(seeded_mm, display_length_unit_);
+                return;
+            }
+        } catch (...) {}
+        num_input_buffer_ += page_unit;
+    }};
+    const ScopeExit capture_numeric_context{[this, field] {
+        if (active_num_field_ != field) return;
+        auto& doc = root().document();
+        const auto snapshot = doc.current_snapshot();
+        numeric_input_context_ = {};
+        numeric_input_context_.root_identity = static_cast<const void*>(&root());
+        numeric_input_context_.page_id = snapshot ? snapshot->active_page_id() : 0;
+        numeric_input_context_.document_revision = doc.revision();
+        numeric_input_context_.view_generation = view_generation_;
+        numeric_input_context_.active_tool = active_tool_;
+        numeric_input_context_.selection_ids = root().vector_controller().selection().selected_ids();
+        if (field == NumericFieldId::ContourSpacing || field == NumericFieldId::ContourSteps ||
+            field == NumericFieldId::ContourTolerance || field == NumericFieldId::ContourMiterLimit) {
+            numeric_input_context_.contour_target = contour_tool_
+                ? contour_tool_->target_object() : document::kInvalidObjectId;
+        }
+        if (field == NumericFieldId::GradientStopOffset || field == NumericFieldId::GradientStopOpacity ||
+            field == NumericFieldId::GradientStopMidpoint || field == NumericFieldId::GradientAngle ||
+            field == NumericFieldId::GradientLength || field == NumericFieldId::GradientCenterX ||
+            field == NumericFieldId::GradientCenterY) {
+            numeric_input_context_.gradient_stop_id = gradient_tool_ && gradient_tool_->active()
+                ? gradient_tool_->presenter().selected_stop_id() : 0;
+        }
+        if (field == NumericFieldId::ArtboardX || field == NumericFieldId::ArtboardY ||
+            field == NumericFieldId::ArtboardWidth || field == NumericFieldId::ArtboardHeight)
+            numeric_input_context_.artboard_id = active_tab().active_artboard_id;
+        numeric_input_context_.valid = true;
+    }};
     if (active_num_field_ != NumericFieldId::None && active_num_field_ != field) {
         commit_numeric_field();
         if (active_num_field_ != NumericFieldId::None)
@@ -39,13 +116,6 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
          field == text_numeric_field(TextPropertyField::LineSpacing)) &&
         active_dock_tab_ == 0 && has_text_properties_target(*this)) {
         const auto view = text_properties_view(*this);
-        if (field == text_numeric_field(TextPropertyField::FontSize) && view.mixed_font) {
-            status_msg_ = language_ == UILanguage::Vietnamese
-                ? "Kiểu chữ hỗn hợp · chọn một đối tượng hoặc thống nhất trước"
-                : "Font settings are mixed · select one object or unify them first";
-            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
-            return;
-        }
         if (!view.editable) {
             status_msg_ = language_ == UILanguage::Vietnamese
                 ? "Văn bản bị khóa hoặc ẩn · không thể sửa thuộc tính"
@@ -54,7 +124,6 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
             return;
         }
         active_num_field_ = field;
-        numeric_effect_index_ = std::numeric_limits<size_t>::max();
         numeric_effect_targets_ = root().vector_controller().selection().selected_ids();
         num_input_buffer_.clear();
         if (field == text_numeric_field(TextPropertyField::FontSize))
@@ -63,8 +132,8 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
                 : "Font size 1–2880 pt · Enter applies · Esc cancels";
         else if (field == text_numeric_field(TextPropertyField::FrameWidth))
             status_msg_ = language_ == UILanguage::Vietnamese
-                ? "Khung chữ 0–1.000.000 mm · 0 = chữ tự do · Enter áp dụng · Esc hủy"
-                : "Text frame 0–1,000,000 mm · 0 = point text · Enter applies · Esc cancels";
+                ? "Khung chữ: số trần theo " + page_unit + "; hậu tố rõ ghi đè · 0 = chữ tự do"
+                : "Text frame: bare value uses " + page_unit + "; explicit suffix overrides · 0 = point text";
         else
             status_msg_ = language_ == UILanguage::Vietnamese
                 ? "Giãn dòng 25–1000% · Enter áp dụng · Esc hủy"
@@ -72,10 +141,90 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
+    if (field == NumericFieldId::RasterExposureEv && !can_edit_selected_bitmap(true)) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Exposure EV cần một ảnh sRGB không khóa; xử lý profile nhúng trước"
+            : "Exposure EV needs one unlocked sRGB bitmap; resolve its embedded profile first";
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    const bool color_balance_field =
+        field == NumericFieldId::RasterColorBalanceRedCyan ||
+        field == NumericFieldId::RasterColorBalanceGreenMagenta ||
+        field == NumericFieldId::RasterColorBalanceBlueYellow;
+    const bool raster_light_field =
+        field == NumericFieldId::RasterLightContrast ||
+        field == NumericFieldId::RasterLightHighlights ||
+        field == NumericFieldId::RasterLightShadows ||
+        field == NumericFieldId::RasterLightWhites ||
+        field == NumericFieldId::RasterLightBlacks;
+    const bool raster_color_adjustment_field =
+        field == NumericFieldId::RasterHslHue ||
+        field == NumericFieldId::RasterHslSaturation ||
+        field == NumericFieldId::RasterHslLightness ||
+        field == NumericFieldId::RasterVibranceAmount;
+    const bool raster_levels_field =
+        field == NumericFieldId::RasterLevelsBlackIn ||
+        field == NumericFieldId::RasterLevelsWhiteIn ||
+        field == NumericFieldId::RasterLevelsGamma ||
+        field == NumericFieldId::RasterLevelsBlackOut ||
+        field == NumericFieldId::RasterLevelsWhiteOut;
+    const bool raster_white_balance_field =
+        field == NumericFieldId::RasterWhiteBalanceTemperature ||
+        field == NumericFieldId::RasterWhiteBalanceTint;
+    const bool raster_curves_field =
+        field == NumericFieldId::RasterCurvePoint0 ||
+        field == NumericFieldId::RasterCurvePoint1 ||
+        field == NumericFieldId::RasterCurvePoint2 ||
+        field == NumericFieldId::RasterCurvePoint3 ||
+        field == NumericFieldId::RasterCurvePoint4;
+    if (color_balance_field && !can_edit_selected_bitmap(true)) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Color Balance cần một ảnh RGB sRGB có nguồn được giữ lại"
+            : "Color Balance needs one RGB sRGB image with a preserved source";
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    if (raster_light_field && !can_edit_selected_bitmap(true)) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Điều chỉnh Ánh sáng cần một ảnh sRGB không khóa"
+            : "Light adjustments require one unlocked sRGB bitmap";
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    if (raster_color_adjustment_field && !can_edit_selected_bitmap(true)) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "HSL/Vibrance cần một ảnh sRGB không khóa và có nguồn được giữ lại"
+            : "HSL/Vibrance needs one unlocked sRGB bitmap with a preserved source";
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    if (raster_levels_field && !can_edit_selected_bitmap(true)) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Levels cần một ảnh RGB sRGB không khóa"
+            : "Levels requires one unlocked RGB sRGB bitmap";
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    if (raster_white_balance_field && !can_edit_selected_bitmap(true)) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Cân bằng trắng cần một ảnh RGB sRGB không khóa"
+            : "White Balance requires one unlocked RGB sRGB bitmap";
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    if (raster_curves_field && !can_edit_selected_bitmap(true)) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Curves cần một ảnh RGB sRGB không khóa"
+            : "Curves requires one unlocked RGB sRGB bitmap";
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
     if (active_tool_ == 12 &&
-        (field == NumericFieldId::DistributeSpacing ||
-         field == NumericFieldId::PolygonSides ||
-         field == NumericFieldId::PolygonRotation)) {
+        (field == NumericFieldId::ContourSpacing ||
+         field == NumericFieldId::ContourSteps ||
+         field == NumericFieldId::ContourMiterLimit ||
+         field == NumericFieldId::ContourTolerance)) {
         const auto target = contour_tool_ ? contour_tool_->target_object() : document::kInvalidObjectId;
         const auto snapshot = root().document().current_snapshot();
         const auto* object = snapshot ? snapshot->objects().lookup_ref(target) : nullptr;
@@ -90,29 +239,40 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
         active_num_field_ = field;
         num_input_buffer_.clear();
         std::ostringstream value;
-        value << std::fixed << std::setprecision(field == NumericFieldId::PolygonSides ? 0 : 3);
-        if (field == NumericFieldId::DistributeSpacing) value << contour_tool_->spacing_mm();
-        else if (field == NumericFieldId::PolygonSides) value << contour_tool_->steps();
+        value << std::setprecision(std::numeric_limits<double>::max_digits10);
+        if (field == NumericFieldId::ContourSpacing) value << contour_tool_->spacing_mm();
+        else if (field == NumericFieldId::ContourSteps) value << contour_tool_->steps();
+        else if (field == NumericFieldId::ContourTolerance) value << contour_tool_->arc_tolerance_mm();
         else value << contour_tool_->miter_limit();
         num_input_buffer_ = value.str();
-        status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Contour · nhập giá trị · Enter cập nhật xem trước · Tab sang trường kế · Esc bỏ nhập"
-            : "Contour · enter a value · Enter updates preview · Tab moves to next field · Esc cancels editing";
+        if (field == NumericFieldId::ContourSpacing || field == NumericFieldId::ContourTolerance)
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Contour · số trần theo " + page_unit + "; hậu tố rõ ghi đè · Enter xem trước · Tab trường kế"
+                : "Contour · bare lengths use " + page_unit + "; explicit suffix overrides · Enter previews · Tab next field";
+        else if (field == NumericFieldId::ContourSteps)
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Contour · số bước nguyên từ 1 đến 99 · Enter xem trước"
+                : "Contour · whole step count from 1 to 99 · Enter previews";
+        else
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Contour · giới hạn góc miter 1–100 · Enter xem trước"
+                : "Contour · miter limit 1–100 · Enter previews";
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
     if (active_tool_ == 13 &&
-        (field == NumericFieldId::EffectOffsetX || field == NumericFieldId::EffectOpacity ||
-         field == NumericFieldId::PolygonSides || field == NumericFieldId::PolygonRotation ||
-         field == NumericFieldId::ObjectHeight || field == NumericFieldId::ObjectX ||
-         field == NumericFieldId::ObjectY)) {
+        (field == NumericFieldId::GradientStopOffset || field == NumericFieldId::GradientStopOpacity ||
+         field == NumericFieldId::GradientStopMidpoint || field == NumericFieldId::GradientAngle ||
+         field == NumericFieldId::GradientLength || field == NumericFieldId::GradientCenterX ||
+         field == NumericFieldId::GradientCenterY)) {
         if (!gradient_tool_ || !gradient_tool_->active())
             return;
         auto& presenter = gradient_tool_->presenter();
         const auto& summary = presenter.summary();
         const auto* paint = presenter.draft_paint();
-        const bool stop_field = field == NumericFieldId::EffectOffsetX ||
-            field == NumericFieldId::EffectOpacity || field == NumericFieldId::PolygonSides;
+        const bool stop_field = field == NumericFieldId::GradientStopOffset ||
+            field == NumericFieldId::GradientStopOpacity ||
+            field == NumericFieldId::GradientStopMidpoint;
         if (!summary.can_edit_gradient() || !paint ||
             (stop_field && summary.mixed_stops && summary.supported_count > 1)) {
             status_msg_ = language_ == UILanguage::Vietnamese
@@ -128,7 +288,7 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
         const size_t stop_index = stop_it == paint->stops.end()
             ? paint->stops.size() : static_cast<size_t>(stop_it - paint->stops.begin());
         if (stop_field && (stop_index >= paint->stops.size() ||
-            (field == NumericFieldId::PolygonSides && stop_index + 1 >= paint->stops.size()))) {
+            (field == NumericFieldId::GradientStopMidpoint && stop_index + 1 >= paint->stops.size()))) {
             status_msg_ = language_ == UILanguage::Vietnamese
                 ? "Chọn một stop có đoạn kế tiếp để sửa trung điểm"
                 : "Select a stop with a following segment to edit its midpoint";
@@ -137,9 +297,9 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
 #endif
             return;
         }
-        const bool geometry_field = field == NumericFieldId::PolygonRotation ||
-            field == NumericFieldId::ObjectHeight || field == NumericFieldId::ObjectX ||
-            field == NumericFieldId::ObjectY;
+        const bool geometry_field = field == NumericFieldId::GradientAngle ||
+            field == NumericFieldId::GradientLength || field == NumericFieldId::GradientCenterX ||
+            field == NumericFieldId::GradientCenterY;
         const bool geometry_mixed = summary.supported_count > 1 &&
             (summary.mixed_angle || summary.mixed_length || summary.mixed_center ||
              summary.mixed_aspect_ratio);
@@ -156,20 +316,21 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
         num_input_buffer_.clear();
         std::ostringstream value;
         value << std::fixed << std::setprecision(2);
-        if (field == NumericFieldId::EffectOffsetX)
+        if (field == NumericFieldId::GradientStopOffset)
             value << paint->stops[stop_index].offset * 100.0;
-        else if (field == NumericFieldId::EffectOpacity)
+        else if (field == NumericFieldId::GradientStopOpacity)
             value << paint->stops[stop_index].opacity * 100.0;
-        else if (field == NumericFieldId::PolygonSides)
+        else if (field == NumericFieldId::GradientStopMidpoint)
             value << paint->stops[stop_index].midpoint_to_next * 100.0;
         else {
+            value << std::defaultfloat << std::setprecision(std::numeric_limits<double>::max_digits10);
             const auto projection = presenter.geometry_projection();
-            const bool mixed = (field == NumericFieldId::PolygonRotation && summary.mixed_angle) ||
-                               (field == NumericFieldId::ObjectHeight && summary.mixed_length);
+            const bool mixed = (field == NumericFieldId::GradientAngle && summary.mixed_angle) ||
+                               (field == NumericFieldId::GradientLength && summary.mixed_length);
             if (!mixed) {
-                if (field == NumericFieldId::PolygonRotation) value << projection.angle_degrees;
-                else if (field == NumericFieldId::ObjectHeight) value << projection.length_mm;
-                else if (field == NumericFieldId::ObjectX) value << projection.center_mm.x;
+                if (field == NumericFieldId::GradientAngle) value << projection.angle_degrees;
+                else if (field == NumericFieldId::GradientLength) value << projection.length_mm;
+                else if (field == NumericFieldId::GradientCenterX) value << projection.center_mm.x;
                 else value << projection.center_mm.y;
                 num_input_buffer_ = value.str();
             }
@@ -245,21 +406,38 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
 #endif
         return;
     }
-    const bool effect_numeric = field == NumericFieldId::EffectSigmaX ||
-        field == NumericFieldId::EffectSigmaY || field == NumericFieldId::EffectOffsetX ||
-        field == NumericFieldId::EffectOffsetY || field == NumericFieldId::EffectOpacity;
+    const bool effect_numeric = field == NumericFieldId::BlurSigmaX ||
+        field == NumericFieldId::BlurSigmaY || field == NumericFieldId::ShadowFeatherX ||
+        field == NumericFieldId::ShadowFeatherY || field == NumericFieldId::ShadowOffsetX ||
+        field == NumericFieldId::ShadowOffsetY || field == NumericFieldId::ShadowOpacity;
     if (effect_numeric) {
         const auto snapshot = root().document().current_snapshot();
         const auto selection = root().vector_controller().selection().selected_ids();
         const auto appearance = snapshot
             ? selection_appearance(*snapshot, selection) : SelectionAppearance{};
-        const bool shadow_field = field == NumericFieldId::EffectOffsetX ||
-            field == NumericFieldId::EffectOffsetY || field == NumericFieldId::EffectOpacity;
-        const auto *shadow = appearance.can_edit_effect(property_effect_index_)
-            ? std::get_if<document::DropShadowEffect>(
-                &appearance.effects[property_effect_index_].parameters) : nullptr;
-        if (!workflow().can_edit_selected_effect(property_effect_index_) ||
-            (shadow_field && !shadow)) {
+        bool field_supported = false;
+        if (appearance.can_edit_effect(property_effect_index_)) {
+            const auto &params = appearance.effects[property_effect_index_].parameters;
+            if (field == NumericFieldId::BlurSigmaX) {
+                field_supported = std::holds_alternative<document::GaussianBlurEffect>(params) ||
+                                  std::holds_alternative<document::FeatherEffect>(params) ||
+                                  std::holds_alternative<document::OuterGlowEffect>(params) ||
+                                  std::holds_alternative<document::InnerGlowEffect>(params);
+            } else if (field == NumericFieldId::BlurSigmaY) {
+                field_supported = std::holds_alternative<document::GaussianBlurEffect>(params);
+            } else if (field == NumericFieldId::ShadowFeatherX || field == NumericFieldId::ShadowFeatherY ||
+                       field == NumericFieldId::ShadowOffsetX || field == NumericFieldId::ShadowOffsetY) {
+                field_supported = std::holds_alternative<document::DropShadowEffect>(params) ||
+                                  std::holds_alternative<document::InnerShadowEffect>(params);
+            } else if (field == NumericFieldId::ShadowOpacity) {
+                field_supported = std::holds_alternative<document::DropShadowEffect>(params) ||
+                                  std::holds_alternative<document::InnerShadowEffect>(params) ||
+                                  std::holds_alternative<document::OuterGlowEffect>(params) ||
+                                  std::holds_alternative<document::InnerGlowEffect>(params) ||
+                                  std::holds_alternative<document::ColorOverlayEffect>(params);
+            }
+        }
+        if (!workflow().can_edit_selected_effect(property_effect_index_) || !field_supported) {
             status_msg_ = language_ == UILanguage::Vietnamese
                 ? "Hiệu ứng đã đổi hoặc vùng chọn không đồng nhất · chưa áp dụng"
                 : "Effect stack changed or selection is mixed · no value was applied";
@@ -276,7 +454,7 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
     numeric_effect_targets_.clear();
 
     std::ostringstream ss;
-    ss << std::fixed << std::setprecision(1);
+    ss << std::setprecision(std::numeric_limits<double>::max_digits10);
 
     if (field == NumericFieldId::PageWidth) {
         ss << active_tab().page_width_mm;
@@ -284,11 +462,90 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
     } else if (field == NumericFieldId::PageHeight) {
         ss << active_tab().page_height_mm;
         num_input_buffer_ = ss.str();
+    } else if (field == NumericFieldId::RasterExposureEv) {
+        const auto value = selected_bitmap_exposure_ev();
+        if (!value) {
+            active_num_field_ = NumericFieldId::None;
+            return;
+        }
+        ss << *value;
+        num_input_buffer_ = ss.str();
+    } else if (field == NumericFieldId::RasterColorBalanceRedCyan ||
+               field == NumericFieldId::RasterColorBalanceGreenMagenta ||
+               field == NumericFieldId::RasterColorBalanceBlueYellow) {
+        const auto parameters = selected_bitmap_color_balance();
+        if (field == NumericFieldId::RasterColorBalanceRedCyan)
+            ss << parameters.red_cyan_percent;
+        else if (field == NumericFieldId::RasterColorBalanceGreenMagenta)
+            ss << parameters.green_magenta_percent;
+        else
+            ss << parameters.blue_yellow_percent;
+        num_input_buffer_ = ss.str();
+    } else if (raster_light_field) {
+        const auto parameters = selected_bitmap_light();
+        if (field == NumericFieldId::RasterLightContrast)
+            ss << parameters.contrast_percent;
+        else if (field == NumericFieldId::RasterLightHighlights)
+            ss << parameters.highlights_percent;
+        else if (field == NumericFieldId::RasterLightShadows)
+            ss << parameters.shadows_percent;
+        else if (field == NumericFieldId::RasterLightWhites)
+            ss << parameters.whites_percent;
+        else
+            ss << parameters.blacks_percent;
+        num_input_buffer_ = ss.str();
+    } else if (raster_color_adjustment_field) {
+        if (field == NumericFieldId::RasterVibranceAmount) {
+            ss << selected_bitmap_vibrance_amount();
+        } else {
+            const auto parameters = selected_bitmap_hsl();
+            if (field == NumericFieldId::RasterHslHue)
+                ss << parameters.hue_degrees;
+            else if (field == NumericFieldId::RasterHslSaturation)
+                ss << parameters.saturation_percent;
+            else
+                ss << parameters.lightness_percent;
+        }
+        num_input_buffer_ = ss.str();
+    } else if (raster_levels_field) {
+        const auto parameters = selected_bitmap_levels();
+        if (field == NumericFieldId::RasterLevelsBlackIn)
+            ss << parameters.black_in * 100.0;
+        else if (field == NumericFieldId::RasterLevelsWhiteIn)
+            ss << parameters.white_in * 100.0;
+        else if (field == NumericFieldId::RasterLevelsGamma)
+            ss << parameters.gamma;
+        else if (field == NumericFieldId::RasterLevelsBlackOut)
+            ss << parameters.black_out * 100.0;
+        else
+            ss << parameters.white_out * 100.0;
+        num_input_buffer_ = ss.str();
+    } else if (raster_white_balance_field) {
+        const auto parameters = selected_bitmap_white_balance();
+        ss << (field == NumericFieldId::RasterWhiteBalanceTemperature
+            ? parameters.temperature_shift_percent : parameters.tint_percent);
+        num_input_buffer_ = ss.str();
+    } else if (raster_curves_field) {
+        const auto parameters = selected_bitmap_curves();
+        size_t point = 0;
+        switch (field) {
+        case NumericFieldId::RasterCurvePoint0: point = 0; break;
+        case NumericFieldId::RasterCurvePoint1: point = 1; break;
+        case NumericFieldId::RasterCurvePoint2: point = 2; break;
+        case NumericFieldId::RasterCurvePoint3: point = 3; break;
+        case NumericFieldId::RasterCurvePoint4: point = 4; break;
+        default: return;
+        }
+        if (point >= parameters.output_points.size()) return;
+        ss << parameters.output_points[point] * 100.0;
+        num_input_buffer_ = ss.str();
     } else if (field == NumericFieldId::PolygonSides) {
         num_input_buffer_ = std::to_string(polygon_sides_);
     } else if (field == NumericFieldId::PolygonRotation) {
         ss << polygon_rotation_degrees_;
         num_input_buffer_ = ss.str();
+    } else if (field == NumericFieldId::TacLimitPercent) {
+        num_input_buffer_.clear();
     } else if (field == NumericFieldId::ModalWidth) {
         ss << new_doc_w_;
         num_input_buffer_ = ss.str();
@@ -297,6 +554,34 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
         num_input_buffer_ = ss.str();
     } else if (field == NumericFieldId::DistributeSpacing) {
         ss << distribute_spacing_mm_;
+        num_input_buffer_ = ss.str();
+    } else if (field == NumericFieldId::GridSpacing) {
+        const auto snap = drawing_tool_ ? drawing_tool_->grid_snap_status()
+                                        : tools::DrawingToolGridSnapStatus{};
+        ss << snap.spacing_mm;
+        num_input_buffer_ = ss.str();
+    } else if (field == NumericFieldId::ArtboardX || field == NumericFieldId::ArtboardY ||
+               field == NumericFieldId::ArtboardWidth || field == NumericFieldId::ArtboardHeight) {
+        const auto snapshot = root().document().current_snapshot();
+        if (snapshot) {
+            const auto& boards = snapshot->active_page().artboards;
+            const auto board = std::find_if(boards.begin(), boards.end(), [&](const auto& item) {
+                return item.id == active_tab().active_artboard_id;
+            });
+            if (board != boards.end()) {
+                if (field == NumericFieldId::ArtboardX) ss << board->x_mm;
+                else if (field == NumericFieldId::ArtboardY) ss << board->y_mm;
+                else if (field == NumericFieldId::ArtboardWidth) ss << board->width_mm;
+                else ss << board->height_mm;
+                num_input_buffer_ = ss.str();
+            }
+        }
+    } else if (field == NumericFieldId::SnapAcquireRadius ||
+               field == NumericFieldId::SnapReleaseRadius) {
+        const auto config = drawing_tool_ ? drawing_tool_->snap_config_snapshot()
+            : vector::precision::snap::SnapConfigSnapshot{};
+        ss << (field == NumericFieldId::SnapAcquireRadius
+            ? config.acquire_radius_dip : config.release_radius_dip);
         num_input_buffer_ = ss.str();
     } else if (field == NumericFieldId::PenExpression) {
         num_input_buffer_ = pen_numeric_buffer_;
@@ -318,33 +603,62 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
         const auto summary = selection_appearance(
             *snapshot, root().vector_controller().selection().selected_ids());
         const auto &effect = summary.effects[numeric_effect_index_];
-        const bool is_blur = std::holds_alternative<document::GaussianBlurEffect>(effect.parameters);
         bool mixed = false;
         double value = 0.0;
-        if (field == NumericFieldId::EffectSigmaX) {
+        if (field == NumericFieldId::BlurSigmaX) {
             mixed = effect.mixed_sigma_x;
-            value = is_blur ? std::get<document::GaussianBlurEffect>(effect.parameters).sigma_x_mm
-                            : std::get<document::DropShadowEffect>(effect.parameters).sigma_x_mm;
-        } else if (field == NumericFieldId::EffectSigmaY) {
+            if (const auto *b = std::get_if<document::GaussianBlurEffect>(&effect.parameters))
+                value = b->sigma_x_mm;
+            else if (const auto *f = std::get_if<document::FeatherEffect>(&effect.parameters))
+                value = f->radius_mm;
+            else if (const auto *og = std::get_if<document::OuterGlowEffect>(&effect.parameters))
+                value = og->radius_mm;
+            else if (const auto *ig = std::get_if<document::InnerGlowEffect>(&effect.parameters))
+                value = ig->radius_mm;
+        } else if (field == NumericFieldId::BlurSigmaY) {
             mixed = effect.mixed_sigma_y;
-            value = is_blur ? std::get<document::GaussianBlurEffect>(effect.parameters).sigma_y_mm
-                            : std::get<document::DropShadowEffect>(effect.parameters).sigma_y_mm;
-        } else if (field == NumericFieldId::EffectOffsetX) {
-            const auto &shadow = std::get<document::DropShadowEffect>(effect.parameters);
+            if (const auto *b = std::get_if<document::GaussianBlurEffect>(&effect.parameters))
+                value = b->sigma_y_mm;
+        } else if (field == NumericFieldId::ShadowFeatherX) {
+            mixed = effect.mixed_sigma_x;
+            if (const auto *s = std::get_if<document::DropShadowEffect>(&effect.parameters))
+                value = s->sigma_x_mm;
+            else if (const auto *is = std::get_if<document::InnerShadowEffect>(&effect.parameters))
+                value = is->sigma_x_mm;
+        } else if (field == NumericFieldId::ShadowFeatherY) {
+            mixed = effect.mixed_sigma_y;
+            if (const auto *s = std::get_if<document::DropShadowEffect>(&effect.parameters))
+                value = s->sigma_y_mm;
+            else if (const auto *is = std::get_if<document::InnerShadowEffect>(&effect.parameters))
+                value = is->sigma_y_mm;
+        } else if (field == NumericFieldId::ShadowOffsetX) {
             mixed = effect.mixed_offset_x;
-            value = shadow.dx_mm;
-        } else if (field == NumericFieldId::EffectOffsetY) {
-            const auto &shadow = std::get<document::DropShadowEffect>(effect.parameters);
+            if (const auto *s = std::get_if<document::DropShadowEffect>(&effect.parameters))
+                value = s->dx_mm;
+            else if (const auto *is = std::get_if<document::InnerShadowEffect>(&effect.parameters))
+                value = is->dx_mm;
+        } else if (field == NumericFieldId::ShadowOffsetY) {
             mixed = effect.mixed_offset_y;
-            value = shadow.dy_mm;
+            if (const auto *s = std::get_if<document::DropShadowEffect>(&effect.parameters))
+                value = s->dy_mm;
+            else if (const auto *is = std::get_if<document::InnerShadowEffect>(&effect.parameters))
+                value = is->dy_mm;
         } else {
-            const auto &shadow = std::get<document::DropShadowEffect>(effect.parameters);
             mixed = effect.mixed_opacity;
-            value = shadow.opacity * 100.0;
+            if (const auto *s = std::get_if<document::DropShadowEffect>(&effect.parameters))
+                value = s->opacity * 100.0;
+            else if (const auto *is = std::get_if<document::InnerShadowEffect>(&effect.parameters))
+                value = is->opacity * 100.0;
+            else if (const auto *og = std::get_if<document::OuterGlowEffect>(&effect.parameters))
+                value = og->opacity * 100.0;
+            else if (const auto *ig = std::get_if<document::InnerGlowEffect>(&effect.parameters))
+                value = ig->opacity * 100.0;
+            else if (const auto *co = std::get_if<document::ColorOverlayEffect>(&effect.parameters))
+                value = co->opacity * 100.0;
         }
         if (!mixed) {
             std::ostringstream effect_value;
-            effect_value << std::setprecision(10) << value;
+            effect_value << std::setprecision(std::numeric_limits<double>::max_digits10) << value;
             num_input_buffer_ = effect_value.str();
         }
     } else if (active_tool_ == 11 &&
@@ -368,7 +682,7 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
             else if (field == NumericFieldId::RectCornerRadiusBR) r = rect_corner_br_;
             else if (field == NumericFieldId::RectCornerRadiusBL) r = rect_corner_bl_;
         }
-        ss << std::fixed << std::setprecision(1) << r;
+        ss << std::setprecision(std::numeric_limits<double>::max_digits10) << r;
         num_input_buffer_ = ss.str();
     } else {
         const auto ids = root().vector_controller().selection().selected_ids();
@@ -376,22 +690,14 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
             const auto snapshot = root().document().current_snapshot();
             const auto obj = snapshot->objects().get(ids.front());
             if (obj) {
-                const auto bounds_opt = std::visit([](const auto& val) -> std::optional<geometry::Rect2D> {
-                    using T = std::decay_t<decltype(val)>;
-                    if constexpr (std::is_same_v<T, document::GroupObject>) return std::nullopt;
-                    else return val.bounds();
-                }, *obj);
+                const auto bounds_opt = workflow().get_object_bounds(ids.front());
                 if (bounds_opt) {
                     if (field == NumericFieldId::ObjectX) ss << bounds_opt->x;
                     else if (field == NumericFieldId::ObjectY) ss << bounds_opt->y;
                     else if (field == NumericFieldId::ObjectWidth) ss << bounds_opt->width;
                     else if (field == NumericFieldId::ObjectHeight) ss << bounds_opt->height;
                     else if (field == NumericFieldId::ObjectRotation) {
-                        const auto transform = std::visit([](const auto& val) -> geometry::Transform2D {
-                            using T = std::decay_t<decltype(val)>;
-                            if constexpr (std::is_same_v<T, document::GroupObject>) return {};
-                            else return val.transform;
-                        }, *obj);
+                        const auto transform = snapshot->hierarchy().find(ids.front())->world;
                         double deg = std::atan2(transform.b, transform.a) * (180.0 / 3.14159265358979323846);
                         if (deg < 0.0) deg += 360.0;
                         ss << std::fixed << std::setprecision(1) << deg;
@@ -409,16 +715,112 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
     if (active_tool_ == 11 &&
         (field == NumericFieldId::ObjectX || field == NumericFieldId::ObjectY)) {
         status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Nhập tọa độ node (mm) · Enter áp dụng · Tab đổi X/Y · Esc hủy · Ctrl+Z hoàn tác"
-            : "Enter node coordinate in mm · Enter applies · Tab switches X/Y · Esc cancels · Ctrl+Z undoes";
+            ? "Tọa độ node: số trần theo " + page_unit + "; hậu tố rõ ghi đè · Enter áp dụng · Tab X/Y · Esc hủy"
+            : "Node coordinates: bare value uses " + page_unit + "; suffix overrides · Enter applies · Tab X/Y · Esc cancels";
     } else if (field == NumericFieldId::ObjectOpacity) {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Nhập Opacity 0–100% (dấu phẩy hoặc chấm) · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
             : "Enter Opacity from 0–100% · comma or dot decimals · Enter applies · Esc cancels · Ctrl+Z undoes";
+    } else if (field == NumericFieldId::RasterExposureEv) {
+        const double range = selected_bitmap_has_light_node() ? 5.0 : 10.0;
+        std::ostringstream range_text;
+        range_text << std::fixed << std::setprecision(0) << range;
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Exposure ±" + range_text.str() + " EV · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
+            : "Exposure ±" + range_text.str() + " EV · Enter applies · Esc cancels · Ctrl+Z undoes";
+    } else if (field == NumericFieldId::RasterColorBalanceRedCyan ||
+               field == NumericFieldId::RasterColorBalanceGreenMagenta ||
+               field == NumericFieldId::RasterColorBalanceBlueYellow) {
+        const char* axis_vi = field == NumericFieldId::RasterColorBalanceRedCyan
+            ? "Lục lam ↔ Đỏ (C↔R)"
+            : field == NumericFieldId::RasterColorBalanceGreenMagenta
+                ? "Xanh lá ↔ Đỏ tía (M↔G)"
+                : "Xanh dương ↔ Vàng (Y↔B)";
+        const char* axis_en = field == NumericFieldId::RasterColorBalanceRedCyan
+            ? "Cyan ↔ Red (C↔R)"
+            : field == NumericFieldId::RasterColorBalanceGreenMagenta
+                ? "Green ↔ Magenta (M↔G)"
+                : "Blue ↔ Yellow (Y↔B)";
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? std::string(axis_vi) + " −100…+100% · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
+            : std::string(axis_en) + " −100…+100% · Enter applies · Esc cancels · Ctrl+Z undoes";
+    } else if (raster_light_field) {
+        const char* parameter_vi = field == NumericFieldId::RasterLightContrast
+            ? "Tương phản" : field == NumericFieldId::RasterLightHighlights
+                ? "Vùng sáng" : field == NumericFieldId::RasterLightShadows
+                    ? "Vùng tối" : field == NumericFieldId::RasterLightWhites
+                        ? "Trắng" : "Đen";
+        const char* parameter_en = field == NumericFieldId::RasterLightContrast
+            ? "Contrast" : field == NumericFieldId::RasterLightHighlights
+                ? "Highlights" : field == NumericFieldId::RasterLightShadows
+                    ? "Shadows" : field == NumericFieldId::RasterLightWhites
+                        ? "Whites" : "Blacks";
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? std::string(parameter_vi) + " −100…+100% · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
+            : std::string(parameter_en) + " −100…+100% · Enter applies · Esc cancels · Ctrl+Z undoes";
+    } else if (field == NumericFieldId::RasterHslHue) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Hue −180…+180° · sRGB đã mã hóa · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
+            : "Hue −180…+180° · encoded sRGB · Enter applies · Esc cancels · Ctrl+Z undoes";
+    } else if (raster_color_adjustment_field) {
+        const char* label_vi = field == NumericFieldId::RasterHslSaturation
+            ? "Bão hòa" : field == NumericFieldId::RasterHslLightness
+                ? "Độ sáng HSL" : "Độ rực";
+        const char* label_en = field == NumericFieldId::RasterHslSaturation
+            ? "Saturation" : field == NumericFieldId::RasterHslLightness
+                ? "Lightness" : "Vibrance";
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? std::string(label_vi) + " −100…+100% · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
+            : std::string(label_en) + " −100…+100% · Enter applies · Esc cancels · Ctrl+Z undoes";
+    } else if (raster_levels_field) {
+        const bool gamma = field == NumericFieldId::RasterLevelsGamma;
+        const char* label_vi = field == NumericFieldId::RasterLevelsBlackIn
+            ? "Đen vào" : field == NumericFieldId::RasterLevelsWhiteIn
+                ? "Trắng vào" : field == NumericFieldId::RasterLevelsBlackOut
+                    ? "Đen ra" : field == NumericFieldId::RasterLevelsWhiteOut
+                        ? "Trắng ra" : "Gamma";
+        const char* label_en = field == NumericFieldId::RasterLevelsBlackIn
+            ? "Input black" : field == NumericFieldId::RasterLevelsWhiteIn
+                ? "Input white" : field == NumericFieldId::RasterLevelsBlackOut
+                    ? "Output black" : field == NumericFieldId::RasterLevelsWhiteOut
+                        ? "Output white" : "Gamma";
+        status_msg_ = gamma
+            ? (language_ == UILanguage::Vietnamese
+                ? "Gamma 0,1…10× · encoded sRGB · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
+                : "Gamma 0.1…10× · encoded sRGB · Enter applies · Esc cancels · Ctrl+Z undoes")
+            : (language_ == UILanguage::Vietnamese
+                ? std::string(label_vi) + " 0…100% · encoded sRGB · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
+                : std::string(label_en) + " 0…100% · encoded sRGB · Enter applies · Esc cancels · Ctrl+Z undoes");
+    } else if (raster_white_balance_field) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Cân bằng trắng tương đối trên sRGB tuyến tính −100…+100%; không phải Kelvin · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
+            : "Relative white balance on linear-light sRGB, −100…+100%; not Kelvin · Enter applies · Esc cancels · Ctrl+Z undoes";
+    } else if (raster_curves_field) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Curves · giá trị đầu ra 0…100% tại điểm cố định · Enter áp dụng · Esc hủy · Ctrl+Z hoàn tác"
+            : "Curves · 0–100% output at fixed input points · Enter applies · Esc cancels · Ctrl+Z undoes";
+    } else if (field == NumericFieldId::ObjectWidth || field == NumericFieldId::ObjectHeight) {
+        const auto dpi_label = [&] {
+            if (!image_pixel_dpi) return std::string{};
+            std::ostringstream formatted;
+            formatted << std::setprecision(5) << *image_pixel_dpi;
+            return formatted.str();
+        }();
+        status_msg_ = image_pixel_dpi
+            ? (language_ == UILanguage::Vietnamese
+                ? "Kích thước: số trần theo " + page_unit + "; px dùng DPI nguồn " + dpi_label + " · Enter áp dụng · Esc hủy"
+                : "Size: bare value uses " + page_unit + "; px uses source DPI " + dpi_label + " · Enter applies · Esc cancels")
+            : (language_ == UILanguage::Vietnamese
+                ? "Kích thước: số trần theo " + page_unit + "; px cần chọn một ảnh có DPI nguồn · Enter áp dụng · Esc hủy"
+                : "Size: bare value uses " + page_unit + "; px requires one image with source DPI · Enter applies · Esc cancels");
     } else if (field == NumericFieldId::PenLength) {
         status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Nhập chiều dài đoạn thẳng (mm) · Enter tạo đoạn · Tab nhập góc (°)"
-            : "Enter line length (mm) · Enter creates line · Tab sets angle (°)";
+            ? "Chiều dài mặc định " + page_unit + "; hậu tố rõ ghi đè · Enter tạo đoạn · Tab nhập góc (°)"
+            : "Length defaults to " + page_unit + "; suffix overrides · Enter creates line · Tab sets angle (°)";
+    } else if (field == NumericFieldId::PenExpression) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Pen: @L<góc, @ΔX;ΔY hoặc #X;Y · số trần theo " + page_unit + " · hậu tố rõ ghi đè"
+            : "Pen: @L<angle, @dX;dY or #X;Y · bare lengths use " + page_unit + " · suffix overrides";
     } else if (field == NumericFieldId::PenAngle) {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Nhập góc theo trục X (°) · Enter tạo đoạn · Tab nhập chiều dài"
@@ -434,15 +836,15 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
                field == NumericFieldId::RectCornerRadiusBL) {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? (rect_corners_locked_
-                ? "Bán kính bo góc (mm) · Khóa 4 góc đang bật · Enter áp dụng · Tab đổi ô · Esc hủy"
-                : "Bán kính bo góc này (mm) · Khóa đang mở · Enter áp dụng · Tab đổi ô · Esc hủy")
+                ? "Bán kính mặc định " + page_unit + " · Khóa 4 góc · Enter áp dụng · Tab đổi ô · Esc hủy"
+                : "Bán kính mặc định " + page_unit + " · Khóa đang mở · Enter áp dụng · Tab đổi ô · Esc hủy")
             : (rect_corners_locked_
-                ? "Corner radius (mm) · 4 corners locked together · Enter applies · Tab cycles · Esc cancels"
-                : "Corner radius (mm) · Independent corner · Enter applies · Tab cycles · Esc cancels");
+                ? "Corner radius defaults to " + page_unit + " · 4 corners locked · Enter applies · Tab cycles · Esc cancels"
+                : "Corner radius defaults to " + page_unit + " · independent corner · Enter applies · Tab cycles · Esc cancels");
     } else if (effect_numeric) {
         status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Nhập mm (σ ≥ 0, lệch ±1.000.000) hoặc Opacity 0–100% · Enter áp dụng · Tab ô kế · Esc hủy · Ctrl+Z hoàn tác"
-            : "Enter mm values (σ ≥ 0, offset ±1,000,000) or Opacity 0–100% · Enter applies · Tab next field · Esc cancels · Ctrl+Z undoes";
+            ? "Chiều dài mặc định " + page_unit + "; hậu tố rõ ghi đè · Opacity 0–100% · Enter áp dụng · Tab ô kế"
+            : "Lengths default to " + page_unit + "; suffix overrides · Opacity 0–100% · Enter applies · Tab next field";
     } else {
         status_msg_ = (language_ == UILanguage::Vietnamese)
             ? "Đang nhập số: gõ phím số, Enter để áp dụng, Tab chuyển ô, Esc để hủy"
@@ -472,6 +874,7 @@ void NativeWindow::cancel_numeric_field() {
                                        active_num_field_ == NumericFieldId::PenAngle);
     active_num_field_ = NumericFieldId::None;
     num_input_buffer_.clear();
+    numeric_input_context_ = {};
     numeric_object_opacity_targets_.clear();
     numeric_paint_opacity_targets_.clear();
     numeric_effect_targets_.clear();
@@ -498,7 +901,14 @@ void NativeWindow::cancel_numeric_field() {
 void NativeWindow::handle_numeric_char_input(wchar_t ch) {
     if (active_num_field_ == NumericFieldId::None) return;
 
+    const auto field = active_num_field_;
+    const bool length_field = numeric_field_is_length(field);
+    const bool text_line_spacing = field == text_numeric_field(TextPropertyField::LineSpacing);
+    const bool accepts_length_units = length_field && !text_line_spacing;
+    const bool unit_letter = (ch >= L'a' && ch <= L'z') || (ch >= L'A' && ch <= L'Z');
+
     if (active_num_field_ == NumericFieldId::PenLength || active_num_field_ == NumericFieldId::PenAngle) {
+        const bool pen_length = active_num_field_ == NumericFieldId::PenLength;
         if (ch == 8) {
             if (!num_input_buffer_.empty()) num_input_buffer_.pop_back();
         } else if (ch == 13) {
@@ -520,22 +930,25 @@ void NativeWindow::handle_numeric_char_input(wchar_t ch) {
                 active_num_field_ = NumericFieldId::PenLength;
                 num_input_buffer_ = pen_numeric_length_;
                 status_msg_ = language_ == UILanguage::Vietnamese
-                    ? "Nhập chiều dài đoạn thẳng (mm) · Enter tạo đoạn · Tab nhập góc (°)"
-                    : "Enter line length (mm) · Enter creates line · Tab sets angle (°)";
+                    ? ("Nhập chiều dài đoạn thẳng (" + std::string(display_length_unit_suffix(display_length_unit_)) + ") · Enter tạo đoạn · Tab nhập góc (°)")
+                    : ("Enter line length (" + std::string(display_length_unit_suffix(display_length_unit_)) + ") · Enter creates line · Tab sets angle (°)");
             }
             update_pen_dimension_candidate();
             if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         } else if ((ch >= L'0' && ch <= L'9') || ch == L'.' || ch == L',' ||
+                   (pen_length && (unit_letter || ch == L'+' || ch == L'/' || ch == L'*' ||
+                                     ch == L'(' || ch == L')' || ch == L'-' || ch == L' ')) ||
                    (active_num_field_ == NumericFieldId::PenAngle && ch == L'-')) {
-            if ((ch == L'.' || ch == L',') &&
+            if (!pen_length && (ch == L'.' || ch == L',') &&
                 (num_input_buffer_.find('.') != std::string::npos || num_input_buffer_.find(',') != std::string::npos)) {
                 return;
             }
-            if (ch == L'-' && !num_input_buffer_.empty()) {
+            if (!pen_length && ch == L'-' && !num_input_buffer_.empty()) {
                 return;
             }
-            if (num_input_buffer_.size() < 12) {
+            if (num_input_buffer_.size() < (pen_length ? 64u : 12u)) {
+                if (ch >= L'A' && ch <= L'Z') ch = static_cast<wchar_t>(ch - L'A' + L'a');
                 num_input_buffer_.push_back(static_cast<char>(ch));
             }
         }
@@ -563,7 +976,8 @@ void NativeWindow::handle_numeric_char_input(wchar_t ch) {
         }
         pen_numeric_buffer_ = num_input_buffer_;
         if (pen_tool_ && pen_tool_->active() && !pen_numeric_buffer_.empty()) {
-            const auto result = pen_tool_->update_numeric_candidate(pen_numeric_buffer_);
+            const auto result = pen_tool_->update_numeric_candidate(pen_numeric_buffer_,
+                vector::precision::numeric::ParseOptions{'.', display_length_unit_});
             if (result.code == vector::tools::pen::PenDrawingResultCode::InvalidInput)
                 status_msg_ = result.message;
             else
@@ -588,11 +1002,21 @@ void NativeWindow::handle_numeric_char_input(wchar_t ch) {
         cancel_numeric_field();
         return;
     } else if (ch == 9) { // Tab: cycle to next field
+        if (active_num_field_ == NumericFieldId::TacLimitPercent) {
+            commit_numeric_field();
+            if (active_num_field_ == NumericFieldId::None) {
+                settings_tac_focus_index_ = 4;
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Đã lưu ngưỡng TAC · Tab tới Kiểm tra"
+                    : "TAC limit applied · Tab moves to Check";
+            }
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
         NumericFieldId next = NumericFieldId::None;
-        if (numeric_effect_index_ == std::numeric_limits<size_t>::max() &&
-            (active_num_field_ == text_numeric_field(TextPropertyField::FontSize) ||
+        if (active_num_field_ == text_numeric_field(TextPropertyField::FontSize) ||
              active_num_field_ == text_numeric_field(TextPropertyField::FrameWidth) ||
-             active_num_field_ == text_numeric_field(TextPropertyField::LineSpacing))) {
+             active_num_field_ == text_numeric_field(TextPropertyField::LineSpacing)) {
             next = active_num_field_ == text_numeric_field(TextPropertyField::FontSize)
                 ? text_numeric_field(TextPropertyField::FrameWidth)
                 : active_num_field_ == text_numeric_field(TextPropertyField::FrameWidth)
@@ -618,13 +1042,13 @@ void NativeWindow::handle_numeric_char_input(wchar_t ch) {
         }
         if (active_tool_ == 13) {
             switch (active_num_field_) {
-                case NumericFieldId::EffectOffsetX: next = NumericFieldId::EffectOpacity; break;
-                case NumericFieldId::EffectOpacity: next = NumericFieldId::PolygonSides; break;
-                case NumericFieldId::PolygonSides: next = NumericFieldId::PolygonRotation; break;
-                case NumericFieldId::PolygonRotation: next = NumericFieldId::ObjectHeight; break;
-                case NumericFieldId::ObjectHeight: next = NumericFieldId::ObjectX; break;
-                case NumericFieldId::ObjectX: next = NumericFieldId::ObjectY; break;
-                case NumericFieldId::ObjectY: next = NumericFieldId::EffectOffsetX; break;
+                case NumericFieldId::GradientStopOffset: next = NumericFieldId::GradientStopOpacity; break;
+                case NumericFieldId::GradientStopOpacity: next = NumericFieldId::GradientStopMidpoint; break;
+                case NumericFieldId::GradientStopMidpoint: next = NumericFieldId::GradientAngle; break;
+                case NumericFieldId::GradientAngle: next = NumericFieldId::GradientLength; break;
+                case NumericFieldId::GradientLength: next = NumericFieldId::GradientCenterX; break;
+                case NumericFieldId::GradientCenterX: next = NumericFieldId::GradientCenterY; break;
+                case NumericFieldId::GradientCenterY: next = NumericFieldId::GradientStopOffset; break;
                 default: break;
             }
             commit_numeric_field();
@@ -636,9 +1060,10 @@ void NativeWindow::handle_numeric_char_input(wchar_t ch) {
         }
         if (active_tool_ == 12) {
             switch (active_num_field_) {
-                case NumericFieldId::DistributeSpacing: next = NumericFieldId::PolygonSides; break;
-                case NumericFieldId::PolygonSides: next = NumericFieldId::PolygonRotation; break;
-                case NumericFieldId::PolygonRotation: next = NumericFieldId::DistributeSpacing; break;
+                case NumericFieldId::ContourSpacing: next = NumericFieldId::ContourSteps; break;
+                case NumericFieldId::ContourSteps: next = NumericFieldId::ContourTolerance; break;
+                case NumericFieldId::ContourTolerance: next = NumericFieldId::ContourMiterLimit; break;
+                case NumericFieldId::ContourMiterLimit: next = NumericFieldId::ContourSpacing; break;
                 default: break;
             }
             commit_numeric_field();
@@ -659,20 +1084,13 @@ void NativeWindow::handle_numeric_char_input(wchar_t ch) {
             case NumericFieldId::ObjectWidth: next = NumericFieldId::ObjectHeight; break;
             case NumericFieldId::ObjectHeight: next = NumericFieldId::ObjectRotation; break;
             case NumericFieldId::ObjectRotation: next = NumericFieldId::ObjectX; break;
-            case NumericFieldId::EffectOffsetX: next = NumericFieldId::EffectOffsetY; break;
-            case NumericFieldId::EffectOffsetY: next = NumericFieldId::EffectSigmaX; break;
-            case NumericFieldId::EffectSigmaX: next = NumericFieldId::EffectSigmaY; break;
-            case NumericFieldId::EffectSigmaY: {
-                const auto snapshot = root().document().current_snapshot();
-                const auto appearance = selection_appearance(
-                    *snapshot, root().vector_controller().selection().selected_ids());
-                const bool shadow = appearance.can_edit_effect(numeric_effect_index_) &&
-                    std::holds_alternative<document::DropShadowEffect>(
-                        appearance.effects[numeric_effect_index_].parameters);
-                next = shadow ? NumericFieldId::EffectOpacity : NumericFieldId::EffectSigmaX;
-                break;
-            }
-            case NumericFieldId::EffectOpacity: next = NumericFieldId::EffectOffsetX; break;
+            case NumericFieldId::ShadowOffsetX: next = NumericFieldId::ShadowOffsetY; break;
+            case NumericFieldId::ShadowOffsetY: next = NumericFieldId::ShadowFeatherX; break;
+            case NumericFieldId::BlurSigmaX: next = NumericFieldId::BlurSigmaY; break;
+            case NumericFieldId::BlurSigmaY: next = NumericFieldId::BlurSigmaX; break;
+            case NumericFieldId::ShadowFeatherX: next = NumericFieldId::ShadowFeatherY; break;
+            case NumericFieldId::ShadowFeatherY: next = NumericFieldId::ShadowOpacity; break;
+            case NumericFieldId::ShadowOpacity: next = NumericFieldId::ShadowOffsetX; break;
             default: break;
         }
         commit_numeric_field();
@@ -683,41 +1101,79 @@ void NativeWindow::handle_numeric_char_input(wchar_t ch) {
         }
         return;
     } else if ((ch >= L'0' && ch <= L'9') ||
-               ((active_num_field_ != NumericFieldId::PolygonSides || active_tool_ == 13) && ch == L'.') ||
+               (accepts_length_units && (unit_letter || ch == L'+' || ch == L'/' || ch == L'*' ||
+                                 ch == L'(' || ch == L')' || ch == L' ')) ||
+               ((active_num_field_ != NumericFieldId::PolygonSides || active_tool_ == 13) &&
+                active_num_field_ != NumericFieldId::ContourSteps && ch == L'.') ||
+               (ch == L',' && accepts_length_units) ||
                (ch == L',' && active_num_field_ == NumericFieldId::DistributeSpacing) ||
                (ch == L',' && (active_num_field_ == text_numeric_field(TextPropertyField::FontSize) ||
                                active_num_field_ == text_numeric_field(TextPropertyField::FrameWidth) ||
                                active_num_field_ == text_numeric_field(TextPropertyField::LineSpacing))) ||
+               (ch == L',' && active_num_field_ == NumericFieldId::TacLimitPercent) ||
                (ch == L',' && active_tool_ == 11 &&
                 (active_num_field_ == NumericFieldId::ObjectX ||
                  active_num_field_ == NumericFieldId::ObjectY)) ||
                (ch == L',' && active_num_field_ == NumericFieldId::ObjectOpacity) ||
+               (ch == L',' && active_num_field_ == NumericFieldId::RasterExposureEv) ||
+               (ch == L',' && (active_num_field_ == NumericFieldId::RasterColorBalanceRedCyan ||
+                               active_num_field_ == NumericFieldId::RasterColorBalanceGreenMagenta ||
+                               active_num_field_ == NumericFieldId::RasterColorBalanceBlueYellow)) ||
+               (ch == L',' && (active_num_field_ == NumericFieldId::RasterLightContrast ||
+                               active_num_field_ == NumericFieldId::RasterLightHighlights ||
+                               active_num_field_ == NumericFieldId::RasterLightShadows ||
+                               active_num_field_ == NumericFieldId::RasterLightWhites ||
+                               active_num_field_ == NumericFieldId::RasterLightBlacks)) ||
+               (ch == L',' && (active_num_field_ == NumericFieldId::RasterHslHue ||
+                               active_num_field_ == NumericFieldId::RasterHslSaturation ||
+                               active_num_field_ == NumericFieldId::RasterHslLightness ||
+                               active_num_field_ == NumericFieldId::RasterVibranceAmount)) ||
+               (ch == L',' && (active_num_field_ == NumericFieldId::RasterLevelsBlackIn ||
+                               active_num_field_ == NumericFieldId::RasterLevelsWhiteIn ||
+                               active_num_field_ == NumericFieldId::RasterLevelsGamma ||
+                               active_num_field_ == NumericFieldId::RasterLevelsBlackOut ||
+                               active_num_field_ == NumericFieldId::RasterLevelsWhiteOut)) ||
+               (ch == L',' && (active_num_field_ == NumericFieldId::RasterWhiteBalanceTemperature ||
+                               active_num_field_ == NumericFieldId::RasterWhiteBalanceTint)) ||
+                (ch == L',' && (active_num_field_ == NumericFieldId::RasterCurvePoint0 ||
+                                active_num_field_ == NumericFieldId::RasterCurvePoint1 ||
+                                active_num_field_ == NumericFieldId::RasterCurvePoint2 ||
+                                active_num_field_ == NumericFieldId::RasterCurvePoint3 ||
+                                active_num_field_ == NumericFieldId::RasterCurvePoint4)) ||
                (ch == L',' && (active_num_field_ == NumericFieldId::FillOpacity ||
                                active_num_field_ == NumericFieldId::StrokeOpacity)) ||
-               (ch == L',' && (active_num_field_ == NumericFieldId::EffectSigmaX ||
-                               active_num_field_ == NumericFieldId::EffectSigmaY ||
-                               active_num_field_ == NumericFieldId::EffectOffsetX ||
-                               active_num_field_ == NumericFieldId::EffectOffsetY ||
-                               active_num_field_ == NumericFieldId::EffectOpacity)) ||
+               (ch == L',' && (active_num_field_ == NumericFieldId::BlurSigmaX ||
+                               active_num_field_ == NumericFieldId::BlurSigmaY ||
+                               active_num_field_ == NumericFieldId::ShadowFeatherX ||
+                               active_num_field_ == NumericFieldId::ShadowFeatherY ||
+                               active_num_field_ == NumericFieldId::ShadowOffsetX ||
+                               active_num_field_ == NumericFieldId::ShadowOffsetY ||
+                               active_num_field_ == NumericFieldId::ShadowOpacity)) ||
                (ch == L',' && active_tool_ == 13 &&
-                (active_num_field_ == NumericFieldId::PolygonSides ||
-                 active_num_field_ == NumericFieldId::PolygonRotation ||
-                 active_num_field_ == NumericFieldId::ObjectHeight ||
-                 active_num_field_ == NumericFieldId::ObjectX ||
-                 active_num_field_ == NumericFieldId::ObjectY)) ||
+                (active_num_field_ == NumericFieldId::GradientStopOffset ||
+                 active_num_field_ == NumericFieldId::GradientStopOpacity ||
+                 active_num_field_ == NumericFieldId::GradientStopMidpoint ||
+                 active_num_field_ == NumericFieldId::GradientAngle ||
+                 active_num_field_ == NumericFieldId::GradientLength ||
+                 active_num_field_ == NumericFieldId::GradientCenterX ||
+                 active_num_field_ == NumericFieldId::GradientCenterY)) ||
                (ch == L',' && active_tool_ == 12 &&
-                (active_num_field_ == NumericFieldId::DistributeSpacing ||
-                 active_num_field_ == NumericFieldId::PolygonRotation)) ||
+                (active_num_field_ == NumericFieldId::ContourSpacing ||
+                 active_num_field_ == NumericFieldId::ContourTolerance ||
+                 active_num_field_ == NumericFieldId::ContourMiterLimit)) ||
+               (accepts_length_units && ch == L'-') ||
                ((active_num_field_ != NumericFieldId::PolygonSides || active_tool_ == 13) &&
-                (active_tool_ != 12 || active_num_field_ != NumericFieldId::PolygonRotation) && ch == L'-')) {
-        if ((ch == L'.' || ch == L',') &&
+                active_num_field_ != NumericFieldId::ContourSteps &&
+                (active_tool_ != 12 || active_num_field_ != NumericFieldId::ContourMiterLimit) && ch == L'-')) {
+        if (!accepts_length_units && (ch == L'.' || ch == L',') &&
             (num_input_buffer_.find('.') != std::string::npos || num_input_buffer_.find(',') != std::string::npos)) {
             return;
         }
-        if (ch == L'-' && !num_input_buffer_.empty()) {
+        if (!accepts_length_units && ch == L'-' && !num_input_buffer_.empty()) {
             return;
         }
-        if (num_input_buffer_.size() < 12) {
+        if (num_input_buffer_.size() < (accepts_length_units ? 64u : 12u)) {
+            if (ch >= L'A' && ch <= L'Z') ch = static_cast<wchar_t>(ch - L'A' + L'a');
             num_input_buffer_.push_back(static_cast<char>(ch));
         }
     }

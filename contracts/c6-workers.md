@@ -1,270 +1,129 @@
 # Contract C6: Worker lifecycle, containment và IPC
 
-Version: 1.0.0 (wire compatibility)
-Status: Locked for the current v1 wire; future file-handle profile is Proposed
-Producer: `platform/workers`
-Consumers: `modules/interop`, `modules/plugin_host`, `modules/desktop`
+Version: 1.1.0 (đồng bộ tài liệu; wire v1/v2 không đổi trong lượt này).
+Audited: 2026-10-24, source đang làm việc.
+Producer: `platform/workers`, `modules/interop`. Consumer: `apps/desktop` và host import.
+Status: IPC v1 legacy và v2 source-handle/proposal-stream đã có; không còn là spike chỉ hỗ trợ SVG.
 
----
+## 1. Ranh giới writer và process
 
-## 1. Phạm vi và bảo đảm
+Parser/decoder bên thứ ba chạy ngoài editor. Worker trả dữ liệu chưa tin cậy; host kiểm framing,
+identity, hash, cấu trúc và semantics trước khi document writer áp command theo C2/C8.
+Worker không được mutate document hoặc tự cấp capability. Crash/cancel/timeout/payload lỗi phải
+bỏ candidate, không publish một phần tài liệu. Không fallback sang parser trong UI khi sandbox lỗi.
 
-Parser và decoder bên thứ ba là đầu vào không tin cậy. Chúng chạy ở process worker ngoài
-editor. Worker chỉ tạo kết quả đề xuất; host xác thực rồi writer mới được commit. Crash,
-timeout, cancel, lỗi quota, response sai version hoặc payload sai không áp dụng một phần
-kết quả vào document đang mở.
+Process riêng không tự chứng minh cô lập filesystem/network/handles/CPU/RAM. AppContainer,
+restricted handle inheritance và Job Object là các lớp triển khai; canary đúng OS/build là gate
+riêng. Audit source này không chạy lại canary và không chứng nhận mọi adapter/OS đã an toàn.
 
-Process riêng không tự cô lập filesystem, network, handles, child processes, CPU hoặc RAM.
-Mỗi bảo đảm cần OS policy và canary dương/âm đo được trên đúng worker build. Sandbox init lỗi
-thì host fail closed; không tự khởi chạy adapter không cô lập.
+## 2. Header chung và nhánh legacy v1
 
-## 2. Wire v1 đã có trong code
+`IpcHeader` packed 16 bytes, scalar little-endian:
 
-Header hiện hành là `IpcHeader`, packed 16 bytes, các trường little-endian trên Windows:
-
-| Thứ tự | Kiểu | Ý nghĩa |
+| Offset | Kiểu | Giá trị/ý nghĩa |
 | --- | --- | --- |
-| 0 | uint32 | Magic `0x50494B43` (bytes `43 4B 49 50`, `PIKC`) |
-| 4 | uint16 | Wire version `1` |
-| 6 | uint16 | Message type |
-| 8 | uint32 | Sequence ID |
-| 12 | uint32 | Payload bytes |
+| 0 | u32 | Magic `0x50494B43`, bytes `43 4B 49 50`; dùng giá trị số/byte làm authority, không suy từ comment ASCII. |
+| 4 | u16 | `wire_version`: 1 hoặc 2 theo nhánh giao thức. |
+| 6 | u16 | Message type. |
+| 8 | u32 | Sequence ID. |
+| 12 | u32 | Payload byte count. |
 
-Message types hiện có: Ping/Pong 1/2, ImportRequest/ImportResponse 10/11,
-CanaryRequest/CanaryResponse 20/21 và ErrorResponse 99. Sequence ID ghép request/response.
-Packet gồm header + payload. C++ serializer/deserializer hiện không gắn CRC32 ở cuối.
-CRC32 trong storage container không hàm ý CRC32 cho IPC. Host vẫn phải kiểm tra độ dài chính
-xác, version, loại message, sequence, trường bắt buộc và toàn bộ payload trước khi dùng.
+V1 còn serializer/launcher tương thích: Ping/Pong 1/2, ImportRequest/Response 10/11,
+CanaryRequest/Response 20/21, ErrorResponse 99. Payload tối đa 16 MiB; request mang raw bytes.
+Object/depth constants là 100.000/64. Nhánh `Transact` v1 nhận timeout >0 và <=60 giây.
+Không có CRC trailer chung cho packet v1. Không lấy CRC của storage hoặc v2 chunk gán cho v1.
+Không nâng trần v1 hoặc downgrade âm thầm request v2 để né lỗi source/capability.
 
-Giới hạn v1 trong code: payload tối đa 16 MiB; import request mang raw source bytes trong
-payload; tối đa 100.000 objects; depth tối đa 64; timeout truyền vào launcher lớn hơn 0 và
-không quá 60 giây. Files lớn hơn 16 MiB bị từ chối trước khi serialize. Không nâng trần v1
-để xử lý file lớn.
+## 3. V2 đang tích hợp
 
-Wire v1 không chứa source-file handle/token, chunk/backpressure, capability matrix đáng tin,
-font/profile blob protocol, transaction report đầy đủ hay IPC cancel message đã triển khai.
-Không ghép nhầm bảng PKWP/64 MiB/CRC32 trong bản đặc tả cũ với packet PIKC hiện tại.
+V2 giữ header 16 bytes, payload tối đa 1 MiB và identity prefix 24 bytes:
+source token 128-bit + generation u64. Negotiation dùng zero identity. Full job identity gồm
+document ID, epoch, base revision, generation, source token; host phải so khớp xuyên suốt job.
 
-## 3. Ranh giới AppContainer và file broker
+| Message | ID | Vai trò |
+| --- | --- | --- |
+| Negotiate request/response | 30/31 | Major/minor và required/accepted feature bits. |
+| ImportBegin | 32 | Job identity, source size/SHA-256, format/profile, optional source page index. |
+| ProposalChunk | 33 | Chunk/record ordinals, record count, CRC32 và canonical record bytes. |
+| ImportEnd | 34 | Tổng chunk/record/bytes, canonical SHA-256, fidelity-report-complete. |
+| ErrorResponse | 35 | Structured failure. |
+| MemoryWait | 36 | Thông báo chờ RAM của worker; host kiểm identity và allowance. |
 
-- Tắt network capability; kiểm read, write, outbound, bind/listen và protocol handles bằng
-  positive controls lẫn denial đúng OS. Một kết nối bị timeout không tính là denial.
-- Kế hoạch cấp tối thiểu executable/runtime của worker và pipe handles trong allowlist.
-  Không tin đường dẫn, tên file hoặc handle do payload worker chọn.
-- Wire v1 nhận bytes qua IPC; worker không tự mở đường dẫn user. V1 chưa hỗ trợ stream file lớn.
-- Import file lớn cần protocol revision được chấp thuận. Host broker sao chép bytes bất biến
-  vào vùng staging/job riêng sau khi kiểm tra path/handle, size, snapshot/hash và quota disk.
-  Worker chỉ được đọc đúng nguồn/job qua capability tạm thời do host cấp; không được duyệt
-  thư mục user, link UNC, registry, font folder hay linked asset tự do.
-- Broker chỉ giải quyết nguồn được chọn. Font, ICC, linked images và resource URI đều cần
-  capability riêng; cấm worker tự tải mạng hoặc chạy script/macro từ file nguồn.
-- Dọn vùng staging theo lifetime job dù job hoàn thành, timeout, worker crash, app đóng hoặc
-  host restart. Log không chứa nội dung file, data URL, full document path hay font bytes.
+Feature bits hiện có: SOURCE_HANDLE, CHECKED_PROPOSAL_STREAM, SOURCE_PAGE_SELECTION,
+RASTER_SOURCE_ASSETS. Caller/worker phải thống nhất features cần dùng trước import.
+Transport có constant tối đa hai queued frames; không suy ra toàn import giữ đúng hai buffers.
+Mỗi chunk tối đa 4096 records; record payload tối đa 512 KiB. Canonical record header gồm
+`type:u16, reserved:u16=0, payload_bytes:u32`. Không được parse cast raw struct/pointer.
 
-Vùng private bin, path-specific file access và pipe handle inheritance cần được chứng minh
-riêng trên worker process đang chạy. Canary C6 cho network/file/handle/child chỉ chứng minh
-đúng canary, policy và build đã chạy; không tự mở quyền import cho mọi parser.
+Record IDs hiện có trong source:
 
-## 4. Job Object, RAM, CPU
+| IDs | Loại |
+| --- | --- |
+| 1–7 | Page, Path, Text, FidelityReport, FidelityIssue, Layer, Group. |
+| 8–10 | RasterImage, RasterImageChunk, RasterSourceChunk. |
+| 11–12 | RasterSourceChunk64, RasterImage64. |
 
-Code `JobLimitsConfig` đang mặc định 256 MiB, active process 1, `KILL_ON_JOB_CLOSE` và đặt
-`JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_JOB_MEMORY`. Trên Windows các memory
-limits này giới hạn **virtual memory commit**, không phải lượng RAM vật lý/working set. Quá
-limit có thể làm allocation/commit thất bại; contract không suy ra rằng Windows luôn terminate
-worker gọn gàng hoặc host chắc chắn sống. Host giám sát process, I/O, peak usage và exit state,
-chủ động terminate job có deadline, rồi bỏ toàn bộ proposal lỗi.
+Codec và host consumer có nhánh U64, nhưng desktop raster admission vẫn dùng
+`kRasterRecordByteLimit = UINT32_MAX` cho nguồn; native storage còn bound riêng. Chưa được
+công bố import/save ảnh >4 GiB chỉ vì có record 11/12. Giữ khả năng đọc record legacy; thay
+layout/feature negotiation cần migration và review consumer, không tái dùng ID với nghĩa khác.
 
-Không được đặt quota 512 MiB làm số runtime chỉ vì nó xuất hiện trong bản đặc tả trước: code
-mặc định 256 MiB, app tổng đang cần đo. Từng mức quota là profile versioned, benchmark trên máy
-8 GB và được review trước đổi. Admission control tính staging+native allocations+decoded images+
-font/profile+preview+undo/index toàn app, không chỉ commit memory trong child.
+Host hiện validate chunk/end checksum, ordinals, count, graph/layer membership và record semantics.
+Desktop materialize proposal thành object/page/asset rồi commit/review theo C8. SVG, DXF, raster,
+PDF/AI PDF-compatible, CDR và EPS có adapter theo subset; không suy ra fidelity đầy đủ từ v2.
 
-Code hiện chặn child process bằng `JOB_OBJECT_LIMIT_ACTIVE_PROCESS = 1` và giữ process trong
-Job Object. Hàm JobObject đang khảo sát không đặt CPU hard cap hoặc process priority. “Below
-normal”/CPU rate control chỉ là target nếu chưa đo code path và scheduler Windows cụ thể; UI
-phải giữ input/render budget trước khi bật quota production.
+## 4. Nguồn chỉ đọc và resources
 
-## 5. Deadline, cancel, crash
+`SourceSnapshot` có hai đường: `Create` sao chép vào staging riêng và `PinReadOnly` giữ handle
+nguồn, chặn concurrent write/delete opens, hash chính handle đó để tránh copy nguồn lần hai.
+Không mô tả mọi import như luôn spool toàn file. Cả hai đường giữ size, SHA-256, token và lifetime
+RAII. Host chọn nguồn, kiểm loại file/reparse/size và cấp handle chỉ đọc; worker không chọn user path.
 
-Host đặt absolute monotonic deadline từ lúc admission. Thời gian I/O, write/read pipe, parse,
-validation, staging và phần chuẩn bị tính về deadline thích hợp; heartbeat không gia hạn job.
-Launcher v1 chặn timeout trên một phút; preview 5 s/full import 30 s mới là target khảo sát,
-không phải latency đã đo và không phù hợp với mọi file.
+Launcher dùng explicit inherited-handle list: stdin, stdout, stderr sink và source handle khi có.
+Không truyền arbitrary handles/pointers hoặc đường dẫn nguồn do parser chỉ định. Font/ICC/linked
+assets/URI ngoài nguồn cần capability riêng; worker không tự tải mạng, chạy macro hoặc mở thư mục
+của người dùng. Nguồn/output tạm có owner và dọn theo lifetime job; log không chứa bytes/tokens
+bí mật hoặc đường dẫn/nội dung khách hàng.
 
-Khi user cancel, timeout, worker crash, pipe đóng, response framing sai hoặc quota/canary fail:
+## 5. RAM, deadline và cancellation hiện tại
 
-1. đánh dấu generation đã hủy trước khi dọn;
-2. terminate Job Object/process khi cần và đóng/drain cả hai pipe trong khoảng thời gian hữu hạn;
-3. xóa staging output và bỏ proposal/preview thuộc generation đó;
-4. giữ document source/revision/undo/dirty state nguyên trạng;
-5. chỉ retry sau lỗi transient theo policy có giới hạn hoặc theo hành động rõ ràng của user,
-   luôn dùng job ID/generation mới; không tự vòng lặp mở lại file lỗi.
+`JobLimitsConfig` mặc định 256 MiB, active process 1, kill-on-close và chặn process con.
+Memory limit của Job Object là commit-memory limit, không phải working-set/RSS guarantee.
+Giá trị `max_memory_bytes=0` tắt hard cap; các đường desktop import hiện dùng giá trị này.
+Vì vậy không được ghi mọi import worker bị giới hạn cứng 256 MiB.
 
-Response đến muộn hoặc worker cũ được khởi động lại không có quyền commit. Host đối chiếu
-document ID, lifecycle epoch, strict base revision, job ID và generation mới nhất ngay tại
-atomic commit. Đóng/mở, undo, cancel hoặc sửa document làm proposal cũ stale.
+Import hiện dùng `SystemMemoryPressureWaiter`: headroom dưới ngưỡng 95% RAM hệ thống thì chờ,
+tự tiếp tục khi đủ, allowance tối đa năm phút cộng dồn mỗi waiter và vẫn nhận cancel. Đây là
+cooperative admission tại các điểm có probe, không phải reservation toàn app. Parser, host
+materialization, full-frame pixels, source bytes, codec trung gian và Undo còn có thể cùng resident.
+Không có bảo đảm mọi allocation trong thư viện đều qua waiter hoặc không thể OOM/UI stall.
 
-## 6. IPC v2 — đề xuất source capability và bounded proposal stream
+Desktop hiện chọn active timeout 120 giây cho rich import và 30 giây cho nhánh còn lại;
+thời gian chờ RAM có cơ chế điều chỉnh deadline riêng. Trần 60 giây chỉ thuộc nhánh v1 nêu trên.
+Không lấy các giá trị này làm thời gian mở file đã đo. Job Object chưa tự tạo CPU hard-cap policy.
 
-Đây là **profile Proposed**; implementation spike hiện có một worker v2 và adapter SVG giới hạn,
-nhưng host chưa semantic-validate toàn bộ record để tạo document transaction. Không phát request
-v2 tới worker v1. Negotiation xác nhận major version và danh sách message/features trước khi mở
-file; không downgrade request có source sang v1 raw bytes. Worker/host mismatch kết thúc job bằng
-unsupported_protocol, không gọi parser trong host.
+Cancel/timeout/crash/EOF/hash mismatch làm candidate bị loại; terminate job/đóng pipe và thu hồi
+resources theo host. Retry phải có identity/generation mới. Tại commit vẫn kiểm C2 lifecycle,
+revision và job generation; IPC identity không thay thế document guard.
 
-### 6.1 Nguồn đọc chỉ qua capability host
+## 6. Hướng cần triển khai và evidence
 
-1. Host kiểm tra file đã được người dùng chọn: loại file thường, không theo reparse point khi
-   broker mở nguồn, có size hữu hạn trong profile và disk budget còn đủ. Không để worker tự mở
-   user path, UNC, archive member path, font/profile folder hoặc resource URI.
-2. I/O executor host sao chép snapshot nguồn vào thư mục riêng của job với tên ngẫu nhiên; mở
-   nguồn read-only/share mode ngăn writer trong lúc copy; tính SHA-256 trên bytes đã copy và xác
-   minh size. Staging có quota, ACL tối thiểu, cleanup khi mọi kết thúc, và không chứa linked
-   assets ngoài capability được cấp riêng.
-3. Launcher truyền đúng một handle read-only tới snapshot bằng explicit inherited-handle list
-   cùng ba handle I/O cố định: stdin pipe đọc, stdout pipe ghi và stderr sink tới `NUL`. Vì vậy
-   allowlist có đúng bốn handle trong profile có source; không có source thì đúng ba. Command line
-   chỉ được mang giá trị handle do host tạo; tuyệt đối không mang đường dẫn nguồn. Handle được bind
-   vào process/job ID, source token ngẫu nhiên 128-bit, size, hash, document epoch/revision và
-   generation. Worker không thể xin handle/path khác. Không đưa handle qua payload có thể chọn tùy ý
-   từ worker.
-4. Host/worker phải có live AppContainer positive/negative canaries chứng minh worker đọc được
-   handle nguồn, không ghi được, không mở file khác, không dùng handle/pipe của process khác và
-   bị chặn network/child. Nếu handle inheritance không hoạt động trong profile OS, job fail
-   closed; không mở ACL rộng hoặc fallback sang user path.
+Admission theo retained bytes toàn app, asset/tile storage, bounded staging và queue/cancel xuyên
+suốt codec/UI vẫn theo [plan hiệu năng](../docs/roadmap/performance-storage-automation.md).
+Không đặt nhãn đã hoàn thành cho các mục này từ kiểm tra checksum hoặc pressure waiter.
 
-### 6.2 Framing, proposal stream và limits
+Adapter release cần evidence riêng: malformed/truncated/oversize/deep/cyclic payload; stale/cancel/
+crash/deadline; source/hash mismatch; leak handles/temp/commit bytes; OS positive/negative canaries;
+và import-edit-Undo-save/reopen cùng fidelity oracle. Contract fixtures là vectors, không phải
+kết quả đã chạy trên build hiện tại.
 
-- Header PIKC 16-byte phải validate magic, negotiated major, message type, sequence và byte length.
-  Payload v2 bắt đầu bằng identity prefix cố định 24-byte: source token 128-bit và generation
-  64-bit. Host kiểm prefix này trước khi cấp buffer phần payload còn lại; negotiation dùng prefix
-  zero. Payload có thêm document ID, epoch, base revision, token và generation đầy đủ để host so
-  khớp identity sau khi đọc phần bounded còn lại. Proposal frames có payload tối đa 1 MiB; producer
-  chỉ có tối đa hai frame đang chờ để tạo backpressure.
-- ImportBegin xác nhận token/hash/size/format profile; PDF và AI-PDF có thể kèm `source_page_index:u32`
-  zero-based khi host đã negotiate feature `SOURCE_PAGE_SELECTION`. Trường vắng mặt chọn trang 0.
-  Worker hash lại chính handle nguồn trước khi
-  gọi adapter. ProposalChunk chứa chunk ordinal, first-record ordinal và các record có header
-  canonical `type:u16, flags:u16=0, length:u32, bytes`; mọi record có type khác zero, length tối đa
-  512 KiB và tổng chunk tối đa 1 MiB. CRC32/IEEE tính trên chuỗi canonical records. ImportEnd mang
-  tổng chunks/records/canonical bytes, cờ fidelity report đầy đủ và SHA-256 của phép nối canonical
-  records theo thứ tự. Host kiểm record framing, CRC, ordinal, tổng count/byte và SHA trước khi chấp
-  nhận terminal frame. Sequence/message sai, token hoặc job identity khác, trailing bytes,
-  checksum/hash/count không khớp, record vượt range hoặc EOF giữa frame làm hủy toàn proposal.
-  Final hash không thay thế semantic validation từng record host-side.
-- Record ID và payload được version hóa tại
-  [`import-record-v1.json`](../tests/fixtures/reference-fixtures/import-record-v1.json): `1=Page`,
-  `2=Path`, `3=Text`, `4=FidelityReport`, `5=FidelityIssue`. Số nguyên, độ dài và IEEE-754 binary64
-  dùng little-endian. Page, endpoint/control points, arc radii, stroke width và vị trí text dùng
-  mm; font size dùng pt. Record ID của object chỉ ổn định trong một proposal; `source_id` giữ nguồn
-  ổn định nếu có. Path verbs là `Move=1`, `Line=2`, `Quad=3`, `Cubic=4`, `Arc=5`, `Close=6`;
-  trường không dùng phải zero. Text và tên font là UTF-8. Màu giữ model RGB/CMYK/Spot/Gray,
-  alpha, spot name, alternate RGB và cờ overprint; host không đổi màu nguồn sang RGB âm thầm.
-  FidelityReport tóm tắt coverage, appearance, editability, production assessment và tổng issue;
-  host kiểm từng record, thứ tự, số issue và report trước khi nhận proposal.
-- Record schema v2 tại [`import-record-v2.json`](../tests/fixtures/reference-fixtures/import-record-v2.json)
-  giữ nguyên payload cơ sở v1 cho Page/Path/Text/FidelityReport/FidelityIssue và thêm `6=Layer`, `7=Group`.
-  Riêng PDF/AI profile v2, Text có thể nối thêm `font_postscript_name:string16` sau Color; vắng trường
-  nghĩa là nguồn không cung cấp tên PostScript. Layer trỏ tới các object gốc; Group trỏ tới các object con.
-  Host kiểm thứ tự, ID, UTF-8/source ID,
-  mọi tham chiếu, đúng một owner cho mỗi object, đồ thị không chu trình, issue locator và report
-  trước khi chấp nhận terminal frame. Production worker dispatch kiểm cặp format/profile đã đăng ký
-  cho SVG, DXF, PDF, AI PDF-compatible, EPS và CDR; mỗi profile có semantic validator riêng.
-  PDF/AI page selection hiện trả một page proposal mỗi lần; inspect toàn bộ Page tree đã tách khỏi
-  materialize, còn Open/Import cả tập hoặc page range bằng một transaction đang chờ tích hợp ở host/UI.
-  Generic stream fixtures chỉ kiểm protocol, không phải format adapters. DXF vẫn chưa được báo
-  runtime-supported cho tới khi app có consumer áp dụng proposal vào document bằng transaction và UI import flow.
-- **Raster source assets:** record `8=RasterImage` giữ metadata source và kích thước preview; `9=RasterImageChunk`
-  mang pixel RGBA8 để dựng/chỉnh sửa trong canvas; `10=RasterSourceChunk` mang bytes ảnh gốc theo từng asset.
-  `RASTER_SOURCE_ASSETS` phải được negotiate cho CDR. Ảnh RGB 24-bit giữ đủ ba kênh; preview RGBA 8-bit mỗi
-  kênh giữ alpha (32-bit/pixel); PNG RGB, grayscale và indexed dùng `tRNS` cũng được chuyển đúng
-  thành alpha preview. Bytes gốc được chia sẻ giữa các placement và lưu cùng document native.
-  Metadata `source_bits_per_pixel` mô tả ảnh nguồn, không phải preview. Không đặt trần nhập 64 MiB; kích thước
-  bytes ảnh gốc theo giới hạn U32 của blob native/record, còn admission/cấp phát theo RAM vật lý toàn hệ thống
-  và hủy/rollback khi ngưỡng 90% đạt hoặc vượt.
-- **SVG profile `svg-hierarchy-v3`:** nguồn UTF-8 tĩnh tối đa 16 MiB, root có width/height rõ đơn vị,
-  hỗ trợ `rect`, `path`, `text`, `<g>` lồng nhau và layer Inkscape ở cấp root qua namespace chính thức.
-  Group giữ thứ tự/con trỏ con; layer giữ tên, source ID, visibility/lock hiện tại và danh sách object
-  gốc. Group có thể mang `clip_mask_local_id` trỏ tới đúng một Path con; host kiểm mask tồn tại, đúng loại
-  và thuộc group trước khi áp dụng. Codec vẫn đọc được Group payload cũ không có trường này.
-  SVG không khai báo layer được tạo một layer mặc định. `viewBox` chỉ dùng mapping xMidYMid meet
-  mặc định hoặc none đồng tỷ lệ. Path commands nhận M/L/H/V/C/S/Q/T/Z. Affine transform trong group,
-  rect và path nhận matrix/translate/scale/rotate/skewX/skewY theo thứ tự nguồn; text chỉ nhận transform
-  dương, đồng tỷ lệ, không xoay. Clip-path subset từ rect/path giữ mask reference trên Group. Text giữ
-  Unicode, family/weight/style/cỡ chữ; việc tìm font và glyph hiển thị chưa được xác minh. Profile từ chối
-  CSS/style, filter/effect, mask tổng quát, image/link ngoài, script, DTD/entity, layer lồng nhau, arc command
-  và phần tử lạ.
-  Từ chối toàn nguồn bằng structured worker error, không phát chunk dở dang. Giới hạn: 10.000 phần tử
-  gồm group, depth 128, 6.000 verb/path, 100.000 path elements cộng dồn, 64 thuộc tính/tag, 256 KiB
-  text/object, 16 MiB canonical stream và 1.000.000 mm mỗi chiều trang. Đây là phạm vi subset, chưa
-  phải claim hỗ trợ SVG tổng quát.
-- **DXF profile `dxf-entities-v1`:** chỉ nhận group-code lines dạng ASCII và value dạng UTF-8, tối đa
-  16 MiB/500.000 group pairs; yêu cầu
-  `$INSUNITS` tường minh và chỉ nhận inch, foot, mm, cm, m hoặc yard. Hỗ trợ modelspace 2D gồm
-  `LINE`, `ARC`, `CIRCLE`, `LWPOLYLINE` phẳng và bulge arc; chuyển mọi tọa độ sang mm/binary64.
-  Layer giữ tên, thứ tự, visible, frozen/locked và quan hệ entity. Màu chỉ nhận ACI 1–9; kiểu nét
-  chỉ nhận BYLAYER/CONTINUOUS. Kích thước trang proposal được tính từ bounds hình học, không đại diện
-  paper/layout extents nguồn. Profile từ chối unitless/đơn vị khác, entity lạ (kể cả INSERT/block),
-  paperspace, section/table không hỗ trợ, Z/thickness khác 0, normal OCS khác +Z, width,
-  linetype/override/TrueColor không hỗ trợ và dữ liệu bảng layer ngoài subset. Giới hạn:
-  10.000 entity, 6.000 path elements/entity,
-  tọa độ tối đa 1.000.000.000 mm và mỗi chiều trang tối đa 1.000.000 mm. Từ chối toàn nguồn bằng
-  structured worker error, không phát chunk dở dang. Đây không phải hỗ trợ DXF tổng quát và chưa xác
-  minh thông tin màu CAD theo nền, hiệu ứng hoặc round-trip.
-- Host kiểm semantic hierarchy/layer membership và profile report cho SVG, DXF. Tuy nhiên
-  document transaction/consumer apply và review
-  tích hợp chưa hoàn tất. Vì vậy C6 vẫn Proposed; parser test pass không chứng minh import vào document,
-  fidelity đầy đủ, lưu/mở document hoặc an toàn OS trên mọi máy.
-- Host ghi chunks vào job staging riêng thay vì giữ toàn scene trong RAM, nhưng validate record
-  ngay khi đọc. Chỉ một reader/writer có quyền consume stream; queue count/bytes và disk usage có
-  trần. Hết quota, thiếu quyền hoặc staging I/O lỗi kết thúc job; không bỏ chunk hoặc giảm chất
-  lượng âm thầm.
-- Per-frame 1 MiB và hai frame queue là transport defaults đề xuất. Max source bytes, proposal
-  bytes, objects, hierarchy depth, path segments, text/glyphs, pixels/assets, staging disk, đồng
-  thời jobs và deadline thuộc versioned import profile; phải đo bằng corpus hợp lệ/negative trước
-  bật profile. Không dùng unlimited hoặc nâng quota vì một mẫu thất bại.
-- Proposal là untrusted data theo [C8](c8-import-fidelity.md), không được mutate document. Host
-  kiểm full stream, capability, provenance, loss completeness, units/precision, finite values,
-  graph refs và toàn bộ limits trước khi tạo commit proposal. Sau đó document writer áp strict
-  epoch/revision/generation và atomic transaction như C8.
+## 7. Nguồn authority
 
-### 6.3 Cancel, timeout, cleanup
+- [Wire DTO/constants](../modules/interop/include/pikdraw/interop/ipc_dto.hpp), [v2 codec](../modules/interop/src/ipc_v2_dto.cpp).
+- [Record types/codecs API](../modules/interop/include/pikdraw/interop/adapters/svg_worker_adapter.hpp), [raster bound](../modules/interop/include/pikdraw/interop/adapters/raster_image_decoder.hpp).
+- [Source snapshot](../platform/workers/include/pikdraw/workers/source_snapshot.hpp), [launcher](../platform/workers/src/process_launcher.cpp).
+- [Stream validator](../platform/workers/src/v2_proposal_validator.cpp), [semantic validator](../platform/workers/src/v2_proposal_semantics.cpp).
+- [Job/memory waiter](../platform/workers/include/pikdraw/workers/job_object.hpp), [desktop import](../apps/desktop/src/workflows/document_workflow_import.cpp).
+- [Wire vectors](fixtures/worker-import-v2-vectors.json), [integrity regression](../platform/workers/tests/v2_integrity_tests.cpp).
 
-Cancel tăng generation trước khi đóng pipes/terminating job; receiver ngừng nhận frames ngay. EOF,
-crash, deadline, cancel, worker restart, document edit/close, hash mismatch hoặc lỗi dọn đều đánh
-dấu proposal stale, terminate process/job khi cần, xóa source/output staging và giữ nguyên base
-document/history/dirty state. Retry là job/token mới và có giới hạn; không resume một stream dở.
-Supervisor có deadline khi drain pipes/cleanup để worker hỏng không treo host.
-
-V2 không truyền raw pointer, renderer type, user path, arbitrary handle, object blob không giới
-hạn hoặc source bytes lớn trong một frame. Response của adapter luôn là import proposal C8. Mọi
-limit/profile ở mục này vẫn là đề xuất đến khi implement, build và chạy live OS canaries trên
-exact merged revision.
-
-## 7. Evidence để bật adapter
-
-Theo từng worker/OS/build ghi exact hash, flags, toolchain/dependencies, limits và corpus ids.
-Kiểm tra containment bằng path/file/network/handle/child positive+negative canaries; protocol
-bằng truncated, oversized, duplicate/out-of-order, nonfinite, deep, stale, fuzz và stdout flood;
-lifecycle bằng cancel/crash/timeout/close/restart; soak leak temp/files/handles/commit bytes.
-Các wire-level vectors đã version hóa tại
-[`worker-ipc-v2-vectors.json`](../tests/fixtures/reference-fixtures/worker-ipc-v2-vectors.json).
-Kiểm thử trên source user được chạy cục bộ; chỉ lưu corpus IDs/hash trong report có phân quyền,
-không commit sample, tên khách hàng hoặc nội dung file.
-
-Không công bố “không bao giờ crash/treo”. Điều kiện công bố: đường lỗi đã thử kết thúc có deadline,
-không commit tài liệu dở dang và không giữ UI callback chờ parser; giới hạn cùng chính sách recovery
-phải được nói rõ theo build/profile đã đo.
-
-## 8. Nguồn code cần giữ đồng bộ
-
-- `modules/interop/include/pikdraw/interop/ipc_dto.hpp`
-- `modules/interop/src/ipc_dto.cpp`
-- `modules/interop/include/pikdraw/interop/payload_validator.hpp`
-- `modules/interop/src/payload_validator.cpp`
-- `platform/workers/include/pikdraw/workers/job_object.hpp`
-- `platform/workers/src/job_object.cpp`
-- `platform/workers/src/process_launcher.cpp`
-
-C6 là đặc tả cho consumer; code changes phải theo task module workers/interop riêng và review
-chung trên merged SHA. Phần v2 chưa implement trong contract-only checkpoint này.
+Lượt này chỉ đồng bộ tài liệu với source, không thay protocol và không chạy native/canary tests.

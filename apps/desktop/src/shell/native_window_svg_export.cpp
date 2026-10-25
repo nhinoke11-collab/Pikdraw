@@ -5,6 +5,7 @@
 #include "pikdraw/interop/export/export_options.hpp"
 #include "pikdraw/interop/export/export_job.hpp"
 #include "pikdraw/interop/writers/svg_exporter.hpp"
+#include "native_window_svg_export.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -15,6 +16,7 @@
 #include <mutex>
 #include <optional>
 #include <sstream>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -45,8 +47,20 @@ struct ExportJobSession {
 namespace {
 
 std::string format_svg_issue_code(interop::FidelitySeverity severity) {
-    return severity == interop::FidelitySeverity::Warning
-        ? "SVG_FIDELITY_CONVERSION" : "SVG_FIDELITY_UNSUPPORTED";
+    switch (severity) {
+    case interop::FidelitySeverity::Info: return "SVG_FIDELITY_INFO";
+    case interop::FidelitySeverity::Warning: return "SVG_FIDELITY_CONVERSION";
+    case interop::FidelitySeverity::Unsupported: return "SVG_FIDELITY_UNSUPPORTED";
+    }
+    return "SVG_FIDELITY_UNKNOWN";
+}
+
+std::filesystem::path filesystem_path_from_utf8(const std::string& bytes) {
+    std::u8string utf8;
+    utf8.reserve(bytes.size());
+    for (const unsigned char byte : bytes)
+        utf8.push_back(static_cast<char8_t>(byte));
+    return std::filesystem::path(utf8);
 }
 
 std::vector<std::string> make_svg_page_paths(const std::string& selected_path,
@@ -79,6 +93,51 @@ std::wstring export_failure_text(const interop::AtomicExportResult* result,
 
 } // namespace
 
+namespace detail {
+
+void append_svg_fidelity_diagnostics(
+    interop::ExportJobReport& report,
+    const std::vector<SvgPageFidelity>& pages) {
+    const bool has_issues = std::any_of(pages.begin(), pages.end(),
+        [](const SvgPageFidelity& page) { return !page.issues.empty(); });
+    if (!has_issues ||
+        (report.status != interop::ExportJobStatus::Complete &&
+         report.status != interop::ExportJobStatus::CompleteWithDiagnostics))
+        return;
+
+    report.status = interop::ExportJobStatus::CompleteWithDiagnostics;
+    report.appearance = interop::ExportAppearanceStatus::Partial;
+    for (const auto& page : pages) {
+        for (const auto& issue : page.issues) {
+            interop::ExportDiagnosticSeverity severity{};
+            switch (issue.severity) {
+            case interop::FidelitySeverity::Info:
+                severity = interop::ExportDiagnosticSeverity::Info;
+                break;
+            case interop::FidelitySeverity::Warning:
+                severity = interop::ExportDiagnosticSeverity::Warning;
+                break;
+            case interop::FidelitySeverity::Unsupported:
+                severity = interop::ExportDiagnosticSeverity::Error;
+                break;
+            }
+            std::string message = page.page_name.empty()
+                ? "Page " + std::to_string(page.page_id) : page.page_name;
+            if (!issue.element_name.empty())
+                message += " · " + issue.element_name;
+            message += " · " + issue.feature + ": " + issue.description;
+            const auto page_id = page.page_id == document::kInvalidPageId
+                ? std::optional<document::PageId>{}
+                : std::optional<document::PageId>{page.page_id};
+            report.diagnostics.push_back({
+                format_svg_issue_code(issue.severity), severity, page_id,
+                std::nullopt, std::move(message)});
+        }
+    }
+}
+
+} // namespace detail
+
 bool NativeWindow::export_job_active() const noexcept {
     return export_job_ && !export_job_->finished.load(std::memory_order_acquire);
 }
@@ -86,9 +145,14 @@ bool NativeWindow::export_job_active() const noexcept {
 bool NativeWindow::start_svg_export(const std::string& file_path,
                                     bool selected_objects,
                                     bool allow_replace_existing,
-                                    bool all_pages) {
+                                    bool all_pages,
+                                    bool active_artboard) {
     if (selected_objects) all_pages = false;
-    if (export_job_active()) {
+    if (active_artboard) {
+        selected_objects = false;
+        all_pages = false;
+    }
+    if (export_job_active() || raster_export_job_active()) {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Đang xuất SVG · nhấn Esc để hủy"
             : "SVG export is running · press Esc to cancel";
@@ -128,11 +192,13 @@ bool NativeWindow::start_svg_export(const std::string& file_path,
     request.output_version = "SVG 1.1 static subset";
     request.profile_id = schema.profile_id;
     request.options = validated_options.snapshot;
-    request.scope = selected_objects ? interop::ExportScope::Selection
+    request.scope = active_artboard ? interop::ExportScope::Artboard
+        : selected_objects ? interop::ExportScope::Selection
         : all_pages ? interop::ExportScope::AllPages
                     : interop::ExportScope::ActivePage;
-    request.bounds_policy = interop::ExportBoundsPolicy::Page;
-    request.target_mode = all_pages && snapshot->page_count() > 1
+    request.bounds_policy = active_artboard ? interop::ExportBoundsPolicy::Artboard
+                                             : interop::ExportBoundsPolicy::Page;
+    request.target_mode = !active_artboard && all_pages && snapshot->page_count() > 1
         ? interop::ExportTargetMode::PerPageBatch
         : interop::ExportTargetMode::SingleFile;
     request.output_paths = all_pages
@@ -141,13 +207,15 @@ bool NativeWindow::start_svg_export(const std::string& file_path,
     request.cancellation_generation = generation;
     if (selected_objects)
         request.selected_object_ids = root().vector_controller().selection().selected_ids();
+    if (active_artboard)
+        request.artboard_id = active_tab().active_artboard_id;
 
     bool replace_existing = allow_replace_existing;
     if (all_pages && hwnd_) {
         size_t existing_count = 0;
         for (const auto& path : request.output_paths) {
             std::error_code error;
-            if (std::filesystem::exists(std::filesystem::u8path(path), error) && !error)
+            if (std::filesystem::exists(filesystem_path_from_utf8(path), error) && !error)
                 ++existing_count;
         }
         std::wostringstream preview;
@@ -198,7 +266,8 @@ bool NativeWindow::start_svg_export(const std::string& file_path,
     session->worker = std::jthread(
         [raw = session.get(), notify_window, job = std::move(job),
          protected_source, allow_replace_existing = replace_existing](std::stop_token stop) mutable {
-            std::vector<interop::SvgStreamExportResult> fidelity_results;
+            (void)SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+            std::vector<detail::SvgPageFidelity> fidelity_results;
             std::string writer_error;
             interop::AtomicExportOptions options;
             options.writer_build = "pikdraw-svg-writer/1";
@@ -224,9 +293,10 @@ bool NativeWindow::start_svg_export(const std::string& file_path,
                     job->snapshot()->epoch(), job->snapshot()->revision(),
                     std::vector<document::DocumentPage>{*source_page},
                     source_page->id, job->snapshot()->document_id());
+                interop::SvgExportOptions writer_options;
+                writer_options.bounds = target.bounds;
                 auto written = interop::SvgExporter::write_to_stream(
-                    page_snapshot, output, interop::SvgExportOptions{},
-                    &target.object_ids);
+                    page_snapshot, output, writer_options, &target.object_ids);
                 if (!written.success) {
                     diagnostic = written.error_message;
                     for (const auto& issue : written.report.issues()) {
@@ -239,7 +309,8 @@ bool NativeWindow::start_svg_export(const std::string& file_path,
                     writer_error = diagnostic;
                     return false;
                 }
-                fidelity_results.push_back(std::move(written));
+                fidelity_results.push_back({source_page->id, source_page->name,
+                                            written.report.issues()});
                 return true;
             };
             options.validate = [](const interop::ExportOutputTarget&,
@@ -297,20 +368,8 @@ bool NativeWindow::start_svg_export(const std::string& file_path,
             std::string error;
             try {
                 result.emplace(interop::execute_atomic_export(*job, options));
-                if (result->report.status == interop::ExportJobStatus::Complete &&
-                    !fidelity_results.empty() &&
-                    !fidelity_results.front().report.is_clean()) {
-                    result->report.status = interop::ExportJobStatus::CompleteWithDiagnostics;
-                    result->report.appearance = interop::ExportAppearanceStatus::Partial;
-                    for (const auto& issue : fidelity_results.front().report.issues()) {
-                        const auto severity = issue.severity == interop::FidelitySeverity::Info
-                            ? interop::ExportDiagnosticSeverity::Info
-                            : interop::ExportDiagnosticSeverity::Warning;
-                        result->report.diagnostics.push_back({
-                            format_svg_issue_code(issue.severity), severity, std::nullopt,
-                            std::nullopt, issue.feature + ": " + issue.description});
-                    }
-                }
+                detail::append_svg_fidelity_diagnostics(
+                    result->report, fidelity_results);
                 result->report_validation =
                     interop::validate_export_job_report(result->report);
                 if (!result->report_validation)

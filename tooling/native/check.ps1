@@ -5,8 +5,8 @@ param(
     [ValidateSet('architecture', 'contract', 'unit', 'e2e', 'all')]
     [string]$Suite = 'architecture',
 
-    [ValidateSet('Debug', 'Release')]
-    [string]$Configuration = 'Debug',
+    [ValidateSet('Auto', 'Debug', 'Release')]
+    [string]$Configuration = 'Auto',
 
     [string]$Preset = ''
 )
@@ -75,10 +75,10 @@ print('All fixtures and oracles parsed valid JSON.')
 }
 
 if ($Suite -eq 'unit' -or $Suite -eq 'all') {
-    & (Join-Path $PSScriptRoot 'build.ps1') -TestsOnly -Configuration $Configuration
+    & (Join-Path $PSScriptRoot 'build.ps1') -Test -AllTests -Configuration $Configuration
 }
 if ($Suite -eq 'e2e') {
-    & (Join-Path $PSScriptRoot 'build.ps1') -TestsOnly -Configuration $Configuration -TestRegex 'test_pikdraw_vertical_slice_e2e'
+    & (Join-Path $PSScriptRoot 'build.ps1') -Test -Configuration $Configuration -TestTarget test_pikdraw_vertical_slice_e2e
 }
 
 Write-Host "`n=== All requested check suites PASSED ===" -ForegroundColor Green

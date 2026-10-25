@@ -1,10 +1,31 @@
-#include "pikdraw/desktop/shell/native_window.hpp"
+﻿#include "pikdraw/desktop/shell/native_window.hpp"
 #include <chrono>
 #include <iostream>
 #include <string>
 #include <thread>
+#include <vector>
+#ifdef _WIN32
+#include <shellapi.h>
+#endif
 
 int main(int argc, char* argv[]) {
+#ifdef _WIN32
+    // The narrow CRT argv uses the active ANSI codepage. Read Windows' Unicode
+    // arguments and normalize to UTF-8 once, including Vietnamese file paths.
+    int wide_argc = 0;
+    auto* wide_argv = CommandLineToArgvW(GetCommandLineW(), &wide_argc);
+    if (!wide_argv) return 1;
+    std::vector<std::string> utf8_arguments;
+    utf8_arguments.reserve(wide_argc);
+    for (int index = 0; index < wide_argc; ++index)
+        utf8_arguments.push_back(pikdraw::desktop::NativeWindow::wide_to_utf8(wide_argv[index]));
+    LocalFree(wide_argv);
+    std::vector<char*> normalized_argv;
+    normalized_argv.reserve(utf8_arguments.size());
+    for (auto& argument : utf8_arguments) normalized_argv.push_back(argument.data());
+    argc = wide_argc;
+    argv = normalized_argv.data();
+#endif
     std::cout << "PikDraw Professional Vector Editor 2026 (Milestone M1 Native Shell)\n";
 
     bool screenshot_mode = false;
@@ -12,6 +33,7 @@ int main(int argc, char* argv[]) {
     std::string import_file_path;
     bool open_as_import = false;
     bool headless = false;
+    bool auto_accept_import_review = false;
     bool mcp_enabled = false;
     bool mcp_edit_access = false;
     int timeout_ms = 0;
@@ -34,6 +56,8 @@ int main(int argc, char* argv[]) {
     bool demo_vector_bitmap = false;
     bool demo_powerclip = false;
     bool demo_powerclip_edit = false;
+    bool demo_rect_scale = false;
+    bool demo_pivot = false;
     int tool_id = -1;
     int flyout_group = 0;
 
@@ -47,6 +71,8 @@ int main(int argc, char* argv[]) {
             screenshot_path = argv[++i];
         } else if (arg == "--headless") {
             headless = true;
+        } else if (arg == "--accept-import-loss") {
+            auto_accept_import_review = true;
         } else if (arg == "--enable-mcp") {
             mcp_enabled = true;
         } else if (arg == "--enable-mcp-edit") {
@@ -100,6 +126,10 @@ int main(int argc, char* argv[]) {
             demo_powerclip = true;
         } else if (arg == "--demo-powerclip-edit") {
             demo_powerclip_edit = true;
+        } else if (arg == "--demo-rect-scale") {
+            demo_rect_scale = true;
+        } else if (arg == "--demo-pivot") {
+            demo_pivot = true;
         } else if (arg == "--tool" && i + 1 < argc) {
             tool_id = std::stoi(argv[++i]);
         } else if (arg == "--flyout" && i + 1 < argc) {
@@ -108,6 +138,8 @@ int main(int argc, char* argv[]) {
     }
 
     pikdraw::desktop::NativeWindow window(1440, 900);
+    if (headless && auto_accept_import_review)
+        window.set_auto_accept_import_review(true);
     if (mcp_enabled) window.enable_mcp(mcp_edit_access);
     window.set_language(initial_lang);
     window.set_theme(initial_theme);
@@ -177,7 +209,7 @@ int main(int argc, char* argv[]) {
         // 2. Second photographic bitmap trimmed by a Vector Circle (Cookie-Cutter)
         const auto bmp2_id = window.workflow().add_bitmap_image(20.0, 25.0, 65.0, 65.0, "Photo Patch Sample");
         const auto vec_cutter = window.workflow().add_ellipse(52.5, 57.5, 18.0, 18.0, "#00f2c3", "#0ea5e9", 2.0);
-        window.workflow().trim_bitmap_with_vector(bmp2_id, vec_cutter, 45.0);
+        window.workflow().create_bitmap_crop_from_vector_bounds(bmp2_id, vec_cutter, 45.0);
 
         // 3. Vector with Vector Knife Cut Demo beside it on the right
         const auto v_id = window.workflow().add_rectangle(140.0, 25.0, 90.0, 65.0, "#00f2c3", "#0ea5e9", 2.0);
@@ -219,6 +251,27 @@ int main(int argc, char* argv[]) {
             window.enter_group_isolation(gid);
             window.root().vector_controller().selection().select(id1, pikdraw::vector::SelectionMode::Replace);
         }
+    }
+    if (demo_pivot) {
+        const auto rect_id = window.workflow().add_rectangle(55.0, 50.0, 110.0, 65.0, "#00f2c3", "#0ea5e9", 2.0);
+        window.root().vector_controller().selection().clear();
+        window.root().vector_controller().selection().select(rect_id, pikdraw::vector::SelectionMode::Replace);
+        window.set_custom_pivot_world(pikdraw::geometry::Point2D{55.0, 50.0});
+    }
+    if (demo_rect_scale) {
+        const auto rect_id = window.workflow().add_rectangle(45.0, 45.0, 100.0, 55.0, "#00f2c3", "#0ea5e9", 2.0);
+        window.root().vector_controller().selection().clear();
+        window.root().vector_controller().selection().select(rect_id, pikdraw::vector::SelectionMode::Replace);
+        window.sync_rect_corner_controls_from_selection();
+        pikdraw::vector::RectCornerSettings s;
+        s.type = pikdraw::vector::RectCornerType::Round;
+        s.tl = 15.0; s.tr = 15.0; s.br = 15.0; s.bl = 15.0;
+        s.locked = true;
+        s.scale_relative = false;
+        window.apply_rect_corner_settings(s);
+        window.workflow().resize_object(rect_id, 210.0, 55.0);
+        window.sync_rect_corner_controls_from_selection();
+        window.root().vector_controller().selection().select(rect_id, pikdraw::vector::SelectionMode::Replace);
     }
     if (demo_powerclip || demo_powerclip_edit) {
         // Create 4 distinct objects inside the clipping container
@@ -284,7 +337,7 @@ int main(int argc, char* argv[]) {
     if (!import_file_path.empty()) {
         const std::wstring wide_path = pikdraw::desktop::NativeWindow::utf8_to_wide(import_file_path);
         std::cout << "Importing file: " << import_file_path << "...\n";
-        window.import_file_to_tab(wide_path, !open_as_import);
+        const bool started = window.import_file_to_tab(wide_path, !open_as_import);
         const auto timeout_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
         while (window.import_job_active() && std::chrono::steady_clock::now() < timeout_deadline) {
 #ifdef _WIN32
@@ -303,7 +356,28 @@ int main(int argc, char* argv[]) {
             DispatchMessageW(&msg);
         }
 #endif
+        if ((headless || screenshot_mode) &&
+            (!started || window.import_job_active() || !window.last_import_succeeded())) {
+            std::cerr << "Import did not complete successfully. Status: " << window.status_message() << "\n";
+            return 2;
+        }
         std::cout << "Import completed. Status: " << window.status_message() << "\n";
+        window.close_recovery_modal();
+        window.fit_page_to_canvas();
+#ifdef _WIN32
+        if (window.hwnd()) {
+            InvalidateRect(window.hwnd(), nullptr, TRUE);
+            UpdateWindow(window.hwnd());
+            for (int frame = 0; frame < 5; ++frame) {
+                MSG msg;
+                while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+                    TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+        }
+#endif
     }
 
     const auto area = window.shell().canvas_area();

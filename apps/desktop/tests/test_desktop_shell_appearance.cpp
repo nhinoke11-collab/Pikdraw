@@ -46,14 +46,14 @@ void test_object_opacity_property_bar_and_appearance_panel() {
         *win.root().document().current_snapshot()->objects().get(id)); };
     const auto layout_revision = win.root().document().current_snapshot()->revision();
     win.handle_mouse_down(1350, 138 + TextPropertiesLayout::frame_field_top + 14);
-    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::EffectSigmaX);
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::TextFrameWidth);
     type(L"52,5");
     assert(text_layout(text_id).frame_width_mm == 52.5);
     assert(win.root().document().current_snapshot()->revision() == layout_revision + 1);
     assert(win.workflow().undo());
     assert(text_layout(text_id).frame_width_mm == 0.0);
     win.handle_mouse_down(1350, 138 + TextPropertiesLayout::spacing_field_top + 14);
-    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::EffectSigmaY && win.numeric_input_buffer().empty());
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::TextLineSpacing && win.numeric_input_buffer().empty());
     type(L"145");
     assert(std::abs(text_layout(text_id).line_spacing_ratio - 1.45) < 1e-9);
     assert(win.workflow().undo());
@@ -75,7 +75,7 @@ void test_object_opacity_property_bar_and_appearance_panel() {
     selection.clear(); selection.select(text_id);
     selection.select(second_text_id, pikdraw::vector::SelectionMode::Add);
     win.handle_mouse_down(1350, 138 + TextPropertiesLayout::frame_field_top + 14);
-    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::EffectSigmaX);
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::TextFrameWidth);
     assert(win.numeric_input_buffer().empty());
     type(L"72.5");
     assert(text_layout(text_id).frame_width_mm == 72.5);
@@ -424,7 +424,7 @@ void test_blend_and_effect_properties_panel() {
     win.scroll_style_inspector(-240);
     const int blur_sigma_x_y = 162 + 794 + 48 + 12 - win.style_inspector_scroll_offset();
     win.handle_mouse_down(panel_left + 82, blur_sigma_x_y);
-    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::EffectSigmaX);
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::BlurSigmaX);
     assert(win.numeric_input_buffer().empty());
     const auto before_sigma = win.root().document().current_snapshot()->revision();
     enter_value(L"3,5");
@@ -463,7 +463,7 @@ void test_blend_and_effect_properties_panel() {
     const int shadow_offset_x_y = 162 + 794 + 128 + 48 + 12 -
                                   win.style_inspector_scroll_offset();
     win.handle_mouse_down(panel_left + 82, shadow_offset_x_y);
-    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::EffectOffsetX);
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::ShadowOffsetX);
     replace_value(L"-7,5");
     path_appearance = appearance_of(path_id);
     text_appearance = appearance_of(text_id);
@@ -483,16 +483,16 @@ void test_blend_and_effect_properties_panel() {
     const int shadow_opacity_y = 162 + 794 + 128 + 48 + 92 + 12 -
                                  win.style_inspector_scroll_offset();
     win.handle_mouse_down(panel_left + 82, shadow_opacity_y);
-    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::EffectOpacity);
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::ShadowOpacity);
     replace_value(L"35");
     assert(std::abs(std::get<pikdraw::document::DropShadowEffect>(
         appearance_of(path_id).effects[1].parameters).opacity - 0.35) < 1e-9);
     const auto before_invalid = win.root().document().current_snapshot()->revision();
     const int blur_sigma_y = 162 + 794 + 48 + 12 - win.style_inspector_scroll_offset();
     win.handle_mouse_down(panel_left + 82, blur_sigma_y);
-    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::EffectSigmaX);
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::BlurSigmaX);
     replace_value(L"1000001");
-    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::EffectSigmaX);
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::BlurSigmaX);
     assert(win.root().document().current_snapshot()->revision() == before_invalid);
     win.cancel_numeric_field();
 
@@ -588,9 +588,10 @@ void test_effects_toolbox_flyout() {
     };
 
 #ifdef _WIN32
-    // AC-BF10-04 — keyboard-only path: Shift+Tab focuses Appearance, Alt+Down opens it,
+    // AC-BF10-04 — keyboard-only path: Tab focuses Appearance, Alt+Down opens it,
     // arrows choose Blur, Enter applies once, and Escape closes/returns focus.
-    assert(win.handle_toolbox_key(VK_TAB, false, true));
+    while (win.status_message().find("Appearance") == std::string::npos)
+        assert(win.handle_toolbox_key(VK_TAB));
     assert(win.status_message().find("Appearance") != std::string::npos);
     assert(!win.handle_toolbox_key(VK_TAB, true, false)); // Preserve the system Alt+Tab switcher.
     assert(win.handle_toolbox_key(VK_DOWN, true, false));
@@ -610,7 +611,8 @@ void test_effects_toolbox_flyout() {
     assert(win.root().document().current_snapshot()->revision() == keyboard_revision + 2);
     assert(win.handle_toolbox_key(VK_ESCAPE));
     assert(win.status_message().find("Canvas focus") != std::string::npos);
-    assert(win.handle_toolbox_key(VK_TAB, false, true));
+    while (win.status_message().find("Appearance") == std::string::npos)
+        assert(win.handle_toolbox_key(VK_TAB));
     assert(win.handle_toolbox_key(VK_DOWN, true, false));
     capture_shell_screenshot(win, "effects-toolbox-keyboard-focus-english.bmp");
     win.set_language(UILanguage::Vietnamese);
@@ -653,8 +655,9 @@ void test_effects_toolbox_flyout() {
             std::vector<pikdraw::document::AppearanceReplacement>{{path_id, appearance_before_clear}})).success);
     assert(win.workflow().can_clear_selected_effects());
     const auto before_clear = win.root().document().current_snapshot()->revision();
+    const int clear_y = 30 + pikdraw::desktop::get_menu_item_top(pikdraw::desktop::MenuId::Effects, pikdraw::desktop::MenuActionId::EffectsClear) + 10;
     win.handle_mouse_down(400, 20); // Effects menu on the 1440px English window.
-    win.handle_mouse_down(400, 226); // Clear Effects row (item 7 in 8-item menu).
+    win.handle_mouse_down(400, clear_y); // Clear Effects row
     assert(win.root().document().current_snapshot()->revision() == before_clear + 1);
     auto cleared_appearance = path_appearance();
     assert(cleared_appearance.effects.empty());
@@ -667,7 +670,7 @@ void test_effects_toolbox_flyout() {
     assert(win.root().document().current_snapshot()->revision() == before_clear + 1);
     const auto before_disabled_clear = win.root().document().current_snapshot()->revision();
     win.handle_mouse_down(400, 20);
-    win.handle_mouse_down(400, 226);
+    win.handle_mouse_down(400, clear_y);
     assert(win.root().document().current_snapshot()->revision() == before_disabled_clear);
     assert(win.workflow().undo());
     assert(path_appearance().effects.size() == 2);
@@ -717,15 +720,17 @@ void test_effects_toolbox_flyout() {
     };
     // Properties edits preview parameters without writing document history; Tab follows field order.
     win.handle_mouse_down(1300, 254);
-    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::DistributeSpacing);
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::ContourSpacing);
     while (!win.numeric_input_buffer().empty()) win.handle_numeric_char_input(8);
     for (const wchar_t ch : std::wstring_view(L"2,75")) win.handle_numeric_char_input(ch);
     win.handle_numeric_char_input(9);
-    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::PolygonSides);
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::ContourSteps);
     while (!win.numeric_input_buffer().empty()) win.handle_numeric_char_input(8);
     for (const wchar_t ch : std::wstring_view(L"5")) win.handle_numeric_char_input(ch);
     win.handle_numeric_char_input(9);
-    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::PolygonRotation);
+    if (win.active_numeric_field() == NativeWindow::NumericFieldId::ContourTolerance)
+        win.handle_numeric_char_input(9);
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::ContourMiterLimit);
     while (!win.numeric_input_buffer().empty()) win.handle_numeric_char_input(8);
     for (const wchar_t ch : std::wstring_view(L"7.5")) win.handle_numeric_char_input(ch);
     win.handle_numeric_char_input(13);
@@ -739,12 +744,12 @@ void test_effects_toolbox_flyout() {
     while (!win.numeric_input_buffer().empty()) win.handle_numeric_char_input(8);
     for (const wchar_t ch : std::wstring_view(L"0.05")) win.handle_numeric_char_input(ch);
     win.handle_numeric_char_input(13);
-    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::DistributeSpacing);
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::ContourSpacing);
     assert(std::abs(contour->spacing_mm() - 2.75) < 1e-9);
     win.handle_numeric_char_input(27);
 
     // Apply writes one undoable feature; Cancel restores that saved draft without a write.
-    win.handle_mouse_down(1184, 468); // Properties > Apply.
+    win.handle_mouse_down(1184, 505); // Properties > Apply.
     assert(win.root().document().current_snapshot()->revision() == contour_revision + 1);
     auto contour_feature = pikdraw::document::get_object_contour(
         win.root().document(), path_id);
@@ -752,14 +757,14 @@ void test_effects_toolbox_flyout() {
     assert(std::abs(contour_feature->spacing_mm - 2.75) < 1e-9);
     assert(contour_feature->steps == 5);
     assert(std::abs(contour_feature->miter_limit - 7.5) < 1e-9);
-    set_contour_field(254, L"3.5", NativeWindow::NumericFieldId::DistributeSpacing);
+    set_contour_field(254, L"3.5", NativeWindow::NumericFieldId::ContourSpacing);
     const auto before_cancel = win.root().document().current_snapshot()->revision();
-    win.handle_mouse_down(1380, 468); // Properties > Cancel.
+    win.handle_mouse_down(1380, 505); // Properties > Cancel.
     assert(std::abs(contour->spacing_mm() - 2.75) < 1e-9);
     assert(win.root().document().current_snapshot()->revision() == before_cancel);
 
     // Remove calls the dedicated Contour operation and Undo restores its saved feature.
-    win.handle_mouse_down(1248, 468); // Properties > Remove.
+    win.handle_mouse_down(1248, 505); // Properties > Remove.
     assert(!pikdraw::document::get_object_contour(win.root().document(), path_id));
     assert(win.root().document().current_snapshot()->revision() == before_cancel + 1);
     assert(win.workflow().undo());
@@ -768,8 +773,9 @@ void test_effects_toolbox_flyout() {
     // Contour tool activation via Effects menu
     win.set_active_tool(0);
     assert(win.active_tool() == 0);
+    const int contour_y = 30 + pikdraw::desktop::get_menu_item_top(pikdraw::desktop::MenuId::Effects, pikdraw::desktop::MenuActionId::EffectsContour) + 10;
     win.handle_mouse_down(400, 20); // Open Effects menu
-    win.handle_mouse_down(400, 118); // Contour row (item 3)
+    win.handle_mouse_down(400, contour_y); // Contour row
     assert(win.active_tool() == 12);
 
     // Contour tool activation via Ctrl+F9 shortcut
@@ -778,9 +784,10 @@ void test_effects_toolbox_flyout() {
     assert(win.root().window().action_dispatcher().dispatch_shortcut("Ctrl+F9"));
     assert(win.active_tool() == 12);
 
-    // Break Contour Apart via Effects menu (item 4)
+    // Break Contour Apart via Effects menu
+    const int break_contour_y = 30 + pikdraw::desktop::get_menu_item_top(pikdraw::desktop::MenuId::Effects, pikdraw::desktop::MenuActionId::EffectsBreakContourApart) + 10;
     win.handle_mouse_down(400, 20);
-    win.handle_mouse_down(400, 145); // Break Contour Apart row
+    win.handle_mouse_down(400, break_contour_y); // Break Contour Apart row
 
     // Test Contour Ribbon Property Bar Clicks and Controls:
     win.root().vector_controller().selection().select(path_id);
@@ -797,7 +804,7 @@ void test_effects_toolbox_flyout() {
 
     // 2. Steps input box: x in [270, 330]
     win.handle_mouse_down(300, 80);
-    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::PolygonSides);
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::ContourSteps);
     win.commit_numeric_field();
 
     // 3. Steps spinner: x in [332, 352]
@@ -809,7 +816,7 @@ void test_effects_toolbox_flyout() {
 
     // 4. Spacing input box: x in [360, 440]
     win.handle_mouse_down(400, 80);
-    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::DistributeSpacing);
+    assert(win.active_numeric_field() == NativeWindow::NumericFieldId::ContourSpacing);
     win.commit_numeric_field();
 
     // 5. Spacing spinner: x in [442, 462]

@@ -28,7 +28,7 @@ enum class TokenKind { Word, LiteralName, LeftBrace, RightBrace, String };
 
 struct Token {
   TokenKind kind{TokenKind::Word};
-  std::string text;
+  std::string_view text;
   double number{0.0};
   bool is_number{false};
 };
@@ -168,7 +168,7 @@ bool Lex(std::string_view source, std::vector<Token>& tokens, std::string& diagn
     Token token;
     if (current == '{' || current == '}') {
       token.kind = current == '{' ? TokenKind::LeftBrace : TokenKind::RightBrace;
-      token.text.assign(1, static_cast<char>(current));
+      token.text = source.substr(offset, 1);
       ++offset;
     } else if (current == '(') {
       token.kind = TokenKind::String;
@@ -205,7 +205,7 @@ bool Lex(std::string_view source, std::vector<Token>& tokens, std::string& diagn
         return false;
       }
       const size_t name_start = token.kind == TokenKind::LiteralName ? start + 1 : start;
-      token.text.assign(source.substr(name_start, offset - name_start));
+      token.text = source.substr(name_start, offset - name_start);
       if (token.kind == TokenKind::Word) token.is_number = ParseNumber(token.text, token.number);
     }
     if (token.text.size() > 1024 * 1024 || tokens.size() >= kMaxTokens) {
@@ -284,11 +284,14 @@ class Parser {
         continue;
       }
       if (++operator_count_ > kMaxOperators) return fail("EPS operator count exceeds the bounded profile");
-      std::string op = token.text;
+      std::string_view op = token.text;
       if (const auto alias = aliases_.find(op); alias != aliases_.end()) op = alias->second;
-      if (!Execute(op, index)) return fail(diagnostic_.empty()
-          ? "EPS contains an operator outside the safe editable path profile: " + op
-          : std::exchange(diagnostic_, {}));
+      if (!Execute(op, index)) {
+        if (!diagnostic_.empty()) return fail(std::exchange(diagnostic_, {}));
+        std::string message = "EPS contains an operator outside the safe editable path profile: ";
+        message.append(op.data(), op.size());
+        return fail(std::move(message));
+      }
     }
     if (!graphics_stack_.empty()) return fail("EPS has an unmatched gsave operator");
     if (!operand_stack_.empty()) return fail("EPS leaves unused values on the PostScript operand stack");
@@ -302,8 +305,8 @@ class Parser {
     if (index + 4 >= tokens_.size() || tokens_[index + 1].kind != TokenKind::LeftBrace ||
         tokens_[index + 2].kind != TokenKind::Word || tokens_[index + 2].is_number ||
         tokens_[index + 3].kind != TokenKind::RightBrace) return false;
-    const std::string alias = tokens_[index].text;
-    const std::string command = tokens_[index + 2].text;
+    const std::string_view alias = tokens_[index].text;
+    const std::string_view command = tokens_[index + 2].text;
     if (!IsSafeOperator(command) || aliases_.size() >= kMaxAliases) return false;
     size_t end = index + 4;
     if (tokens_[end].kind == TokenKind::Word && tokens_[end].text == "bind") ++end;
@@ -706,7 +709,7 @@ class Parser {
   GraphicsState state_{};
   std::vector<GraphicsState> graphics_stack_;
   std::vector<double> operand_stack_;
-  std::map<std::string, std::string, std::less<>> aliases_;
+  std::map<std::string_view, std::string_view, std::less<>> aliases_;
   std::vector<uint32_t> layer_object_ids_;
   size_t operator_count_{0};
   size_t path_count_{0};

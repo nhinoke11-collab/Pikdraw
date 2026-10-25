@@ -2,6 +2,7 @@
 #include "svg_path_parser.hpp"
 #include "svg_xml_cursor.hpp"
 #include "../path_adapter/svg_path_adapter.hpp"
+#include "pikdraw/geometry/units/length_unit.hpp"
 
 #include <algorithm>
 #include <array>
@@ -36,12 +37,17 @@ bool ParseLength(std::string_view source, SvgLength& output) {
 }
 
 double LengthToMm(const SvgLength& length) {
-    if (length.unit.empty() || length.unit == "px") return length.value * kPxToMm;
-    if (length.unit == "mm") return length.value;
-    if (length.unit == "cm") return length.value * 10.0;
-    if (length.unit == "in") return length.value * 25.4;
-    if (length.unit == "pt") return length.value * 25.4 / 72.0;
-    return length.value * 25.4 / 6.0;
+    using geometry::units::LengthUnit;
+    const LengthUnit unit = length.unit == "cm" ? LengthUnit::Centimeter
+        : length.unit == "mm" ? LengthUnit::Millimeter
+        : length.unit == "in" ? LengthUnit::Inch
+        : length.unit == "pt" ? LengthUnit::Point
+        : length.unit == "pc" ? LengthUnit::Pica : LengthUnit::Pixel;
+    double millimeters = 0.0;
+    if (!geometry::units::convert_length_to_mm(length.value, unit, millimeters,
+            unit == LengthUnit::Pixel ? std::optional<double>{96.0} : std::nullopt))
+        return std::numeric_limits<double>::quiet_NaN();
+    return millimeters;
 }
 
 bool LengthToUserUnits(const SvgLength& length, double& value) {
@@ -228,6 +234,30 @@ bool ParsePaint(const XmlTag& tag, std::string_view key, std::string_view defaul
     return !enabled || ParseColor(paint, value);
 }
 
+bool ParseOpacity(const XmlTag& tag, std::string_view key, double& value) {
+    const auto found = tag.attributes.find(std::string(key));
+    if (found == tag.attributes.end()) {
+        value = 1.0;
+        return true;
+    }
+    std::string_view source = found->second;
+    while (!source.empty() && std::isspace(static_cast<unsigned char>(source.front())) != 0)
+        source.remove_prefix(1);
+    while (!source.empty() && std::isspace(static_cast<unsigned char>(source.back())) != 0)
+        source.remove_suffix(1);
+    const bool percent = !source.empty() && source.back() == '%';
+    if (percent) source.remove_suffix(1);
+    if (source.empty()) return false;
+    size_t consumed = 0;
+    double parsed = 0.0;
+    if (!ParseSvgNumber(source, parsed, consumed) || consumed != source.size()) return false;
+    if (percent) parsed /= 100.0;
+    if (!std::isfinite(parsed)) return false;
+    // SVG opacity values are clamped to [0, 1] by the rendering model.
+    value = std::clamp(parsed, 0.0, 1.0);
+    return true;
+}
+
 geometry::Path2D TransformPath(const geometry::Path2D& source, const geometry::Transform2D& transform) {
     geometry::Path2D result;
     result.set_winding_rule(source.winding_rule());
@@ -290,9 +320,9 @@ std::string ParseClipPathUrl(std::string_view value) {
 
 namespace {
 
-SvgImportResult ImportSvgString(const std::string& input) {
+SvgImportResult ImportSvgString(std::string_view input) {
     if (input.empty() || input.size() > SvgImporter::kMaxSourceBytes) return Failure("SVG source exceeds the bounded input profile", "resource_limit");
-    std::string_view source(input);
+    std::string_view source = input;
     if (source.starts_with("\xef\xbb\xbf")) source.remove_prefix(3);
     if (!IsValidUtf8(source)) return Failure("SVG source is not valid UTF-8", "invalid_encoding");
 
@@ -369,6 +399,7 @@ SvgImportResult ImportSvgString(const std::string& input) {
     };
     std::unordered_map<std::string, document::PathObject> clip_path_defs;
     std::string active_clip_path_id;
+    geometry::Transform2D active_clip_transform{};
     std::vector<GroupFrame> group_stack;
     std::optional<size_t> default_layer_index;
     const auto ensure_default_layer = [&] {
@@ -404,10 +435,13 @@ SvgImportResult ImportSvgString(const std::string& input) {
         object.children_ids = std::move(frame.children);
         if (!frame.clip_path_ref.empty()) {
             const auto it = clip_path_defs.find(frame.clip_path_ref);
+            if (it == clip_path_defs.end()) return false;
             if (it != clip_path_defs.end()) {
                 auto mask_obj = it->second;
                 mask_obj.id = document::generate_object_id();
                 mask_obj.name = "Clipping Mask";
+                const auto inverse_root=root_transform.inverted();if(!inverse_root)return false;
+                mask_obj.transform=frame.transform * *inverse_root * mask_obj.transform;
                 const auto mask_id = mask_obj.id;
                 result.objects.emplace_back(std::move(mask_obj));
                 result.source_ids.push_back(frame.clip_path_ref);
@@ -415,10 +449,10 @@ SvgImportResult ImportSvgString(const std::string& input) {
                 object.children_ids.insert(object.children_ids.begin(), mask_id);
                 document::ClipProperties clip_props{};
                 clip_props.mask_object_id = mask_id;
-                clip_props.lock_contents_to_frame = false;
+                clip_props.lock_contents_to_frame = true;
                 clip_props.preserve_frame_appearance = false;
                 clip_props.fit_mode = document::ClipContentFitMode::CurrentPosition;
-                clip_props.is_empty_frame = false;
+                clip_props.is_empty_frame = object.children_ids.size() == 1;
                 object.clip = clip_props;
             }
         }
@@ -491,7 +525,8 @@ SvgImportResult ImportSvgString(const std::string& input) {
             geometry::Transform2D local_transform;
             if (!ParseTransform(Attribute(tag, "transform"), local_transform))
                 return Failure("SVG group transform is malformed or unsupported", "unsupported_transform");
-            const auto parent_transform = group_stack.empty() ? root_transform : group_stack.back().transform;
+            const auto parent_transform = !active_clip_path_id.empty()?root_transform*active_clip_transform
+                :(group_stack.empty() ? root_transform : group_stack.back().transform);
             frame.transform = parent_transform * local_transform;
             if (is_layer) {
                 frame.layer_index = result.page.layers.size();
@@ -504,7 +539,7 @@ SvgImportResult ImportSvgString(const std::string& input) {
             }
             continue;
         } else if (tag.name == "rect") {
-            if (!AttributesAllowed(tag, {"id", "x", "y", "width", "height", "fill", "stroke", "stroke-width", "transform"})) {
+            if (!AttributesAllowed(tag, {"id", "x", "y", "width", "height", "fill", "stroke", "stroke-width", "opacity", "fill-opacity", "stroke-opacity", "transform"})) {
                 return Failure("SVG rectangle uses unsupported attributes", "unsupported_rectangle_feature");
             }
             double x = 0, y = 0, w = 0, h = 0;
@@ -515,7 +550,8 @@ SvgImportResult ImportSvgString(const std::string& input) {
             geometry::Transform2D local_transform;
             if (!ParseTransform(Attribute(tag, "transform"), local_transform))
                 return Failure("SVG rectangle transform is malformed or unsupported", "unsupported_transform");
-            const auto parent_transform = group_stack.empty() ? root_transform : group_stack.back().transform;
+            const auto parent_transform = !active_clip_path_id.empty()?root_transform*active_clip_transform
+                :(group_stack.empty() ? root_transform : group_stack.back().transform);
             const auto transform = parent_transform * local_transform;
             geometry::Path2D source_path = geometry::Path2D::make_rect(x, y, w, h);
             document::PathObject object;
@@ -525,6 +561,11 @@ SvgImportResult ImportSvgString(const std::string& input) {
             if (object.path.empty() || !ParsePaint(tag, "fill", "black", object.fill, object.has_fill) ||
                 !ParsePaint(tag, "stroke", "none", object.stroke, object.has_stroke)) {
                 return Failure("SVG rectangle paint or geometry is unsupported", "unsupported_paint");
+            }
+            if (!ParseOpacity(tag, "opacity", object.appearance.object_opacity) ||
+                !ParseOpacity(tag, "fill-opacity", object.appearance.fill_opacity) ||
+                !ParseOpacity(tag, "stroke-opacity", object.appearance.stroke_opacity)) {
+                return Failure("SVG rectangle opacity is malformed", "invalid_opacity");
             }
             SvgLength stroke;
             if (!ParseLength(Attribute(tag, "stroke-width", "1"), stroke) || !LengthToUserUnits(stroke, object.stroke_width_mm)) {
@@ -543,6 +584,7 @@ SvgImportResult ImportSvgString(const std::string& input) {
             total_path_elements += object.path.size();
             const auto id = object.id;
             if (!active_clip_path_id.empty()) {
+                if(clip_path_defs.contains(active_clip_path_id))return Failure("Multiple clipPath children require an explicit compound path","unsupported_clippath_feature");
                 clip_path_defs[active_clip_path_id] = std::move(object);
             } else {
                 result.objects.emplace_back(std::move(object));
@@ -550,7 +592,7 @@ SvgImportResult ImportSvgString(const std::string& input) {
                 add_to_container(id);
             }
         } else if (tag.name == "path") {
-            if (!AttributesAllowed(tag, {"id", "d", "fill", "stroke", "stroke-width", "fill-rule", "transform"})) {
+            if (!AttributesAllowed(tag, {"id", "d", "fill", "stroke", "stroke-width", "fill-rule", "clip-rule", "opacity", "fill-opacity", "stroke-opacity", "transform"})) {
                 return Failure("SVG path uses unsupported attributes", "unsupported_path_feature");
             }
             document::PathObject object;
@@ -559,17 +601,24 @@ SvgImportResult ImportSvgString(const std::string& input) {
             geometry::Transform2D local_transform;
             if (!ParseTransform(Attribute(tag, "transform"), local_transform))
                 return Failure("SVG path transform is malformed or unsupported", "unsupported_transform");
-            const auto parent_transform = group_stack.empty() ? root_transform : group_stack.back().transform;
+            const auto parent_transform = !active_clip_path_id.empty()?root_transform*active_clip_transform
+                :(group_stack.empty() ? root_transform : group_stack.back().transform);
             const auto transform = parent_transform * local_transform;
             if (!ParseSvgPath(Attribute(tag, "d"), transform, object.path, SvgImporter::kMaxPathElements)) {
                 return Failure("SVG path data is malformed or uses an unsupported command", "unsupported_path_command");
             }
-            const std::string rule = Attribute(tag, "fill-rule", "nonzero");
+            const std::string rule = active_clip_path_id.empty()?Attribute(tag,"fill-rule","nonzero")
+                :Attribute(tag,"clip-rule",Attribute(tag,"fill-rule","nonzero"));
             if (rule == "evenodd") object.path.set_winding_rule(geometry::WindingRule::EvenOdd);
             else if (rule != "nonzero") return Failure("SVG fill-rule is unsupported", "unsupported_fill_rule");
             if (!ParsePaint(tag, "fill", "black", object.fill, object.has_fill) ||
                 !ParsePaint(tag, "stroke", "none", object.stroke, object.has_stroke)) {
                 return Failure("SVG path paint is unsupported", "unsupported_paint");
+            }
+            if (!ParseOpacity(tag, "opacity", object.appearance.object_opacity) ||
+                !ParseOpacity(tag, "fill-opacity", object.appearance.fill_opacity) ||
+                !ParseOpacity(tag, "stroke-opacity", object.appearance.stroke_opacity)) {
+                return Failure("SVG path opacity is malformed", "invalid_opacity");
             }
             SvgLength stroke;
             if (!ParseLength(Attribute(tag, "stroke-width", "1"), stroke) || !LengthToUserUnits(stroke, object.stroke_width_mm)) {
@@ -587,6 +636,7 @@ SvgImportResult ImportSvgString(const std::string& input) {
             const auto id = object.id;
             total_path_elements += object.path.size();
             if (!active_clip_path_id.empty()) {
+                if(clip_path_defs.contains(active_clip_path_id))return Failure("Multiple clipPath children require an explicit compound path","unsupported_clippath_feature");
                 clip_path_defs[active_clip_path_id] = std::move(object);
             } else {
                 result.objects.emplace_back(std::move(object));
@@ -594,7 +644,7 @@ SvgImportResult ImportSvgString(const std::string& input) {
                 add_to_container(id);
             }
         } else if (tag.name == "text") {
-            if (!AttributesAllowed(tag, {"id", "x", "y", "fill", "font-family", "font-size", "font-weight", "font-style", "transform"}) || tag.self_closing) {
+            if (!AttributesAllowed(tag, {"id", "x", "y", "fill", "fill-opacity", "opacity", "font-family", "font-size", "font-weight", "font-style", "transform"}) || tag.self_closing) {
                 return Failure("SVG text uses unsupported attributes or empty-element syntax", "unsupported_text_feature");
             }
             double x = 0, y = 0, font_size = 16;
@@ -614,7 +664,8 @@ SvgImportResult ImportSvgString(const std::string& input) {
             geometry::Transform2D local_transform;
             if (!ParseTransform(Attribute(tag, "transform"), local_transform))
                 return Failure("SVG text transform is malformed or unsupported", "unsupported_transform");
-            const auto parent_transform = group_stack.empty() ? root_transform : group_stack.back().transform;
+            const auto parent_transform = !active_clip_path_id.empty()?root_transform*active_clip_transform
+                :(group_stack.empty() ? root_transform : group_stack.back().transform);
             const auto transform = parent_transform * local_transform;
             const auto inverse_root_transform = root_transform.inverted();
             if (!inverse_root_transform)
@@ -649,6 +700,10 @@ SvgImportResult ImportSvgString(const std::string& input) {
             bool has_fill = true;
             if (!ParsePaint(tag, "fill", "black", object.fill, has_fill)) return Failure("SVG text paint is unsupported", "unsupported_paint");
             if (!has_fill) object.fill = color::RGBColor{0, 0, 0, 0};
+            if (!ParseOpacity(tag, "opacity", object.appearance.object_opacity) ||
+                !ParseOpacity(tag, "fill-opacity", object.appearance.fill_opacity)) {
+                return Failure("SVG text opacity is malformed", "invalid_opacity");
+            }
             result.report.add_issue(FidelitySeverity::Warning, source_id, "font_resolution",
                                     "Font family is retained; rendered appearance is not verified");
             const auto id = object.id;
@@ -664,6 +719,9 @@ SvgImportResult ImportSvgString(const std::string& input) {
             if (!AttributesAllowed(tag, {"id", "clipPathUnits", "transform"})) {
                 return Failure("SVG clipPath uses unsupported attributes", "unsupported_clippath_feature");
             }
+            const auto units=Attribute(tag,"clipPathUnits","userSpaceOnUse");
+            if(units!="userSpaceOnUse")return Failure("objectBoundingBox clipPath units are unsupported","unsupported_clippath_feature");
+            if(!ParseTransform(Attribute(tag,"transform"),active_clip_transform))return Failure("Malformed clipPath transform","unsupported_transform");
             const std::string clip_id = Attribute(tag, "id");
             if (clip_id.empty()) {
                 return Failure("SVG clipPath missing required id attribute", "malformed_xml");
@@ -696,7 +754,7 @@ SvgImportResult ImportSvgString(const std::string& input) {
 
 } // namespace
 
-SvgImportResult SvgImporter::import_from_string(const std::string& input) {
+SvgImportResult SvgImporter::import_from_string(std::string_view input) {
     try {
         return ImportSvgString(input);
     } catch (...) {

@@ -46,6 +46,20 @@ public:
     [[nodiscard]] geometry::Rect2D marquee_rect() const noexcept;
     [[nodiscard]] std::vector<vector::tools::node::NodeHandleRef> visible_handles() const;
     [[nodiscard]] document::ObjectId target_object() const noexcept;
+    [[nodiscard]] std::optional<std::pair<document::SubpathId, document::SegmentId>> selected_segment() const noexcept {
+        return tool_->selected_segment();
+    }
+    void set_selected_segment(std::optional<std::pair<document::SubpathId, document::SegmentId>> seg) noexcept {
+        tool_->set_selected_segment(seg);
+    }
+    [[nodiscard]] std::optional<std::pair<document::SubpathId, document::SegmentId>> hover_segment() const noexcept {
+        return tool_->hover_segment();
+    }
+    void set_hover_segment(std::optional<std::pair<document::SubpathId, document::SegmentId>> seg) noexcept {
+        tool_->set_hover_segment(seg);
+    }
+    [[nodiscard]] bool last_edit_committed() const noexcept { return tool_->last_edit_committed(); }
+    [[nodiscard]] const std::string& last_error_message() const noexcept { return tool_->last_error_message(); }
     [[nodiscard]] bool is_node_selected(document::SubpathId sub_id, document::NodeId node_id) const noexcept {
         return tool_->is_node_selected(sub_id, node_id);
     }

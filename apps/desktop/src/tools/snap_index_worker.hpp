@@ -3,7 +3,9 @@
 #include "pikdraw/vector/precision/snap/snap_index.hpp"
 
 #include <condition_variable>
+#include <atomic>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <thread>
 
@@ -25,6 +27,7 @@ private:
     struct Request {
         uint64_t generation{0};
         document::SnapshotPtr snapshot;
+        std::shared_ptr<std::atomic_bool> cancellation;
     };
 
     void run();
@@ -33,6 +36,7 @@ private:
     std::condition_variable condition_;
     std::thread worker_;
     Request pending_;
+    std::shared_ptr<std::atomic_bool> active_cancellation_;
     uint64_t generation_{0};
     bool building_{false};
     bool stopping_{false};

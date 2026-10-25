@@ -1,8 +1,9 @@
 # Phiếu UI — Gradient fill
 
-Ngày: 17/10/2026. Task planning `gradient-design-plan-20261017`; implementation G05/G06/G09.
-Trạng thái: **đặc tả Win32, chưa có UI Gradient runtime**. Backend và nguồn chính thức ở
-[plan](../../roadmap/gradient-20261017.md); Given/When/Then ở [AC](../../quality/gradient-acceptance.md).
+Ngày gốc: 17/10/2026; kiểm tra runtime: 23/10/2026.
+Trạng thái: **Gradient UI/runtime đã được triển khai một phần**. Hành vi live commit hiện tại và giới hạn
+đã xác minh nằm ở mục 9; mục tiêu tổng thể vẫn theo [plan](../../roadmap/gradient-20261017.md) và
+[AC](../../quality/gradient-acceptance.md).
 Áp dụng [chuẩn UI](../ui-ux-standard.md) và [workspace](../../architecture/workspace-layout.md).
 
 ## 1. Quyết định và phạm vi
@@ -22,15 +23,16 @@ Chọn tool/mở panel không tự áp Gradient hoặc tạo Undo. Text/stroke/g
 | Toolbox | Thêm Gradient vào flyout Appearance hiện có, cùng group semantics Alt+Down, Up/Down, Enter, Esc. Nút chọn tool có active state, không giả one-shot apply. |
 | Standard toolbar | Không thêm: toolbox + menu đủ entry points; giữ bar chung gọn. |
 | Bar | Khi Gradient tool hoạt động hoặc đang sửa Gradient: Type, ramp/selected stop Color, Position, Reverse, nút có tên `Gradient properties`. Không thêm một hàng bar. |
-| Properties | Style > Fill: None / Solid / Gradient, rồi nhóm Type, Color stops, Geometry, Advanced, Preview/Apply/Cancel. Effect stack hiện có vẫn tách biệt. |
+| Properties | Style > Fill: None / Solid / Gradient, rồi nhóm Type, Color stops, Geometry, Advanced và trạng thái live edit/Undo. Effect stack hiện có vẫn tách biệt. |
 | Mở lại khi dock đóng/hẹp | Menu `Object > Fill > Gradient…` luôn truy cập khi ngữ cảnh hợp lệ; mở dock/focus đúng section, không bật lại dock khi người dùng chỉ đổi tool. |
 | Context menu | `Fill > Gradient…` alias cùng action mở panel; không handler riêng. |
 | Shortcut | V1 chưa gán global shortcut. Không quảng bá G/F1 từ Adobe/Corel; nếu task sau gán phải audit conflict, register và test. |
 | Help | `Help > Gradient` → `help.gradient`, mở hướng dẫn trong bề mặt help hiện có; nếu chưa có help host, G06 thêm nội dung đọc được bằng keyboard qua cùng action, không handler rỗng. |
 
-Actions sửa draft đề xuất: `gradient.type`, `gradient.stop.add`, `gradient.stop.delete`,
+Action semantics đề xuất: `gradient.type`, `gradient.stop.add`, `gradient.stop.delete`,
 `gradient.stop.color`, `gradient.stop.position`, `gradient.stop.opacity`, `gradient.segment.midpoint`,
-`gradient.geometry`, `gradient.reverse`, `gradient.fit`, `gradient.spread`, `gradient.apply`, `gradient.cancel`.
+`gradient.geometry`, `gradient.reverse`, `gradient.fit`, `gradient.spread`. Mỗi thao tác hoàn tất ghi một
+command; Undo/Redo dùng history chuẩn của document.
 Action registry string ID ánh xạ một lần sang enum menu/tool event native nếu shell dùng enum;
 không có hai command pathways. Message IDs là `gradient.*.label/tooltip/hint/error`, EN mặc định + VI.
 
@@ -50,7 +52,7 @@ Properties / Style / Fill / Gradient
              [Fit to object]
   Advanced   Spread [Pad v]   Method [sRGB] (read-only V1)
              Imported skew: giữ nguyên; số affine nâng cao chỉ khi thực sự hỗ trợ
-  [Preview ☑]                         [Cancel] [Apply]
+  Sửa trực tiếp · Ctrl+Z hoàn tác
 ```
 
 Đây là wireframe text, không phải ảnh native hoặc UI đã pass. Ramp, selected-stop markers, midpoint
@@ -59,13 +61,16 @@ không dùng màu làm tín hiệu duy nhất. Icon chứ không dùng ký tự 
 
 ## 4. Fields và binding
 
-Mọi field selection ghi vào một GradientDraft; Apply/gesture-end mới tạo command.
-Bar và Properties cùng presenter + draft + validation. Giá trị ban đầu dưới đây dùng khi tạo Gradient
+Mỗi field dùng Gradient draft để kiểm tra trước khi commit; thao tác ramp/canvas commit khi thả chuột,
+các nút commit sau click, numeric field commit khi xác nhận hoặc rời focus hợp lệ. Bar, Properties và
+Vector Tool cùng trỏ tới một `shared_ptr<GradientPaint>` do controller nối khi mở phiên. Dirty flags,
+target list và session token vẫn thuộc controller/presenter riêng; chưa gom metadata này thành một
+`ActiveGradientSession` aggregate. Giá trị ban đầu dưới đây dùng khi tạo Gradient
 mới cho path đang chọn; mở lại paint hiện có luôn giữ giá trị đã lưu.
 
 | Field ID / EN — VI | Vị trí | Kiểu/unit/range/default | Scope/enable/Mixed/commit |
 | --- | --- | --- | --- |
-| `fill.kind` Fill — Tô màu | Properties | None/Solid/Gradient; giữ selection hiện có | Selection; đổi sang Gradient bắt đầu draft 2 stop, không commit ngay; None/Solid cũng Apply theo cùng session. |
+| `fill.kind` Fill — Tô màu | Properties | None/Solid/Gradient; giữ selection hiện có | Mỗi đổi loại hoàn tất thành một command; None/Solid cũng đi qua writer/Undo chuẩn. |
 | `gradient.type` Type — Kiểu | Bar + Properties | Linear/Radial; Linear mới | Draft; mixed hiện `Mixed`, đổi type giữ ramp và reset geometry theo bounds mỗi object; không copy geometry object đầu. |
 | `gradient.stops` Color stops — Điểm màu | Ramp hai nơi, list Properties | 2–256; default 0% màu solid đã nhớ, 100% RGB trắng opaque; None dùng màu fill nhớ | Stable stop IDs; active stop là view state. Batch khác cấu trúc disable stop-level; cho action áp gradient chung tường minh. |
 | `gradient.stop.color` Color — Màu | Bar + Properties | ColorValue hợp lệ; model/alpha nguồn giữ nguyên | Active stop; CMYK/spot preview có giới hạn theo plan, không giả proof. Color picker cập nhật draft, Escape hủy picker rồi về draft. |
@@ -80,10 +85,8 @@ mới cho path đang chọn; mở lại paint hiện có luôn giữ giá trị 
 | `gradient.aspect` Aspect — Tỉ lệ | Properties | % = ry/rx×100, >0; mặc định H/W×100; max theo inverse/geometry bounds | Radial; không tự gán 100 khi mixed. |
 | `gradient.spread` Spread — Lặp | Properties | Pad/Repeat/Reflect; Pad mới | Draft; EN labels `Pad`, `Repeat`, `Reflect`; VI `Kéo màu biên`, `Lặp`, `Lặp đối xứng`. |
 | `gradient.method` Method — Nội suy | Advanced Properties | `sRGB` read-only V1 | Tooltip giải thích preview; không dựng dropdown có Classic/Perceptual chưa hỗ trợ. |
-| `gradient.reverse` Reverse — Đảo màu | Bar + Properties | One-shot draft action | Giữ geometry, đảo stops/midpoints, Apply một lần. |
-| `gradient.fit` Fit — Khớp đối tượng | Properties | One-shot draft action | Reset matrix về bounds từng object theo type; giữ ramp và source colors. |
-| `gradient.preview` Preview — Xem trước | Properties | Bool, ON mỗi session mới | View/draft setting; OFF trở lại committed frame, không tắt source fill. |
-| `gradient.apply/cancel` Apply/Cancel — Áp dụng/Hủy | Properties | Buttons | Apply chỉ khi dirty+valid+current, Cancel khi có draft; mở panel không tạo draft nếu không sửa. |
+| `gradient.reverse` Reverse — Đảo màu | Bar + Properties | One-shot action | Giữ geometry, đảo stops/midpoints; một command Undo. |
+| `gradient.fit` Fit — Khớp đối tượng | Properties | One-shot action | Reset matrix về bounds từng object theo type; giữ ramp và source colors. |
 
 Precision: display mm theo formatter hiện có, position/midpoint/opacity hiển thị tối thiểu 0,1%;
 model vẫn binary64. Nhập `mm`, `%`, `deg` theo grammar hỗ trợ, decimal dot/comma theo numeric policy
@@ -119,18 +122,20 @@ Canvas handles chỉ khi một path; batch dùng Properties, không chọn ngầ
    không kế thừa profile Line/Polyline hoặc shortcut Adobe một cách ngầm định.
 2. Drag có preview cùng sampler; pointer-up commit một Undo. Drag ngắn hơn 2 DIP bị coi click,
    không tạo Gradient vô tình. Với Radial, trục phụ dùng radius/aspect handle; không đổi geometry của path.
-3. Click stop chọn; double-click ramp thêm stop; Delete chỉ xóa stop khi stop focus và >2.
-   Nếu canvas/object focus thì route delete theo host, không xóa object khi field/ramp đang có focus.
-   Có nút Add/Delete và list keyboard tương đương, không cần double-click hoặc hover để thao tác.
-4. Tab/Shift+Tab qua ramp, list, fields, Preview/Cancel/Apply. Arrow chọn stop khi list focus;
+3. Click pin chọn; click ramp hoặc trục canvas để thêm stop; Delete/Backspace chỉ xóa stop đang chọn
+   khi còn trên 2 stops. Nếu canvas/object focus thì route delete theo host, không xóa object khi field/ramp có focus.
+   Có nút Add/Delete; thao tác keyboard/list đầy đủ vẫn cần xác minh trên app.
+4. Tab/Shift+Tab qua các control hiện có. Arrow/list navigation và Preview/Cancel/Apply là mục tiêu
+   thiết kế, chưa xác minh trong runtime live-commit hiện tại;
    sửa vị trí qua field, không dùng cùng Arrow vừa chọn vừa move. Midpoint qua field là keyboard equivalent.
-5. Properties gom nhiều sửa thành draft; click Apply một Undo; Cancel/Esc discard. Chuyển bar↔dock
-   giữ draft; đổi target/tool/doc/Undo hủy draft trước thao tác. Đóng riêng dock giữ draft trong controller,
-   mở lại khôi phục; khi dock đóng status có `Gradient changes pending`, Escape vẫn hủy được.
+5. Thay đổi hợp lệ được commit theo từng thao tác; ramp/canvas drag tạo một command khi thả chuột,
+   numeric field tạo một command khi xác nhận. Ctrl+Z/ Ctrl+Y hoàn tác/làm lại; Escape hủy gesture
+   chưa hoàn tất hoặc input đang lỗi, không đảo ngược thao tác đã commit.
 
 Không tự bật Properties sau khi người dùng đóng. Focus loss giữ field buffer; input-invalid không clear
 draft hoặc tự Apply. Pointer capture lost hủy drag, cancel generation; không commit điểm cuối không biết.
-Save lúc draft lưu committed snapshot, hint chưa Apply. Undo/Redo sau Apply khôi phục paint và IDs đúng.
+Save trong lúc preview draft lưu committed snapshot, có hint thay đổi chưa được commit. Undo/Redo
+sau commit khôi phục paint và IDs đúng.
 
 ## 7. Icons, labels, help và accessibility
 
@@ -149,14 +154,14 @@ Color/stop symbols có outline/shape riêng; None/Mixed/Disabled/Busy/Error phâ
 | Idle hint | Select a path, then drag to create a gradient. | Chọn đường rồi kéo để tạo chuyển sắc. |
 | Drag hint | Drag to set the gradient. Shift: 15° steps. Esc: cancel. | Kéo để đặt chuyển sắc. Shift: bước 15°. Esc: hủy. |
 | Stop hint | Select a stop to edit color and position. | Chọn điểm để sửa màu và vị trí. |
-| Pending hint | Gradient changes pending. Apply or cancel. | Gradient chưa áp dụng. Áp dụng hoặc hủy. |
+| Live edit hint | Gradient edit saved. Ctrl+Z to undo. | Đã lưu chỉnh sửa Gradient. Ctrl+Z để hoàn tác. |
 | Minimum stops | Keep at least two color stops. | Cần giữ ít nhất hai điểm màu. |
 | Range error | Enter a position from 0% to 100%. | Nhập vị trí từ 0% đến 100%. |
 | Stale | Unapplied gradient changes were cancelled because the selection or document changed. | Đã hủy Gradient chưa áp dụng vì lựa chọn hoặc tài liệu thay đổi. |
 
 Chỉ đưa hint Shift lên runtime sau binding có test. Label ngắn, help dài ở Help, không button chứa câu.
 Help `help.gradient`: (1) chọn Path và tool; (2) kéo Linear/Radial; (3) thêm/chọn stop đổi màu/opacity;
-(4) nhập geometry/spread trong Properties và Apply; (5) Undo hoặc mở sửa lại. Nêu rõ cách Cancel,
+(4) nhập geometry/spread trong Properties; (5) Ctrl+Z/Redo hoặc mở sửa lại. Nêu rõ cách hủy gesture,
 2-stop minimum, reset midpoint khi thay topology, source/local axes, batch limitations, preview CMYK/spot,
 chưa có stroke/Freeform/print certification và giới hạn export SVG midpoint/method.
 
@@ -170,9 +175,27 @@ Theo tokens workspace: Properties khoảng 280–340 DIP, resizable; icon 16/20 
 24×24 DIP; canvas handles có hit radius đề xuất 6 DIP, painted marker 8 DIP, overlap chọn stop đang focus
 rồi stop cuối theo z-order. Nút control vẫn giữ minimum hit target; DIP→pixel một lần tại native boundary.
 Narrow bar giữ Type, ramp selection và opener có tên; Position/Reverse vào overflow hoặc Properties,
-không giảm font/cắt units. Dock scroll giữ Apply/Cancel luôn tới được bằng Tab và scroll.
+không giảm font/cắt units. Dock scroll phải giữ mọi control truy cập được bằng keyboard và scroll.
 
 G06/G10 kiểm Win32 ở 1366×768, 1920×1080; 100/125/150/200% theo thiết bị có thể kiểm, light/dark/high
 contrast, dock đóng/mở, mixed/locked/invalid/focus. Báo cụ thể tổ hợp chưa chạy. AC-G08–G12 là đường
 nghiệm thu, không suy pass UX từ mockup, controller tests hoặc một ảnh. Phiếu đã tự phân tích; agent tự
 quyết routine spacing/labels trong scope rồi triển khai, không chờ user duyệt form.
+
+## 9. Trạng thái runtime đã kiểm tra
+
+Native shell/controller tests xác nhận live commit/Undo, preview snapshot có dùng khi render canvas,
+8 preset, chỉnh ramp stop/midpoint, kéo ra ngoài để xóa, thêm/xóa stop trên trục và click stop trên Path
+đã transform mà không ghi Undo. Đây là bằng chứng harness, chưa phải xác nhận thao tác người dùng trong
+app đã cài.
+
+| Phần | Trạng thái hiện tại |
+| --- | --- |
+| Live edit và hit tolerance | Properties và Vector Tool cùng dùng shared paint pointer; runtime chọn handle bằng khoảng cách screen ≤8 px rồi đổi pointer world sang object-local qua transform. Session metadata chưa gom thành một `ActiveGradientSession` aggregate. |
+| Ramp | Dùng chung `GradientSampler`; hỗ trợ chèn, kéo stop/midpoint, kéo xuống xóa; mỗi gesture commit một Undo. |
+| Presets và numeric IDs | 8 preset theo catalog, ID riêng cho các trường Gradient, Reverse/Distribute/Fit và Undo có test. |
+| Canvas overlay | Có màu stop, midpoint và add/delete theo trục; shell test bao phủ một Path affine transform. Ma trận zoom 10–3200%, DPI/theme và nhóm transform khác chưa chạy. |
+| Chưa hoàn tất | Angle Dial/nút góc nhanh, eyedropper/double-click pin, accessibility inspector/UIA, launch/visible CUA ở nhiều kích thước, đo p50/p95 hoặc chứng minh 60fps. |
+
+Không gọi preview snapshot là hiệu năng 0 ms/60 fps; chưa có phép đo present/input-to-visible. Canonical
+`pikdraw.exe` đã build, nhưng build và test harness không thay cho launch/runtime visual inspection.

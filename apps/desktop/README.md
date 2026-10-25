@@ -45,12 +45,12 @@ Tái dùng các bề mặt và action/value hiện có; không thêm bar/panel h
 | Shell paint/status | native_window_paint.cpp, native_window_paint_status.cpp, native_window_canvas_overlays.cpp | desktop shell screenshot and interaction tests |
 | Fill/stroke | presenters/object_style.hpp, object_style.cpp, native_window_style*.cpp, native_style_dialog.* | palette, hộp nhập và Undo tests |
 | ICC preview | native_window_color_profiles.cpp → color::IccPreview → render backend | ICC test và pixel consumer |
-| Document I/O | DocumentWorkflow, native_window_files.cpp | save/reopen và source-channel assertions |
+| Document I/O | DocumentWorkflow, native_window_files.cpp; UI `.pr` save/open dùng một worker ưu tiên thấp, immutable save snapshot và revision check khi open commit | save/open, dirty snapshot và stale-open regression |
 | Menu, pointer, window events | native_window_menu_actions.cpp, native_window_pointer_dispatch.cpp, native_window_events.cpp | drawing_tool_ui và desktop_shell |
 | Isolation & numeric | native_window_isolation_menus.cpp, native_window_numeric_input.cpp, native_window_numeric_edit.cpp, native_window_array_quickdim.cpp | desktop_shell và drawing_tool_ui |
 | Workflow | document_workflow_appearance.cpp, document_workflow_effect_draft.cpp, document_workflow_clipboard_transform.cpp, document_workflow_group_transform.cpp | effect_draft, drawing_tool_controller và desktop_shell |
 | DPI | DIP chung cho paint/hit-test; WM_DPICHANGED dựng lại font/cache; canvas buffer theo pixel vật lý | drawing_tool_ui: thông điệp 120/144/192/96 DPI; chưa nghiệm thu chuyển màn hình thật |
-| Phục hồi | native_window_files.cpp; timer 60 giây, checkpoint riêng mỗi phiên/tab dưới Recovery; Save thành công dọn đúng tab | test_pikdraw_save_recovery |
+| Phục hồi | native_window_files.cpp + native_window_recovery.cpp; timer 60 giây, snapshot immutable ghi checkpoint nền (tối đa 8 job); startup scan dùng một worker ưu tiên thấp sau frame đầu, hủy giữa các checkpoint | test_pikdraw_save_recovery |
 
 `test_pikdraw_desktop_shell` dùng bốn translation unit (`test_desktop_shell`,
 `_align_boolean`, `_appearance`, `_text_settings`) và `desktop_shell_test_helpers.hpp`.
@@ -74,7 +74,12 @@ không thay đường output để né lỗi.
 `test_pikdraw_editor_tools.exe` gửi mouse/keyboard messages tới cửa sổ
 native, mở và thao tác hộp màu thật, kiểm tra source/Undo/ICC pixels/native reopen. Cửa sổ test ẩn; đây không phải đo input-to-present.
 
+Chẩn đoán timing canvas chỉ ghi khi người vận hành chủ động đặt biến môi trường
+`PIKDRAW_PERF_TRACE_PATH` thành đường dẫn CSV. Trace dùng QPC và ring buffer bounded;
+worker nền ghi input/message, render, paint, first frame, recovery scan và cặp begin/end save/open .pr, không ghi tọa độ
+hoặc nội dung bản vẽ. `PaintEnd` không chứng minh OS đã present pixel.
+
 ## Giới hạn hiện tại
 
 Pick/transform/style hỗ trợ root path/text có thể sửa; đã có tay nắm xoay (rotation handle), lật đối xứng (flip), Pen/Quick Shapes/Gradient, cùng các bộ điều khiển `NodeToolController`, `ContourToolController`, `DimensionToolController`. `GroupObject` và `ImageObject` có đường vẽ trong SoftwareRasterizer và D2D; điều đó không khẳng định mọi thao tác chỉnh sửa nhóm/ảnh đã có trên shell.
-ICC hiện là preview của máy; `.pikdraw` ghi Native v5 (`kCurrentFormatVersion = 5`), đọc tương thích v2/v3/v4. Native v5 giữ RGB/CMYK/spot/gradient/overprint và appearance qua codec đã kiểm thử. Plan R10 ghi v4 nhưng source HEAD đã là v5; không hạ phiên bản writer. Autosave giữ dirty/Undo; hiện chưa có màn hình tự đề nghị phục hồi lúc khởi động.
+File thiết kế chỉ dùng `.pr`. Payload schema v23 được lưu trong container v23 khi payload dưới 1 MiB, hoặc container chunk v24; schema v24 raster source/sample dedup được ghi trong container v25. Reader nhận v2–v25. Không còn trần file 256 MiB hoặc quota cứng 100.000 object/1.000.000 path element; wire widths và memory quota vẫn áp dụng. UI save/open `.pr` chạy trên một worker tuần tự; save ghi immutable snapshot và stream payload theo chunk tối đa 1 MiB vào file tạm, open chỉ áp dụng snapshot nếu tab/revision/UI context còn nguyên. Reader vẫn đọc toàn file và giải nén payload trước khi parse; streaming load, lazy assets và peak-RAM gate còn mở. Shutdown có thể chờ I/O/parse hiện tại. Source ICC, raster descriptors/edit graph, fidelity report, text properties, layer properties và artboards có codec tương ứng. Auto-recovery checkpoint được ghi nền từ immutable snapshot; startup recovery list chạy nền sau frame đầu, hủy tại ranh giới checkpoint và kiểm tra trạng thái UI trước khi bật prompt. Mỗi candidate vẫn được đọc/giải mã full-buffer; shutdown có thể chờ file đang đọc xong. Xem [PR format](../../docs/architecture/native-pr-format.md).

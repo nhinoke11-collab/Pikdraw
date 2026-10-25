@@ -27,6 +27,8 @@ struct V2ProposalStreamValidator::SemanticState {
   uint32_t next_object_id{1};
   uint32_t issue_count{0};
   uint64_t records_seen{0};
+  uint16_t failed_record_type{0};
+  std::string_view failed_record_detail{};
   std::string expected_coverage_profile;
   std::unordered_set<std::string> source_ids;
   std::vector<pikdraw::interop::ImportPageRecord> pages;
@@ -40,8 +42,8 @@ struct V2ProposalStreamValidator::SemanticState {
     uint32_t height_px{0};
   };
   std::unordered_map<uint32_t, RasterChunkState> raster_chunks;
-  std::unordered_map<uint32_t, uint32_t> raster_source_next_offsets;
-  std::unordered_map<uint32_t, uint32_t> raster_source_total_bytes;
+  std::unordered_map<uint32_t, uint64_t> raster_source_next_offsets;
+  std::unordered_map<uint32_t, uint64_t> raster_source_total_bytes;
   bool has_raster{false};
 
   [[nodiscard]] bool AddObject(uint32_t id, std::string_view source_id,

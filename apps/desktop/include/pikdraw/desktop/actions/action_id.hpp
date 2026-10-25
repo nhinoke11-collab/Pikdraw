@@ -22,10 +22,15 @@ struct ActionId {
     static constexpr std::string_view kFileAcquireImage = "action.file.acquire_image";
     static constexpr std::string_view kFileImport = "action.file.import";
     static constexpr std::string_view kFileExport = "action.file.export";
+    static constexpr std::string_view kFileExportRaster = "action.file.export_raster";
     static constexpr std::string_view kFileExportFor = "action.file.export_for";
     static constexpr std::string_view kFilePublishPdf = "action.file.publish_pdf";
     static constexpr std::string_view kFilePrint = "action.file.print";
     static constexpr std::string_view kFilePrintPreview = "action.file.print_preview";
+    static constexpr std::string_view kFileTestPrint = "action.file.test_print";
+    static constexpr std::string_view kFilePrintTestSheet = "action.file.print_test_sheet";
+    static constexpr std::string_view kFileImportMeasurementRun = "action.file.import_measurement_run";
+    static constexpr std::string_view kFileCompareMeasurementRuns = "action.file.compare_measurement_runs";
     static constexpr std::string_view kFileProperties = "action.file.properties";
     static constexpr std::string_view kFileExit = "action.file.exit";
 
@@ -54,6 +59,40 @@ struct ActionId {
     static constexpr std::string_view kViewProofColors = "action.view.proof_colors";
     static constexpr std::string_view kViewGamutWarning = "action.view.gamut_warning";
     static constexpr std::string_view kViewOverprintPreview = "action.view.overprint_preview";
+    static constexpr std::string_view kColorAssignProfile = "action.color.assign_profile";
+    static constexpr std::string_view kColorConvertProfile = "action.color.convert_profile";
+    static constexpr std::string_view kColorConvertDocumentProfile = "action.color.convert_document_profile";
+    static constexpr std::string_view kColorAssignSelectionProfile = "action.color.assign_selection_profile";
+    static constexpr std::string_view kColorConvertSelectionProfile = "action.color.convert_selection_profile";
+
+    // Bitmap editing (one stable action ID per user-facing operation).
+    static constexpr std::string_view kBitmapCrop = "action.bitmap.crop";
+    static constexpr std::string_view kBitmapExportMaster = "action.bitmap.export_master";
+    static constexpr std::string_view kBitmapExportCmykMaster = "action.bitmap.export_cmyk_master";
+    static constexpr std::string_view kBitmapAssignProfile = "action.bitmap.assign_profile";
+    static constexpr std::string_view kBitmapConvertProfileToSrgb = "action.bitmap.convert_profile_to_srgb";
+    static constexpr std::string_view kBitmapAdjustExposure = "action.bitmap.adjust.exposure";
+    static constexpr std::string_view kBitmapAdjustLight = "action.bitmap.adjust.light";
+    static constexpr std::string_view kBitmapAdjustColorBalance = "action.bitmap.adjust.color_balance";
+    static constexpr std::string_view kBitmapAdjustChannelMixer = "action.bitmap.adjust.channel_mixer";
+    static constexpr std::string_view kBitmapLocalExposureMask = "action.bitmap.adjust.local_exposure_mask";
+    static constexpr std::string_view kBitmapAdjustLevels = "action.bitmap.adjust.levels";
+    static constexpr std::string_view kBitmapAdjustHsl = "action.bitmap.adjust.hsl";
+    static constexpr std::string_view kBitmapAdjustCurves = "action.bitmap.adjust.curves";
+    static constexpr std::string_view kBitmapAdjustWhiteBalance = "action.bitmap.adjust.white_balance";
+    static constexpr std::string_view kBitmapAdjustVibrance = "action.bitmap.adjust.vibrance";
+    static constexpr std::string_view kBitmapAdjustSelectiveHsl = "action.bitmap.adjust.selective_hsl";
+    static constexpr std::string_view kBitmapCloneStamp = "action.bitmap.retouch.clone_stamp";
+    static constexpr std::string_view kBitmapFlipHorizontal = "action.bitmap.flip_horizontal";
+    static constexpr std::string_view kBitmapFlipVertical = "action.bitmap.flip_vertical";
+    static constexpr std::string_view kPageUnitsMillimeter = "action.page.units.millimeter";
+    static constexpr std::string_view kPageUnitsCentimeter = "action.page.units.centimeter";
+    static constexpr std::string_view kPageUnitsMeter = "action.page.units.meter";
+    static constexpr std::string_view kPageUnitsInch = "action.page.units.inch";
+    static constexpr std::string_view kPageUnitsFoot = "action.page.units.foot";
+    static constexpr std::string_view kPageUnitsYard = "action.page.units.yard";
+    static constexpr std::string_view kPageUnitsPoint = "action.page.units.point";
+    static constexpr std::string_view kPageUnitsPica = "action.page.units.pica";
     // Tool domain
     static constexpr std::string_view kToolSelect = "action.tool.select";
     static constexpr std::string_view kToolNodeEdit = "action.tool.node_edit";
@@ -65,9 +104,38 @@ struct ActionId {
     static constexpr std::string_view kToolPolyline = "action.tool.polyline";
     static constexpr std::string_view kToolSnapPanel = "action.tool.snap_panel";
     static constexpr std::string_view kToolKnife = "action.tool.knife";
+    static constexpr std::string_view kToolVectorEraser = "action.tool.vector_eraser";
+    static constexpr std::string_view kToolScissors = "action.tool.scissors";
+    static constexpr std::string_view kToolSmartTrim = "action.tool.smart_trim";
+    static constexpr std::string_view kToolTrim = "action.tool.trim";
+    static constexpr std::string_view kToolSmartFill = "action.tool.smart_fill";
+    static constexpr std::string_view kToolShapeBuilder = "action.tool.shape_builder";
+    static constexpr std::string_view kObjectTrimSourceTarget = "action.object.trim_source_target";
     static constexpr std::string_view kToolContour = "action.tool.contour";
     static constexpr std::string_view kEffectsContourFocus = "action.effects.contour.focus";
     static constexpr std::string_view kObjectContourBreakApart = "action.object.contour.break_apart";
+
+    // Effects domain
+    static constexpr std::string_view kEffectsAppearanceFocus = "action.effects.appearance.focus";
+    static constexpr std::string_view kEffectsGaussianBlur = "action.effects.gaussian_blur";
+    static constexpr std::string_view kEffectsFeather = "action.effects.feather";
+    static constexpr std::string_view kEffectsDropShadow = "action.effects.drop_shadow";
+    static constexpr std::string_view kEffectsInnerShadow = "action.effects.inner_shadow";
+    static constexpr std::string_view kEffectsOuterGlow = "action.effects.outer_glow";
+    static constexpr std::string_view kEffectsInnerGlow = "action.effects.inner_glow";
+    static constexpr std::string_view kEffectsBlockShadow = "action.effects.block_shadow";
+    static constexpr std::string_view kEffectsOffsetPath = "action.effects.offset_path";
+    static constexpr std::string_view kEffectsTransformRepeat = "action.effects.transform_repeat";
+    static constexpr std::string_view kEffectsRoughen = "action.effects.roughen";
+    static constexpr std::string_view kEffectsZigzag = "action.effects.zigzag";
+    static constexpr std::string_view kEffectsColorOverlay = "action.effects.color_overlay";
+    static constexpr std::string_view kEffectsBlend = "action.effects.blend";
+    static constexpr std::string_view kEffectsEnvelope = "action.effects.envelope";
+    static constexpr std::string_view kEffectsDistort = "action.effects.distort";
+    static constexpr std::string_view kEffectsBevel = "action.effects.bevel";
+    static constexpr std::string_view kEffectsExtrude = "action.effects.extrude";
+    static constexpr std::string_view kEffectsClearSelected = "action.effects.clear_selected";
+    static constexpr std::string_view kEffectsClearAll = "action.effects.clear_all_effects";
 
     // Object domain
     static constexpr std::string_view kObjectProperties = "action.object.properties.focus";

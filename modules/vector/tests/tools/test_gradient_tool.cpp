@@ -1,5 +1,6 @@
 #include "pikdraw/vector/tools/gradient_tool.hpp"
 #include "pikdraw/document/document.hpp"
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <iostream>
@@ -146,6 +147,44 @@ void test_handle_manipulation() {
   std::cout << "[PASS] test_handle_manipulation\n";
 }
 
+void test_stop_drag_tracks_stable_id_after_crossing() {
+  const auto id = generate_object_id();
+  auto doc = create_test_doc(id);
+  GradientTool tool(*doc);
+  tool.set_target_objects({id});
+
+  auto paint = GradientPaint::make_default_linear(
+      allocate_gradient_paint_id(), geometry::Rect2D{10.0, 10.0, 80.0, 40.0});
+  const uint64_t moving_id = allocate_gradient_stop_id();
+  const uint64_t crossed_id = allocate_gradient_stop_id();
+  auto moving = paint.stops.front();
+  moving.id = moving_id;
+  moving.offset = 0.5;
+  auto crossed = paint.stops.front();
+  crossed.id = crossed_id;
+  crossed.offset = 0.75;
+  paint.stops.insert(paint.stops.begin() + 1, moving);
+  paint.stops.insert(paint.stops.begin() + 2, crossed);
+  paint.gradient_to_object = geometry::Transform2D(80.0, 0.0, 0.0, 40.0, 10.0, 10.0);
+  assert(tool.set_draft_paint(paint));
+
+  tool.on_pointer_down({50.0, 10.0}, false, false, 0.5);
+  assert(tool.state() == GradientToolState::DraggingHandle);
+  tool.on_pointer_move({82.0, 10.0}, false, false); // Move offset 0.5 past the 0.75 stop.
+  tool.on_pointer_move({58.0, 10.0}, false, false); // Continue dragging the same stable stop back.
+
+  const auto* draft = tool.draft_paint();
+  assert(draft);
+  const auto moving_stop = std::find_if(draft->stops.begin(), draft->stops.end(),
+      [&](const auto& stop) { return stop.id == moving_id; });
+  const auto crossed_stop = std::find_if(draft->stops.begin(), draft->stops.end(),
+      [&](const auto& stop) { return stop.id == crossed_id; });
+  assert(moving_stop != draft->stops.end() && std::abs(moving_stop->offset - 0.6) < 1e-6);
+  assert(crossed_stop != draft->stops.end() && std::abs(crossed_stop->offset - 0.75) < 1e-6);
+  tool.on_cancel();
+  std::cout << "[PASS] test_stop_drag_tracks_stable_id_after_crossing\n";
+}
+
 void test_batch_apply() {
   const auto id1 = generate_object_id();
   const auto id2 = generate_object_id();
@@ -176,6 +215,8 @@ void test_batch_apply() {
   const auto po2 = std::get<PathObject>(*snap2->get_object(id2));
   assert(po1.fill_gradient != nullptr);
   assert(po2.fill_gradient != nullptr);
+  assert(po1.fill_gradient->id != po2.fill_gradient->id);
+  assert(po1.fill_gradient->stops.front().id != po2.fill_gradient->stops.front().id);
 
   std::cout << "[PASS] test_batch_apply\n";
 }
@@ -186,6 +227,7 @@ int main() {
     test_shift_15_deg_snap();
     test_cancel_and_stale_discard();
     test_handle_manipulation();
+    test_stop_drag_tracks_stable_id_after_crossing();
     test_batch_apply();
     std::cout << "All test_gradient_tool checks PASSED.\n";
     return 0;

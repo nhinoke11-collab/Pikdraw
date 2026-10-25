@@ -10,9 +10,9 @@ set(PIKDRAW_MODULE_PATHS
     "modules/vector"
     "modules/automation"
     "modules/raster"
-    "modules/production"
     "modules/scene3d"
     "modules/interop"
+    "modules/production"
     "packages/plugin-sdk"
     "platform/workers"
     "apps/desktop"
@@ -21,6 +21,10 @@ set(PIKDRAW_MODULE_PATHS
 )
 
 foreach(mod_path IN LISTS PIKDRAW_MODULE_PATHS)
+    # Track module build files even when a module is currently absent. Creating
+    # a planned module's first CMakeLists.txt must regenerate the build graph.
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/${mod_path}/CMakeLists.txt")
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${mod_path}/CMakeLists.txt")
         message(STATUS "PikDraw: Registering active module: ${mod_path}")
         add_subdirectory("${mod_path}")

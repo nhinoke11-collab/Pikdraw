@@ -4,11 +4,14 @@
 #include "native_window_file_menu.hpp"
 #include "native_window_menus.hpp"
 #include "native_window_page_presets.hpp"
+#include "native_window_page_navigation.hpp"
+#include "native_window_raster_dock_metrics.hpp"
 #include "../tools/drawing_tool_controller.hpp"
 #include "../tools/pen_tool_controller.hpp"
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/gradient_tool_controller.hpp"
+#include "../tools/annotation/annotation_tool_controller.hpp"
 #include "native_window_drop_shadow_paint.hpp"
 
 #include <algorithm>
@@ -42,6 +45,59 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
     }
     (void)h;
 
+    if (handle_snap_toolbar_click(x, y)) return true;
+    if (active_tool_ == 14 && y >= 66 && y <= 102) {
+        (void)handle_artboard_property_click(x, y);
+        return true;
+    }
+    if (active_tool_ == 14 && x >= w - 280 && y >= 138) {
+        (void)handle_artboard_property_click(x, y);
+        return true;
+    }
+    if (active_dock_tab_ == 0 && x >= w - 280 && y >= 138) {
+        if (handle_raster_dock_interactive_mouse_down(x, y)) {
+            return true;
+        }
+    }
+    if (show_snap_properties_ && active_dock_tab_ == 0 && x >= w - 280 && y >= 138) {
+        (void)handle_snap_properties_click(x, y);
+        return true;
+    }
+    if (show_snap_to_popup_) {
+        show_snap_to_popup_ = false;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return true;
+    }
+
+    if (show_page_units_flyout_) {
+        const int panel_left = w - AlignPanelMetrics::dock_width + AlignPanelMetrics::content_left;
+        const int menu_top = AlignPanelMetrics::section_tabs_top + AlignPanelMetrics::section_tabs_height +
+            PageUnitPropertiesMetrics::row_top_in_content + PageUnitPropertiesMetrics::row_height +
+            PageUnitPropertiesMetrics::menu_gap;
+        const int menu_right = panel_left + PageUnitPropertiesMetrics::menu_width;
+        const int menu_bottom = menu_top + 8 * PageUnitPropertiesMetrics::item_height;
+        const int row_top = AlignPanelMetrics::section_tabs_top + AlignPanelMetrics::section_tabs_height +
+            PageUnitPropertiesMetrics::row_top_in_content;
+        const bool on_unit_row = x >= panel_left && x <= menu_right &&
+            y >= row_top && y < row_top + PageUnitPropertiesMetrics::row_height;
+        if (x >= panel_left && x <= menu_right && y >= menu_top && y < menu_bottom) {
+            constexpr MenuActionId unit_actions[] = {
+                MenuActionId::LayoutUnitMillimeter, MenuActionId::LayoutUnitCentimeter,
+                MenuActionId::LayoutUnitMeter, MenuActionId::LayoutUnitInch,
+                MenuActionId::LayoutUnitFoot, MenuActionId::LayoutUnitYard,
+                MenuActionId::LayoutUnitPoint, MenuActionId::LayoutUnitPica};
+            const int index = (y - menu_top) / PageUnitPropertiesMetrics::item_height;
+            show_page_units_flyout_ = false;
+            execute_menu_action(static_cast<int>(unit_actions[index]));
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
+        if (!on_unit_row) {
+            show_page_units_flyout_ = false;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+    }
+
     // 3a. Document Tab Bar clicks (y: 38 to 66)
     if (y >= 38 && y <= 66) {
         int cur_x = 10;
@@ -68,6 +124,8 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
 
     // 3b. Context Tool Ribbon clicks (y: 66 to 102)
     if (y >= 66 && y <= 102) {
+        if (active_tool_ == 0 && handle_powerclip_controls(x,y,10,70,
+            w - AlignPanelMetrics::dock_width - 10,false)) return true;
         if (active_tool_ == 11 && node_tool_ && node_tool_->active()) {
             if (handle_node_property_click(x, y))
                 return true;
@@ -121,12 +179,22 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                 }
                 return true;
             }
-            if (x >= 422 && x <= 492) {
+            if (x >= 422 && x <= 490) {
                 if (active_tool_ == 8) finish_pen_session(false, true);
                 else {
                     drawing_tool_->cancel();
                     finish_drawing_tool(true);
                 }
+                return true;
+            }
+            if (x >= 495 && x <= 605) {
+                active_dock_tab_ = 0;
+                show_style_inspector_ = true;
+                show_align_panel_ = false;
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Bảng kiểu dáng: Tùy chỉnh nét vẽ, màu sắc và thuộc tính đường vẽ"
+                    : "Style panel: Stroke width, cap, join and color settings";
+                if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
                 return true;
             }
             return true;
@@ -136,19 +204,25 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
             if (x >= rx + 32 && x < rx + 60) { set_creation_rect_corner_type(vector::RectCornerType::Scallop); return true; }
             if (x >= rx + 64 && x < rx + 92) { set_creation_rect_corner_type(vector::RectCornerType::Chamfer); return true; }
             rx += 98;
-            if (x >= rx && x <= rx + 48) {
-                if (y < 84) start_numeric_input(NumericFieldId::RectCornerRadiusTL);
-                else start_numeric_input(NumericFieldId::RectCornerRadiusBL);
+            if (x >= rx && x <= rx + 80) {
+                start_numeric_input(NumericFieldId::RectCornerRadiusTL);
                 return true;
             }
-            if (x >= rx + 51 && x <= rx + 73) { toggle_creation_rect_corners_locked(); return true; }
-            if (x >= rx + 76 && x <= rx + 124) {
-                if (y < 84) start_numeric_input(NumericFieldId::RectCornerRadiusTR);
-                else start_numeric_input(NumericFieldId::RectCornerRadiusBR);
+            rx += 86;
+            if (x >= rx && x <= rx + 24) { toggle_creation_rect_corners_locked(); return true; }
+            rx += 30;
+            if (x >= rx && x <= rx + 62) { toggle_creation_rect_corners_scale_relative(); return true; }
+            rx += 68;
+            if (x >= rx && x <= rx + 110) {
+                active_dock_tab_ = 0;
+                show_style_inspector_ = false;
+                show_align_panel_ = false;
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Đã mở Bảng Thuộc tính chi tiết Hình chữ nhật"
+                    : "Opened Rectangle Properties inspector";
+                InvalidateRect(hwnd_, nullptr, FALSE);
                 return true;
             }
-            rx += 128;
-            if (x >= rx && x <= rx + 68) { toggle_creation_rect_corners_scale_relative(); return true; }
             commit_numeric_field();
             return true;
         } else if (active_tool_ == 9) {
@@ -156,8 +230,22 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                 start_numeric_input(NumericFieldId::PolygonSides);
                 return true;
             }
+            if (x >= 172 && x <= 280) {
+                active_dock_tab_ = 0;
+                show_style_inspector_ = false;
+                show_align_panel_ = false;
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Đã mở Bảng Thuộc tính chi tiết Đa giác"
+                    : "Opened Polygon Properties inspector";
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return true;
+            }
             commit_numeric_field();
             return true;
+        } else if (active_tool_ == 15) {
+            if (handle_eyedropper_property_bar_click(x, y)) {
+                return true;
+            }
         } else if (active_tool_ == 10 || is_dimension_object_selected()) {
             if (handle_dimension_property_bar_click(x, y)) {
                 return true;
@@ -179,7 +267,18 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
             if (x >= 386 && x <= 414) { toggle_font_underline(); return true; }
             if (x >= 422 && x <= 462) { set_font_alignment(typography::TextAlignment::Left); return true; }
             if (x >= 466 && x <= 506) { set_font_alignment(typography::TextAlignment::Center); return true; }
-            if (x >= 510 && x <= 550) { set_font_alignment(typography::TextAlignment::Right); return true; }
+            if (x >= 510 && x <= 550) {
+                const auto text_view = text_properties_view(*this);
+                const auto align = text_view.context ? text_view.alignment : font_alignment_;
+                if (text_view.mixed_alignment) {
+                    set_font_alignment(typography::TextAlignment::Right);
+                } else if (align == typography::TextAlignment::Right) {
+                    set_font_alignment(typography::TextAlignment::Justify);
+                } else {
+                    set_font_alignment(typography::TextAlignment::Right);
+                }
+                return true;
+            }
             if (x >= 556 && x <= 616) { convert_selected_text_to_curves(); return true; }
             if (x >= 622 && x <= 692) { insert_table(table_rows_, table_cols_); return true; }
             if (x >= 698 && x <= 728) { toggle_font_strikethrough(); return true; }
@@ -232,6 +331,13 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
             if (x >= 340 && x <= 425) { start_numeric_input(NumericFieldId::ObjectHeight); return true; } // H box
             if (x >= 435 && x <= 525) { start_numeric_input(NumericFieldId::ObjectRotation); return true; } // Rotation angle box
             const bool is_rect_single = selection.size() == 1 && is_selected_rectangle();
+            const auto exposure_ev = selection.size() == 1
+                ? selected_bitmap_exposure_ev() : std::optional<double>{};
+            if (exposure_ev && can_edit_selected_bitmap(true) &&
+                x >= 720 && x <= 844 && x + 124 <= w - 280) {
+                start_numeric_input(NumericFieldId::RasterExposureEv);
+                return true;
+            }
             if (!is_rect_single && selection.size() == 1 && workflow().can_set_selected_object_opacity() &&
                 x >= 720 && x <= 844 && x + 124 <= w - 280) {
                 start_numeric_input(NumericFieldId::ObjectOpacity);
@@ -289,20 +395,26 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                         if (x >= rx + 32 && x < rx + 60) { set_rect_corner_type(vector::RectCornerType::Scallop); return true; }
                         if (x >= rx + 64 && x < rx + 92) { set_rect_corner_type(vector::RectCornerType::Chamfer); return true; }
                         rx += 98;
-                        if (x >= rx && x <= rx + 48) {
-                            if (y < 84) start_numeric_input(NumericFieldId::RectCornerRadiusTL);
-                            else start_numeric_input(NumericFieldId::RectCornerRadiusBL);
+                        if (x >= rx && x <= rx + 75) {
+                            start_numeric_input(NumericFieldId::RectCornerRadiusTL);
                             return true;
                         }
-                        if (x >= rx + 51 && x <= rx + 73) { toggle_rect_corners_locked(); return true; }
-                        if (x >= rx + 76 && x <= rx + 124) {
-                            if (y < 84) start_numeric_input(NumericFieldId::RectCornerRadiusTR);
-                            else start_numeric_input(NumericFieldId::RectCornerRadiusBR);
+                        rx += 80;
+                        if (x >= rx && x <= rx + 24) { toggle_rect_corners_locked(); return true; }
+                        rx += 28;
+                        if (x >= rx && x <= rx + 62) { toggle_rect_corners_scale_relative(); return true; }
+                        rx += 68;
+                        if (x >= rx && x <= rx + 80) {
+                            active_dock_tab_ = 0;
+                            show_style_inspector_ = false;
+                            show_align_panel_ = false;
+                            status_msg_ = language_ == UILanguage::Vietnamese
+                                ? "Đã mở Bảng Thuộc tính chi tiết Bo góc"
+                                : "Opened Rectangle Corner Properties";
+                            InvalidateRect(hwnd_, nullptr, FALSE);
                             return true;
                         }
-                        rx += 128;
-                        if (x >= rx && x <= rx + 68) { toggle_rect_corners_scale_relative(); return true; }
-                        rx += 74;
+                        rx += 86;
                     }
                     if (rx + 128 <= w - 280 - 10) {
                         if (x >= rx && x < rx + 28) {
@@ -346,7 +458,7 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                         }
                         rx += 82;
                         if (x >= rx && x < rx + 88) {
-                            if (workflow().release_clipping_mask_selected()) {
+                            if (workflow().extract_powerclip_contents(clip_id)) {
                                 status_msg_ = (language_ == UILanguage::Vietnamese) ? "Đã trích xuất nội dung PowerClip" : "Extracted PowerClip Contents";
                                 InvalidateRect(hwnd_, nullptr, FALSE);
                             }
@@ -438,9 +550,9 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
         const auto slots = visible_toolbox_slots();
         const int plus_y = 112 + static_cast<int>(slots.size()) * 42;
         const int flyout_left = 54;
-        const int flyout_top = std::max(112, std::min(plus_y - 200, h - 26 - 430));
+        const int flyout_top = std::max(112, std::min(plus_y - 200, h - 26 - 445));
         const int flyout_w = 264;
-        const int flyout_h = 405;
+        const int flyout_h = 425;
         const RECT flyout_rc = { flyout_left, flyout_top, flyout_left + flyout_w, flyout_top + flyout_h };
 
         if (x >= flyout_rc.left && x <= flyout_rc.right && y >= flyout_rc.top && y <= flyout_rc.bottom) {
@@ -450,7 +562,7 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return true;
             }
-            // Check 11 tool checklist rows
+            // Check toolbox slot rows
             for (int i = 0; i < static_cast<int>(ToolboxSlotId::Count); ++i) {
                 const int item_top = flyout_top + 43 + i * 26;
                 if (y >= item_top && y < item_top + 25) {
@@ -463,7 +575,7 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                 }
             }
             // Check bottom buttons: Reset & Edit Mode
-            const int bottom_y = flyout_top + 338;
+            const int bottom_y = flyout_top + 385;
             if (y >= bottom_y && y <= bottom_y + 26) {
                 if (x >= flyout_left + 10 && x <= flyout_left + 122) {
                     reset_toolbox_slots_default();
@@ -483,22 +595,69 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
         }
     }
 
-    // Grouped toolbox flyouts (Quick Shapes, Path Drawing, Appearance)
+    // Grouped toolbox flyouts (Quick Shapes, Path Drawing, Appearance, Gradient, Eyedropper)
     if (toolbox_open_group_ > 0) {
-        const int group_row = toolbox_open_group_ == 1 ? get_visible_row_for_slot(ToolboxSlotId::QuickShapes)
-                            : toolbox_open_group_ == 2 ? get_visible_row_for_slot(ToolboxSlotId::PathDrawing) : 6;
-        const int flyout_top = 112 + (group_row >= 0 ? group_row : 1) * 42;
-        const int flyout_height = toolbox_open_group_ == 3 ? 174
-            : toolbox_open_group_ == 2 ? 145 : 116;
-        const bool inside_flyout = x >= 54 && x <= 242 &&
+        const ToolboxSlotId slot_for_group = toolbox_open_group_ == 1 ? ToolboxSlotId::QuickShapes
+                                           : toolbox_open_group_ == 2 ? ToolboxSlotId::PathDrawing
+                                           : toolbox_open_group_ == 3 ? ToolboxSlotId::Blur
+                                           : toolbox_open_group_ == 4 ? ToolboxSlotId::Gradient
+                                           : toolbox_open_group_ == 5 ? ToolboxSlotId::Eyedropper
+                                           : toolbox_open_group_ == 6 ? ToolboxSlotId::Knife
+                                           : ToolboxSlotId::Annotation;
+        const int slot_idx = get_visible_index_for_slot(slot_for_group);
+        const RECT slot_rc = get_toolbox_slot_rect(slot_idx >= 0 ? slot_idx : 0);
+        const int flyout_top = slot_rc.top;
+        const int flyout_left = toolbox_width() + 4;
+        const int flyout_height = toolbox_open_group_ == 6 ? 90
+            : toolbox_open_group_ == 7 ? 116
+            : toolbox_open_group_ == 3 ? 174
+            : (toolbox_open_group_ == 2) ? 145
+            : (toolbox_open_group_ == 5) ? 116
+            : (toolbox_open_group_ == 4) ? 58
+            : 116;
+        const int flyout_width = (toolbox_open_group_ == 6 || toolbox_open_group_ == 7) ? 220 : (toolbox_open_group_ == 3 || toolbox_open_group_ == 5) ? 214 : 188;
+        const bool inside_flyout = x >= flyout_left && x <= flyout_left + flyout_width &&
             y >= flyout_top && y < flyout_top + flyout_height;
         if (inside_flyout && y >= flyout_top + 26) {
             const int item = (y - flyout_top - 26) / 29;
-            const int max_items = toolbox_open_group_ == 3 ? 5
-                : toolbox_open_group_ == 2 ? 4 : 3;
+            const int max_items = toolbox_open_group_ == 6 ? 2
+                : toolbox_open_group_ == 7 ? 3
+                : toolbox_open_group_ == 3 ? 5
+                : toolbox_open_group_ == 2 ? 4
+                : toolbox_open_group_ == 5 ? 3
+                : toolbox_open_group_ == 4 ? 1
+                : 3;
             if (item >= 0 && item < max_items) {
+                if (toolbox_open_group_ == 7) {
+                    toolbox_open_group_ = 0;
+                    activate_annotation_tool(item == 0 ? tools::AnnotationToolMode::DetailView
+                                           : item == 1 ? tools::AnnotationToolMode::LeaderNote
+                                           : tools::AnnotationToolMode::PlainNote);
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return true;
+                }
                 if (toolbox_open_group_ == 3) {
                     activate_toolbox_effect_item(item);
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return true;
+                }
+                if (toolbox_open_group_ == 4) {
+                    toolbox_open_group_ = 0;
+                    set_active_tool(13);
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return true;
+                }
+                if (toolbox_open_group_ == 5) {
+                    toolbox_open_group_ = 0;
+                    set_eyedropper_mode(item);
+                    set_active_tool(15);
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return true;
+                }
+                if (toolbox_open_group_ == 6) {
+                    toolbox_open_group_ = 0;
+                    const int tools_grp6[] = {5, 16};
+                    set_active_tool(tools_grp6[item]);
                     InvalidateRect(hwnd_, nullptr, FALSE);
                     return true;
                 }
@@ -506,129 +665,175 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                     ? (item == 0 ? 1 : item == 1 ? 2 : 9)
                     : (item == 0 ? 6 : item == 1 ? 7 : item == 2 ? 8 : 11);
                 toolbox_open_group_ = 0;
-                workflow().cancel_effect_draft(); set_active_tool(tool);
+                set_active_tool(tool);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return true;
             }
         }
-        if (!inside_flyout && (x < 6 || x > 46 || y < 112)) {
+        if (!inside_flyout && (x < 6 || x > toolbox_width() - 6 || y < 104)) {
             toolbox_open_group_ = 0;
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
     }
 
     const auto visible_slots = visible_toolbox_slots();
-    const int total_rows = static_cast<int>(visible_slots.size());
-    const int toolbox_max_y = 112 + (total_rows + 1) * 42;
-    const bool on_toolbox = x >= 6 && x <= 46 && y >= 112 && y < toolbox_max_y;
+    const int total_slots = static_cast<int>(visible_slots.size());
+    const int tool_w = toolbox_width();
+    const RECT rc_plus = get_toolbox_plus_rect(total_slots);
+    const int toolbox_max_y = rc_plus.bottom + 8;
+    const bool on_toolbox = x >= 0 && x < tool_w && y >= 102 && y < toolbox_max_y;
 
     if (on_toolbox) {
         toolbox_keyboard_focus_ = false;
-        const int row = (y - 112) / 42;
-        if (row == total_rows) {
-            // Clicked Quick Customize [+] button
+
+        // Check Column Toggle header button
+        const RECT rc_toggle = get_toolbox_toggle_columns_rect();
+        if (x >= rc_toggle.left && x <= rc_toggle.right && y >= rc_toggle.top && y <= rc_toggle.bottom) {
+            toggle_toolbox_columns();
+            return true;
+        }
+
+        // Check Quick Customize [+] button
+        if (x >= rc_plus.left && x <= rc_plus.right && y >= rc_plus.top && y <= rc_plus.bottom) {
             toolbox_open_group_ = 0;
             toggle_toolbox_customize_flyout();
             InvalidateRect(hwnd_, nullptr, FALSE);
             return true;
-        } else if (row >= 0 && row < total_rows) {
-            const auto slot_id = visible_slots[row];
-            const int ty = 112 + row * 42;
+        }
 
-            // Delete badge click in edit mode
-            if (toolbox_edit_mode_ && slot_id != ToolboxSlotId::Pick && x >= 32 && y <= ty + 16) {
-                set_toolbox_slot_visible(slot_id, false);
+        // Check Slot buttons
+        for (int i = 0; i < total_slots; ++i) {
+            const RECT rc_tb = get_toolbox_slot_rect(i);
+            if (x >= rc_tb.left && x <= rc_tb.right && y >= rc_tb.top && y <= rc_tb.bottom) {
+                const auto slot_id = visible_slots[i];
+                // Delete badge click in edit mode
+                if (toolbox_edit_mode_ && slot_id != ToolboxSlotId::Pick &&
+                    x >= rc_tb.right - 10 && x <= rc_tb.right && y >= rc_tb.top && y <= rc_tb.top + 10) {
+                    set_toolbox_slot_visible(slot_id, false);
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return true;
+                }
+
+                close_toolbox_customize_flyout();
+                const bool on_arrow = (x >= rc_tb.right - 10 && y >= rc_tb.bottom - 10);
+
+                switch (slot_id) {
+                case ToolboxSlotId::Pick:
+                    toolbox_open_group_ = 0;
+                    previous_drawing_tool_ = 0;
+                    set_active_tool(0);
+                    break;
+                case ToolboxSlotId::Node:
+                    toolbox_open_group_ = 0;
+                    set_active_tool(11);
+                    break;
+                case ToolboxSlotId::QuickShapes: {
+                    const int group = 1;
+                    toolbox_focus_group_ = group;
+                    if (on_arrow) {
+                        toolbox_open_group_ = (toolbox_open_group_ == group) ? 0 : group;
+                        toolbox_flyout_index_ = quick_shapes_last_tool_ == 1 ? 0 : quick_shapes_last_tool_ == 2 ? 1 : 2;
+                    } else {
+                        toolbox_open_group_ = 0;
+                        set_active_tool(quick_shapes_last_tool_);
+                    }
+                    break;
+                }
+                case ToolboxSlotId::PathDrawing: {
+                    const int group = 2;
+                    toolbox_focus_group_ = group;
+                    if (on_arrow) {
+                        toolbox_open_group_ = (toolbox_open_group_ == group) ? 0 : group;
+                        toolbox_flyout_index_ = path_drawing_last_tool_ == 6 ? 0 : path_drawing_last_tool_ == 7 ? 1 : 2;
+                    } else {
+                        toolbox_open_group_ = 0;
+                        set_active_tool(path_drawing_last_tool_);
+                    }
+                    break;
+                }
+                case ToolboxSlotId::Pan:
+                    toolbox_open_group_ = 0;
+                    set_active_tool(3);
+                    break;
+                case ToolboxSlotId::Text:
+                    toolbox_open_group_ = 0;
+                    set_active_tool(4);
+                    break;
+                case ToolboxSlotId::Knife:
+                    toolbox_focus_group_ = 6;
+                    if (on_arrow) {
+                        toolbox_open_group_ = (toolbox_open_group_ == 6) ? 0 : 6;
+                        toolbox_flyout_index_ = 0;
+                    } else {
+                        toolbox_open_group_ = 0;
+                        set_active_tool(5);
+                    }
+                    break;
+                case ToolboxSlotId::Blur:
+                    toolbox_focus_group_ = 3;
+                    if (on_arrow) {
+                        toolbox_open_group_ = (toolbox_open_group_ == 3) ? 0 : 3;
+                        toolbox_flyout_index_ = 0;
+                    } else {
+                        toolbox_open_group_ = 0;
+                        activate_toolbox_effect_item(1);
+                    }
+                    break;
+                case ToolboxSlotId::DropShadow:
+                    toolbox_open_group_ = 0;
+                    activate_toolbox_effect_item(2);
+                    break;
+                case ToolboxSlotId::Contour:
+                    toolbox_open_group_ = 0;
+                    workflow().cancel_effect_draft();
+                    trigger_effects_contour();
+                    break;
+                case ToolboxSlotId::Gradient:
+                    toolbox_focus_group_ = 4;
+                    if (on_arrow) {
+                        toolbox_open_group_ = (toolbox_open_group_ == 4) ? 0 : 4;
+                        toolbox_flyout_index_ = 0;
+                    } else {
+                        toolbox_open_group_ = 0;
+                        set_active_tool(13);
+                    }
+                    break;
+                case ToolboxSlotId::Eyedropper:
+                    toolbox_focus_group_ = 5;
+                    if (on_arrow) {
+                        toolbox_open_group_ = (toolbox_open_group_ == 5) ? 0 : 5;
+                        toolbox_flyout_index_ = eyedropper_mode_;
+                    } else {
+                        toolbox_open_group_ = 0;
+                        set_active_tool(15);
+                    }
+                    break;
+                case ToolboxSlotId::Dimension:
+                    toolbox_open_group_ = 0;
+                    set_active_tool(10);
+                    break;
+                case ToolboxSlotId::Artboard:
+                    toolbox_open_group_ = 0;
+                    set_active_tool(14);
+                    break;
+                case ToolboxSlotId::Annotation: {
+                    const int group = 7;
+                    toolbox_focus_group_ = group;
+                    if (on_arrow) {
+                        toolbox_open_group_ = (toolbox_open_group_ == group) ? 0 : group;
+                        toolbox_flyout_index_ = 0;
+                    } else {
+                        toolbox_open_group_ = 0;
+                        activate_annotation_tool(tools::AnnotationToolMode::DetailView);
+                    }
+                    break;
+                }
+                default:
+                    break;
+                }
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return true;
             }
-
-            close_toolbox_customize_flyout();
-            switch (slot_id) {
-            case ToolboxSlotId::Pick:
-                toolbox_open_group_ = 0;
-                workflow().cancel_effect_draft();
-                set_active_tool(0);
-                break;
-            case ToolboxSlotId::Node:
-                toolbox_open_group_ = 0;
-                workflow().cancel_effect_draft();
-                set_active_tool(11);
-                break;
-            case ToolboxSlotId::QuickShapes: {
-                const int group = 1;
-                toolbox_focus_group_ = group;
-                if (x >= 37) {
-                    if (toolbox_open_group_ == group) toolbox_open_group_ = 0;
-                    else {
-                        toolbox_open_group_ = group;
-                        toolbox_flyout_index_ = quick_shapes_last_tool_ == 1 ? 0 : quick_shapes_last_tool_ == 2 ? 1 : 2;
-                    }
-                } else {
-                    toolbox_open_group_ = 0;
-                    workflow().cancel_effect_draft();
-                    set_active_tool(quick_shapes_last_tool_);
-                }
-                break;
-            }
-            case ToolboxSlotId::PathDrawing: {
-                const int group = 2;
-                toolbox_focus_group_ = group;
-                if (x >= 37) {
-                    if (toolbox_open_group_ == group) toolbox_open_group_ = 0;
-                    else {
-                        toolbox_open_group_ = group;
-                        toolbox_flyout_index_ = path_drawing_last_tool_ == 6 ? 0 : path_drawing_last_tool_ == 7 ? 1 : 2;
-                    }
-                } else {
-                    toolbox_open_group_ = 0;
-                    workflow().cancel_effect_draft();
-                    set_active_tool(path_drawing_last_tool_);
-                }
-                break;
-            }
-            case ToolboxSlotId::Pan:
-                toolbox_open_group_ = 0;
-                workflow().cancel_effect_draft();
-                set_active_tool(3);
-                break;
-            case ToolboxSlotId::Text:
-                toolbox_open_group_ = 0;
-                workflow().cancel_effect_draft();
-                set_active_tool(4);
-                break;
-            case ToolboxSlotId::Knife:
-                toolbox_open_group_ = 0;
-                workflow().cancel_effect_draft();
-                set_active_tool(5);
-                break;
-            case ToolboxSlotId::Blur:
-                toolbox_open_group_ = 0;
-                activate_toolbox_effect_item(1);
-                break;
-            case ToolboxSlotId::DropShadow:
-                toolbox_open_group_ = 0;
-                activate_toolbox_effect_item(2);
-                break;
-            case ToolboxSlotId::Contour:
-                toolbox_open_group_ = 0;
-                workflow().cancel_effect_draft();
-                trigger_effects_contour();
-                break;
-            case ToolboxSlotId::Gradient:
-                toolbox_open_group_ = 0;
-                workflow().cancel_effect_draft();
-                set_active_tool(13);
-                break;
-            case ToolboxSlotId::Dimension:
-                toolbox_open_group_ = 0;
-                workflow().cancel_effect_draft();
-                set_active_tool(10);
-                break;
-            default:
-                break;
-            }
-            InvalidateRect(hwnd_, nullptr, FALSE);
-            return true;
         }
     }
 
@@ -643,118 +848,518 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
             }
         }
         const int inspector_content_y = 138;
+        const int dock_y = (active_dock_tab_ == 0) ? (y + properties_dock_scroll_) : y;
+        const int color_balance_histogram_top = raster_dock_metrics::kInspectorContentTop +
+            raster_dock_metrics::kHistogramTopOffset;
+        if (active_dock_tab_ == 0 && active_tool_ == 0 &&
+            !show_style_inspector_ && !show_align_panel_ &&
+            x >= w - 266 && x < w - 14 &&
+            ((dock_y >= color_balance_histogram_top + 20 && dock_y < color_balance_histogram_top + 38) ||
+             (dock_y >= 382 && dock_y < 400))) {
+            const auto& selected =
+                root().vector_controller().selection().selected_ids();
+            const auto snapshot = root().document().current_snapshot();
+            const auto* object = selected.size() == 1 && snapshot
+                ? snapshot->objects().lookup_ref(selected.front()) : nullptr;
+            if (object && std::holds_alternative<document::ImageObject>(*object)) {
+                const size_t channel = static_cast<size_t>((x - (w - 266)) / 63);
+                if (channel < raster_histogram_channels_visible_.size()) {
+                    raster_histogram_channels_visible_[channel] =
+                        !raster_histogram_channels_visible_[channel];
+                    constexpr const char* names_vi[]{"R", "G", "B", "A"};
+                    constexpr const char* names_en[]{"R", "G", "B", "A"};
+                    const auto& name = language_ == UILanguage::Vietnamese
+                        ? names_vi[channel] : names_en[channel];
+                    status_msg_ = std::string(language_ == UILanguage::Vietnamese
+                        ? "Histogram kênh " : "Histogram channel ") + name +
+                        (raster_histogram_channels_visible_[channel]
+                            ? (language_ == UILanguage::Vietnamese ? " bật" : " shown")
+                            : (language_ == UILanguage::Vietnamese ? " tắt" : " hidden"));
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return true;
+                }
+            }
+        }
+        const int color_balance_panel_left = w - raster_dock_metrics::kInspectorDockWidth +
+            raster_dock_metrics::kInspectorPanelInset;
+        const int color_balance_panel_right = color_balance_panel_left +
+            raster_dock_metrics::kInspectorPanelWidth;
+        const int adjustment_tabs_top = color_balance_histogram_top +
+            raster_dock_metrics::kRasterAdjustmentTabsTopOffset;
+        const int adjustment_tabs_bottom = adjustment_tabs_top +
+            raster_dock_metrics::kRasterAdjustmentTabsHeight;
+        const int light_fields_top = color_balance_histogram_top +
+            raster_dock_metrics::kLightFieldsTopOffset;
+        const int light_fields_bottom = light_fields_top +
+            raster_dock_metrics::kLightFieldsHeight;
+        const int color_fields_top = color_balance_histogram_top +
+            raster_dock_metrics::kColorFieldsTopOffset;
+        const int color_fields_bottom = color_fields_top +
+            raster_dock_metrics::kColorFieldsHeight;
+        const int levels_channel_top = color_balance_histogram_top +
+            raster_dock_metrics::kLevelsChannelButtonsTopOffset;
+        const int levels_fields_top = color_balance_histogram_top +
+            raster_dock_metrics::kLevelsFieldsTopOffset;
+        const int levels_fields_bottom = levels_fields_top +
+            raster_dock_metrics::kLevelsFieldsHeight;
+        const int curves_fields_top = levels_fields_top;
+        const int curves_fields_bottom = levels_fields_bottom;
+        const int raster_advanced_actions_top = color_balance_histogram_top +
+            raster_dock_metrics::kRasterAdvancedActionsTopOffset;
+        const int raster_advanced_actions_bottom = raster_advanced_actions_top +
+            2 * raster_dock_metrics::kRasterAdvancedActionHeight +
+            raster_dock_metrics::kRasterAdvancedActionGap;
+        const int white_balance_fields_top = color_balance_histogram_top +
+            raster_dock_metrics::kWhiteBalanceFieldsTopOffset;
+        const int white_balance_fields_bottom = white_balance_fields_top +
+            raster_dock_metrics::kWhiteBalanceFieldHeight;
+        const int color_balance_ranges_top = color_balance_histogram_top +
+            raster_dock_metrics::kColorBalanceRangesTopOffset;
+        const int color_balance_fields_top = color_balance_histogram_top +
+            raster_dock_metrics::kColorBalanceFieldsTopOffset;
+        const int color_balance_preserve_top = color_balance_histogram_top +
+            raster_dock_metrics::kColorBalancePreserveTopOffset;
+        const int max_bottom = (std::max)({
+            light_fields_bottom,
+            color_balance_preserve_top + raster_dock_metrics::kColorBalancePreserveHeight,
+            color_fields_bottom,
+            levels_fields_bottom,
+            white_balance_fields_bottom,
+            curves_fields_bottom,
+            raster_advanced_actions_bottom
+        });
+        if (active_dock_tab_ == 0 && active_tool_ == 0 &&
+            !show_style_inspector_ && !show_align_panel_ &&
+            x >= color_balance_panel_left && x < color_balance_panel_right &&
+            dock_y >= adjustment_tabs_top && dock_y < max_bottom) {
+            const auto& selected =
+                root().vector_controller().selection().selected_ids();
+            const auto snapshot = root().document().current_snapshot();
+            const auto* object = selected.size() == 1 && snapshot
+                ? snapshot->objects().lookup_ref(selected.front()) : nullptr;
+            if (object && std::holds_alternative<document::ImageObject>(*object)) {
+                // Commit the active field before changing the adjustment panel.
+                if (active_num_field_ != NumericFieldId::None) {
+                    commit_numeric_field();
+                    if (active_num_field_ != NumericFieldId::None)
+                        return true;
+                }
+                if (!can_edit_selected_bitmap(true)) {
+                    status_msg_ = language_ == UILanguage::Vietnamese
+                        ? "Cân bằng màu cần một ảnh RGB sRGB có nguồn được giữ lại"
+                        : "Color Balance requires one RGB sRGB image with a preserved source";
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return true;
+                }
+
+                if (dock_y >= adjustment_tabs_top && dock_y < adjustment_tabs_bottom) {
+                    raster_adjustment_inspector_tab_ = static_cast<uint8_t>(
+                        raster_dock_metrics::raster_adjustment_tab_from_x(
+                            x, color_balance_panel_left));
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return true;
+                }
+
+                if (raster_adjustment_inspector_tab_ == 1) {
+                    if (dock_y >= light_fields_top && dock_y < light_fields_bottom) {
+                        const int row = (dock_y - light_fields_top) /
+                            raster_dock_metrics::kLightFieldRowSpacing;
+                        const int column = (x - color_balance_panel_left) /
+                            (raster_dock_metrics::kInspectorPanelWidth / 2);
+                        constexpr NumericFieldId fields[]{
+                            NumericFieldId::RasterExposureEv,
+                            NumericFieldId::RasterLightContrast,
+                            NumericFieldId::RasterLightHighlights,
+                            NumericFieldId::RasterLightShadows,
+                            NumericFieldId::RasterLightWhites,
+                            NumericFieldId::RasterLightBlacks};
+                        const int index = row * 2 + std::clamp(column, 0, 1);
+                        if (row >= 0 && row < 3 && index >= 0 && index < 6) {
+                            start_numeric_input(fields[index]);
+                            return true;
+                        }
+                    }
+                    return true;
+                }
+
+                if (raster_adjustment_inspector_tab_ == 2) {
+                    if (dock_y >= color_fields_top && dock_y < color_fields_bottom) {
+                        const int row = (dock_y - color_fields_top) /
+                            raster_dock_metrics::kColorFieldRowSpacing;
+                        const int column = (x - color_balance_panel_left) /
+                            (raster_dock_metrics::kInspectorPanelWidth / 2);
+                        constexpr NumericFieldId fields[]{
+                            NumericFieldId::RasterHslHue,
+                            NumericFieldId::RasterHslSaturation,
+                            NumericFieldId::RasterHslLightness,
+                            NumericFieldId::RasterVibranceAmount};
+                        const int index = row * 2 + std::clamp(column, 0, 1);
+                        if (row >= 0 && row < 2 && index >= 0 && index < 4) {
+                            start_numeric_input(fields[index]);
+                            return true;
+                        }
+                    }
+                    if (dock_y >= white_balance_fields_top &&
+                        dock_y < white_balance_fields_bottom) {
+                        const int column = (x - color_balance_panel_left) /
+                            (raster_dock_metrics::kInspectorPanelWidth / 2);
+                        constexpr NumericFieldId fields[]{
+                            NumericFieldId::RasterWhiteBalanceTemperature,
+                            NumericFieldId::RasterWhiteBalanceTint};
+                        start_numeric_input(fields[std::clamp(column, 0, 1)]);
+                        return true;
+                    }
+                    return true;
+                }
+
+                if (raster_adjustment_inspector_tab_ == 3) {
+                    if (dock_y >= levels_channel_top &&
+                        dock_y < levels_channel_top +
+                            raster_dock_metrics::kLevelsChannelButtonsHeight) {
+                        const int button_width =
+                            (raster_dock_metrics::kInspectorPanelWidth - 12) / 4;
+                        const int channel = std::clamp(
+                            (x - color_balance_panel_left) / (button_width + 4),
+                            0, 3);
+                        constexpr document::RasterToneChannel channels[]{
+                            document::RasterToneChannel::Composite,
+                            document::RasterToneChannel::Red,
+                            document::RasterToneChannel::Green,
+                            document::RasterToneChannel::Blue};
+                        if (set_selected_bitmap_levels_channel(channels[channel])) {
+                            status_msg_ = language_ == UILanguage::Vietnamese
+                                ? "Đã đổi kênh Levels · Ctrl+Z hoàn tác"
+                                : "Changed Levels channel · Ctrl+Z undoes";
+                            InvalidateRect(hwnd_, nullptr, FALSE);
+                        }
+                        return true;
+                    }
+                    if (dock_y >= levels_fields_top && dock_y < levels_fields_bottom) {
+                        const int row = (dock_y - levels_fields_top) /
+                            raster_dock_metrics::kLevelsFieldRowSpacing;
+                        const int column = (x - color_balance_panel_left) /
+                            (raster_dock_metrics::kInspectorPanelWidth / 2);
+                        constexpr NumericFieldId fields[]{
+                            NumericFieldId::RasterLevelsBlackIn,
+                            NumericFieldId::RasterLevelsWhiteIn,
+                            NumericFieldId::RasterLevelsGamma,
+                            NumericFieldId::RasterLevelsBlackOut,
+                            NumericFieldId::RasterLevelsWhiteOut};
+                        const int index = row * 2 + std::clamp(column, 0, 1);
+                        if (row >= 0 && row < 3 && index >= 0 && index < 5) {
+                            start_numeric_input(fields[index]);
+                            return true;
+                        }
+                    }
+                    return true;
+                }
+
+                if (raster_adjustment_inspector_tab_ == 5) {
+                    if (dock_y >= levels_channel_top &&
+                        dock_y < levels_channel_top +
+                            raster_dock_metrics::kLevelsChannelButtonsHeight) {
+                        const int button_width =
+                            (raster_dock_metrics::kInspectorPanelWidth - 12) / 4;
+                        const int channel = std::clamp(
+                            (x - color_balance_panel_left) / (button_width + 4),
+                            0, 3);
+                        constexpr document::RasterToneChannel channels[]{
+                            document::RasterToneChannel::Composite,
+                            document::RasterToneChannel::Red,
+                            document::RasterToneChannel::Green,
+                            document::RasterToneChannel::Blue};
+                        if (set_selected_bitmap_curves_channel(channels[channel])) {
+                            status_msg_ = language_ == UILanguage::Vietnamese
+                                ? "Đã đổi kênh Curves · Ctrl+Z hoàn tác"
+                                : "Changed Curves channel · Ctrl+Z undoes";
+                            InvalidateRect(hwnd_, nullptr, FALSE);
+                        }
+                        return true;
+                    }
+                    if (dock_y >= curves_fields_top && dock_y < curves_fields_bottom) {
+                        const int row = (dock_y - curves_fields_top) /
+                            raster_dock_metrics::kLevelsFieldRowSpacing;
+                        const int column = (x - color_balance_panel_left) /
+                            (raster_dock_metrics::kInspectorPanelWidth / 2);
+                        constexpr NumericFieldId fields[]{
+                            NumericFieldId::RasterCurvePoint0,
+                            NumericFieldId::RasterCurvePoint1,
+                            NumericFieldId::RasterCurvePoint2,
+                            NumericFieldId::RasterCurvePoint3,
+                            NumericFieldId::RasterCurvePoint4};
+                        const int index = row * 2 + std::clamp(column, 0, 1);
+                        if (row >= 0 && row < 3 && index >= 0 && index < 5) {
+                            start_numeric_input(fields[index]);
+                            return true;
+                        }
+                    }
+                    return true;
+                }
+
+                if (raster_adjustment_inspector_tab_ == 6) {
+                    const int action_height =
+                        raster_dock_metrics::kRasterAdvancedActionHeight;
+                    const int action_stride = action_height +
+                        raster_dock_metrics::kRasterAdvancedActionGap;
+                    if (dock_y >= raster_advanced_actions_top &&
+                        dock_y < raster_advanced_actions_top + action_height) {
+                        edit_selected_bitmap_selective_hsl();
+                        return true;
+                    }
+                    if (dock_y >= raster_advanced_actions_top + action_stride &&
+                        dock_y < raster_advanced_actions_top + action_stride +
+                            action_height) {
+                        edit_selected_bitmap_channel_mixer();
+                        return true;
+                    }
+                    return true;
+                }
+
+                if (raster_adjustment_inspector_tab_ == 4) {
+                    const int range_width =
+                        raster_dock_metrics::kInspectorPanelWidth / 3;
+                    if (dock_y >= color_balance_ranges_top &&
+                        dock_y < color_balance_ranges_top +
+                            raster_dock_metrics::kColorBalanceRangeHeight) {
+                        const int range = std::clamp(
+                            (x - color_balance_panel_left) / range_width, 0, 2);
+                        raster_color_balance_active_range_ =
+                            static_cast<document::RasterTonalRange>(range);
+                        status_msg_ = language_ == UILanguage::Vietnamese
+                            ? "Đang chỉnh Cân bằng màu: "
+                            : "Editing Color Balance: ";
+                        constexpr const char* range_names_vi[]{
+                            "Vùng tối", "Trung gian", "Vùng sáng"};
+                        constexpr const char* range_names_en[]{
+                            "Shadows", "Midtones", "Highlights"};
+                        status_msg_ += language_ == UILanguage::Vietnamese
+                            ? range_names_vi[range] : range_names_en[range];
+                        InvalidateRect(hwnd_, nullptr, FALSE);
+                        return true;
+                    }
+                    if (dock_y >= color_balance_fields_top &&
+                        dock_y < color_balance_fields_top +
+                            raster_dock_metrics::kColorBalanceFieldsHeight) {
+                        const int row = (dock_y - color_balance_fields_top) /
+                            raster_dock_metrics::kColorBalanceFieldRowSpacing;
+                        constexpr NumericFieldId fields[]{
+                            NumericFieldId::RasterColorBalanceRedCyan,
+                            NumericFieldId::RasterColorBalanceGreenMagenta,
+                            NumericFieldId::RasterColorBalanceBlueYellow};
+                        if (row >= 0 && row < 3) {
+                            start_numeric_input(fields[row]);
+                            return true;
+                        }
+                    }
+                    if (dock_y >= color_balance_preserve_top &&
+                        dock_y < color_balance_preserve_top +
+                            raster_dock_metrics::kColorBalancePreserveHeight) {
+                        if (toggle_selected_bitmap_color_balance_preserve_luminosity()) {
+                            status_msg_ = language_ == UILanguage::Vietnamese
+                                ? "Đã đổi Bảo toàn độ sáng · Ctrl+Z hoàn tác"
+                                : "Changed Preserve Luminosity · Ctrl+Z undoes";
+                        } else {
+                            status_msg_ = language_ == UILanguage::Vietnamese
+                                ? "Không thể cập nhật Cân bằng màu"
+                                : "Could not update Color Balance";
+                        }
+                        InvalidateRect(hwnd_, nullptr, FALSE);
+                        return true;
+                    }
+                }
+                return true;
+            }
+        }
+        if (active_dock_tab_ == 0 && (active_tool_ == 10 || is_dimension_object_selected()) &&
+            !show_style_inspector_ && !show_align_panel_ && y >= inspector_content_y) {
+            if (handle_dimension_dock_click(x, y)) {
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return true;
+            }
+        }
+
+        // Transform controls & Rectangle corner controls in Inspector Dock (Objects tab)
+        if (active_dock_tab_ == 0 && !show_style_inspector_ && !show_align_panel_ &&
+            active_tool_ != 12 && active_tool_ != 13 && active_tool_ != 11 &&
+            !has_text_properties_target(*this)) {
+            const auto& sel = root().vector_controller().selection().selected_ids();
+            const int content_y = 138 - properties_dock_scroll_;
+            const int insp_x = w - 280;
+            const int panel_left = insp_x + 14;
+            const int panel_width = (w - 14) - panel_left;
+            const int half_w = (panel_width - 6) / 2;
+
+            if (!sel.empty()) {
+                const int tf_y = content_y + 50;
+                // Row 1: X & Y
+                if (y >= tf_y && y <= tf_y + 26) {
+                    if (x < panel_left + half_w) start_numeric_input(NumericFieldId::ObjectX);
+                    else start_numeric_input(NumericFieldId::ObjectY);
+                    return true;
+                }
+                // Row 2: W & H
+                if (y >= tf_y + 30 && y <= tf_y + 56) {
+                    if (x < panel_left + half_w) start_numeric_input(NumericFieldId::ObjectWidth);
+                    else start_numeric_input(NumericFieldId::ObjectHeight);
+                    return true;
+                }
+                // Row 3: Rotation & Aspect Ratio Lock
+                if (y >= tf_y + 60 && y <= tf_y + 86) {
+                    if (x < panel_left + half_w) {
+                        start_numeric_input(NumericFieldId::ObjectRotation);
+                    } else if (sel.size() == 1 &&
+                               x >= panel_left + half_w + 6 &&
+                               x <= panel_left + panel_width &&
+                               selected_bitmap_exposure_ev() &&
+                               can_edit_selected_bitmap(true)) {
+                        start_numeric_input(NumericFieldId::RasterExposureEv);
+                    } else {
+                        aspect_ratio_locked_ = !aspect_ratio_locked_;
+                        status_msg_ = aspect_ratio_locked_
+                            ? (language_ == UILanguage::Vietnamese ? "Đã khóa tỉ lệ kích thước (W/H)" : "Aspect ratio locked")
+                            : (language_ == UILanguage::Vietnamese ? "Đã mở khóa tỉ lệ kích thước (W/H)" : "Aspect ratio unlocked");
+                        InvalidateRect(hwnd_, nullptr, FALSE);
+                    }
+                    return true;
+                }
+            }
+
+            const bool is_rect_single = sel.size() == 1 && is_selected_rectangle();
+            const bool is_rect_tool = sel.empty() && active_tool_ == 1;
+            if (is_rect_single || is_rect_tool) {
+                const int corner_y = content_y + (is_rect_tool ? 48 : 155);
+                // 3 Mode buttons
+                if (y >= corner_y && y <= corner_y + 26) {
+                    const int triple_w = (panel_width - 12) / 3;
+                    const int idx = std::clamp((x - panel_left) / (triple_w + 6), 0, 2);
+                    constexpr vector::RectCornerType ctypes[] = {
+                        vector::RectCornerType::Round, vector::RectCornerType::Scallop, vector::RectCornerType::Chamfer
+                    };
+                    if (is_rect_tool) set_creation_rect_corner_type(ctypes[idx]);
+                    else set_rect_corner_type(ctypes[idx]);
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return true;
+                }
+                // 4 Corner Inputs
+                const int half_w = (panel_width - 6) / 2;
+                if (y >= corner_y + 32 && y <= corner_y + 58) {
+                    if (x < panel_left + half_w) start_numeric_input(NumericFieldId::RectCornerRadiusTL);
+                    else start_numeric_input(NumericFieldId::RectCornerRadiusTR);
+                    return true;
+                }
+                if (y >= corner_y + 64 && y <= corner_y + 90) {
+                    if (x < panel_left + half_w) start_numeric_input(NumericFieldId::RectCornerRadiusBL);
+                    else start_numeric_input(NumericFieldId::RectCornerRadiusBR);
+                    return true;
+                }
+                // Toggles Row: Lock & Scale
+                if (y >= corner_y + 98 && y <= corner_y + 124) {
+                    if (x < panel_left + half_w) {
+                        if (is_rect_tool) toggle_creation_rect_corners_locked();
+                        else toggle_rect_corners_locked();
+                    } else {
+                        if (is_rect_tool) toggle_creation_rect_corners_scale_relative();
+                        else toggle_rect_corners_scale_relative();
+                    }
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return true;
+                }
+                // Action: Convert to curves (Ctrl+Q)
+                if (is_rect_single && y >= corner_y + 132 && y <= corner_y + 158) {
+                    execute_menu_action(static_cast<int>(MenuActionId::ObjectConvertToCurves));
+                    return true;
+                }
+            }
+        }
+        if (active_dock_tab_ == 0 && !show_style_inspector_ && !show_align_panel_ &&
+            root().vector_controller().selection().selected_ids().empty() &&
+            active_tool_ != 9 && !(active_tool_ == 11 && node_tool_ && node_tool_->active()) &&
+            !(active_tool_ == 13 && gradient_tool_ && gradient_tool_->active()) &&
+            !(active_tool_ == 12 && contour_tool_ && contour_tool_->active()) &&
+            !has_text_properties_target(*this)) {
+            const int panel_left = w - AlignPanelMetrics::dock_width + AlignPanelMetrics::content_left;
+            const int row_top = AlignPanelMetrics::section_tabs_top + AlignPanelMetrics::section_tabs_height +
+                PageUnitPropertiesMetrics::row_top_in_content;
+            if (x >= panel_left && x <= panel_left + AlignPanelMetrics::content_width &&
+                y >= row_top && y < row_top + PageUnitPropertiesMetrics::row_height) {
+                show_page_units_flyout_ = !show_page_units_flyout_;
+                if (show_page_units_flyout_)
+                    page_units_flyout_focus_index_ = std::clamp(static_cast<int>(display_length_unit_), 0, 7);
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return true;
+            }
+        }
         if (active_dock_tab_ == 0 && active_tool_ == 11 &&
-            y >= inspector_content_y + 24) {
+            dock_y >= inspector_content_y + 24) {
             (void)handle_node_property_click(x, y);
             return true;
         }
-        if (active_dock_tab_ == 0 && active_tool_ == 9 && y >= inspector_content_y + 24) {
-            if (x >= w - 148 && x <= w - 14 && y >= 172 && y <= 206) {
+        if (active_dock_tab_ == 0 && active_tool_ == 9 && dock_y >= inspector_content_y + 24) {
+            if (x >= w - 148 && x <= w - 14 && dock_y >= 172 && dock_y <= 206) {
                 start_numeric_input(NumericFieldId::PolygonSides);
                 return true;
             }
-            if (x >= w - 148 && x <= w - 14 && y >= 216 && y <= 250) {
+            if (x >= w - 148 && x <= w - 14 && dock_y >= 216 && dock_y <= 250) {
                 start_numeric_input(NumericFieldId::PolygonRotation);
                 return true;
             }
             return true;
         }
         if (active_dock_tab_ == 0 && has_text_properties_target(*this) &&
-            y >= inspector_content_y) {
+            dock_y >= inspector_content_y) {
             const auto view = text_properties_view(*this);
-            const int local_y = y - inspector_content_y;
+            const int local_y = dock_y - inspector_content_y;
             if (local_y >= TextPropertiesLayout::font_button_top &&
                 local_y < TextPropertiesLayout::font_button_top + TextPropertiesLayout::font_button_height) {
                 const int panel_left = w - AlignPanelMetrics::dock_width + AlignPanelMetrics::content_left;
                 const int row_width = AlignPanelMetrics::content_width;
+                const int style_row_width = 4 * TextPropertiesLayout::style_button_width + 3 * TextPropertiesLayout::font_row_gap;
                 const int family_width = std::max(72, row_width - TextPropertiesLayout::font_size_width -
-                    3 * TextPropertiesLayout::style_button_width - 4 * TextPropertiesLayout::font_row_gap);
+                    style_row_width - 2 * TextPropertiesLayout::font_row_gap);
                 const int size_left = panel_left + family_width + TextPropertiesLayout::font_row_gap;
                 const int style_left = size_left + TextPropertiesLayout::font_size_width + TextPropertiesLayout::font_row_gap;
                 if (x >= size_left) {
                     if (!view.editable) status_msg_ = language_ == UILanguage::Vietnamese ? "Văn bản bị khóa hoặc ẩn · không thể sửa thuộc tính" : "Text is locked or hidden · properties cannot be edited";
                     else if (x < style_left) {
-                        if (!view.mixed_font) start_numeric_input(text_numeric_field(TextPropertyField::FontSize));
-                        else status_msg_ = language_ == UILanguage::Vietnamese ? "Kiểu chữ đang hỗn hợp · chọn một đối tượng hoặc thống nhất trước" : "Font settings are mixed · select one object or unify them first";
-                    } else if (!view.mixed_font) {
-                        const int index = std::clamp((x - style_left) / (TextPropertiesLayout::style_button_width + TextPropertiesLayout::font_row_gap), 0, 2);
+                        start_numeric_input(text_numeric_field(TextPropertyField::FontSize));
+                    } else {
+                        const int index = std::clamp((x - style_left) / (TextPropertiesLayout::style_button_width + TextPropertiesLayout::font_row_gap), 0, 3);
                         font_size_pt_ = view.size_pt; font_bold_ = view.bold; font_italic_ = view.italic;
-                        font_underline_ = view.underline; font_alignment_ = view.alignment;
-                        if (index == 0) toggle_font_bold(); else if (index == 1) toggle_font_italic(); else toggle_font_underline();
-                    } else status_msg_ = language_ == UILanguage::Vietnamese ? "Kiểu chữ đang hỗn hợp · chọn một đối tượng hoặc thống nhất trước" : "Font settings are mixed · select one object or unify them first";
+                        font_underline_ = view.underline; font_strikethrough_ = view.strikethrough; font_alignment_ = view.alignment;
+                        if (index == 0) toggle_font_bold();
+                        else if (index == 1) toggle_font_italic();
+                        else if (index == 2) toggle_font_underline();
+                        else toggle_font_strikethrough();
+                    }
                     InvalidateRect(hwnd_, nullptr, FALSE); return true;
                 }
                 if (!view.editable) {
                     status_msg_ = language_ == UILanguage::Vietnamese
                         ? "Văn bản bị khóa hoặc ẩn · không thể sửa thuộc tính"
                         : "Text is locked or hidden · properties cannot be edited";
-                } else if (view.mixed_font) {
-                    status_msg_ = language_ == UILanguage::Vietnamese
-                        ? "Kiểu chữ đang hỗn hợp · chọn một đối tượng hoặc thống nhất trước"
-                        : "Font settings are mixed · select one object or unify them first";
                 } else {
                     open_font_picker(panel_left - 440, y + 16);
                 }
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return true;
             }
-            if (local_y >= TextPropertiesLayout::size_field_top &&
-                local_y < TextPropertiesLayout::size_field_top + TextPropertiesLayout::field_height) {
-                if (view.editable && !view.mixed_font)
-                    start_numeric_input(text_numeric_field(TextPropertyField::FontSize));
-                else status_msg_ = view.editable
-                    ? language_ == UILanguage::Vietnamese
-                        ? "Kiểu chữ hỗn hợp · chọn một đối tượng hoặc thống nhất trước"
-                        : "Font settings are mixed · select one object or unify them first"
-                    : language_ == UILanguage::Vietnamese
-                        ? "Văn bản bị khóa hoặc ẩn · không thể sửa thuộc tính"
-                        : "Text is locked or hidden · properties cannot be edited";
-                InvalidateRect(hwnd_, nullptr, FALSE);
-                return true;
-            }
-            if (local_y >= TextPropertiesLayout::style_buttons_top &&
-                local_y < TextPropertiesLayout::style_buttons_top + TextPropertiesLayout::style_buttons_height) {
-                if (view.editable && !view.mixed_font) {
-                    const int button_width = (AlignPanelMetrics::content_width - 12) / 3;
-                    const int panel_left = w - AlignPanelMetrics::dock_width + AlignPanelMetrics::content_left;
-                    const int index = std::clamp((x - panel_left) / (button_width + 6), 0, 2);
-                    font_size_pt_ = view.size_pt;
-                    font_bold_ = view.bold;
-                    font_italic_ = view.italic;
-                    font_underline_ = view.underline;
-                    font_alignment_ = view.alignment;
-                    if (index == 0) toggle_font_bold();
-                    else if (index == 1) toggle_font_italic();
-                    else toggle_font_underline();
-                } else status_msg_ = view.editable
-                    ? language_ == UILanguage::Vietnamese
-                        ? "Kiểu chữ hỗn hợp · chọn một đối tượng hoặc thống nhất trước"
-                        : "Font settings are mixed · select one object or unify them first"
-                    : language_ == UILanguage::Vietnamese
-                        ? "Văn bản bị khóa hoặc ẩn · không thể sửa thuộc tính"
-                        : "Text is locked or hidden · properties cannot be edited";
-                InvalidateRect(hwnd_, nullptr, FALSE);
-                return true;
-            }
             if (local_y >= TextPropertiesLayout::alignment_buttons_top &&
                 local_y < TextPropertiesLayout::alignment_buttons_top + TextPropertiesLayout::alignment_buttons_height) {
-                if (view.editable && !view.mixed_font) {
-                    const int button_width = (AlignPanelMetrics::content_width - 12) / 3;
+                if (view.editable) {
+                    const int quad_width = std::max(1, (AlignPanelMetrics::content_width - 18) / 4);
                     const int panel_left = w - AlignPanelMetrics::dock_width + AlignPanelMetrics::content_left;
-                    const int index = std::clamp((x - panel_left) / (button_width + 6), 0, 2);
+                    const int index = std::clamp((x - panel_left) / (quad_width + 6), 0, 3);
                     font_size_pt_ = view.size_pt;
                     font_bold_ = view.bold;
                     font_italic_ = view.italic;
                     font_underline_ = view.underline;
+                    font_strikethrough_ = view.strikethrough;
                     font_alignment_ = view.alignment;
-                    set_font_alignment(index == 0 ? typography::TextAlignment::Left
-                        : index == 1 ? typography::TextAlignment::Center
-                                      : typography::TextAlignment::Right);
-                } else status_msg_ = view.editable
-                    ? language_ == UILanguage::Vietnamese
-                        ? "Kiểu chữ hỗn hợp · chọn một đối tượng hoặc thống nhất trước"
-                        : "Font settings are mixed · select one object or unify them first"
-                    : language_ == UILanguage::Vietnamese
+                    if (index == 0) set_font_alignment(typography::TextAlignment::Left);
+                    else if (index == 1) set_font_alignment(typography::TextAlignment::Center);
+                    else if (index == 2) set_font_alignment(typography::TextAlignment::Right);
+                    else set_font_alignment(typography::TextAlignment::Justify);
+                } else status_msg_ = language_ == UILanguage::Vietnamese
                         ? "Văn bản bị khóa hoặc ẩn · không thể sửa thuộc tính"
                         : "Text is locked or hidden · properties cannot be edited";
                 InvalidateRect(hwnd_, nullptr, FALSE);
@@ -811,13 +1416,87 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
             if (y >= inspector_content_y + 24) return true;
         }
         if (active_dock_tab_ == 1) {
+            (void)handle_layers_dock_mouse_down(x, y);
             if (handle_layers_dock_click(x, y))
                 return true;
         }
     }
 
-    // 6. Page and zoom controls in the status bar.
-    if (y >= height_ - 26) {
+    // Page navigation row sits immediately above the status bar.
+    if (y >= height_ - page_navigation::kBottomChromeHeight &&
+        y < height_ - page_navigation::kStatusBarHeight) {
+        const bool artboard_mode = artboard_overview_enabled();
+        const auto& pages = root().document().pages();
+        const auto snapshot = root().document().current_snapshot();
+        const auto& boards = snapshot->active_page().artboards;
+        const size_t item_count = artboard_mode ? boards.size() : pages.size();
+        size_t active_index = 0;
+        if (artboard_mode) {
+            const auto active_it = std::find_if(boards.begin(), boards.end(), [&](const auto& board) {
+                return board.id == active_tab().active_artboard_id;
+            });
+            if (active_it != boards.end())
+                active_index = static_cast<size_t>(std::distance(boards.begin(), active_it));
+        } else {
+            const auto active_it = std::find_if(pages.begin(), pages.end(), [&](const auto& page) {
+                return page.id == root().document().active_page_id();
+            });
+            if (active_it != pages.end())
+                active_index = static_cast<size_t>(std::distance(pages.begin(), active_it));
+        }
+        const auto nav = page_navigation::make_layout(w, item_count, active_index);
+        const auto activate_item = [this, artboard_mode, &pages, &boards](size_t index) {
+            if (artboard_mode) {
+                if (index >= boards.size()) return;
+                (void)set_active_artboard(boards[index].id);
+                status_msg_ = (language_ == UILanguage::Vietnamese ? "Artboard đang hoạt động · " : "Active Artboard · ") +
+                    boards[index].name;
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
+            if (index >= pages.size() || !root().document().set_active_page(pages[index].id)) return;
+            const auto active_snapshot = root().document().current_snapshot();
+            const auto* page = active_snapshot ? active_snapshot->find_page(active_snapshot->active_page_id()) : nullptr;
+            if (!page) return;
+            active_tab().active_artboard_id = page->artboards.empty()
+                ? document::kInvalidArtboardId : page->artboards.front().id;
+            sync_display_unit_from_active_page();
+            active_tab().page_width_mm = page->layout.width_mm;
+            active_tab().page_height_mm = page->layout.height_mm;
+            root().vector_controller().selection().clear();
+            fit_page_to_canvas();
+            status_msg_ = (language_ == UILanguage::Vietnamese ? "Đã chuyển đến " : "Opened ") +
+                page->name;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        };
+        if (nav.first.contains(x)) { activate_item(0); return true; }
+        if (nav.previous.contains(x)) {
+            if (active_index > 0) activate_item(active_index - 1);
+            return true;
+        }
+        if (nav.next.contains(x)) {
+            if (active_index + 1 < item_count) activate_item(active_index + 1);
+            return true;
+        }
+        if (nav.last.contains(x)) { activate_item(item_count == 0 ? 0 : item_count - 1); return true; }
+        if (nav.add.contains(x)) {
+            execute_menu_action(static_cast<int>(artboard_mode
+                ? MenuActionId::LayoutArtboardAdd : MenuActionId::LayoutPageAdd));
+            return true;
+        }
+        if (nav.remove.contains(x)) {
+            execute_menu_action(static_cast<int>(artboard_mode
+                ? MenuActionId::LayoutArtboardDelete : MenuActionId::LayoutPageDelete));
+            return true;
+        }
+        for (size_t i = nav.first_visible; i < nav.first_visible + nav.visible_count; ++i) {
+            if (nav.tab(i).contains(x)) { activate_item(i); return true; }
+        }
+        return true;
+    }
+
+    // Page and zoom controls in the status bar.
+    if (y >= height_ - page_navigation::kStatusBarHeight) {
         if (x >= w - 210 && x <= w - 145) { fit_page_to_canvas(); return true; }
         if (x >= w - 120 && x <= w - 95) { zoom_out(); return true; }
         if (x >= w - 90 && x <= w - 50) {
@@ -847,6 +1526,7 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
 
     // Ruler guideline dragging: Top ruler creates horizontal guideline, Left ruler creates vertical guideline
     if (x >= area.left && x <= area.right && y >= 102 && y <= area.top) {
+        selected_guideline_index_ = -1;
         is_dragging_guideline_ = true;
         drag_guideline_orientation_ = GuidelineOrientation::Horizontal;
         show_guidelines_ = true;
@@ -860,7 +1540,8 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
         return true;
     }
 
-    if (x >= 52 && x <= area.left && y >= area.top && y <= area.bottom) {
+    if (x >= toolbox_width() && x <= area.left && y >= area.top && y <= area.bottom) {
+        selected_guideline_index_ = -1;
         is_dragging_guideline_ = true;
         drag_guideline_orientation_ = GuidelineOrientation::Vertical;
         show_guidelines_ = true;
@@ -876,13 +1557,13 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
 
     if (handle_drawing_panel_click(x, y))
         return true;
-    if (handle_style_click(x, y))
-        return true;
-    if (handle_node_property_click(x, y))
-        return true;
     if (handle_contour_property_click(x, y))
         return true;
     if (handle_gradient_property_click(x, y))
+        return true;
+    if (handle_style_click(x, y))
+        return true;
+    if (handle_node_property_click(x, y))
         return true;
     if (handle_node_pointer_down(x, y, modifiers))
         return true;

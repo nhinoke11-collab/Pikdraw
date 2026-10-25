@@ -1,5 +1,6 @@
 #include "test_harness.hpp"
 #include "pikdraw/geometry/operations/offset.hpp"
+#include "pikdraw/geometry/units/length_unit.hpp"
 #include <cmath>
 
 #ifndef M_PI
@@ -65,7 +66,7 @@ PIKDRAW_TEST(contour_offset_ac_c02_star_round) {
     req.spacing_mm = 20.0;
     req.steps = 1;
     req.join_type = JoinType::Round;
-    req.arc_tolerance_mm = 0.005;
+    req.arc_tolerance_mm = 0.02;
 
     const auto res = compute_contour(req);
     PIKDRAW_ASSERT(res.status == OffsetStatus::Success);
@@ -77,6 +78,55 @@ PIKDRAW_TEST(contour_offset_ac_c02_star_round) {
     PIKDRAW_ASSERT_NEAR(bounds.top(), -120.0, 0.1);
     PIKDRAW_ASSERT(bounds.width > 200.0);
     PIKDRAW_ASSERT(bounds.height > 200.0);
+}
+
+PIKDRAW_TEST(contour_arc_tolerance_default_and_minimum) {
+    ContourRequest request;
+    PIKDRAW_ASSERT_NEAR(request.arc_tolerance_mm, 0.02, 1e-12);
+    request.path = Path2D::make_rect(0.0, 0.0, 20.0, 20.0);
+    request.arc_tolerance_mm = 0.005;
+    const auto rejected = compute_contour(request);
+    PIKDRAW_ASSERT(rejected.status == OffsetStatus::InvalidInput);
+
+    for (const double tolerance : {0.02, 0.05, 0.1}) {
+        request.arc_tolerance_mm = tolerance;
+        const auto accepted = compute_contour(request);
+        PIKDRAW_ASSERT(accepted.status == OffsetStatus::Success);
+    }
+}
+
+PIKDRAW_TEST(common_length_units_convert_to_canonical_mm) {
+    using pikdraw::geometry::units::LengthUnit;
+    using pikdraw::geometry::units::convert_length_to_mm;
+    using pikdraw::geometry::units::length_unit_suffix;
+    using pikdraw::geometry::units::parse_length_unit_suffix;
+    double mm = 0.0;
+    PIKDRAW_ASSERT(convert_length_to_mm(1.0, LengthUnit::Millimeter, mm));
+    PIKDRAW_ASSERT_NEAR(mm, 1.0, 1e-12);
+    PIKDRAW_ASSERT(convert_length_to_mm(1.0, LengthUnit::Centimeter, mm));
+    PIKDRAW_ASSERT_NEAR(mm, 10.0, 1e-12);
+    PIKDRAW_ASSERT(convert_length_to_mm(1.0, LengthUnit::Meter, mm));
+    PIKDRAW_ASSERT_NEAR(mm, 1000.0, 1e-12);
+    PIKDRAW_ASSERT(convert_length_to_mm(1.0, LengthUnit::Inch, mm));
+    PIKDRAW_ASSERT_NEAR(mm, 25.4, 1e-12);
+    PIKDRAW_ASSERT(convert_length_to_mm(1.0, LengthUnit::Foot, mm));
+    PIKDRAW_ASSERT_NEAR(mm, 304.8, 1e-12);
+    PIKDRAW_ASSERT(convert_length_to_mm(1.0, LengthUnit::Yard, mm));
+    PIKDRAW_ASSERT_NEAR(mm, 914.4, 1e-12);
+    PIKDRAW_ASSERT(convert_length_to_mm(72.0, LengthUnit::Point, mm));
+    PIKDRAW_ASSERT_NEAR(mm, 25.4, 1e-12);
+    PIKDRAW_ASSERT(convert_length_to_mm(6.0, LengthUnit::Pica, mm));
+    PIKDRAW_ASSERT_NEAR(mm, 25.4, 1e-12);
+    PIKDRAW_ASSERT(!convert_length_to_mm(1.0, LengthUnit::Pixel, mm));
+    PIKDRAW_ASSERT(convert_length_to_mm(96.0, LengthUnit::Pixel, mm, 96.0));
+    PIKDRAW_ASSERT_NEAR(mm, 25.4, 1e-12);
+    for (const auto unit : {LengthUnit::Millimeter, LengthUnit::Centimeter,
+             LengthUnit::Meter, LengthUnit::Inch, LengthUnit::Foot, LengthUnit::Yard,
+             LengthUnit::Point, LengthUnit::Pica, LengthUnit::Pixel}) {
+        const auto parsed = parse_length_unit_suffix(length_unit_suffix(unit));
+        PIKDRAW_ASSERT(parsed && *parsed == unit);
+    }
+    PIKDRAW_ASSERT(!parse_length_unit_suffix("bogus"));
 }
 
 PIKDRAW_TEST(contour_offset_ac_c03_donut) {

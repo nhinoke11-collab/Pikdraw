@@ -6,36 +6,36 @@
       "paths": [
         "AGENTS.md",
         "docs/START.md",
-        "docs/project-state.json",
-        "skills/pikdraw-session/SKILL.md"
+        "docs/project-state.json"
       ]
     },
     {
       "id": "module-change",
       "paths": [
-        "skills/pikdraw-module-change/SKILL.md",
+        "docs/development/code-organization.md",
         "registry/modules.json"
       ]
     },
     {
       "id": "plugin",
       "paths": [
-        "skills/pikdraw-plugin/SKILL.md",
+        "packages/plugin-sdk/AGENTS.md",
         "contracts/plugin-manifest.schema.json"
       ]
     },
     {
       "id": "interop",
       "paths": [
-        "skills/pikdraw-interop/SKILL.md",
+        "modules/interop/AGENTS.md",
+        "docs/architecture/vector-resource-interoperability.md",
         "docs/quality/gates.md"
       ]
     },
     {
       "id": "review",
       "paths": [
-        "skills/pikdraw-review/SKILL.md",
-        "docs/agents/PROTOCOL.md"
+        "docs/quality/feature-acceptance.md",
+        "AGENTS.md"
       ]
     }
   ]

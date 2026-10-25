@@ -272,7 +272,7 @@ void TestFormatMatrixAndFixtures() {
             has_dxf = entry.import_status == FormatCapabilityStatus::SupportedPrototype &&
                 entry.export_status == FormatCapabilityStatus::UnsupportedReject;
         } else if (entry.extension == ".cdr") {
-            has_cdr = entry.import_status == FormatCapabilityStatus::UnsupportedReject &&
+            has_cdr = entry.import_status == FormatCapabilityStatus::SupportedPrototype &&
                 entry.export_status == FormatCapabilityStatus::UnsupportedReject;
         } else if (entry.extension == ".eps") {
             has_eps = entry.import_status == FormatCapabilityStatus::SupportedPrototype &&
@@ -430,6 +430,30 @@ void TestSourceSnapshotBroker() {
     auto oversized = SourceSnapshot::Create(source.path, source_bytes - 1, &failure, &system_error);
     TEST_ASSERT(!oversized && failure == SourceSnapshotFailure::SourceTooLarge,
                 "Reject over-profile source before worker launch");
+
+    {
+        auto pinned = SourceSnapshot::PinReadOnly(
+            source.path, source_bytes, &failure, &system_error);
+        TEST_ASSERT(pinned && pinned->IsValid(),
+                    "Pin the original source without creating a staging copy");
+        TEST_ASSERT(pinned->SizeBytes() == source_bytes,
+                    "Pinned source retains its 64-bit byte length");
+        TEST_ASSERT(HashReadOnlyHandle(
+                        pinned->ReadHandle(), source_bytes, bytes_read, digest,
+                        &system_error) &&
+                        bytes_read == source_bytes && digest == pinned->Sha256(),
+                    "Pinned handle hash matches the verified source version");
+        HANDLE writer = CreateFileW(
+            source.path.c_str(), GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        const bool write_was_denied = writer == INVALID_HANDLE_VALUE;
+        if (writer != INVALID_HANDLE_VALUE) CloseHandle(writer);
+        TEST_ASSERT(write_was_denied,
+                    "Pinned import source denies concurrent write/delete opens");
+    }
+    TEST_ASSERT(std::filesystem::exists(source.path),
+                "Releasing a source pin never deletes the selected user file");
 
     ++g_tests_passed;
     std::cout << "[PASS] TestSourceSnapshotBroker\n";

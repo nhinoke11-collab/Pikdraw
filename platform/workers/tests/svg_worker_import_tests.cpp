@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iostream>
 #include <cwctype>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -129,7 +130,19 @@ V2ImportBegin BeginFor(const SourceSnapshot& source, std::string format = "SVG",
 }
 
 V2ProposalStreamLimits Limits() {
-    return V2ProposalStreamLimits{4 * 1024 * 1024, 2 * 1024 * 1024, 128, 16, 17};
+    return V2ProposalStreamLimits{
+        std::numeric_limits<uint64_t>::max(),
+        std::numeric_limits<uint64_t>::max(),
+        IPC_MAX_OBJECTS,
+        IPC_MAX_OBJECTS,
+        IPC_MAX_OBJECTS + 1};
+}
+
+std::chrono::seconds CdrImportTestTimeout(uint64_t source_bytes) {
+    constexpr uint64_t bytes_per_second = 8ULL * 1024ULL * 1024ULL;
+    const uint64_t scaled_seconds = source_bytes / bytes_per_second +
+        (source_bytes % bytes_per_second == 0 ? 0 : 1);
+    return std::chrono::seconds(60 + static_cast<int64_t>(scaled_seconds));
 }
 
 struct RunResult final {
@@ -163,11 +176,12 @@ void TestCdrWorkerImportFromEnvironment() {
 #ifdef _WIN32
     const wchar_t* fixture = _wgetenv(L"PIKDRAW_CDR_WORKER_FIXTURE");
     if (!fixture || !*fixture) return;
-    const auto source = SourceSnapshot::Create(fixture, 64ull * 1024 * 1024);
+    const auto source = SourceSnapshot::Create(
+        fixture, std::numeric_limits<uint64_t>::max());
     Require(source && source->IsValid(), "could not snapshot the CDR worker fixture");
 
     auto config = ConfigFor(*source);
-    config.job_limits.max_memory_bytes = 0; // Shared system-wide 90% RAM guard is the only memory limit.
+    config.job_limits.max_memory_bytes = 0; // Shared system-wide 95% RAM waiter is the pressure gate.
     WorkerProcessHost host;
     Require(host.Launch(config), "could not launch the repository-owned CDR worker");
     Require(host.NegotiateV2(IPC_V2_SUPPORTED_FEATURES, std::chrono::seconds(3)),
@@ -198,8 +212,13 @@ void TestCdrWorkerImportFromEnvironment() {
     size_t frames_received = 0;
     bool records_valid = true;
     const V2ProposalStreamLimits limits{
-        164ull * 1024 * 1024, 160ull * 1024 * 1024, 40002, 192, 193};
-    const bool complete = host.TransactV2ProposalStream(request, std::chrono::seconds(60), limits,
+        std::numeric_limits<uint64_t>::max(),
+        std::numeric_limits<uint64_t>::max(),
+        IPC_MAX_OBJECTS,
+        IPC_MAX_OBJECTS,
+        IPC_MAX_OBJECTS + 1};
+    const bool complete = host.TransactV2ProposalStream(
+        request, CdrImportTestTimeout(source->SizeBytes()), limits,
         [&](const IpcV2Frame& frame) {
             ++frames_received;
             const auto type = static_cast<MessageType>(frame.header.message_type);
@@ -217,7 +236,7 @@ void TestCdrWorkerImportFromEnvironment() {
                 offset += 8;
                 if (flags != 0 || payload_bytes > bytes.size() - offset ||
                     raw_type < static_cast<uint16_t>(ImportRecordType::Page) ||
-                    raw_type > static_cast<uint16_t>(ImportRecordType::RasterSourceChunk))
+                    raw_type > static_cast<uint16_t>(ImportRecordType::RasterImage64))
                     return records_valid = false;
                 const auto record = DeserializeImportRecord(
                     static_cast<ImportRecordType>(raw_type), bytes.subspan(offset, payload_bytes));
@@ -306,7 +325,8 @@ void TestPdfWorkerPageSelectionFromEnvironment() {
 }
 
 std::optional<SourceSnapshot> SnapshotFor(const fs::path& path) {
-    return SourceSnapshot::Create(path.wstring(), 64ULL * 1024ULL * 1024ULL);
+    return SourceSnapshot::Create(
+        path.wstring(), std::numeric_limits<uint64_t>::max());
 }
 
 void TestWorkerImportAndTypedProposal() {

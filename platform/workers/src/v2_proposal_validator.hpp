@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pikdraw/interop/ipc_dto.hpp"
+#include "pikdraw/workers/job_object.hpp"
 #include "pikdraw/workers/win32_common.hpp"
 
 #include <chrono>
@@ -22,7 +23,9 @@ inline constexpr std::chrono::minutes kMaxV2ProposalStreamTimeout{5};
     bool has_source_capability,
     std::chrono::milliseconds timeout,
     uint32_t& accepted_features,
-    std::string_view& failure) noexcept;
+    std::string_view& failure,
+    std::stop_token cancellation,
+    SystemMemoryPressureWaiter& memory_waiter) noexcept;
 
 [[nodiscard]] bool TransactV2ProposalStreamProcess(
     HANDLE stdin_pipe,
@@ -34,7 +37,8 @@ inline constexpr std::chrono::minutes kMaxV2ProposalStreamTimeout{5};
     const pikdraw::interop::V2ProposalStreamLimits& limits,
     const std::function<bool(const pikdraw::interop::IpcV2Frame&)>& consumer,
     std::string_view& failure,
-    std::stop_token cancellation) noexcept;
+    std::stop_token cancellation,
+    SystemMemoryPressureWaiter& memory_waiter) noexcept;
 
 class V2ProposalStreamValidator final {
 public:

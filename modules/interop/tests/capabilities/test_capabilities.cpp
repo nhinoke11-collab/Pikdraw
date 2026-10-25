@@ -21,6 +21,8 @@ void test_format_capabilities() {
         FormatType::Pdf, "pdf-page-vector-v2"));
     assert(FormatCapabilities::is_worker_import_profile_supported(
         FormatType::Pdf, "pdf-page-set-v3"));
+    assert(FormatCapabilities::is_worker_import_profile_supported(
+        FormatType::Pdf, "pdf-print-source-v1"));
     assert(FormatCapabilities::is_import_supported(FormatType::Cdr));
     assert(FormatCapabilities::is_worker_import_profile_supported(
         FormatType::Cdr, "cdr-libcdr-svg-v2"));
@@ -76,6 +78,8 @@ void test_capability_matrix_is_explicit_about_opacity_and_unsupported_formats() 
     assert(svg != matrix.end());
     assert(svg->export_status == FormatCapabilityStatus::SupportedPrototype);
     assert(svg->notes.find("opacity") != std::string::npos);
+    assert(svg->notes.find("Path and Rect") != std::string::npos);
+    assert(svg->notes.find("Group opacity") != std::string::npos);
     assert(svg->notes.find("effect nodes") != std::string::npos);
     assert(svg->notes.find("non-Normal blend") != std::string::npos);
 
@@ -106,11 +110,21 @@ void test_capability_matrix_is_explicit_about_opacity_and_unsupported_formats() 
         assert(FormatCapabilityRegistry::IsFormatSupported(extension));
         assert(entry->notes.find("editable") != std::string::npos);
     }
+    for (const auto extension : {".svg", ".dxf", ".pdf", ".ai", ".cdr", ".eps"}) {
+        const auto entry = std::find_if(matrix.begin(), matrix.end(), [&](const auto& item) {
+            return item.extension == extension;
+        });
+        assert(entry != matrix.end());
+        assert(entry->notes.find("shared import RAM gate pauses at 95% usage") !=
+               std::string::npos);
+        assert(entry->notes.find("five cumulative minutes") != std::string::npos);
+        assert(entry->notes.find("90% physical-RAM pressure stop") == std::string::npos);
+    }
     const auto cdr_diagnostic = FormatCapabilityRegistry::GetDiagnosticForFormat(".cdr");
     assert(cdr_diagnostic.find("thumbnail") != std::string::npos);
     assert(cdr_diagnostic.find("ImageObjects") != std::string::npos);
     assert(FormatCapabilityRegistry::GetDiagnosticForFormat(".pdf").find("editable") != std::string::npos);
-    for (const auto extension : {".png", ".jpg", ".tif"}) {
+    for (const auto extension : {".png", ".jpg", ".tif", ".bmp"}) {
         const auto entry = std::find_if(matrix.begin(), matrix.end(), [&](const auto& item) {
             return item.extension == extension;
         });
@@ -118,7 +132,16 @@ void test_capability_matrix_is_explicit_about_opacity_and_unsupported_formats() 
         assert(entry->import_status == FormatCapabilityStatus::SupportedPrototype);
         assert(entry->export_status == FormatCapabilityStatus::UnsupportedReject);
         assert(entry->notes.find("RGBA8") != std::string::npos);
-        assert(entry->notes.find("90% whole-system physical RAM") != std::string::npos);
+        assert(entry->notes.find("32-bit raster record representation") != std::string::npos);
+        assert(entry->notes.find("shared 95% system-RAM waiter") != std::string::npos);
+        assert(entry->notes.find("five-minute cumulative timeout") != std::string::npos);
+        assert(entry->notes.find("refreshed headroom") != std::string::npos);
+        assert(entry->notes.find("512 MiB") == std::string::npos);
+        assert(entry->notes.find("16 MiB") == std::string::npos);
+        assert(entry->notes.find("128 MiB") == std::string::npos);
+        assert(entry->notes.find("192 MiB") == std::string::npos);
+        assert(entry->notes.find("640 MiB") == std::string::npos);
+        assert(entry->notes.find("768 MiB") == std::string::npos);
         assert(entry->notes.find("4M pixels") == std::string::npos);
     }
     const auto png = std::find_if(matrix.begin(), matrix.end(), [](const auto& entry) {

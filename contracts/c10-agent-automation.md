@@ -98,11 +98,21 @@ field/op, NaN/Infinity, reference cycle và mixed unsupported target; không sil
 ## 4. Queries, jobs và bằng chứng
 
 `document.inspect` trả document/page/layer IDs, revision, units, object counts, dirty,
-history head receipt và capabilities. `objects.query/get` phân trang theo immutable
-snapshot handle gắn epoch/revision; hết hạn trả `SNAPSHOT_EXPIRED`, không trộn hai revision.
+history head receipt và capabilities. `objects.query/get` đọc snapshot committed theo
+epoch/revision; trang tiếp theo phải giữ identity đó, nếu document đổi thì client bắt đầu lại.
+Query hiện phân trang root objects của trang đang active, hỗ trợ lọc `object_id`, `layer_index`,
+`type` và vùng `region_mm`; cursor `v2` ràng buộc với trang và bộ lọc, offset/cursor `v1` cũ
+vẫn đọc được khi không lọc.
 Fields gồm type/hierarchy/z-order, local/world transform, geometric/paint bounds tách biệt,
 editable geometry, text/font, source colors/effects/provenance và lock/visibility.
-Filter theo type/layer/region/tags có budget; không chỉ trả tọa độ bounding box.
+Filter theo ID/layer/type/region hiện hoạt động trên root objects; tag filters và truy vấn nested
+objects theo trang chưa được hỗ trợ. Region dùng bounds trong hierarchy khi có; không chỉ trả tọa độ
+bounding box.
+
+`objects.changes` nhận `expected_epoch` và `from_revision`. Delta liên tục chỉ gồm object edits
+giữ nguyên topology/identity; giới hạn 128 revision và 4.096 stable IDs. Structural edits,
+Undo/Redo, epoch mismatch, gap hoặc vượt giới hạn yêu cầu full `objects.query`; khi đó
+`changed_ids` rỗng để client không áp dụng nhầm một delta một phần.
 
 `document.validate` chạy checker đã đăng ký, trả pass/fail/unsupported/not_assessed theo
 check ID/version, target IDs, actual/expected/tolerance và revision/hash. Missing checker

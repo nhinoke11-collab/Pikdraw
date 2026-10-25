@@ -27,7 +27,7 @@ constexpr int kMaxPathSegmentsPerObject = 32768;
 constexpr size_t kMaxProposalRecords = IPC_MAX_OBJECTS;
 constexpr uint64_t kMaxDecodedImageBytes = UINT32_MAX;
 constexpr uint32_t kMaxImagePixels = UINT32_MAX / 4;
-constexpr uint32_t kRasterChunkBytes = 256u * 1024u;
+constexpr size_t kRasterChunkBytes = kMaxRasterChunkPayloadBytes;
 constexpr double kPdfPointsToMillimetres = 25.4 / 72.0;
 constexpr double kMatrixTolerance = 1e-5;
 
@@ -47,6 +47,9 @@ struct PdfiumApi {
     using ClosePage = decltype(&FPDF_ClosePage);
     using GetPageBoundingBox = decltype(&FPDF_GetPageBoundingBox);
     using GetPageRotation = decltype(&FPDFPage_GetRotation);
+    using RenderPageBitmap = decltype(&FPDF_RenderPageBitmap);
+    using BitmapCreateEx = decltype(&FPDFBitmap_CreateEx);
+    using BitmapFillRect = decltype(&FPDFBitmap_FillRect);
     using CountObjects = decltype(&FPDFPage_CountObjects);
     using GetObject = decltype(&FPDFPage_GetObject);
     using GetObjectType = decltype(&FPDFPageObj_GetType);
@@ -99,6 +102,9 @@ struct PdfiumApi {
     ClosePage close_page{nullptr};
     GetPageBoundingBox get_page_bounding_box{nullptr};
     GetPageRotation get_page_rotation{nullptr};
+    RenderPageBitmap render_page_bitmap{nullptr};
+    BitmapCreateEx bitmap_create_ex{nullptr};
+    BitmapFillRect bitmap_fill_rect{nullptr};
     CountObjects count_objects{nullptr};
     GetObject get_object{nullptr};
     GetObjectType get_object_type{nullptr};
@@ -178,6 +184,9 @@ struct PdfiumApi {
         PIKDRAW_PDFIUM_LOAD(close_page, "FPDF_ClosePage");
         PIKDRAW_PDFIUM_LOAD(get_page_bounding_box, "FPDF_GetPageBoundingBox");
         PIKDRAW_PDFIUM_LOAD(get_page_rotation, "FPDFPage_GetRotation");
+        PIKDRAW_PDFIUM_LOAD(render_page_bitmap, "FPDF_RenderPageBitmap");
+        PIKDRAW_PDFIUM_LOAD(bitmap_create_ex, "FPDFBitmap_CreateEx");
+        PIKDRAW_PDFIUM_LOAD(bitmap_fill_rect, "FPDFBitmap_FillRect");
         PIKDRAW_PDFIUM_LOAD(count_objects, "FPDFPage_CountObjects");
         PIKDRAW_PDFIUM_LOAD(get_object, "FPDFPage_GetObject");
         PIKDRAW_PDFIUM_LOAD(get_object_type, "FPDFPageObj_GetType");
@@ -317,6 +326,31 @@ Point2D ToMillimetres(const FS_MATRIX& matrix, double x, double y,
 bool AddRecord(std::vector<CanonicalImportRecord>& records,
                const ImportRecordValue& value) {
     auto encoded = SerializeImportRecord(value);
+    if (!encoded || encoded->payload.size() > IPC_V2_MAX_RECORD_BYTES) return false;
+    records.push_back(std::move(*encoded));
+    return records.size() <= kMaxProposalRecords;
+}
+
+bool AddRecordAndReleaseRasterChunk(std::vector<CanonicalImportRecord>& records,
+                                    ImportRecordValue& value) {
+    std::optional<CanonicalImportRecord> encoded;
+    if (auto* chunk = std::get_if<ImportRasterImageChunkRecord>(&value)) {
+        encoded = SerializeRasterImageChunk(chunk->local_id, chunk->byte_offset,
+                                            chunk->total_bytes, chunk->bytes);
+        if (encoded) std::vector<uint8_t>().swap(chunk->bytes);
+    } else if (auto* source_chunk = std::get_if<ImportRasterSourceChunkRecord>(&value)) {
+        encoded = SerializeRasterSourceChunk(source_chunk->local_id,
+                                             source_chunk->byte_offset,
+                                             source_chunk->total_bytes,
+                                             source_chunk->bytes);
+        if (encoded) std::vector<uint8_t>().swap(source_chunk->bytes);
+    } else {
+        encoded = SerializeImportRecord(value);
+        if (encoded) {
+            if (auto* path = std::get_if<ImportPathRecord>(&value))
+                std::vector<ImportPathElementRecord>().swap(path->elements);
+        }
+    }
     if (!encoded || encoded->payload.size() > IPC_V2_MAX_RECORD_BYTES) return false;
     records.push_back(std::move(*encoded));
     return records.size() <= kMaxProposalRecords;
@@ -920,6 +954,80 @@ bool AddImageRecords(PdfiumApi& api, FPDF_DOCUMENT document, FPDF_PAGE page,
     return true;
 }
 
+bool RenderPdfPageRgba8(PdfiumApi& api, FPDF_DOCUMENT document,
+                        uint32_t source_page_index, uint32_t dpi,
+                        uint64_t max_pixels, PdfRenderedPageRgba8& rendered,
+                        std::string& diagnostic) {
+    PageGuard page{api};
+    page.value = api.load_page(document, static_cast<int>(source_page_index));
+    if (!page.value) {
+        diagnostic = "PDFium could not load the requested source page";
+        return false;
+    }
+    FS_RECTF page_box{};
+    if (!api.get_page_bounding_box(page.value, &page_box)) {
+        diagnostic = "PDF preview page bounds are not readable";
+        return false;
+    }
+    const double width_pt = static_cast<double>(page_box.right) - page_box.left;
+    const double height_pt = static_cast<double>(page_box.top) - page_box.bottom;
+    const int rotation = api.get_page_rotation(page.value);
+    if (!std::isfinite(width_pt) || !std::isfinite(height_pt) ||
+        width_pt <= 0.0 || height_pt <= 0.0 || rotation < 0 || rotation > 3) {
+        diagnostic = "PDF preview page metadata is invalid";
+        return false;
+    }
+    const bool swap_dimensions = (rotation & 1) != 0;
+    const double output_width_pt = swap_dimensions ? height_pt : width_pt;
+    const double output_height_pt = swap_dimensions ? width_pt : height_pt;
+    const double pixel_scale = static_cast<double>(dpi) / 72.0;
+    const double width_px = std::ceil(output_width_pt * pixel_scale);
+    const double height_px = std::ceil(output_height_pt * pixel_scale);
+    if (!std::isfinite(width_px) || !std::isfinite(height_px) ||
+        width_px < 1.0 || height_px < 1.0 ||
+        width_px > static_cast<double>(std::numeric_limits<int>::max() / 4) ||
+        height_px > static_cast<double>(std::numeric_limits<int>::max())) {
+        diagnostic = "PDF preview dimensions exceed the addressable bitmap range";
+        return false;
+    }
+    const uint64_t pixel_count = static_cast<uint64_t>(width_px) *
+                                 static_cast<uint64_t>(height_px);
+    if (pixel_count > max_pixels || pixel_count > kMaxImagePixels ||
+        pixel_count > std::numeric_limits<size_t>::max() / 4) {
+        diagnostic = "PDF preview exceeds its explicit pixel budget";
+        return false;
+    }
+    rendered.width_px = static_cast<uint32_t>(width_px);
+    rendered.height_px = static_cast<uint32_t>(height_px);
+    const int stride = static_cast<int>(rendered.width_px * 4u);
+    rendered.rgba.resize(static_cast<size_t>(pixel_count) * 4u);
+    FPDF_BITMAP bitmap = api.bitmap_create_ex(
+        static_cast<int>(rendered.width_px), static_cast<int>(rendered.height_px),
+        FPDFBitmap_BGRA, rendered.rgba.data(), stride);
+    if (!bitmap) {
+        rendered = {};
+        diagnostic = "PDFium could not allocate the bounded preview bitmap";
+        return false;
+    }
+    struct BitmapGuard {
+        PdfiumApi& api;
+        FPDF_BITMAP value;
+        ~BitmapGuard() { if (value) api.destroy_bitmap(value); }
+    } bitmap_guard{api, bitmap};
+    if (!api.bitmap_fill_rect(bitmap, 0, 0, static_cast<int>(rendered.width_px),
+                              static_cast<int>(rendered.height_px), 0x00000000u)) {
+        rendered = {};
+        diagnostic = "PDFium could not clear the preview bitmap";
+        return false;
+    }
+    api.render_page_bitmap(bitmap, page.value, 0, 0,
+        static_cast<int>(rendered.width_px), static_cast<int>(rendered.height_px),
+        rotation, FPDF_ANNOT | FPDF_PRINTING);
+    for (size_t offset = 0; offset < rendered.rgba.size(); offset += 4)
+        std::swap(rendered.rgba[offset], rendered.rgba[offset + 2]);
+    return true;
+}
+
 #endif // _WIN32
 } // namespace
 
@@ -1180,8 +1288,8 @@ bool BuildPdfImportRecords(std::span<const uint8_t> source, bool is_ai_represent
                 return false;
             }
         }
-        for (const auto& object : object_records) {
-            if (!AddRecord(records, object)) {
+        for (auto& object : object_records) {
+            if (!AddRecordAndReleaseRasterChunk(records, object)) {
                 diagnostic = "PDF object record exceeds C6 record limits";
                 records.clear();
                 return false;
@@ -1317,6 +1425,98 @@ bool InspectPdfSource(std::span<const uint8_t> source,
     } catch (...) {
         manifest = {};
         diagnostic = "PDF page inspection allocation or PDFium API failure";
+        return false;
+    }
+#endif
+}
+
+bool RenderPdfSourcePageRgba8(std::span<const uint8_t> source,
+                              uint32_t source_page_index, uint32_t dpi,
+                              uint64_t max_pixels,
+                              PdfRenderedPageRgba8& rendered,
+                              std::string& diagnostic) {
+    rendered = {};
+    const std::array<uint32_t, 1> page_indices{source_page_index};
+    bool received = false;
+    if (!RenderPdfSourcePagesRgba8(
+            source, page_indices, dpi, max_pixels, max_pixels,
+            [&](uint32_t, PdfRenderedPageRgba8&& page) {
+                rendered = std::move(page);
+                received = true;
+                return true;
+            }, diagnostic))
+        return false;
+    if (!received) {
+        diagnostic = "PDF page renderer returned no preview image";
+        return false;
+    }
+    return true;
+}
+
+bool RenderPdfSourcePagesRgba8(
+    std::span<const uint8_t> source,
+    std::span<const uint32_t> source_page_indices, uint32_t dpi,
+    uint64_t max_pixels_per_page, uint64_t max_total_pixels,
+    const PdfRenderedPageConsumer& consumer, std::string& diagnostic) {
+    diagnostic.clear();
+    if (source.empty() || source_page_indices.empty() || dpi == 0 ||
+        max_pixels_per_page == 0 || max_total_pixels == 0 || !consumer) {
+        diagnostic = "PDF preview source, pages, DPI, budget, or consumer is invalid";
+        return false;
+    }
+#ifndef _WIN32
+    diagnostic = "PDF source rendering currently requires the isolated Windows PDFium worker";
+    return false;
+#else
+    try {
+        PdfiumApi api;
+        if (!api.ready()) {
+            diagnostic = "PDFium runtime is missing or its rendering API is incomplete";
+            return false;
+        }
+        DocumentGuard document{api};
+        document.value = api.load_mem_document64(source.data(), source.size(), nullptr);
+        if (!document.value) {
+            diagnostic = "PDFium rejected the source PDF representation";
+            return false;
+        }
+        const int page_count = api.get_page_count(document.value);
+        if (page_count <= 0) {
+            diagnostic = "PDF document has no readable pages";
+            return false;
+        }
+        uint64_t rendered_pixels = 0;
+        for (const uint32_t page_index : source_page_indices) {
+            if (page_index >= static_cast<uint32_t>(page_count)) {
+                diagnostic = "PDF preview page index is outside the source page tree";
+                return false;
+            }
+            if (rendered_pixels >= max_total_pixels) {
+                diagnostic = "PDF preview exceeds its aggregate pixel budget";
+                return false;
+            }
+            PdfRenderedPageRgba8 rendered;
+            const auto remaining = max_total_pixels - rendered_pixels;
+            if (!RenderPdfPageRgba8(api, document.value, page_index, dpi,
+                                    (std::min)(max_pixels_per_page, remaining),
+                                    rendered, diagnostic))
+                return false;
+            const uint64_t page_pixels =
+                static_cast<uint64_t>(rendered.width_px) * rendered.height_px;
+            if (page_pixels > remaining) {
+                diagnostic = "PDF preview exceeds its aggregate pixel budget";
+                return false;
+            }
+            rendered_pixels += page_pixels;
+            if (!consumer(page_index, std::move(rendered))) {
+                if (diagnostic.empty())
+                    diagnostic = "PDF preview consumer rejected a rendered page";
+                return false;
+            }
+        }
+        return true;
+    } catch (...) {
+        diagnostic = "PDF preview rendering allocation or PDFium failure";
         return false;
     }
 #endif

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pikdraw/desktop/shell/desktop_window.hpp"
+#include "pikdraw/desktop/performance/pointer_move_coalescer.hpp"
 #include "pikdraw/desktop/runtime/composition_root.hpp"
 #include "pikdraw/desktop/workflows/document_workflow.hpp"
 #include "pikdraw/desktop/presenters/object_style.hpp"
@@ -11,14 +12,21 @@
 #include "pikdraw/typography/layout/case_conversion.hpp"
 #include "pikdraw/desktop/shell/native_window_layers_dock.hpp"
 #include "pikdraw/vector/tools/shape_tools.hpp"
+#include "pikdraw/vector/precision/snap/layout_snap.hpp"
 
+#include <array>
 #include <string>
 #include <memory>
 #include <optional>
+#include <filesystem>
+#include <functional>
 #include <cstddef>
 #include <cstdint>
+#include <atomic>
 #include <cmath>
 #include <unordered_set>
+#include <thread>
+#include <vector>
 #include "pikdraw/geometry/primitives/point.hpp"
 #include "pikdraw/geometry/units/length_unit.hpp"
 #include "pikdraw/geometry/primitives/bounds.hpp"
@@ -32,15 +40,52 @@
 #include <windows.h>
 #endif
 
+namespace pikdraw::raster {
+class RasterEditPreviewService;
+class RasterHistogramService;
+}
+
 namespace pikdraw::desktop {
 struct CanvasFrameCache;
 struct NativeWindowAutomationRuntime;
+enum class CanvasTraceKind : std::uint8_t;
+class CanvasTrace;
+
+struct CanvasColorSample {
+    bool valid{false};
+    bool on_object{false};
+    bool is_bitmap_pixel{false};
+    bool has_gradient{false};
+    bool has_object_style{false};
+    document::ObjectId object_id{document::kInvalidObjectId};
+    std::string object_label;
+    int pixel_x{-1};
+    int pixel_y{-1};
+    uint8_t r{255};
+    uint8_t g{255};
+    uint8_t b{255};
+    uint8_t a{255};
+    color::ColorValue color_value{color::RGBColor{1.0, 1.0, 1.0, 1.0}};
+    std::optional<document::GradientPaint> gradient_paint;
+    EditorStyle object_style{};
+    double object_opacity{1.0};
+    document::BlendMode object_blend_mode{document::BlendMode::Normal};
+};
 #ifdef _WIN32
 inline constexpr UINT kImportWorkerMessage = WM_APP + 0x37;
 inline constexpr UINT kExportWorkerMessage = WM_APP + 0x38;
 inline constexpr UINT kRasterExportWorkerMessage = WM_APP + 0x39;
+inline constexpr UINT kAutosaveWorkerMessage = WM_APP + 0x3A;
+inline constexpr UINT kRecoveryScanWorkerMessage = WM_APP + 0x3B;
+inline constexpr UINT kNativeFileWorkerMessage = WM_APP + 0x3C;
+inline constexpr UINT kRasterPreviewWorkerMessage = WM_APP + 0x3D;
+inline constexpr UINT kRasterHistogramWorkerMessage = WM_APP + 0x3E;
+inline constexpr UINT kRasterProfileWorkerMessage = WM_APP + 0x3F;
+inline constexpr UINT kTestSheetWorkerMessage = WM_APP + 0x40;
 #endif
 struct ImportJobSession;
+struct RecoveryScanJobSession;
+struct NativeFileJobSession;
 struct ImportPlacementSession {
     document::AsyncProposalMetadata metadata;
     ImportedContentProposal proposal;
@@ -61,9 +106,12 @@ struct ImportPlacementSession {
 };
 struct ExportJobSession;
 struct RasterExportJobSession;
+struct RasterProfileConversionJobSession;
+struct TestSheetJobSession;
+struct AutosaveJobSession;
 enum class MenuActionId;
 class NativeFontPicker;
-namespace tools { class DrawingToolController; class PenToolController; class NodeToolController; class ContourToolController; class GradientToolController; class DimensionToolController; }
+namespace tools { class DrawingToolController; class PenToolController; class NodeToolController; class ContourToolController; class GradientToolController; class DimensionToolController; class ArtboardToolController; class AnnotationToolController; enum class AnnotationToolMode : uint8_t; }
 enum class ToolboxSlotId : int;
 
 enum class UILanguage {
@@ -133,19 +181,24 @@ public:
     [[nodiscard]] size_t active_layer_index() const noexcept { return layers_state_.active_layer_index; }
     void set_active_layer_index(size_t index);
     [[nodiscard]] bool is_dock_text_editing() const noexcept {
-        return active_dock_tab_ == 1 && (layers_state_.search_active || layers_state_.rename_layer_idx.has_value() || layers_state_.rename_object_id.has_value());
+        return artboard_name_editing_ || (active_dock_tab_ == 1 && (layers_state_.search_active || layers_state_.rename_layer_idx.has_value() || layers_state_.rename_object_id.has_value()));
     }
     [[nodiscard]] bool align_distribute_panel_visible() const noexcept { return show_align_panel_; }
 
     void zoom_in() noexcept;
     void zoom_out() noexcept;
     void fit_page_to_canvas() noexcept;
+    void fit_artboards_to_canvas() noexcept;
+    [[nodiscard]] bool artboard_overview_enabled() const noexcept;
+    void set_artboard_overview_enabled(bool enabled, bool save_default = true) noexcept;
+    [[nodiscard]] bool set_active_artboard(document::ArtboardId id) noexcept;
     bool fit_document_content_to_canvas(bool* content_outside_page = nullptr) noexcept;
     void trigger_export() noexcept;
     void open_import_dialog();
     bool export_svg_to(const std::string& file_path, bool selected_objects = false,
                        bool allow_replace_existing = false,
-                       bool all_pages = false);
+                       bool all_pages = false,
+                       bool active_artboard = false);
     void create_new_document();
     bool apply_selection_color(bool stroke, color::ColorValue value);
     bool set_selection_fill_enabled(bool enabled);
@@ -153,6 +206,7 @@ public:
     bool set_selection_stroke_width(double width_mm);
     bool configure_preview_profiles(const std::filesystem::path &rgb_source,
         const std::filesystem::path &cmyk_source, std::string *error = nullptr);
+    bool refresh_display_preview_profile(bool force_reload = false);
 
     // Main Menu Bar & Dropdowns (CorelDRAW Reference)
     [[nodiscard]] bool is_menu_open() const noexcept { return open_menu_id_ >= 0; }
@@ -225,6 +279,8 @@ public:
         double page_width_mm{297.0};
         double page_height_mm{210.0};
         std::string unit{"mm"};
+        document::ArtboardId active_artboard_id{document::kInvalidArtboardId};
+        bool artboard_overview{false};
         std::unique_ptr<CompositionRoot> root;
         std::unique_ptr<DocumentWorkflow> workflow;
         bool is_dirty{false};
@@ -235,6 +291,8 @@ public:
     [[nodiscard]] uint64_t view_generation() const noexcept { return view_generation_; }
     [[nodiscard]] const std::vector<DocumentTab>& tabs() const noexcept { return tabs_; }
     [[nodiscard]] bool is_recovery_modal_open() const noexcept { return show_recovery_modal_; }
+    [[nodiscard]] bool is_recovery_scan_pending() const noexcept { return recovery_scan_pending_; }
+    [[nodiscard]] bool is_native_file_job_pending() const noexcept { return native_file_job_pending_; }
     [[nodiscard]] size_t recovery_candidate_count() const noexcept { return recovery_candidates_.size(); }
     [[nodiscard]] DocumentTab& active_tab() noexcept;
     [[nodiscard]] const DocumentTab& active_tab() const noexcept;
@@ -453,6 +511,7 @@ public:
         GuidelineOrientation orientation{GuidelineOrientation::Horizontal};
         double position_mm{0.0};
         bool locked{false};
+        uint64_t id{0};
     };
 
     void add_guideline(GuidelineOrientation orient, double pos_mm);
@@ -488,7 +547,20 @@ public:
         GradientAngle, GradientLength, GradientCenterX, GradientCenterY,
         PenExpression, PenLength, PenAngle, ModalWidth, ModalHeight,
         RectCornerRadiusTL, RectCornerRadiusTR, RectCornerRadiusBR, RectCornerRadiusBL,
-        TacLimitPercent, GridSpacing
+        TacLimitPercent, GridSpacing,
+        ArtboardX, ArtboardY, ArtboardWidth, ArtboardHeight,
+        SnapAcquireRadius, SnapReleaseRadius,
+        RasterExposureEv, RasterColorBalanceRedCyan,
+        RasterColorBalanceGreenMagenta, RasterColorBalanceBlueYellow,
+        RasterLightContrast, RasterLightHighlights, RasterLightShadows,
+        RasterLightWhites, RasterLightBlacks,
+        RasterHslHue, RasterHslSaturation, RasterHslLightness,
+        RasterVibranceAmount,
+        RasterLevelsBlackIn, RasterLevelsWhiteIn, RasterLevelsGamma,
+        RasterLevelsBlackOut, RasterLevelsWhiteOut,
+        RasterWhiteBalanceTemperature, RasterWhiteBalanceTint,
+        RasterCurvePoint0, RasterCurvePoint1, RasterCurvePoint2,
+        RasterCurvePoint3, RasterCurvePoint4
     };
 
     [[nodiscard]] NumericFieldId active_numeric_field() const noexcept { return active_num_field_; }
@@ -532,10 +604,31 @@ public:
     bool handle_gradient_pointer_down(int x, int y, unsigned modifiers);
     bool handle_gradient_pointer_move(int x, int y, unsigned modifiers);
     bool handle_gradient_pointer_up(int x, int y, unsigned modifiers);
+    bool handle_gradient_ramp_pointer_move(int x, int y);
+    bool handle_gradient_ramp_pointer_up(int x, int y);
     void paint_gradient_canvas_overlay(HDC hdc, const RECT& canvas);
     [[nodiscard]] tools::DimensionToolController* dimension_tool() noexcept { return dimension_tool_.get(); }
     [[nodiscard]] const tools::DimensionToolController* dimension_tool() const noexcept { return dimension_tool_.get(); }
     void paint_dimension_canvas_overlay(HDC hdc, const RECT& canvas);
+    [[nodiscard]] tools::AnnotationToolController* annotation_tool() noexcept { return annotation_tool_.get(); }
+    [[nodiscard]] const tools::AnnotationToolController* annotation_tool() const noexcept { return annotation_tool_.get(); }
+    void activate_annotation_tool(tools::AnnotationToolMode mode);
+    void paint_annotation_canvas_overlay(HDC hdc, const RECT& canvas);
+    bool handle_artboard_property_click(int x, int y);
+    bool handle_artboard_pointer_down(int x, int y, unsigned modifiers);
+    bool handle_artboard_pointer_move(int x, int y, unsigned modifiers);
+    bool handle_artboard_pointer_up(int x, int y, unsigned modifiers);
+    void update_artboard_snap_preview(const document::DocumentSnapshot& snapshot,
+                                     geometry::Point2D pointer_world, unsigned modifiers);
+    bool handle_artboard_tool_key(WPARAM key);
+    bool handle_artboard_tool_char(wchar_t ch);
+    void paint_artboard_canvas_overlay(HDC dc, const RECT& area);
+    void paint_artboard_properties_panel(HDC dc, int window_width, int inspector_x, int content_y);
+    bool commit_artboard_numeric_field(NumericFieldId field);
+    bool handle_snap_toolbar_click(int x, int y);
+    bool handle_snap_properties_click(int x, int y);
+    void paint_snap_to_popup(HDC dc, int window_width, int topbar_height);
+    void paint_snap_properties_panel(HDC dc, int window_width, int inspector_x, int content_y);
 
     // Toolbox Customization & Dynamic Slots
     [[nodiscard]] uint32_t toolbox_visible_mask() const noexcept { return toolbox_visible_mask_; }
@@ -553,13 +646,25 @@ public:
     void toggle_toolbox_customize_flyout() noexcept { show_toolbox_customize_flyout_ = !show_toolbox_customize_flyout_; }
     [[nodiscard]] std::vector<ToolboxSlotId> visible_toolbox_slots() const;
     [[nodiscard]] int get_visible_row_for_slot(ToolboxSlotId slot) const;
+    [[nodiscard]] int get_visible_index_for_slot(ToolboxSlotId slot) const noexcept;
+    [[nodiscard]] int toolbox_columns() const noexcept { return toolbox_columns_; }
+    void set_toolbox_columns(int cols) noexcept;
+    void toggle_toolbox_columns() noexcept;
+    [[nodiscard]] int toolbox_width() const noexcept;
+    [[nodiscard]] RECT get_toolbox_slot_rect(int index) const noexcept;
+    [[nodiscard]] RECT get_toolbox_plus_rect(int total_slots) const noexcept;
+    [[nodiscard]] RECT get_toolbox_toggle_columns_rect() const noexcept;
 
 #ifdef _WIN32
     [[nodiscard]] HWND hwnd() const noexcept { return hwnd_; }
     [[nodiscard]] int toolbox_open_group() const noexcept { return toolbox_open_group_; }
     [[nodiscard]] int toolbox_focus_group() const noexcept { return toolbox_focus_group_; }
+    [[nodiscard]] int toolbox_focus_slot_index() const noexcept { return toolbox_focus_slot_index_; }
+    [[nodiscard]] bool toolbox_has_keyboard_focus() const noexcept { return toolbox_keyboard_focus_; }
     [[nodiscard]] int toolbox_flyout_index() const noexcept { return toolbox_flyout_index_; }
     bool handle_key_down(WPARAM key);
+    void handle_key_up(WPARAM key) noexcept;
+    [[nodiscard]] bool space_pan_active() const noexcept { return space_down_; }
     bool handle_toolbox_key(WPARAM key, bool alt_pressed = false, bool shift_pressed = false);
     void handle_mouse_down(int x, int y);
     void handle_mouse_down(int x, int y, unsigned modifiers);
@@ -584,19 +689,43 @@ public:
     bool handle_layers_dock_char(wchar_t ch);
     bool handle_layers_dock_context_menu(int screen_x, int screen_y, int x, int y);
     bool apply_style_patch(const vector::StylePatch &patch);
+    [[nodiscard]] bool can_convert_selected_to_bitmap() const;
+    bool convert_selected_to_bitmap(uint32_t dpi = 300);
 #endif
 
 private:
+    enum class GradientRampDragKind : uint8_t { None, Stop, Midpoint };
     // Narrow test seam for the in-process MCP E2E; credentials stay out of the public API.
     friend struct NativeWindowMcpE2eAccess;
     friend struct NativeWindowImportE2eAccess;
     friend struct NativeWindowExportE2eAccess;
+    friend struct NativeWindowFileIoE2eAccess;
+    friend struct RasterProfileWorkflowTestAccess;
     friend struct DropShadowRibbon;
 
     bool start_mcp_gateway();
+    void initialize_performance_trace() noexcept;
+    void shutdown_performance_trace() noexcept;
+    void record_performance_event(CanvasTraceKind kind,
+                                  uint64_t event_id = 0,
+                                  uint64_t frame_id = 0) noexcept;
+    void queue_coalesced_mouse_move(int x, int y, unsigned modifiers);
+    void flush_coalesced_mouse_move();
     void discard_ai_connections_choices() noexcept;
     [[nodiscard]] std::string recovery_root_path() const;
-    void scan_recovery_checkpoints(bool show_when_found = true);
+    void scan_recovery_checkpoints(bool show_when_found = true,
+                                   bool force_modal = false,
+                                   bool only_if_document_idle = false);
+    void handle_recovery_scan_worker_message();
+    void join_recovery_scan_worker() noexcept;
+    void start_native_save(std::string path);
+    void start_native_open(std::string path);
+    void start_recovery_load(document::RecoveryInfo candidate);
+    void handle_native_file_worker_message();
+    void join_native_file_job() noexcept;
+#ifdef _WIN32
+    void request_cancel_native_open_for_tab(const std::string& tab_id) noexcept;
+#endif
     void recover_selected_checkpoint();
     void discard_selected_checkpoint();
     [[nodiscard]] bool handle_recovery_key(WPARAM key);
@@ -615,30 +744,149 @@ private:
     [[nodiscard]] bool handle_import_placement_escape(WPARAM key);
     [[nodiscard]] bool place_pending_import_at(int x, int y);
     void paint_import_placement_overlay(HDC dc);
-    void export_svg_dialog(bool selected_objects, bool all_pages);
+    void update_layout_snap_preview(const document::DocumentSnapshot& snapshot,
+                                    geometry::Point2D raw_delta,
+                                    int resize_handle = -1,
+                                    bool preserve_aspect = false,
+                                    bool shape_point = false);
+    void paint_smart_guide_overlay(HDC dc, const RECT& area);
+    void export_svg_dialog(bool selected_objects, bool all_pages,
+                           bool active_artboard = false);
     [[nodiscard]] bool start_svg_export(const std::string& file_path, bool selected_objects,
-                                        bool allow_replace_existing, bool all_pages);
+                                        bool allow_replace_existing, bool all_pages,
+                                        bool active_artboard = false);
     void request_cancel_export_job();
     void cancel_export_job();
     void handle_export_worker_message(WPARAM kind);
     [[nodiscard]] bool export_job_active() const noexcept;
     void export_raster_dialog();
+    void export_selected_bitmap_master();
+    void export_selected_bitmap_master_cmyk();
+    [[nodiscard]] bool can_export_selected_bitmap_test_sheet() const;
+    void export_selected_bitmap_test_sheet();
+    void request_cancel_test_sheet_job();
+    void cancel_test_sheet_job();
+    void handle_test_sheet_worker_message(WPARAM kind);
+    void print_selected_bitmap_test_sheet();
+    void import_measurement_run();
+    void compare_measurement_runs();
     void request_cancel_raster_export_job();
     void cancel_raster_export_job();
     void handle_raster_export_worker_message(WPARAM kind);
     [[nodiscard]] bool raster_export_job_active() const noexcept;
+    [[nodiscard]] bool can_edit_selected_bitmap(bool require_srgb_preview = false) const;
+    [[nodiscard]] bool can_export_selected_bitmap_master() const;
+    [[nodiscard]] bool can_export_selected_bitmap_cmyk_master() const;
+    [[nodiscard]] bool can_assign_selected_bitmap_profile() const;
+    void assign_selected_bitmap_profile();
+    [[nodiscard]] bool can_convert_selected_bitmap_profile_to_srgb() const;
+    void convert_selected_bitmap_profile_to_srgb();
+    void request_cancel_raster_profile_conversion();
+    void cancel_raster_profile_conversion();
+    void handle_raster_profile_worker_message(WPARAM kind);
+    [[nodiscard]] bool raster_profile_conversion_active() const noexcept;
+    void edit_selected_bitmap_crop();
+    void edit_selected_bitmap_exposure();
+    [[nodiscard]] std::optional<double> selected_bitmap_exposure_ev() const;
+    bool set_selected_bitmap_exposure_ev(double exposure_ev);
+    [[nodiscard]] document::RasterLightParams selected_bitmap_light() const;
+    [[nodiscard]] bool selected_bitmap_has_light_node() const;
+    bool set_selected_bitmap_light_value(NumericFieldId field, double value);
+    [[nodiscard]] document::RasterHslParams selected_bitmap_hsl() const;
+    [[nodiscard]] double selected_bitmap_vibrance_amount() const;
+    bool set_selected_bitmap_color_adjustment(NumericFieldId field,
+                                               double value);
+    [[nodiscard]] document::RasterLevelsParams selected_bitmap_levels() const;
+    bool set_selected_bitmap_levels_value(NumericFieldId field, double value);
+    bool set_selected_bitmap_levels_channel(document::RasterToneChannel channel);
+    [[nodiscard]] document::RasterWhiteBalanceParams
+    selected_bitmap_white_balance() const;
+    bool set_selected_bitmap_white_balance_value(NumericFieldId field,
+                                                 double value);
+    [[nodiscard]] document::RasterCurvesParams selected_bitmap_curves() const;
+    bool set_selected_bitmap_curves(document::RasterCurvesParams parameters);
+    bool set_selected_bitmap_curve_point(NumericFieldId field, double value);
+    bool set_selected_bitmap_curves_channel(document::RasterToneChannel channel);
+    [[nodiscard]] document::RasterColorBalanceParams
+        selected_bitmap_color_balance() const;
+    bool set_selected_bitmap_color_balance_value(NumericFieldId field,
+                                                 double value);
+    bool toggle_selected_bitmap_color_balance_preserve_luminosity();
+    void edit_selected_bitmap_light();
+    void edit_selected_bitmap_color_balance();
+    void edit_selected_bitmap_channel_mixer();
+    void edit_selected_bitmap_local_exposure_mask();
+    void edit_selected_bitmap_adjustment_mask();
+    void edit_selected_bitmap_levels();
+      void edit_selected_bitmap_hsl();
+    void edit_selected_bitmap_curves();
+    void edit_selected_bitmap_white_balance();
+    void edit_selected_bitmap_vibrance();
+    void edit_selected_bitmap_selective_hsl();
+    void edit_selected_bitmap_clone_stamp();
+    void flip_selected_bitmap(bool horizontal);
+    [[nodiscard]] document::RasterSelectiveHslParams
+    selected_bitmap_selective_hsl(document::RasterHueRange range) const;
+    bool set_selected_bitmap_selective_hsl_value(
+        document::RasterHueRange range, int component, double value);
+    void focus_raster_adjustment_in_dock(int tab, int hsl_channel = -1);
+    bool auto_levels_selected_bitmap();
+    bool reset_selected_bitmap_tab_adjustments(int tab);
+    bool handle_raster_dock_interactive_mouse_down(int x, int y);
+    bool handle_raster_dock_interactive_mouse_move(int x, int y);
+    bool handle_raster_dock_interactive_mouse_up(int x, int y);
+
+    [[nodiscard]] int inspector_width() const noexcept;
+    [[nodiscard]] int properties_dock_content_height();
+    void scroll_properties_dock(int wheel_delta);
+    void reset_properties_dock_scroll() noexcept;
+
+    // Eyedropper & Live Canvas Color Inspection
+    [[nodiscard]] CanvasColorSample sample_canvas_color_at(int client_x, int client_y) const;
+    [[nodiscard]] bool apply_displayed_canvas_pixel(
+        int client_x, int client_y, CanvasColorSample& sample) const;
+    [[nodiscard]] const CanvasColorSample& hover_color_sample() const noexcept { return hover_color_sample_; }
+    [[nodiscard]] const CanvasColorSample& eyedropper_picked_sample() const noexcept { return eyedropper_picked_sample_; }
+    [[nodiscard]] int eyedropper_mode() const noexcept { return eyedropper_mode_; }
+    void set_eyedropper_mode(int mode) noexcept { eyedropper_mode_ = std::clamp(mode, 0, 2); }
+    bool apply_eyedropper_sample_to_objects(
+        const CanvasColorSample& sample,
+        const std::vector<document::ObjectId>& target_ids,
+        bool apply_to_stroke = false,
+        bool force_solid_color = false);
+    bool handle_eyedropper_mouse_down(int x, int y, unsigned modifiers);
+    bool handle_eyedropper_mouse_move(int x, int y, unsigned modifiers);
+    bool handle_eyedropper_property_bar_click(int x, int y);
+#ifdef _WIN32
+    void paint_raster_inspector_dock(HDC mem_dc, int panel_left, int panel_width, int content_y);
+    void paint_eyedropper_property_bar(HDC mem_dc, int w, int topbar_h, int tabbar_h, int content_top);
+    void paint_eyedropper_cursor_overlay(HDC dc, int width, int height);
+#endif
+    void handle_raster_preview_worker_message();
+    void handle_raster_histogram_worker_message();
+    void handle_autosave_worker_message();
+    void drain_autosave_jobs(bool reschedule_latest);
+    void join_autosave_jobs() noexcept;
     void paint(HDC hdc, int width, int height);
     void paint_settings_modal(HDC mem_dc, int width, int height);
     void paint_new_document_modal(HDC mem_dc, int width, int height);
     void paint_recovery_modal(HDC mem_dc, int width, int height);
     void paint_document_tab_bar(HDC mem_dc, int w, int topbar_h, int tabbar_h);
     void paint_status_bar(HDC mem_dc, int width, int height, int status_height);
+    void paint_topmost_ui_layer(HDC dc, int width, int height);
     void paint_left_toolbox(HDC mem_dc, int w, int h);
     void paint_right_inspector_dock(HDC mem_dc, int w, int h);
     void paint_layers_dock(HDC mem_dc, int insp_x, int content_y, int w, int h, int status_h);
 
     void paint_main_menu_bar(HDC mem_dc, int w, int topbar_h);
     void paint_dropdown_menu(HDC mem_dc, int menu_id, int x, int y);
+    void paint_text_case_submenu(HDC mem_dc);
+    [[nodiscard]] RECT text_case_menu_parent_rect() const noexcept;
+    [[nodiscard]] RECT text_case_submenu_rect() const noexcept;
+    void clear_text_case_submenu_tooltip() noexcept;
+    bool handle_text_case_submenu_mouse_move(int x, int y);
+    bool handle_text_case_submenu_mouse_down(int x, int y);
+    bool handle_text_case_submenu_key(unsigned key);
     RECT get_menu_bar_item_rect(int menu_index, int topbar_h) const noexcept;
     int get_menu_bar_item_at(int mouse_x, int mouse_y, int topbar_h) const noexcept;
     [[nodiscard]] bool is_menu_action_enabled(MenuActionId action) const;
@@ -676,6 +924,10 @@ private:
     [[nodiscard]] std::string recovery_directory_for_tab(DocumentTab& tab);
     void export_svg_dialog();
     void paint_canvas_rulers(HDC dc, int width, int height);
+    void paint_canvas_overlay_layer(HDC dc, int width, int height);
+    void paint_canvas_interaction_handles(HDC dc, int width, int height);
+    bool paint_direct_present_frame(int width, int height);
+    void cleanup_direct_present_target() noexcept;
     void paint_drawing_overlay(HDC dc);
     void paint_pen_overlay(HDC dc);
     void paint_drawing_tool_overlays(HDC dc);
@@ -722,9 +974,11 @@ private:
     int path_drawing_last_tool_{6};
     int toolbox_open_group_{0}; // 0: closed, 1: Quick Shapes, 2: Path Drawing, 3: Effects
     int toolbox_focus_group_{1};
+    int toolbox_focus_slot_index_{0};
     bool toolbox_keyboard_focus_{false};
     int toolbox_flyout_index_{0};
-    uint32_t toolbox_visible_mask_{0xFFF};
+    int toolbox_columns_{1}; // 1 or 2 columns layout
+    uint32_t toolbox_visible_mask_{0x7FFF}; // all 15 slots
     bool toolbox_edit_mode_{false};
     bool show_toolbox_customize_flyout_{false};
     int polygon_sides_{6};
@@ -747,6 +1001,15 @@ private:
     int active_dock_tab_{0}; // 0: Inspector, 1: Layers, 2: History
     bool show_style_inspector_{false};
     bool show_align_panel_{false};
+    bool show_snap_to_popup_{false};
+    bool show_snap_properties_{false};
+    bool artboard_name_editing_{false};
+    std::wstring artboard_name_buffer_;
+    document::ArtboardId artboard_name_target_{document::kInvalidArtboardId};
+    std::unique_ptr<tools::ArtboardToolController> artboard_tool_;
+    int artboard_pointer_start_x_{0};
+    int artboard_pointer_start_y_{0};
+    uint64_t artboard_pointer_revision_{0};
     bool show_page_units_flyout_{false};
     int page_units_flyout_focus_index_{0};
     int style_inspector_scroll_{0};
@@ -755,6 +1018,12 @@ private:
 
     // Multi-Document Tabs
     std::vector<DocumentTab> tabs_;
+#ifdef _WIN32
+    std::vector<std::shared_ptr<AutosaveJobSession>> autosave_jobs_;
+    std::shared_ptr<RecoveryScanJobSession> recovery_scan_job_;
+    std::thread recovery_scan_worker_;
+    std::shared_ptr<NativeFileJobSession> native_file_job_;
+#endif
     bool mcp_enabled_{false};
     bool mcp_edit_access_{false};
     std::unique_ptr<NativeWindowAutomationRuntime> mcp_runtime_;
@@ -782,6 +1051,18 @@ private:
     std::unordered_set<std::string> restored_recovery_paths_;
     bool recovery_candidates_truncated_{false};
     bool show_recovery_modal_{false};
+    bool recovery_scan_pending_{false};
+    bool recovery_scan_show_when_found_{false};
+    bool recovery_scan_force_modal_{false};
+    bool recovery_scan_only_if_idle_{false};
+    bool recovery_scan_user_activity_{false};
+    bool native_file_job_pending_{false};
+    bool native_file_job_user_activity_{false};
+    std::string recovery_scan_idle_document_id_;
+    uint64_t recovery_scan_idle_epoch_{0};
+    uint64_t recovery_scan_idle_revision_{0};
+    uint64_t recovery_scan_idle_view_generation_{0};
+    size_t recovery_scan_idle_tab_count_{0};
     size_t recovery_selected_index_{0};
     size_t recovery_first_visible_{0};
     int recovery_focus_index_{1}; // 0: list, 1: Recover, 2: Discard, 3: Later
@@ -835,6 +1116,8 @@ private:
     int open_menu_id_{-1};
     int hovered_menu_bar_item_{-1};
     int hovered_menu_item_{-1};
+    int open_submenu_action_{-1};
+    int hovered_submenu_item_{-1};
 
     // File Menu Dropdown State (Corel Reference - Compatibility)
     bool show_file_menu_{false};
@@ -848,6 +1131,7 @@ private:
     bool show_settings_modal_{false};
     int settings_active_tab_{0}; // 0: Giao diện, 1: Đơn vị & Lưới, 2: Quản lý màu & ICC, 3: Thi công & CNC, 4: Hiệu năng, 5: Phím tắt
     int settings_theme_choice_{1}; // 0: Dark Mode, 1: Light Mode, 2: Auto OS
+    bool settings_artboard_overview_choice_{false};
     int settings_accent_choice_{0}; // 0: Cyber Mint, 1: Sky Blue, 2: Purple Tech, 3: Amber CAD
     int settings_unit_choice_{0}; // mm, cm, in, pt, m, ft, yd, pc
     int settings_tac_scope_choice_{0}; // 0: document, 1: active page, 2: selection
@@ -896,6 +1180,19 @@ private:
     bool is_creating_shape_{false};
     unsigned shape_drag_modifiers_{0};
     uint64_t pointer_start_revision_{0};
+    uint64_t smart_guide_reference_revision_{0};
+    document::PageId smart_guide_reference_page_{document::kInvalidPageId};
+    bool smart_guide_reference_artboard_mode_{false};
+    std::vector<document::ObjectId> smart_guide_reference_selection_roots_;
+    document::ObjectId smart_guide_reference_isolation_{document::kInvalidObjectId};
+    int smart_guide_reference_active_layer_{-1};
+    bool smart_guide_reference_locked_{false};
+    bool smart_guide_reference_current_layer_only_{false};
+    bool smart_guide_reference_hidden_{false};
+    std::vector<vector::precision::snap::LayoutSnapReference> smart_guide_references_;
+    std::array<std::optional<vector::precision::snap::LayoutSnapKey>, 2> smart_guide_acquisition_{};
+    vector::precision::snap::LayoutSnapSolution smart_guide_solution_;
+    std::optional<geometry::Rect2D> smart_guide_moving_bounds_;
     int last_pointer_x_{0};
     int last_pointer_y_{0};
     int drag_start_x_{0};
@@ -905,6 +1202,7 @@ private:
     geometry::Point2D pointer_down_world_{};
     geometry::Point2D pointer_current_world_{};
     geometry::Point2D drag_preview_delta_{};
+    std::optional<geometry::Point2D> shape_snap_effective_world_;
     std::optional<geometry::Rect2D> drag_preview_bounds_;
     bool is_marquee_{false};
     bool pointer_preserve_aspect_{false};
@@ -920,9 +1218,14 @@ private:
     std::shared_ptr<const color::IccPreview> render_color_preview_;
     std::shared_ptr<const color::ProfileResource> rgb_preview_resource_;
     std::shared_ptr<const color::ProfileResource> cmyk_preview_resource_;
+    std::shared_ptr<const color::ProfileResource> display_preview_resource_;
     std::filesystem::path rgb_preview_profile_, cmyk_preview_profile_;
+    std::filesystem::path display_preview_profile_path_;
+    std::wstring display_preview_device_;
     bool proof_colors_enabled_{false};
     bool gamut_warning_enabled_{false};
+    color::IccRenderingIntent proof_intent_{
+        color::IccRenderingIntent::RelativeColorimetric};
     bool overprint_preview_enabled_{false};
     bool page_color_preview_available_{true};
     [[nodiscard]] const std::shared_ptr<const color::IccPreview>&
@@ -941,13 +1244,33 @@ private:
     std::unique_ptr<tools::ContourToolController> contour_tool_;
     std::unique_ptr<tools::GradientToolController> gradient_tool_;
     std::unique_ptr<tools::DimensionToolController> dimension_tool_;
+    std::unique_ptr<tools::AnnotationToolController> annotation_tool_;
 #ifdef _WIN32
     std::shared_ptr<ImportJobSession> import_job_;
     std::unique_ptr<ImportPlacementSession> import_placement_;
     bool last_import_succeeded_{false};
     std::shared_ptr<ExportJobSession> export_job_;
     std::shared_ptr<RasterExportJobSession> raster_export_job_;
+    std::shared_ptr<RasterProfileConversionJobSession> raster_profile_conversion_job_;
+    std::shared_ptr<TestSheetJobSession> test_sheet_job_;
+    std::function<std::optional<std::filesystem::path>(bool)>
+        raster_profile_file_picker_;
+    std::function<std::optional<std::filesystem::path>()>
+        raster_bitmap_master_file_picker_;
+    std::unique_ptr<raster::RasterEditPreviewService> raster_preview_service_;
+    std::unique_ptr<raster::RasterHistogramService> raster_histogram_service_;
+    std::array<bool, 4> raster_histogram_channels_visible_{{true, true, true, true}};
+    document::RasterTonalRange raster_color_balance_active_range_{
+        document::RasterTonalRange::Midtones};
+    uint8_t raster_adjustment_inspector_tab_{1};
 #endif
+    uint8_t raster_hsl_active_channel_{0}; // 0: Master, 1..6: R, Y, G, C, B, M
+    int raster_dock_drag_control_{0};
+    int properties_dock_scroll_{0};
+    int eyedropper_mode_{0}; // 0: Solid Color, 1: Copy Gradient, 2: Copy Object Style
+    bool eyedropper_has_picked_sample_{false};
+    CanvasColorSample eyedropper_picked_sample_{};
+    CanvasColorSample hover_color_sample_{};
     std::string pen_numeric_buffer_;
     std::string pen_numeric_length_;
     std::string pen_numeric_angle_;
@@ -958,6 +1281,10 @@ private:
     bool pen_close_candidate_{false};
     int last_canvas_pointer_x_{0};
     int last_canvas_pointer_y_{0};
+    PointerMoveCoalescer pointer_move_coalescer_;
+    GradientRampDragKind gradient_ramp_drag_kind_{GradientRampDragKind::None};
+    uint64_t gradient_ramp_drag_stop_id_{0};
+    bool gradient_ramp_drag_moved_{false};
 
     std::string status_msg_{"Ready | Click canvas or tools to start vector editing"};
     bool auto_accept_import_review_{false};
@@ -967,12 +1294,13 @@ private:
 
     // Guideline State
     std::vector<Guideline> guidelines_;
+    uint64_t next_guideline_id_{1};
     bool show_guidelines_{true};
     bool is_dragging_guideline_{false};
     GuidelineOrientation drag_guideline_orientation_{GuidelineOrientation::Horizontal};
     double drag_guideline_pos_mm_{0.0};
     int selected_guideline_index_{-1};
-    int previous_drawing_tool_{1};
+    int previous_drawing_tool_{0};
 
     // Numeric Input State (Direct typing on Property Bar & Modals)
     struct NumericInputContext {
@@ -984,6 +1312,7 @@ private:
         std::vector<document::ObjectId> selection_ids;
         document::ObjectId contour_target{document::kInvalidObjectId};
         uint64_t gradient_stop_id{};
+        document::ArtboardId artboard_id{document::kInvalidArtboardId};
         bool valid{};
     };
     NumericFieldId active_num_field_{NumericFieldId::None};
@@ -1012,6 +1341,9 @@ private:
 
     // Canvas Viewport Cache (Fast zero-allocation redraw during interaction)
     bool canvas_cache_valid_{false};
+    bool direct_present_frame_{false};
+    bool direct_present_active_{false};
+    bool canvas_overlay_only_{false};
     uint64_t cached_revision_{0};
     document::SnapshotPtr cached_canvas_snapshot_;
     std::shared_ptr<const color::IccPreview> cached_canvas_profile_;
@@ -1021,6 +1353,10 @@ private:
     int cached_canvas_w_{0};
     int cached_canvas_h_{0};
     ThemeMode cached_theme_{ThemeMode::Light};
+    bool cached_artboard_overview_{false};
+    document::ArtboardId cached_active_artboard_id_{document::kInvalidArtboardId};
+    geometry::Point2D artboard_pointer_start_world_{};
+    int artboard_resize_handle_{-1};
 #ifdef _WIN32
     HDC cached_canvas_dc_{nullptr};
     HBITMAP cached_canvas_bmp_{nullptr};
@@ -1049,6 +1385,19 @@ private:
     void cleanup_ui_fonts() noexcept;
     friend struct DropShadowRibbon;
 #endif
+
+    std::unique_ptr<CanvasTrace> canvas_trace_;
+    std::thread canvas_trace_worker_;
+    std::atomic<bool> canvas_trace_stop_{false};
+    std::wstring canvas_trace_output_path_;
+    std::atomic<bool> canvas_trace_output_ready_{false};
+    uint64_t next_trace_event_id_{1};
+    uint64_t next_trace_frame_id_{1};
+    uint64_t pending_trace_event_id_{0};
+    uint64_t active_trace_event_id_{0};
+    uint64_t active_trace_frame_id_{0};
+    uint64_t last_trace_event_id_{0};
+    bool trace_first_frame_recorded_{false};
 
     DesktopWindow shell_;
 };

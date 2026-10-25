@@ -34,6 +34,7 @@ add_library(pikdraw_interop STATIC
     src/adapters/dxf_entity_parser.cpp
     src/adapters/dxf_worker_adapter.cpp
     src/adapters/raster_image_decoder.cpp
+    src/adapters/raster_png_decoder.cpp
     src/adapters/raster_worker_adapter.cpp
     src/adapters/svg_importer.cpp
     src/adapters/svg_path_parser.cpp
@@ -44,6 +45,7 @@ add_library(pikdraw_interop STATIC
     src/adapters/pdf_worker_adapter.cpp
     src/adapters/pdf_page_set_builder.cpp
     src/adapters/eps_worker_adapter.cpp
+    src/writers/raster_image_writer.cpp
     src/writers/svg_exporter.cpp
     src/export/export_job.cpp
     src/export/export_options.cpp
@@ -76,11 +78,12 @@ target_link_libraries(pikdraw_interop PUBLIC
     pikdraw_document
     pikdraw_geometry
     pikdraw_color
+    pikdraw_raster
     pikdraw_typography
 )
 
 if(WIN32)
-    target_link_libraries(pikdraw_interop PUBLIC bcrypt windowscodecs uuid)
+    target_link_libraries(pikdraw_interop PUBLIC bcrypt windowscodecs ole32 oleaut32 uuid)
 endif()
 
 if(PIKDRAW_BUILD_TESTS)
@@ -94,6 +97,7 @@ if(PIKDRAW_BUILD_TESTS)
             pikdraw_document
             pikdraw_geometry
             pikdraw_color
+            pikdraw_raster
             pikdraw_typography
         )
         add_test(NAME ${target_name} COMMAND ${target_name})
@@ -103,10 +107,12 @@ if(PIKDRAW_BUILD_TESTS)
     add_interop_test(test_pikdraw_interop_dxf_adapter tests/adapters/test_dxf_adapter.cpp)
     add_interop_test(test_pikdraw_interop_dxf_worker_adapter tests/adapters/test_dxf_worker_adapter.cpp)
     add_interop_test(test_pikdraw_interop_raster_image_decoder tests/adapters/test_raster_image_decoder.cpp)
+    add_interop_test(test_pikdraw_interop_raster_asset_byte_source tests/adapters/test_raster_asset_byte_source.cpp)
     add_interop_test(test_pikdraw_interop_raster_worker_adapter tests/adapters/test_raster_worker_adapter.cpp)
     add_interop_test(test_pikdraw_interop_svg_adapter tests/adapters/test_svg_adapter.cpp)
     add_interop_test(test_pikdraw_interop_svg_worker_adapter tests/adapters/test_svg_worker_adapter.cpp)
     add_interop_test(test_pikdraw_interop_svg_exporter tests/writers/test_svg_exporter.cpp)
+    add_interop_test(test_pikdraw_interop_raster_image_writer tests/writers/test_raster_image_writer.cpp)
     add_interop_test(test_pikdraw_interop_export_job tests/writers/test_export_job.cpp)
     add_interop_test(test_pikdraw_interop_export_report tests/writers/test_export_report.cpp)
     add_interop_test(test_pikdraw_interop_export_options tests/writers/test_export_options.cpp)

@@ -56,6 +56,16 @@ Path2D make_arrow_path(const DimensionArrow& arrow, ArrowType type, double size_
         path = Path2D::make_ellipse(arrow.tip.x, arrow.tip.y, r, r);
         break;
     }
+    case ArrowType::Open: {
+        const Point2D dir = normalize_vec(arrow.direction);
+        const Point2D perp{-dir.y, dir.x};
+        const Point2D base = arrow.tip - dir * size;
+        const double half_w = size * 0.55;
+        path.move_to(base + perp * half_w);
+        path.line_to(arrow.tip);
+        path.line_to(base - perp * half_w);
+        break;
+    }
     }
 
     return path;

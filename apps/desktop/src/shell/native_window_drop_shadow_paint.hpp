@@ -3,6 +3,7 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
 #include "pikdraw/desktop/presenters/object_style.hpp"
 #include "native_style_dialog.hpp"
+#include "native_window_length_input.hpp"
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
@@ -115,23 +116,24 @@ struct DropShadowRibbon {
         draw_rib_btn(80, 155, preset_txt.c_str(), cur_preset >= 0, cur_preset >= 0 ? col_teal : col_text_white);
 
         // 3. Offset X & Y, Feather, Opacity
-        std::ostringstream sx, sy, ssigma, sopacity;
-        sx << std::fixed << std::setprecision(1) << shadow.dx_mm;
-        sy << std::fixed << std::setprecision(1) << shadow.dy_mm;
-        ssigma << std::fixed << std::setprecision(1) << shadow.sigma_x_mm;
+        const auto unit = win.display_length_unit_;
+        const auto sx = format_mm_display_utf8(shadow.dx_mm, unit, 4);
+        const auto sy = format_mm_display_utf8(shadow.dy_mm, unit, 4);
+        const auto ssigma = format_mm_display_utf8(shadow.sigma_x_mm, unit, 4);
+        std::ostringstream sopacity;
         sopacity << std::fixed << std::setprecision(0) << (shadow.opacity * 100.0);
 
-        draw_num_input(160, 245, L"X:", sx.str(), NumericFieldId::EffectOffsetX, false);
-        draw_num_input(250, 335, L"Y:", sy.str(), NumericFieldId::EffectOffsetY, false);
-        draw_num_input(340, 435, is_vi ? L"Nhòe:" : L"Feather:", ssigma.str(), NumericFieldId::EffectSigmaX, false);
-        draw_num_input(440, 530, is_vi ? L"Mờ:" : L"Opacity:", sopacity.str() + "%", NumericFieldId::EffectOpacity, false);
+        draw_num_input(160, 245, L"X:", sx, NumericFieldId::ShadowOffsetX, false);
+        draw_num_input(250, 335, L"Y:", sy, NumericFieldId::ShadowOffsetY, false);
+        draw_num_input(340, 435, is_vi ? L"Nhòe:" : L"Feather:", ssigma, NumericFieldId::ShadowFeatherX, false);
+        draw_num_input(440, 530, is_vi ? L"Mờ:" : L"Opacity:", sopacity.str() + "%", NumericFieldId::ShadowOpacity, false);
 
         // 4. Color Swatch
-        const auto rgb = color::to_preview_rgba(shadow.color);
-        COLORREF col_swatch = RGB(
-            std::clamp(static_cast<int>(std::round(rgb.r * 255.0)), 0, 255),
-            std::clamp(static_cast<int>(std::round(rgb.g * 255.0)), 0, 255),
-            std::clamp(static_cast<int>(std::round(rgb.b * 255.0)), 0, 255));
+        const auto* preview = win.effective_color_preview();
+        const auto swatch = (preview
+            ? preview->convert(shadow.color)
+            : color::to_preview_rgba(shadow.color)).to_device();
+        COLORREF col_swatch = RGB(swatch.r, swatch.g, swatch.b);
         draw_rib_btn(535, 615, is_vi ? L"■ Màu" : L"■ Color", false, col_swatch);
 
         // 5. Blend Mode
@@ -230,25 +232,25 @@ struct DropShadowRibbon {
 
         // Offset X [160, 245]
         if (x >= 160 && x <= 245) {
-            win.start_numeric_input(NumericFieldId::EffectOffsetX);
+            win.start_numeric_input(NumericFieldId::ShadowOffsetX);
             return true;
         }
 
         // Offset Y [250, 335]
         if (x >= 250 && x <= 335) {
-            win.start_numeric_input(NumericFieldId::EffectOffsetY);
+            win.start_numeric_input(NumericFieldId::ShadowOffsetY);
             return true;
         }
 
         // Feather / Nhòe [340, 435]
         if (x >= 340 && x <= 435) {
-            win.start_numeric_input(NumericFieldId::EffectSigmaX);
+            win.start_numeric_input(NumericFieldId::ShadowFeatherX);
             return true;
         }
 
         // Opacity [440, 530]
         if (x >= 440 && x <= 530) {
-            win.start_numeric_input(NumericFieldId::EffectOpacity);
+            win.start_numeric_input(NumericFieldId::ShadowOpacity);
             return true;
         }
 
@@ -260,7 +262,7 @@ struct DropShadowRibbon {
                 if (const auto edited = edit_source_color(
                         win.hwnd_, shadow.color, 0.0, false,
                         is_vi, ColorEditContext::Generic,
-                        false, false, snapshot->color_mode())) {
+                        false, false, snapshot->color_mode(), false, win.effective_color_preview())) {
                     if (win.workflow().set_selected_effect_color(effect_index, edited->color)) {
                         win.status_msg_ = is_vi
                             ? "Đã cập nhật màu bóng đổ · Ctrl+Z hoàn tác"

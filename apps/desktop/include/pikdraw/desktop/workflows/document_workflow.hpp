@@ -15,6 +15,7 @@
 #include "pikdraw/geometry/primitives/point.hpp"
 
 #include <functional>
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -52,6 +53,8 @@ enum class SelectSameCriterion : uint8_t {
 struct ImportProgress {
     ImportProgressStage stage{ImportProgressStage::Snapshotting};
     size_t records_received{0};
+    uint64_t source_bytes_copied{0};
+    uint64_t source_bytes_total{0};
 };
 
 struct ImportIssueSummary {
@@ -461,6 +464,8 @@ public:
     bool set_selected_blend_mode(document::BlendMode mode);
     bool add_selected_effect(document::EffectParameters parameters);
     bool clear_selected_effects();
+    [[nodiscard]] bool can_clear_all_effects() const;
+    bool clear_all_effects();
     bool remove_selected_effect(size_t effect_index);
     [[nodiscard]] bool can_move_selected_effect(size_t effect_index,
                                                 int direction) const;
@@ -498,8 +503,30 @@ public:
         double separate_offset_mm = 0.0
     );
 
+    /// Knife cut on selected or candidate objects using true geometric path bisecting
+    bool cut_objects_by_line(
+        const geometry::Point2D& p1,
+        const geometry::Point2D& p2,
+        double separate_offset_mm = 0.0,
+        double gap_mm = 0.0
+    );
+
+    /// Vector Eraser sweeping along stroke
+    bool erase_objects_by_stroke(
+        const std::vector<geometry::Point2D>& stroke,
+        double diameter_mm = 2.0,
+        bool round_nib = true
+    );
+
+    /// Trim target object by subtracting source objects
+    bool trim_objects_source_target(
+        document::ObjectId target_id,
+        const std::vector<document::ObjectId>& source_ids,
+        bool keep_sources = true
+    );
+
     /// Trim / Cookie-cutter a bitmap with a vector contour and optionally offset the extracted piece
-    bool trim_bitmap_with_vector(
+    bool create_bitmap_crop_from_vector_bounds(
         document::ObjectId bitmap_id,
         document::ObjectId vector_cutter_id,
         double separate_offset_mm = 25.0
@@ -508,10 +535,10 @@ public:
     /// Automatic weld of all overlapping shapes (CNC helper)
     bool auto_weld_overlapping();
 
-    /// Save native binary .pikdraw container
+    /// Save native binary .pr container
     bool save_native(const std::string& file_path);
 
-    /// Reopen native binary .pikdraw container
+    /// Reopen native binary .pr container
     bool open_native(const std::string& file_path);
 
     /// Atomically export the current snapshot as SVG.
@@ -537,8 +564,16 @@ public:
     /// Synchronize shell status bar with active document metrics
     void sync_status_bar();
 
-    [[nodiscard]] size_t active_layer_index() const noexcept { return active_layer_index_; }
-    void set_active_layer_index(size_t index) noexcept { active_layer_index_ = index; }
+    [[nodiscard]] size_t active_layer_index() const noexcept {
+        const auto snapshot = root_.document().current_snapshot();
+        if (!snapshot || snapshot->page().layers.empty()) return 0;
+        return std::min(active_layer_index_, snapshot->page().layers.size() - 1);
+    }
+    void set_active_layer_index(size_t index) noexcept {
+        const auto snapshot = root_.document().current_snapshot();
+        active_layer_index_ = !snapshot || snapshot->page().layers.empty()
+            ? 0 : std::min(index, snapshot->page().layers.size() - 1);
+    }
 
 private:
     struct EffectDraftState {

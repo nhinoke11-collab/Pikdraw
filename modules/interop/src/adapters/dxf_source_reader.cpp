@@ -1,4 +1,5 @@
 #include "dxf_importer_internal.hpp"
+#include "pikdraw/geometry/units/length_unit.hpp"
 
 #include <algorithm>
 #include <charconv>
@@ -153,28 +154,34 @@ bool AllowedCodes(const EntityInfo &entity, std::initializer_list<int> codes) {
 }
 
 bool UnitScale(int code, double &scale) {
+  using pikdraw::geometry::units::LengthUnit;
+  LengthUnit unit{};
   switch (code) {
   case 1:
-    scale = 25.4;
-    return true;
+    unit = LengthUnit::Inch;
+    break;
   case 2:
-    scale = 304.8;
-    return true;
+    unit = LengthUnit::Foot;
+    break;
   case 4:
-    scale = 1.0;
-    return true;
+    unit = LengthUnit::Millimeter;
+    break;
   case 5:
-    scale = 10.0;
-    return true;
+    unit = LengthUnit::Centimeter;
+    break;
   case 6:
-    scale = 1000.0;
-    return true;
+    unit = LengthUnit::Meter;
+    break;
   case 10:
-    scale = 914.4;
-    return true;
+    unit = LengthUnit::Yard;
+    break;
   default:
     return false;
   }
+  const auto factor = pikdraw::geometry::units::millimeters_per_unit(unit);
+  if (!factor) return false;
+  scale = *factor;
+  return true;
 }
 
 bool ParseUnits(std::span<const Pair> section, int &units) {

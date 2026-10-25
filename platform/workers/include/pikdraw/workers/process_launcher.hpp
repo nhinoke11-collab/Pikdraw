@@ -51,7 +51,9 @@ public:
     // A v2 request is never downgraded to the legacy raw-byte protocol.
     [[nodiscard]] bool NegotiateV2(
         uint32_t required_features,
-        std::chrono::milliseconds timeout);
+        std::chrono::milliseconds timeout,
+        SystemMemoryPressureWaiter* memory_waiter = nullptr,
+        std::stop_token cancellation = {});
 
     // Streams bounded v2 proposal frames to one consumer with backpressure.
     [[nodiscard]] bool TransactV2ProposalStream(
@@ -59,7 +61,8 @@ public:
         std::chrono::milliseconds timeout,
         const pikdraw::interop::V2ProposalStreamLimits& limits,
         const std::function<bool(const pikdraw::interop::IpcV2Frame&)>& consumer,
-        std::stop_token cancellation = {});
+        std::stop_token cancellation = {},
+        SystemMemoryPressureWaiter* memory_waiter = nullptr);
 
     // Sends framed packet and waits for response up to timeout
     [[nodiscard]] std::optional<std::vector<uint8_t>> TransactBinaryPayload(
@@ -72,7 +75,9 @@ public:
         std::span<const uint8_t> input,
         uint64_t max_output_bytes,
         std::chrono::milliseconds timeout,
-        std::vector<uint8_t>& output);
+        std::vector<uint8_t>& output,
+        std::stop_token cancellation = {},
+        SystemMemoryPressureWaiter* memory_waiter = nullptr);
     [[nodiscard]] const char* LastTransportFailure() const noexcept { return last_transport_failure_; }
     [[nodiscard]] DWORD LastWorkerExitCode() const noexcept { return last_worker_exit_code_; }
     [[nodiscard]] const AppContainerProfileGuard& GetAppContainer() const noexcept { return app_container_; }

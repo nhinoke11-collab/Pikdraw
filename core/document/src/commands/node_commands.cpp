@@ -1,4 +1,5 @@
 #include "pikdraw/document/commands/node_commands.hpp"
+#include "pikdraw/document/model/path_adapter.hpp"
 #include "path_command_support.hpp"
 #include <algorithm>
 #include <cmath>
@@ -273,27 +274,40 @@ bool ConvertSegmentKindCommand::apply_edit(EditablePath& path, PathTopologyMappi
         it->kind = PathSegmentKind::CubicBezier;
         const auto p0 = subpath->nodes[idx].anchor;
         const auto p1 = subpath->nodes[next_idx].anchor;
-        subpath->nodes[idx].outgoing_handle = p0 + (p1 - p0) * (1.0 / 3.0);
-        subpath->nodes[idx].has_outgoing_handle = true;
-        if (subpath->nodes[idx].mode == PathNodeMode::Corner ||
-            subpath->nodes[idx].mode == PathNodeMode::AutoSmooth) {
-            subpath->nodes[idx].mode = PathNodeMode::Cusp;
-        }
-        subpath->nodes[next_idx].incoming_handle = p0 + (p1 - p0) * (2.0 / 3.0);
-        subpath->nodes[next_idx].has_incoming_handle = true;
-        if (subpath->nodes[next_idx].mode == PathNodeMode::Corner ||
-            subpath->nodes[next_idx].mode == PathNodeMode::AutoSmooth) {
-            subpath->nodes[next_idx].mode = PathNodeMode::Cusp;
-        }
+
+        auto prepare_node = [&](PathNode& node, size_t node_idx, bool modify_outgoing, const geometry::Point2D& new_handle) {
+            if (node.mode == PathNodeMode::AutoSmooth) {
+                const auto [in_h, out_h] = editable_path_handles_for(*subpath, node_idx);
+                node.incoming_handle = in_h;
+                node.has_incoming_handle = (subpath->closed || node_idx > 0);
+                node.outgoing_handle = out_h;
+                node.has_outgoing_handle = (subpath->closed || node_idx + 1 < n);
+            }
+            if (modify_outgoing) {
+                node.outgoing_handle = new_handle;
+                node.has_outgoing_handle = true;
+            } else {
+                node.incoming_handle = new_handle;
+                node.has_incoming_handle = true;
+            }
+            node.mode = PathNodeMode::Cusp;
+        };
+
+        prepare_node(subpath->nodes[idx], idx, true, p0 + (p1 - p0) * (1.0 / 3.0));
+        prepare_node(subpath->nodes[next_idx], next_idx, false, p0 + (p1 - p0) * (2.0 / 3.0));
     } else if (new_kind_ == PathSegmentKind::Line) {
         it->kind = PathSegmentKind::Line;
         subpath->nodes[idx].has_outgoing_handle = false;
         subpath->nodes[next_idx].has_incoming_handle = false;
         if (!subpath->nodes[idx].has_incoming_handle) {
             subpath->nodes[idx].mode = PathNodeMode::Corner;
+        } else {
+            subpath->nodes[idx].mode = PathNodeMode::Cusp;
         }
         if (!subpath->nodes[next_idx].has_outgoing_handle) {
             subpath->nodes[next_idx].mode = PathNodeMode::Corner;
+        } else {
+            subpath->nodes[next_idx].mode = PathNodeMode::Cusp;
         }
     }
 
@@ -359,19 +373,27 @@ bool BendSegmentCommand::apply_edit(EditablePath& path, PathTopologyMapping& map
     const size_t next_idx = (idx + 1) % n;
 
     it->kind = PathSegmentKind::CubicBezier;
-    subpath->nodes[idx].outgoing_handle = outgoing_handle_;
-    subpath->nodes[idx].has_outgoing_handle = true;
-    if (subpath->nodes[idx].mode == PathNodeMode::Corner ||
-        subpath->nodes[idx].mode == PathNodeMode::AutoSmooth) {
-        subpath->nodes[idx].mode = PathNodeMode::Cusp;
-    }
 
-    subpath->nodes[next_idx].incoming_handle = incoming_handle_;
-    subpath->nodes[next_idx].has_incoming_handle = true;
-    if (subpath->nodes[next_idx].mode == PathNodeMode::Corner ||
-        subpath->nodes[next_idx].mode == PathNodeMode::AutoSmooth) {
-        subpath->nodes[next_idx].mode = PathNodeMode::Cusp;
-    }
+    auto prepare_node_for_bend = [&](PathNode& node, size_t node_idx, bool modify_outgoing, const geometry::Point2D& new_handle) {
+        if (node.mode == PathNodeMode::AutoSmooth) {
+            const auto [in_h, out_h] = editable_path_handles_for(*subpath, node_idx);
+            node.incoming_handle = in_h;
+            node.has_incoming_handle = (subpath->closed || node_idx > 0);
+            node.outgoing_handle = out_h;
+            node.has_outgoing_handle = (subpath->closed || node_idx + 1 < n);
+        }
+        if (modify_outgoing) {
+            node.outgoing_handle = new_handle;
+            node.has_outgoing_handle = true;
+        } else {
+            node.incoming_handle = new_handle;
+            node.has_incoming_handle = true;
+        }
+        node.mode = PathNodeMode::Cusp;
+    };
+
+    prepare_node_for_bend(subpath->nodes[idx], idx, true, outgoing_handle_);
+    prepare_node_for_bend(subpath->nodes[next_idx], next_idx, false, incoming_handle_);
 
     detail::add_mapping(mapping, PathElementKind::Segment, segment_id_.value(),
                         segment_id_.value(), IdMappingRelation::Preserved);

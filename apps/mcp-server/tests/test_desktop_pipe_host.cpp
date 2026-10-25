@@ -3,8 +3,12 @@
 #include "pikdraw/automation/json_value.hpp"
 
 #include <atomic>
+#include <array>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <string>
+#include <string_view>
 #include <thread>
 
 #ifdef _WIN32
@@ -115,7 +119,87 @@ void test_agent_document_identity() {
               *second.get("status")->string() == "ok" && second_id && second_id->string() &&
               !second_id->string()->empty() && *first_id->string() != *second_id->string(),
           "separate agent documents receive distinct identities");
-    check(window.tabs().size() == 3, "agent document creation preserves the original tab");
+    const auto typed_created = runtime.handle(window, JsonValue(JsonValue::Object{
+        {"operation", "document.create"}, {"session_handle", *edit_handle->string()},
+        {"title", "Agent inch document"}, {"page_width", 10.0},
+        {"page_height", 12.0}, {"length_unit", "in"}}));
+    const auto* typed_width = typed_created.get("page_width_mm");
+    const auto* typed_height = typed_created.get("page_height_mm");
+    check(typed_created.get("status") && typed_created.get("status")->string() &&
+              *typed_created.get("status")->string() == "ok" && typed_width && typed_width->number() &&
+              typed_height && typed_height->number() &&
+              std::abs(*typed_width->number() - 254.0) < 1e-9 &&
+              std::abs(*typed_height->number() - 304.8) < 1e-9,
+          "AC-UNIT11 document.create converts typed inches to canonical millimeters");
+    check(window.tabs().size() == 4, "typed document creation preserves every existing tab");
+
+    struct UnitFixture {
+        std::string_view unit;
+        double width;
+        double height;
+    };
+    constexpr std::array<UnitFixture, 8> physical_units{{
+        {"mm", 254.0, 304.8}, {"cm", 25.4, 30.48}, {"m", 0.254, 0.3048},
+        {"in", 10.0, 12.0}, {"ft", 10.0 / 12.0, 1.0},
+        {"yd", 10.0 / 36.0, 1.0 / 3.0}, {"pt", 720.0, 864.0}, {"pc", 60.0, 72.0}}};
+    bool all_units_resolve_to_canonical_mm = true;
+    for (const auto& fixture : physical_units) {
+        const auto converted = runtime.handle(window, JsonValue(JsonValue::Object{
+            {"operation", "document.create"}, {"session_handle", *edit_handle->string()},
+            {"page_width", fixture.width}, {"page_height", fixture.height},
+            {"length_unit", std::string(fixture.unit)}}));
+        const auto* width_mm = converted.get("page_width_mm");
+        const auto* height_mm = converted.get("page_height_mm");
+        all_units_resolve_to_canonical_mm = all_units_resolve_to_canonical_mm &&
+            converted.get("status") && converted.get("status")->string() &&
+            *converted.get("status")->string() == "ok" && width_mm && width_mm->number() &&
+            height_mm && height_mm->number() && std::abs(*width_mm->number() - 254.0) < 1e-8 &&
+            std::abs(*height_mm->number() - 304.8) < 1e-8;
+    }
+    check(all_units_resolve_to_canonical_mm,
+          "AC-UNIT11 document.create accepts all eight physical units and returns canonical millimeters");
+
+    const auto tabs_before_invalid = window.tabs().size();
+    const auto rejected_pixel = runtime.handle(window, JsonValue(JsonValue::Object{
+        {"operation", "document.create"}, {"session_handle", *edit_handle->string()},
+        {"page_width", 10.0}, {"page_height", 12.0}, {"length_unit", "px"}}));
+    check(rejected_pixel.get("code") && rejected_pixel.get("code")->string() &&
+              *rejected_pixel.get("code")->string() == "INVALID_ARGUMENT" &&
+              window.tabs().size() == tabs_before_invalid,
+          "AC-UNIT11 document.create rejects pixel dimensions without an explicit DPI basis");
+
+    const auto rejected_mixed = runtime.handle(window, JsonValue(JsonValue::Object{
+        {"operation", "document.create"}, {"session_handle", *edit_handle->string()},
+        {"page_width_mm", 254.0}, {"page_height_mm", 304.8},
+        {"page_width", 10.0}, {"page_height", 12.0}, {"length_unit", "in"}}));
+    check(rejected_mixed.get("code") && rejected_mixed.get("code")->string() &&
+              *rejected_mixed.get("code")->string() == "INVALID_ARGUMENT" &&
+              window.tabs().size() == tabs_before_invalid,
+          "AC-UNIT11 document.create rejects mixed mm and typed fields without opening a tab");
+
+    const auto rejected_unknown_unit = runtime.handle(window, JsonValue(JsonValue::Object{
+        {"operation", "document.create"}, {"session_handle", *edit_handle->string()},
+        {"page_width", 10.0}, {"page_height", 12.0}, {"length_unit", "furlong"}}));
+    check(rejected_unknown_unit.get("code") && rejected_unknown_unit.get("code")->string() &&
+              *rejected_unknown_unit.get("code")->string() == "INVALID_ARGUMENT" &&
+              window.tabs().size() == tabs_before_invalid,
+          "AC-UNIT11 document.create rejects unknown units without opening a tab");
+
+    const auto rejected_small_page = runtime.handle(window, JsonValue(JsonValue::Object{
+        {"operation", "document.create"}, {"session_handle", *edit_handle->string()},
+        {"page_width", 0.1}, {"page_height", 12.0}, {"length_unit", "in"}}));
+    check(rejected_small_page.get("code") && rejected_small_page.get("code")->string() &&
+              *rejected_small_page.get("code")->string() == "INVALID_ARGUMENT" &&
+              window.tabs().size() == tabs_before_invalid,
+          "AC-UNIT11 document.create enforces page bounds after canonical conversion");
+
+    const auto rejected_invalid_title = runtime.handle(window, JsonValue(JsonValue::Object{
+        {"operation", "document.create"}, {"session_handle", *edit_handle->string()},
+        {"title", 42}, {"page_width_mm", 254.0}, {"page_height_mm", 304.8}}));
+    check(rejected_invalid_title.get("code") && rejected_invalid_title.get("code")->string() &&
+              *rejected_invalid_title.get("code")->string() == "INVALID_ARGUMENT" &&
+              window.tabs().size() == tabs_before_invalid,
+          "document.create rejects non-string titles without opening a tab");
 }
 }
 

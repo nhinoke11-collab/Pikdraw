@@ -34,55 +34,55 @@ void DesktopWindow::setup_default_actions() {
     // File Actions (CorelDRAW Reference)
     dispatcher_.register_action({
         std::string(ActionId::kFileNew), "Tạo mới...", "New...", "Ctrl+N",
-        []() {}, nullptr
+        {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kFileNewFromTemplate), "Tạo từ mẫu...", "New from Template...", "",
-        []() {}, nullptr
+        {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kFileOpen), "Mở tệp...", "Open...", "Ctrl+O",
-        []() {}, nullptr
+        {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kFileOpenCloud), "Mở từ đám mây...", "Open from Cloud...", "",
-        []() {}, nullptr
+        {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kFileOpenRecent), "Tệp gần đây", "Open Recent", "",
-        []() {}, nullptr
+        {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kFileClose), "Đóng", "Close", "Ctrl+W",
-        []() {}, nullptr
+        {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kFileCloseAll), "Đóng tất cả", "Close All", "",
-        []() {}, nullptr
+        {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kFileSave), "Lưu", "Save", "Ctrl+S",
-        []() {}, nullptr
+        {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kFileSaveAs), "Lưu thành...", "Save As...", "Ctrl+Shift+S",
-        []() {}, nullptr
+        {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kFileSaveCloud), "Lưu lên đám mây...", "Save to Cloud...", "",
-        []() {}, nullptr
+        {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kFileSaveTemplate), "Lưu dưới dạng mẫu...", "Save as Template...", "",
-        []() {}, nullptr
+        {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kFileRevert), "Khôi phục gốc", "Revert", "",
-        []() {}, nullptr
+        {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kFileAcquireImage), "Thu nạp hình ảnh", "Acquire Image", "",
-        []() {}, nullptr
+        {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kFileImport), "Nhập tệp...", "Import...", "Ctrl+I",
@@ -94,51 +94,51 @@ void DesktopWindow::setup_default_actions() {
     });
     dispatcher_.register_action({
         std::string(ActionId::kFileExportFor), "Xuất cho", "Export For", "",
-        []() {}, nullptr
+        {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kFilePublishPdf), "Xuất bản PDF...", "Publish to PDF...", "",
-        []() {}, nullptr
+        {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kFilePrint), "In ấn...", "Print...", "Ctrl+P",
-        []() {}, nullptr
+        {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kFilePrintPreview), "Xem trước bản in...", "Print Preview...", "",
-        []() {}, nullptr
+        {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kFileProperties), "Thuộc tính tài liệu...", "Document Properties...", "",
-        []() {}, nullptr
+        {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kFileExit), "Thoát", "Exit", "Alt+F4",
-        []() {}, nullptr
+        {}, nullptr
     });
 
     // Home Action
     dispatcher_.register_action({
         std::string(ActionId::kViewHome), "Trang chủ", "Home", "Alt+H",
-        []() {}, nullptr
+        {}, nullptr
     });
 
     // Edit Actions
     dispatcher_.register_action({
         std::string(ActionId::kEditUndo), "Hoàn tác", "Undo", "Ctrl+Z",
-        []() {}, nullptr
+        {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kEditRedo), "Làm lại", "Redo", "Ctrl+Y",
-        []() {}, nullptr
+        {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kEditDelete), "Xóa", "Delete", "Delete",
-        []() {}, nullptr
+        {}, nullptr
     });
     dispatcher_.register_action({
         std::string(ActionId::kEditSelectAll), "Chọn tất cả", "Select All", "Ctrl+A",
-        []() {}, nullptr
+        {}, nullptr
     });
 
     // View Actions

@@ -3,6 +3,7 @@
 #include "pikdraw/interop/capabilities/format_capabilities.hpp"
 #include "pikdraw/document/model/object.hpp"
 #include <string>
+#include <string_view>
 #include <vector>
 #include <limits>
 
@@ -26,7 +27,7 @@ public:
     static constexpr size_t kMaxPathElements = 6000;
     static constexpr double kMaxPageMillimeters = 1000000.0;
 
-    [[nodiscard]] static SvgImportResult import_from_string(const std::string& svg_xml);
+    [[nodiscard]] static SvgImportResult import_from_string(std::string_view svg_xml);
     [[nodiscard]] static SvgImportResult import_from_file(const std::string& path);
 };
 

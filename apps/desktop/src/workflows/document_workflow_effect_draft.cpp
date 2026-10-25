@@ -115,7 +115,8 @@ bool DocumentWorkflow::begin_selected_effect_edit_draft(size_t effect_index) {
 
     EffectDraftState draft;
     draft.parameters = appearance->effects[effect_index].parameters;
-    if (!valid_effect_parameters(draft.parameters)) return false;
+    if (!valid_effect_parameters(draft.parameters) ||
+        !root_.renderer().backend().supports_effect(draft.parameters)) return false;
     draft.document_id = snapshot->document_id();
     draft.epoch = snapshot->epoch();
     draft.revision = snapshot->revision();
@@ -155,6 +156,8 @@ bool DocumentWorkflow::rebuild_effect_draft_preview() {
                 document::EffectNode preview_node;
                 preview_node.id = document::generate_effect_instance_id();
                 preview_node.parameters = effect_draft_->parameters;
+                preview_node.schema_minor =
+                    document::effect_node_schema_minor(preview_node.parameters);
                 appearance->effects.push_back(std::move(preview_node));
             }
             objects = objects.set(id, std::move(*object));
@@ -172,11 +175,18 @@ bool DocumentWorkflow::rebuild_effect_draft_preview() {
 bool DocumentWorkflow::set_effect_draft_parameters(document::EffectParameters parameters) {
     if (!effect_draft_ || !effect_draft_is_current() ||
         parameters.index() != effect_draft_->parameters.index() ||
-        !valid_effect_parameters(parameters))
+        !valid_effect_parameters(parameters) ||
+        !root_.renderer().backend().supports_effect(parameters))
         return false;
+    auto previous_parameters = effect_draft_->parameters;
+    auto previous_preview = effect_draft_->preview_snapshot;
+    const bool preview_enabled = effect_draft_->preview_enabled;
     effect_draft_->parameters = std::move(parameters);
     effect_draft_->preview_snapshot.reset();
-    return !effect_draft_->preview_enabled || rebuild_effect_draft_preview();
+    if (!preview_enabled || rebuild_effect_draft_preview()) return true;
+    effect_draft_->parameters = std::move(previous_parameters);
+    effect_draft_->preview_snapshot = std::move(previous_preview);
+    return false;
 }
 
 bool DocumentWorkflow::set_effect_draft_preview(bool enabled) {
@@ -218,6 +228,13 @@ DocumentWorkflow::effect_draft_numeric_fields() const {
     if (!effect_draft_) return {};
     if (std::holds_alternative<document::GaussianBlurEffect>(effect_draft_->parameters))
         return {EffectDraftField::SigmaX, EffectDraftField::SigmaY};
+    if (std::holds_alternative<document::FeatherEffect>(effect_draft_->parameters))
+        return {EffectDraftField::SigmaX};
+    if (std::holds_alternative<document::OuterGlowEffect>(effect_draft_->parameters) ||
+        std::holds_alternative<document::InnerGlowEffect>(effect_draft_->parameters))
+        return {EffectDraftField::SigmaX, EffectDraftField::Opacity};
+    if (std::holds_alternative<document::ColorOverlayEffect>(effect_draft_->parameters))
+        return {EffectDraftField::Opacity};
     return {EffectDraftField::OffsetX, EffectDraftField::OffsetY,
             EffectDraftField::SigmaX, EffectDraftField::SigmaY, EffectDraftField::Opacity};
 }
@@ -260,11 +277,29 @@ bool DocumentWorkflow::set_effect_draft_numeric_value(EffectDraftField field, do
         else if (field == EffectDraftField::SigmaY) shadow->sigma_y_mm = value;
         else if (field == EffectDraftField::Opacity) shadow->opacity = value / 100.0;
         else return false;
+    } else if (auto *feather = std::get_if<document::FeatherEffect>(&parameters)) {
+        if (field == EffectDraftField::SigmaX) feather->radius_mm = value;
+        else return false;
+    } else if (auto *oglow = std::get_if<document::OuterGlowEffect>(&parameters)) {
+        if (field == EffectDraftField::SigmaX) oglow->radius_mm = value;
+        else if (field == EffectDraftField::Opacity) oglow->opacity = value / 100.0;
+        else return false;
+    } else if (auto *iglow = std::get_if<document::InnerGlowEffect>(&parameters)) {
+        if (field == EffectDraftField::SigmaX) iglow->radius_mm = value;
+        else if (field == EffectDraftField::Opacity) iglow->opacity = value / 100.0;
+        else return false;
+    } else if (auto *ishadow = std::get_if<document::InnerShadowEffect>(&parameters)) {
+        if (field == EffectDraftField::OffsetX) ishadow->dx_mm = value;
+        else if (field == EffectDraftField::OffsetY) ishadow->dy_mm = value;
+        else if (field == EffectDraftField::SigmaX) ishadow->sigma_x_mm = value;
+        else if (field == EffectDraftField::SigmaY) ishadow->sigma_y_mm = value;
+        else if (field == EffectDraftField::Opacity) ishadow->opacity = value / 100.0;
+        else return false;
+    } else if (auto *overlay = std::get_if<document::ColorOverlayEffect>(&parameters)) {
+        if (field == EffectDraftField::Opacity) overlay->opacity = value / 100.0;
+        else return false;
     }
-    if (!valid_effect_parameters(parameters)) return false;
-    effect_draft_->parameters = std::move(parameters);
-    effect_draft_->preview_snapshot.reset();
-    return !effect_draft_->preview_enabled || rebuild_effect_draft_preview();
+    return set_effect_draft_parameters(std::move(parameters));
 }
 
 bool DocumentWorkflow::input_effect_draft_character(char character) {

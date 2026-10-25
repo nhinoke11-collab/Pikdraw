@@ -6,6 +6,7 @@
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/gradient_tool_controller.hpp"
 #include "pikdraw/desktop/actions/action_id.hpp"
+#include "pikdraw/rendering/gradient_sampler.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cmath>
@@ -16,7 +17,17 @@ namespace pikdraw::desktop {
 #ifdef _WIN32
 namespace {
 int effect_row_height(const document::EffectParameters &parameters) {
-    return std::holds_alternative<document::DropShadowEffect>(parameters) ? 246 : 118;
+    if (std::holds_alternative<document::DropShadowEffect>(parameters) ||
+        std::holds_alternative<document::InnerShadowEffect>(parameters))
+        return 246;
+    if (std::holds_alternative<document::OuterGlowEffect>(parameters) ||
+        std::holds_alternative<document::InnerGlowEffect>(parameters))
+        return 118;
+    if (std::holds_alternative<document::ColorOverlayEffect>(parameters))
+        return 150;
+    if (std::holds_alternative<document::FeatherEffect>(parameters))
+        return 88;
+    return 118; // GaussianBlurEffect
 }
 
 bool effect_numeric_field(NativeWindow::NumericFieldId field) {
@@ -418,7 +429,6 @@ bool NativeWindow::handle_style_click(int x, int y, bool right_click) {
         int node_top = kAppearanceEffectListTop;
         for (size_t index = 0; index < appearance.effects.size(); ++index) {
             const auto &effect = appearance.effects[index];
-            const bool blur = std::holds_alternative<document::GaussianBlurEffect>(effect.parameters);
             const bool can_edit_node = appearance.can_edit_effect(index) &&
                 workflow().can_edit_selected_effect(index);
             if (dy >= node_top + 22 && dy < node_top + 45) {
@@ -444,13 +454,26 @@ bool NativeWindow::handle_style_click(int x, int y, bool right_click) {
                 return true;
             }
             const int first_row = node_top + 48;
-            if (blur) {
+            const auto *blur_ptr = std::get_if<document::GaussianBlurEffect>(&effect.parameters);
+            const auto *feather_ptr = std::get_if<document::FeatherEffect>(&effect.parameters);
+            const auto *shadow_ptr = std::get_if<document::DropShadowEffect>(&effect.parameters);
+            const auto *inner_shadow_ptr = std::get_if<document::InnerShadowEffect>(&effect.parameters);
+            const auto *outer_glow_ptr = std::get_if<document::OuterGlowEffect>(&effect.parameters);
+            const auto *inner_glow_ptr = std::get_if<document::InnerGlowEffect>(&effect.parameters);
+            const auto *overlay_ptr = std::get_if<document::ColorOverlayEffect>(&effect.parameters);
+
+            if (blur_ptr) {
                 if (dy >= first_row + 1 && dy < first_row + 26 && dx >= 12 && dx < 268) {
                     if (dx < 140) start_effect_numeric_input(NumericFieldId::BlurSigmaX, index);
                     else start_effect_numeric_input(NumericFieldId::BlurSigmaY, index);
                     return true;
                 }
-            } else {
+            } else if (feather_ptr) {
+                if (dy >= first_row + 1 && dy < first_row + 26 && dx >= 12 && dx < 140) {
+                    start_effect_numeric_input(NumericFieldId::BlurSigmaX, index);
+                    return true;
+                }
+            } else if (shadow_ptr || inner_shadow_ptr) {
                 if (dy >= first_row + 1 && dy < first_row + 26 && dx >= 12 && dx < 268) {
                     if (dx < 140) start_effect_numeric_input(NumericFieldId::ShadowOffsetX, index);
                     else start_effect_numeric_input(NumericFieldId::ShadowOffsetY, index);
@@ -463,23 +486,17 @@ bool NativeWindow::handle_style_click(int x, int y, bool right_click) {
                 }
                 if (dy >= first_row + 62 && dy < first_row + 88 && dx >= 96 && dx < 268) {
                     if (can_edit_node && !effect.mixed_color) {
-                        const auto &shadow = std::get<document::DropShadowEffect>(effect.parameters);
+                        const auto &col = shadow_ptr ? shadow_ptr->color : inner_shadow_ptr->color;
                         if (const auto edited = edit_source_color(
-                                hwnd_, shadow.color, 0.0, false,
+                                hwnd_, col, 0.0, false,
                                 language_ == UILanguage::Vietnamese, ColorEditContext::Generic,
                                 false, false, snapshot->color_mode(), theme_ == ThemeMode::CyberDark,
                                 effective_color_preview())) {
                             if (workflow().set_selected_effect_color(index, edited->color))
                                 status_msg_ = language_ == UILanguage::Vietnamese
-                                    ? "Đã cập nhật màu nguồn của bóng · Ctrl+Z hoàn tác"
-                                    : "Updated the shadow source color · Ctrl+Z undoes";
+                                    ? "Đã cập nhật màu của bóng · Ctrl+Z hoàn tác"
+                                    : "Updated the shadow color · Ctrl+Z undoes";
                         }
-                    } else {
-                        status_msg_ = effect.mixed_color
-                            ? (language_ == UILanguage::Vietnamese ? "Màu bóng đang khác nhau · chọn một đối tượng để sửa"
-                                                                  : "Shadow colors are mixed · select one object to edit")
-                            : (language_ == UILanguage::Vietnamese ? "Màu bóng không thể sửa cho vùng chọn này"
-                                                                  : "Shadow color is unavailable for this selection");
                     }
                     InvalidateRect(hwnd_, nullptr, FALSE);
                     return true;
@@ -488,31 +505,88 @@ bool NativeWindow::handle_style_click(int x, int y, bool right_click) {
                     start_effect_numeric_input(NumericFieldId::ShadowOpacity, index);
                     return true;
                 }
-                if (dy >= first_row + 144 && dy < first_row + 196 &&
-                    dx >= 12 && dx < 276) {
+                if (dy >= first_row + 144 && dy < first_row + 196 && dx >= 12 && dx < 276) {
                     const int column = (dx - 12) / 88;
                     const int row = (dy - first_row - 144) / 28;
                     const int column_offset = (dx - 12) % 88;
                     const int row_offset = (dy - first_row - 144) % 28;
-                    if (column < 3 && row < 2 && column_offset < 80 &&
-                        row_offset < 24) {
-                        constexpr document::BlendMode shadow_modes[] = {
+                    if (column < 3 && row < 2 && column_offset < 80 && row_offset < 24) {
+                        constexpr document::BlendMode modes[] = {
                             document::BlendMode::Normal, document::BlendMode::Multiply,
                             document::BlendMode::Screen, document::BlendMode::Overlay,
                             document::BlendMode::Darken, document::BlendMode::Lighten};
-                        const auto mode = shadow_modes[row * 3 + column];
+                        const auto mode = modes[row * 3 + column];
                         if (workflow().set_selected_effect_blend_mode(index, mode)) {
                             status_msg_ = language_ == UILanguage::Vietnamese
-                                ? (mode == document::BlendMode::Normal
-                                    ? "Đã cập nhật hòa trộn bóng · Ctrl+Z hoàn tác"
-                                    : "Bóng hòa trộn với nền · Ctrl+Z hoàn tác")
-                                : (mode == document::BlendMode::Normal
-                                    ? "Updated shadow blend · Ctrl+Z undoes"
-                                    : "Shadow blends with the backdrop · Ctrl+Z undoes");
-                        } else if (mode != document::BlendMode::Normal) {
+                                ? "Đã cập nhật hòa trộn hiệu ứng · Ctrl+Z hoàn tác"
+                                : "Updated effect blend · Ctrl+Z undoes";
+                        }
+                    }
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return true;
+                }
+            } else if (outer_glow_ptr || inner_glow_ptr) {
+                if (dy >= first_row + 1 && dy < first_row + 26 && dx >= 12 && dx < 140) {
+                    start_effect_numeric_input(NumericFieldId::BlurSigmaX, index);
+                    return true;
+                }
+                if (dy >= first_row + 30 && dy < first_row + 56 && dx >= 96 && dx < 268) {
+                    if (can_edit_node && !effect.mixed_color) {
+                        const auto &col = outer_glow_ptr ? outer_glow_ptr->color : inner_glow_ptr->color;
+                        if (const auto edited = edit_source_color(
+                                hwnd_, col, 0.0, false,
+                                language_ == UILanguage::Vietnamese, ColorEditContext::Generic,
+                                false, false, snapshot->color_mode(), theme_ == ThemeMode::CyberDark,
+                                effective_color_preview())) {
+                            if (workflow().set_selected_effect_color(index, edited->color))
+                                status_msg_ = language_ == UILanguage::Vietnamese
+                                    ? "Đã cập nhật màu phát sáng · Ctrl+Z hoàn tác"
+                                    : "Updated the glow color · Ctrl+Z undoes";
+                        }
+                    }
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return true;
+                }
+                if (dy >= first_row + 60 && dy < first_row + 86 && dx >= 12 && dx < 140) {
+                    start_effect_numeric_input(NumericFieldId::ShadowOpacity, index);
+                    return true;
+                }
+            } else if (overlay_ptr) {
+                if (dy >= first_row && dy < first_row + 26 && dx >= 96 && dx < 268) {
+                    if (can_edit_node && !effect.mixed_color) {
+                        if (const auto edited = edit_source_color(
+                                hwnd_, overlay_ptr->color, 0.0, false,
+                                language_ == UILanguage::Vietnamese, ColorEditContext::Generic,
+                                false, false, snapshot->color_mode(), theme_ == ThemeMode::CyberDark,
+                                effective_color_preview())) {
+                            if (workflow().set_selected_effect_color(index, edited->color))
+                                status_msg_ = language_ == UILanguage::Vietnamese
+                                    ? "Đã cập nhật màu phủ · Ctrl+Z hoàn tác"
+                                    : "Updated the overlay color · Ctrl+Z undoes";
+                        }
+                    }
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return true;
+                }
+                if (dy >= first_row + 30 && dy < first_row + 56 && dx >= 12 && dx < 140) {
+                    start_effect_numeric_input(NumericFieldId::ShadowOpacity, index);
+                    return true;
+                }
+                if (dy >= first_row + 82 && dy < first_row + 134 && dx >= 12 && dx < 276) {
+                    const int column = (dx - 12) / 88;
+                    const int row = (dy - first_row - 82) / 28;
+                    const int column_offset = (dx - 12) % 88;
+                    const int row_offset = (dy - first_row - 82) % 28;
+                    if (column < 3 && row < 2 && column_offset < 80 && row_offset < 24) {
+                        constexpr document::BlendMode modes[] = {
+                            document::BlendMode::Normal, document::BlendMode::Multiply,
+                            document::BlendMode::Screen, document::BlendMode::Overlay,
+                            document::BlendMode::Darken, document::BlendMode::Lighten};
+                        const auto mode = modes[row * 3 + column];
+                        if (workflow().set_selected_effect_blend_mode(index, mode)) {
                             status_msg_ = language_ == UILanguage::Vietnamese
-                                ? "Hòa bóng khác Normal yêu cầu Shadow là hiệu ứng bật cuối cùng"
-                                : "A non-Normal shadow blend requires Shadow to be the last enabled effect";
+                                ? "Đã cập nhật hòa trộn phủ màu · Ctrl+Z hoàn tác"
+                                : "Updated overlay blend · Ctrl+Z undoes";
                         }
                     }
                     InvalidateRect(hwnd_, nullptr, FALSE);
@@ -590,7 +664,7 @@ bool NativeWindow::handle_gradient_property_click(int x, int y) {
         const int left = inspector_left + Layout::content_left;
         const int right = std::min(width_ - 14, left + Layout::content_width);
         const int local_x = x - left;
-        const int local_y = y - properties_top;
+        const int local_y = (y + properties_dock_scroll_) - properties_top;
         auto hit = [&](int top, int height = 26) {
             return local_y >= top && local_y < top + height && x < right;
         };
@@ -605,21 +679,10 @@ bool NativeWindow::handle_gradient_property_click(int x, int y) {
         const int spread_width = (panel_width - 12) / 3;
         const int stop_action_width = (panel_width - 18) / 4;
 
-        const int action_half = (panel_width - 6) / 2;
-        if (hit(Layout::actions_top, 30) && local_x < action_half) {
-            if (commit_or_stop()) return true;
-            if (can_edit && gradient_tool_->apply())
-                status_msg_ = language_ == UILanguage::Vietnamese
-                    ? "Đã áp dụng chuyển sắc · Ctrl+Z để hoàn tác"
-                    : "Applied Gradient · Ctrl+Z undoes";
-            else
-                status_msg_ = language_ == UILanguage::Vietnamese
-                    ? "Không thể áp dụng · chọn Path có thể chỉnh sửa"
-                    : "Could not apply · select an editable Path";
-        } else if (hit(Layout::actions_top, 30) && local_x >= action_half + 6) {
-            if (active_num_field_ != Field::None) cancel_numeric_field();
-            gradient_tool_->cancel();
-            status_msg_ = language_ == UILanguage::Vietnamese ? "Đã bỏ bản nháp Gradient" : "Discarded Gradient draft";
+        if (hit(Layout::actions_top, 30)) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Gradient được lưu trực tiếp · Ctrl+Z hoàn tác"
+                : "Gradient edits save live · Ctrl+Z undoes";
         } else if (hit(Layout::kind_top) && can_edit) {
             if (commit_or_stop()) return true;
             presenter.set_kind(local_x < kind_half ? document::GradientKind::Linear
@@ -647,57 +710,52 @@ bool NativeWindow::handle_gradient_property_click(int x, int y) {
                 const auto hit_res = hit_test_gradient_ramp(pt, ramp_rect, *current);
                 if (hit_res.kind == RampHitKind::StopPin) {
                     if (hit_res.index < current->stops.size()) {
-                        (void)presenter.select_stop(current->stops[hit_res.index].id);
+                        const auto stop_id = current->stops[hit_res.index].id;
+                        (void)presenter.select_stop(stop_id);
+                        gradient_ramp_drag_kind_ = GradientRampDragKind::Stop;
+                        gradient_ramp_drag_stop_id_ = stop_id;
+                        gradient_ramp_drag_moved_ = false;
+                        if (hwnd_) SetCapture(hwnd_);
                         status_msg_ = language_ == UILanguage::Vietnamese
                             ? "Đã chọn Stop " + std::to_string(hit_res.index + 1)
                             : "Selected Stop " + std::to_string(hit_res.index + 1);
                     }
                 } else if (hit_res.kind == RampHitKind::MidpointDiamond) {
                     if (hit_res.index < current->stops.size()) {
-                        (void)presenter.select_stop(current->stops[hit_res.index].id);
-                        start_numeric_input(Field::GradientStopMidpoint);
+                        const auto stop_id = current->stops[hit_res.index].id;
+                        (void)presenter.select_stop(stop_id);
+                        gradient_ramp_drag_kind_ = GradientRampDragKind::Midpoint;
+                        gradient_ramp_drag_stop_id_ = stop_id;
+                        gradient_ramp_drag_moved_ = false;
+                        if (hwnd_) SetCapture(hwnd_);
                     }
                 } else if (hit_res.kind == RampHitKind::RampTrack) {
                     if (current->stops.size() < document::kMaxGradientStops) {
-                        auto get_rgb = [](const color::ColorValue& cv) -> color::RGBColor {
-                            return std::visit([](const auto& c) -> color::RGBColor {
-                                using T = std::decay_t<decltype(c)>;
-                                if constexpr (std::is_same_v<T, color::RGBColor>) return c;
-                                return color::RGBColor{0.0, 0.0, 0.0, 1.0};
-                            }, cv.payload());
-                        };
-                        color::ColorValue new_col{color::RGBColor{0.5, 0.5, 0.5, 1.0}};
-                        const auto& stops = current->stops;
-                        if (!stops.empty()) {
-                            if (hit_res.offset <= stops.front().offset) {
-                                new_col = stops.front().color;
-                            } else if (hit_res.offset >= stops.back().offset) {
-                                new_col = stops.back().color;
-                            } else {
-                                for (size_t s = 0; s + 1 < stops.size(); ++s) {
-                                    if (hit_res.offset >= stops[s].offset && hit_res.offset <= stops[s + 1].offset) {
-                                        const double s0 = stops[s].offset;
-                                        const double s1 = stops[s + 1].offset;
-                                        const double seg_len = s1 - s0;
-                                        const double t = seg_len > 1e-6 ? (hit_res.offset - s0) / seg_len : 0.0;
-                                        const auto c0 = get_rgb(stops[s].color);
-                                        const auto c1 = get_rgb(stops[s + 1].color);
-                                        new_col = color::ColorValue{color::RGBColor{
-                                            c0.r + (c1.r - c0.r) * t,
-                                            c0.g + (c1.g - c0.g) * t,
-                                            c0.b + (c1.b - c0.b) * t,
-                                            c0.a + (c1.a - c0.a) * t
-                                        }};
-                                        break;
-                                    }
+                        std::vector<uint64_t> prior_ids;
+                        prior_ids.reserve(current->stops.size());
+                        for (const auto& stop : current->stops) prior_ids.push_back(stop.id);
+                        const auto sampler = rendering::GradientSampler::prepare(
+                            *current, geometry::Transform2D::identity(),
+                            rendering::Camera2D{}, nullptr, 1.0);
+                        if (sampler) {
+                            const auto sampled = sampler->sample_at_t(hit_res.offset);
+                            const color::ColorValue new_col{color::RGBColor{
+                                sampled.r, sampled.g, sampled.b, 1.0}};
+                            if (presenter.add_stop(hit_res.offset, new_col, sampled.a)) {
+                                const auto* updated = presenter.draft_paint();
+                                const auto inserted = std::find_if(updated->stops.begin(), updated->stops.end(),
+                                    [&](const auto& stop) {
+                                        return std::find(prior_ids.begin(), prior_ids.end(), stop.id) == prior_ids.end();
+                                    });
+                                if (inserted != updated->stops.end())
+                                    (void)presenter.select_stop(inserted->id);
+                                (void)gradient_tool_->tool().set_draft_paint(*presenter.draft_paint());
+                                if (gradient_tool_->apply()) {
+                                    status_msg_ = language_ == UILanguage::Vietnamese
+                                        ? "Đã thêm điểm dừng màu · Ctrl+Z hoàn tác"
+                                        : "Added color stop · Ctrl+Z undoes";
                                 }
                             }
-                        }
-                        if (presenter.add_stop(hit_res.offset, new_col)) {
-                            gradient_tool_->tool().set_draft_paint(*presenter.draft_paint());
-                            status_msg_ = language_ == UILanguage::Vietnamese
-                                ? "Đã thêm điểm dừng màu mới vào dải màu"
-                                : "Added new color stop to ramp";
                         }
                     }
                 }
@@ -815,7 +873,6 @@ bool NativeWindow::handle_gradient_property_click(int x, int y) {
                         : "Mixed stops are locked · select one Path before reversing";
                 } else {
                     presenter.reverse_stops();
-                    gradient_tool_->tool().reverse_stops();
                     status_msg_ = language_ == UILanguage::Vietnamese ? "Đã đảo chiều dải màu" : "Reversed Gradient stops";
                 }
             } else if (local_x >= half + 6) {
@@ -852,10 +909,23 @@ bool NativeWindow::handle_gradient_property_click(int x, int y) {
             const auto bounds = snapshot ? root().vector_controller().selection().bounds(*snapshot)
                 .value_or(geometry::Rect2D{0, 0, 100, 100}) : geometry::Rect2D{0, 0, 100, 100};
             presenter.fit_to_bounds(bounds);
-            gradient_tool_->tool().fit_to_object_bounds(bounds);
             status_msg_ = language_ == UILanguage::Vietnamese ? "Đã khớp dải màu theo khung đối tượng" : "Fit Gradient to bounds";
         } else if (x >= left && x < right) {
             return false;
+        }
+        if (gradient_tool_->presenter().draft_paint())
+            (void)gradient_tool_->tool().set_draft_paint(
+                *gradient_tool_->presenter().draft_paint());
+        if (gradient_tool_->presenter().is_dirty()) {
+            if (gradient_tool_->apply()) {
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Đã lưu chỉnh sửa Gradient · Ctrl+Z để hoàn tác"
+                    : "Saved Gradient edit · Ctrl+Z to undo";
+            } else {
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Không thể lưu chỉnh sửa Gradient · bản nháp được giữ lại"
+                    : "Could not save Gradient edit · draft is preserved";
+            }
         }
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
         return true;
@@ -867,12 +937,10 @@ bool NativeWindow::handle_gradient_property_click(int x, int y) {
     if (x >= 80 && x < 145) {
         if (!commit_active()) return true;
         presenter.set_kind(document::GradientKind::Linear);
-        gradient_tool_->tool().set_kind(document::GradientKind::Linear);
         status_msg_ = language_ == UILanguage::Vietnamese ? "Kiểu: Tuyến tính (Linear)" : "Kind: Linear";
     } else if (x >= 150 && x < 215) {
         if (!commit_active()) return true;
         presenter.set_kind(document::GradientKind::Radial);
-        gradient_tool_->tool().set_kind(document::GradientKind::Radial);
         status_msg_ = language_ == UILanguage::Vietnamese ? "Kiểu: Tỏa tròn (Radial)" : "Kind: Radial";
     } else if (x >= 220 && x < 295) {
         if (!commit_active()) return true;
@@ -882,7 +950,6 @@ bool NativeWindow::handle_gradient_property_click(int x, int y) {
                 : "Mixed stops are locked · select one Path before reversing";
         else {
             presenter.reverse_stops();
-            gradient_tool_->tool().reverse_stops();
             status_msg_ = language_ == UILanguage::Vietnamese ? "Đã đảo chiều dải màu" : "Reversed Gradient stops";
         }
     } else if (x >= 305 && x <= 415) {
@@ -893,6 +960,100 @@ bool NativeWindow::handle_gradient_property_click(int x, int y) {
     } else {
         return false;
     }
+    if (presenter.draft_paint())
+        (void)gradient_tool_->tool().set_draft_paint(*presenter.draft_paint());
+    if (presenter.is_dirty()) (void)gradient_tool_->apply();
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    return true;
+}
+
+bool NativeWindow::handle_gradient_ramp_pointer_move(int x, int) {
+    if (gradient_ramp_drag_kind_ == GradientRampDragKind::None || !gradient_tool_ ||
+        !gradient_tool_->active() || GetCapture() != hwnd_)
+        return false;
+
+    namespace Layout = GradientPropertiesLayout;
+    const int inspector_left = width_ - 280;
+    const int local_x = x - inspector_left - Layout::content_left;
+    // local_x is already relative to content_left (the ramp panel origin).
+    const int track_left = 8;
+    const int track_width = std::max(1, Layout::content_width - 16);
+    const double offset = std::clamp(
+        static_cast<double>(local_x - track_left) / std::max(1, track_width - 1), 0.0, 1.0);
+    auto& presenter = gradient_tool_->presenter();
+    const auto* paint = presenter.draft_paint();
+    if (!paint) return false;
+
+    const auto left = std::find_if(paint->stops.begin(), paint->stops.end(),
+        [&](const auto& stop) { return stop.id == gradient_ramp_drag_stop_id_; });
+    if (left == paint->stops.end()) return false;
+    const size_t index = static_cast<size_t>(left - paint->stops.begin());
+    bool changed = false;
+    if (gradient_ramp_drag_kind_ == GradientRampDragKind::Stop) {
+        changed = std::abs(left->offset - offset) > 1e-7;
+        if (changed) (void)presenter.set_stop_offset(index, offset);
+    } else if (index + 1 < paint->stops.size()) {
+        const double segment = paint->stops[index + 1].offset - left->offset;
+        if (segment > 1e-9) {
+            const double midpoint = std::clamp((offset - left->offset) / segment, 0.05, 0.95);
+            changed = std::abs(left->midpoint_to_next - midpoint) > 1e-6;
+            if (changed) (void)presenter.set_segment_midpoint(index, midpoint);
+        }
+    }
+    gradient_ramp_drag_moved_ = gradient_ramp_drag_moved_ || changed;
+    if (changed && presenter.draft_paint())
+        (void)gradient_tool_->tool().set_draft_paint(*presenter.draft_paint());
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    return true;
+}
+
+bool NativeWindow::handle_gradient_ramp_pointer_up(int, int y) {
+    if (gradient_ramp_drag_kind_ == GradientRampDragKind::None || !gradient_tool_ ||
+        !gradient_tool_->active())
+        return false;
+
+    namespace Layout = GradientPropertiesLayout;
+    constexpr int properties_top = 38 + 28 + 36 + 36;
+    const auto kind = gradient_ramp_drag_kind_;
+    const auto stop_id = gradient_ramp_drag_stop_id_;
+    const bool moved = gradient_ramp_drag_moved_;
+    gradient_ramp_drag_kind_ = GradientRampDragKind::None;
+    gradient_ramp_drag_stop_id_ = 0;
+    gradient_ramp_drag_moved_ = false;
+
+    bool changed = false;
+    auto& presenter = gradient_tool_->presenter();
+    const auto* paint = presenter.draft_paint();
+    if (kind == GradientRampDragKind::Stop && paint && paint->stops.size() > 2 &&
+        y > properties_top + Layout::ramp_top + Layout::ramp_height + 25) {
+        const auto stop = std::find_if(paint->stops.begin(), paint->stops.end(),
+            [stop_id](const auto& item) { return item.id == stop_id; });
+        if (stop != paint->stops.end()) {
+            const size_t index = static_cast<size_t>(stop - paint->stops.begin());
+            if (presenter.delete_stop(index)) {
+                const auto* updated = presenter.draft_paint();
+                if (updated && !updated->stops.empty())
+                    (void)presenter.select_stop(updated->stops[std::min(index, updated->stops.size() - 1)].id);
+                changed = true;
+            }
+        }
+    } else {
+        changed = moved;
+    }
+
+    if (changed && presenter.draft_paint()) {
+        (void)gradient_tool_->tool().set_draft_paint(*presenter.draft_paint());
+        if (gradient_tool_->apply()) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Đã lưu chỉnh sửa Ramp trong một bước · Ctrl+Z hoàn tác"
+                : "Saved Ramp edit in one step · Ctrl+Z undoes";
+        } else {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Không thể lưu chỉnh sửa Ramp · bản nháp được giữ lại"
+                : "Could not save Ramp edit · draft is preserved";
+        }
+    }
+    if (hwnd_ && GetCapture() == hwnd_) ReleaseCapture();
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
     return true;
 }

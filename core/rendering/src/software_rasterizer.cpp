@@ -1,7 +1,10 @@
+#include "powerclip_view.hpp"
 #include "pikdraw/rendering/software_rasterizer.hpp"
 #include "pikdraw/typography/layout/glyph_outline.hpp"
+#include "pikdraw/typography/layout/text_on_path.hpp"
 #include "effects/object_compositor.hpp"
 #include "raster/path_raster.hpp"
+#include "pdf_source_preview.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -9,6 +12,7 @@
 #include <exception>
 #include <limits>
 #include <span>
+#include <string>
 #include <unordered_set>
 
 namespace pikdraw::rendering {
@@ -112,7 +116,8 @@ std::array<uint8_t, 4> sample_image_linear(
 }
 
 bool render_image(const document::ImageObject &image,
-                  const Camera2D &camera, PixelBufferTarget &target) {
+                  const Camera2D &camera, PixelBufferTarget &target,
+                  const geometry::Transform2D &parent_transform = geometry::Transform2D::identity()) {
   const auto pixels = image.rgba_pixels();
   if (image.width_px <= 0 || image.height_px <= 0 ||
       static_cast<uint64_t>(image.width_px) *
@@ -120,11 +125,12 @@ bool render_image(const document::ImageObject &image,
           pixels.size() ||
       image.bounds_rect.width <= 0.0 || image.bounds_rect.height <= 0.0)
     return false;
-  const auto inverse = image.transform.inverted();
+  const auto effective_transform = parent_transform * image.transform;
+  const auto inverse = effective_transform.inverted();
   if (!inverse)
     return false;
 
-  const auto world_bounds = image.transform.map_rect(image.bounds_rect);
+  const auto world_bounds = effective_transform.map_rect(image.bounds_rect);
   const std::array<geometry::Point2D, 4> corners{{
       {world_bounds.x, world_bounds.y},
       {world_bounds.right(), world_bounds.y},
@@ -160,7 +166,7 @@ bool render_image(const document::ImageObject &image,
     document::PathObject clip;
     clip.id = image.id;
     clip.path = *image.clip_path;
-    clip.transform = image.transform;
+    clip.transform = effective_transform;
     if (!raster::flatten(clip, camera, clip_contours))
       return false;
   }
@@ -191,29 +197,41 @@ bool render_image(const document::ImageObject &image,
   return true;
 }
 
+struct ClipScratch {
+  size_t live{0};
+  static constexpr size_t budget=64u*1024u*1024u;
+};
+struct ClipScratchLease {
+  ClipScratch* scratch; size_t bytes;
+  ~ClipScratchLease(){if(scratch)scratch->live-=bytes;}
+};
 bool render_object(const document::DocumentSnapshot &snapshot,
                    const document::ObjectVariant &variant,
                    const geometry::Transform2D &parent_transform,
                    const Camera2D &camera, PixelBufferTarget &target,
                    RenderMetric &metric, const color::IccPreview *preview,
-                   size_t &rendered_objects, size_t depth = 0) {
+                   size_t &rendered_objects, size_t depth = 0,
+                   document::ObjectId excluded = 0, ClipScratch* scratch = nullptr,
+                   const IRenderBackend::RasterImageResolver* raster_resolver = nullptr) {
   if (depth > 256)
     return false;
   return std::visit(
       [&](const auto &object) -> bool {
         using T = std::decay_t<decltype(object)>;
-        if (!object.visible)
+        if (!object.visible || (excluded && object.id == excluded))
           return true;
         if constexpr (std::is_same_v<T, document::PathObject>) {
           auto transformed = object;
           transformed.transform = parent_transform * object.transform;
           size_t gaussian_scratch_capacity_bytes = 0;
           size_t shadow_scratch_capacity_bytes = 0;
+          std::string effect_failure;
           const bool rendered = effects::render_path_with_appearance(
               transformed, transformed.appearance, camera, target, preview,
               &gaussian_scratch_capacity_bytes,
               &shadow_scratch_capacity_bytes,
-              (snapshot.page().color_mode_explicit || snapshot.page().raster_dpi_explicit) ? snapshot.raster_dpi() : 0);
+              (snapshot.page().color_mode_explicit || snapshot.page().raster_dpi_explicit) ? snapshot.raster_dpi() : 0,
+              &effect_failure);
           metric.peak_gaussian_blur_scratch_capacity_bytes = std::max(
               metric.peak_gaussian_blur_scratch_capacity_bytes,
               gaussian_scratch_capacity_bytes);
@@ -222,25 +240,43 @@ bool render_object(const document::DocumentSnapshot &snapshot,
               shadow_scratch_capacity_bytes);
           if (rendered)
             ++rendered_objects;
+          else if (!effect_failure.empty())
+            diagnostic(metric, object.id, true, std::move(effect_failure));
           return rendered;
         } else if constexpr (std::is_same_v<T, document::TextObject>) {
       // Enabled only when a genuine platform outline backend is compiled in.
 #ifdef PIKDRAW_TYPOGRAPHY_REAL_OUTLINES
           try {
-            const auto layout = object.layout();
-            for (const auto &line : layout.lines()) {
-              if (line.run.is_fallback) {
-                diagnostic(metric, object.id, false,
-                           line.run.warning_message +
-                               " Resolved face: " + line.run.font.family_name);
+            document::PathObject outlines;
+            if (object.is_text_on_path()) {
+              auto path_opt = snapshot.objects().get(object.path_binding_id);
+              if (path_opt && std::holds_alternative<document::PathObject>(*path_opt)) {
+                const auto& host_path = std::get<document::PathObject>(*path_opt);
+                typography::TextOnPathOptions top_opts;
+                top_opts.start_offset_mm = object.path_offset_mm;
+                top_opts.baseline_offset_mm = object.path_baseline_offset_mm;
+                top_opts.reversed = object.path_reversed;
+                top_opts.alignment = object.alignment;
+                auto top_res = typography::layout_text_on_path(host_path.path, object.text, object.font, top_opts);
+                outlines.path = std::move(top_res.combined_outlines);
+                outlines.transform = (parent_transform * host_path.transform) * geometry::Transform2D::scale(1, -1);
               }
             }
-            document::PathObject outlines;
-            outlines.path = typography::text_to_path_outlines(layout, object.underline);
-            outlines.transform = (parent_transform * object.transform) *
-                                 geometry::Transform2D::translation(
-                                     object.position.x, object.position.y) *
-                                 geometry::Transform2D::scale(1, -1);
+            if (outlines.path.empty()) {
+              const auto layout = object.layout();
+              for (const auto &line : layout.lines()) {
+                if (line.run.is_fallback) {
+                  diagnostic(metric, object.id, false,
+                             line.run.warning_message +
+                                 " Resolved face: " + line.run.font.family_name);
+                }
+              }
+              outlines.path = typography::text_to_path_outlines(layout, object.underline, object.strikethrough);
+              outlines.transform = (parent_transform * object.transform) *
+                                   geometry::Transform2D::translation(
+                                       object.position.x, object.position.y) *
+                                   geometry::Transform2D::scale(1, -1);
+            }
             outlines.fill = object.fill;
             outlines.has_stroke = false;
             size_t gaussian_scratch_capacity_bytes = 0;
@@ -270,9 +306,10 @@ bool render_object(const document::DocumentSnapshot &snapshot,
           return false;
 #endif
         } else if constexpr (std::is_same_v<T, document::ImageObject>) {
-          auto transformed = object;
-          transformed.transform = parent_transform * object.transform;
-          if (!render_image(transformed, camera, target))
+          const auto resolved = raster_resolver && *raster_resolver
+              ? (*raster_resolver)(snapshot, object) : nullptr;
+          const auto& renderable = resolved ? *resolved : object;
+          if (!render_image(renderable, camera, target, parent_transform))
             return false;
           ++rendered_objects;
           return true;
@@ -280,8 +317,9 @@ bool render_object(const document::DocumentSnapshot &snapshot,
           const auto child_transform = parent_transform * object.transform;
           if (object.is_clipping_container()) {
             const auto *mask_child = snapshot.objects().lookup_ref(object.clip->mask_object_id);
-            if (mask_child && std::holds_alternative<document::PathObject>(*mask_child)) {
-              const auto &mask_obj = std::get<document::PathObject>(*mask_child);
+            const auto mask_geometry = mask_child ? document::frame_geometry(*mask_child) : std::nullopt;
+            if (mask_geometry) {
+              const auto &mask_obj = *mask_geometry;
               const auto mask_effective_transform = child_transform * mask_obj.transform;
 
               if (object.clip->preserve_frame_appearance && mask_obj.has_fill) {
@@ -295,6 +333,7 @@ bool render_object(const document::DocumentSnapshot &snapshot,
                     (snapshot.page().color_mode_explicit || snapshot.page().raster_dpi_explicit)
                         ? snapshot.raster_dpi()
                         : 0);
+                if (!rendered_fill) return false;
                 metric.peak_gaussian_blur_scratch_capacity_bytes = std::max(
                     metric.peak_gaussian_blur_scratch_capacity_bytes, g_bytes);
                 metric.peak_drop_shadow_scratch_capacity_bytes = std::max(
@@ -307,36 +346,38 @@ bool render_object(const document::DocumentSnapshot &snapshot,
               clip_path_obj.transform = mask_effective_transform;
               std::vector<raster::Contour> clip_contours;
               const bool has_contours = raster::flatten(clip_path_obj, camera, clip_contours);
+              if (!has_contours) return false;
 
-              std::vector<uint32_t> intermediate(static_cast<size_t>(target.width) * target.height, 0);
-              PixelBufferTarget intermediate_target;
-              intermediate_target.bgra_pixels = intermediate.data();
-              intermediate_target.width = target.width;
-              intermediate_target.height = target.height;
-              intermediate_target.stride_bytes = target.width * static_cast<int32_t>(sizeof(uint32_t));
-
-              for (const auto child_id : object.children_ids) {
-                if (child_id == object.clip->mask_object_id) continue;
-                const auto *child = snapshot.objects().lookup_ref(child_id);
-                if (!child || !render_object(snapshot, *child, child_transform,
-                                             camera, intermediate_target, metric, preview,
-                                             rendered_objects, depth + 1))
-                  return false;
-              }
-
-              for (int32_t y = 0; y < target.height; ++y) {
-                for (int32_t x = 0; x < target.width; ++x) {
-                  const uint32_t px = intermediate[static_cast<size_t>(y) * target.width + x];
-                  const uint8_t a = static_cast<uint8_t>((px >> 24) & 0xFF);
-                  if (a > 0) {
-                    const geometry::Point2D screen_point{x + 0.5, y + 0.5};
-                    if (!has_contours || point_in_contours(clip_contours, mask_obj.path.winding_rule(), screen_point)) {
-                      const uint8_t r = static_cast<uint8_t>((px >> 16) & 0xFF);
-                      const uint8_t g = static_cast<uint8_t>((px >> 8) & 0xFF);
-                      const uint8_t b = static_cast<uint8_t>(px & 0xFF);
-                      target.blend_pixel(x, y, r, g, b, a);
-                    }
-                  }
+              const auto world_bounds=mask_effective_transform.map_rect(mask_obj.path.bounds());
+              const auto tl=camera.world_to_screen({world_bounds.x,world_bounds.bottom()});
+              const auto br=camera.world_to_screen({world_bounds.right(),world_bounds.y});
+              const int32_t x0=int32_t(std::clamp(std::floor(tl.x)-2.,0.,double(target.width)));
+              const int32_t y0=int32_t(std::clamp(std::floor(tl.y)-2.,0.,double(target.height)));
+              const int32_t x1=int32_t(std::clamp(std::ceil(br.x)+2.,0.,double(target.width)));
+              const int32_t y1=int32_t(std::clamp(std::ceil(br.y)+2.,0.,double(target.height)));
+              const auto width=x1-x0,height=y1-y0;
+              if(width>0&&height>0) {
+                const size_t bytes=size_t(width)*size_t(height)*4;
+                if(!scratch||bytes>ClipScratch::budget-scratch->live) {
+                  diagnostic(metric,object.id,true,"PowerClip scratch budget exceeded; frame incomplete");return false;
+                }
+                scratch->live+=bytes;ClipScratchLease lease{scratch,bytes};
+                std::vector<uint32_t> intermediate(size_t(width)*size_t(height),0);
+                PixelBufferTarget intermediate_target;
+                intermediate_target.bgra_pixels=intermediate.data();intermediate_target.width=width;
+                intermediate_target.height=height;intermediate_target.stride_bytes=width*4;
+                Camera2D local_camera{camera.screen_to_world({float(x0+width*.5),float(y0+height*.5)}),camera.zoom(),width,height};
+                for(auto child_id:object.children_ids) {
+                  if(child_id==object.clip->mask_object_id)continue;
+                  const auto* child=snapshot.objects().lookup_ref(child_id);
+                  if(!child||!render_object(snapshot,*child,child_transform,local_camera,intermediate_target,
+                      metric,preview,rendered_objects,depth+1,excluded,scratch,
+                      raster_resolver))return false;
+                }
+                for(int32_t y=0;y<height;++y)for(int32_t x=0;x<width;++x) {
+                  const uint32_t px=intermediate[size_t(y)*width+x];const auto alpha=uint8_t(px>>24);
+                  if(alpha && has_contours && point_in_contours(clip_contours,mask_obj.path.winding_rule(),{x+x0+.5,y+y0+.5}))
+                    target.blend_pixel(x+x0,y+y0,uint8_t(px>>16),uint8_t(px>>8),uint8_t(px),alpha);
                 }
               }
 
@@ -351,6 +392,7 @@ bool render_object(const document::DocumentSnapshot &snapshot,
                     (snapshot.page().color_mode_explicit || snapshot.page().raster_dpi_explicit)
                         ? snapshot.raster_dpi()
                         : 0);
+                if (!rendered_stroke) return false;
                 metric.peak_gaussian_blur_scratch_capacity_bytes = std::max(
                     metric.peak_gaussian_blur_scratch_capacity_bytes, g_bytes);
                 metric.peak_drop_shadow_scratch_capacity_bytes = std::max(
@@ -362,11 +404,13 @@ bool render_object(const document::DocumentSnapshot &snapshot,
             }
           }
 
+          if (object.is_clipping_container()) return false;
           for (const auto child_id : object.children_ids) {
             const auto *child = snapshot.objects().lookup_ref(child_id);
             if (!child || !render_object(snapshot, *child, child_transform,
                                          camera, target, metric, preview,
-                                         rendered_objects, depth + 1))
+                                         rendered_objects, depth + 1, excluded, scratch,
+                                         raster_resolver))
               return false;
           }
           ++rendered_objects;
@@ -400,28 +444,66 @@ bool SoftwareRasterizer::render(const document::DocumentSnapshot &snapshot,
           kMaxTargetPixels)
     return fail("Invalid target, pixel budget exceeded or backend not healthy");
   target.clear(background_.r, background_.g, background_.b, background_.a);
-  if (!render_page(snapshot.page(), camera, target))
+  if (render_page_background_ && !render_page(snapshot.page(), camera, target))
     return fail("Invalid/unsupported page projection");
+  if (auto source_preview = detail::make_pdf_source_preview(snapshot.active_page())) {
+    if (!render_image(*source_preview, camera, target))
+      return fail("Locked PDF source preview could not be rendered");
+  }
   // Match the compositor's rounded local filter support. Keep one extra world
   // pixel for target pixel-center sampling after the affine bounds mapping.
   const double culling_margin_world_mm = 1.0 / camera.zoom();
-  const auto visible = SpatialCuller::query_visible_refs(
+  const auto visible = spatial_index_.query_visible_refs(
       snapshot, camera.visible_world_bounds(), camera.zoom(),
       culling_margin_world_mm);
   bool success = true;
   size_t rendered_count = 0;
+  ClipScratch clip_scratch;
   for (const auto &item : visible) {
     if (render_object(snapshot, *item.object,
                       geometry::Transform2D::identity(), camera, target,
-                      metric, preview_.get(), rendered_count))
+                      metric, preview_.get(), rendered_count, 0, view_context_.owner,
+                      &clip_scratch, &raster_image_resolver_))
       metric.rendered_objects = rendered_count;
     else {
-      diagnostic(metric, item.id, true,
-                 "Object cannot be rendered: invalid/unsupported data or CPU "
-                 "work budget exceeded");
+      const bool has_specific_diagnostic = std::any_of(
+          metric.diagnostics.begin(), metric.diagnostics.end(),
+          [id = item.id](const RenderDiagnostic &entry) {
+            return entry.error && entry.object_id == id;
+          });
+      if (!has_specific_diagnostic)
+        diagnostic(metric, item.id, true,
+                   "Object cannot be rendered: invalid/unsupported data or CPU "
+                   "work budget exceeded");
       success = false;
     }
   }
+  if (view_context_.owner) {
+    const auto* entry = snapshot.hierarchy().find(view_context_.owner);
+    const auto* object = snapshot.objects().lookup_ref(view_context_.owner);
+    const auto* group = object ? std::get_if<document::GroupObject>(object) : nullptr;
+    if (!entry || !group) return fail("Stale edit view owner");
+    for (int32_t y = 0; y < target.height; ++y)
+      for (int32_t x = 0; x < target.width; ++x) target.blend_pixel(x, y, 240, 240, 240, 170);
+    if (!view_context_.reveal_contents || view_context_.edit_frame) {
+      success = render_object(snapshot, *object, entry->parent_world, camera, target,
+          metric, preview_.get(), rendered_count, 0, 0, &clip_scratch,
+          &raster_image_resolver_) && success;
+    } else {
+      for (auto id : group->children_ids) {
+        if (group->clip && id == group->clip->mask_object_id) continue;
+        const auto* child = snapshot.objects().lookup_ref(id);
+        if (!child || !render_object(snapshot, *child, entry->world, camera, target,
+              metric, preview_.get(), rendered_count, 0, 0, &clip_scratch,
+              &raster_image_resolver_)) success = false;
+      }
+    }
+    if (auto outline = detail::clip_frame_outline(snapshot, view_context_.owner, camera))
+      success = render_object(snapshot, document::ObjectVariant{*outline}, {}, camera, target,
+          metric, nullptr, rendered_count, 0, 0, &clip_scratch,
+          &raster_image_resolver_) && success;
+  }
+  metric.rendered_objects = rendered_count;
   metric.culled_objects = snapshot.object_count() > rendered_count
                               ? snapshot.object_count() - rendered_count
                               : 0;

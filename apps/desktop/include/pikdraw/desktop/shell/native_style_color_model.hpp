@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pikdraw/color/preview/color_transform.hpp"
+#include "pikdraw/color/preview/icc_preview.hpp"
 
 namespace pikdraw::desktop::source_color {
 
@@ -16,10 +17,19 @@ inline Model model_of(const color::ColorValue &value) noexcept {
     return Model::Rgb;
 }
 
-inline color::ColorValue convert(const color::ColorValue &source, Model target) {
+inline color::ColorValue convert(const color::ColorValue &source, Model target,
+                                 const color::IccPreview* icc = nullptr) {
     if (model_of(source) == target) return source;
 
-    const auto preview = color::to_preview_rgba(source);
+    if (target == Model::Rgb)
+        return color::convert_color_to_mode(source, color::DocumentColorMode::Rgb, icc,
+                                            color::BlackGeneration::None);
+    if (target == Model::Cmyk)
+        return color::convert_color_to_mode(source, color::DocumentColorMode::Cmyk, icc,
+                                            color::BlackGeneration::None);
+
+    const auto preview = icc
+        ? icc->convert(source, color::PreviewOptions{}) : color::to_preview_rgba(source);
     const double r = preview.r, g = preview.g, b = preview.b, a = preview.a;
     color::ColorValue result;
     switch (target) {

@@ -19,6 +19,8 @@ struct ActionDescriptor {
 
 class ActionDispatcher {
 public:
+    static constexpr size_t max_dispatch_history = 1024;
+
     ActionDispatcher() = default;
 
     /// Register a new action

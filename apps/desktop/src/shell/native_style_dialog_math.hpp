@@ -70,8 +70,10 @@ inline color::RGBColor hsl_to_rgb(double hue, double saturation, double lightnes
     return {r + m, g + m, b + m, alpha};
 }
 
-inline color::RGBColor rgb_from(const color::ColorValue &value) {
-    const auto preview = color::to_preview_rgba(value);
+inline color::RGBColor rgb_from(const color::ColorValue &value,
+                                const color::IccPreview* icc = nullptr) {
+    const auto preview = icc ? icc->convert(value, color::PreviewOptions{})
+                             : color::to_preview_rgba(value);
     return {preview.r, preview.g, preview.b, preview.a};
 }
 

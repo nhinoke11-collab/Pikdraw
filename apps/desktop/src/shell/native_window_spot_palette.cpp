@@ -245,14 +245,14 @@ LRESULT CALLBACK picker_proc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
             const LRESULT data = SendMessageW(state->list, LB_GETITEMDATA, draw->itemID, 0);
             const auto& swatches = state->libraries[state->library_index].swatches;
             if (data >= 0 && static_cast<size_t>(data) < swatches.size()) {
-                const auto& rgb = swatches[static_cast<size_t>(data)].alternate_rgb;
+                const auto& swatch_source = swatches[static_cast<size_t>(data)];
+                const color::ColorValue spot_color{color::SpotColor{
+                    swatch_source.name, 1.0, swatch_source.alternate_rgb, false}};
+                const auto device = state->owner->preview_color_for_ui(spot_color).to_device();
                 const int left = draw->rcItem.left + state->owner->dip(5);
                 const int top = draw->rcItem.top + state->owner->dip(4);
                 RECT swatch{left, top, left + state->owner->dip(17), top + state->owner->dip(17)};
-                HBRUSH color_brush = CreateSolidBrush(RGB(
-                    static_cast<BYTE>(std::clamp(std::lround(rgb.r * 255), 0L, 255L)),
-                    static_cast<BYTE>(std::clamp(std::lround(rgb.g * 255), 0L, 255L)),
-                    static_cast<BYTE>(std::clamp(std::lround(rgb.b * 255), 0L, 255L))));
+                HBRUSH color_brush = CreateSolidBrush(RGB(device.r, device.g, device.b));
                 FillRect(draw->hDC, &swatch, color_brush);
                 DeleteObject(color_brush);
                 FrameRect(draw->hDC, &swatch, static_cast<HBRUSH>(GetStockObject(GRAY_BRUSH)));

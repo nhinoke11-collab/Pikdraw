@@ -162,7 +162,7 @@ không tái hiện được. Không tự tạo ảnh phỏng đoán rồi ghi Re
   limits decompression ratio. Caches chỉ là dẫn xuất; bản nhúng không bị downsample âm thầm khi save.
 
 Bản nguồn bất biến, source locator (page/object/chunk khi biết), parser fingerprint, units/precision,
-feature flags, source→native ID map và loss report được lưu cùng .pikdraw. Nếu không thể ánh xạ
+feature flags, source→native ID map và loss report được lưu cùng .pr. Nếu không thể ánh xạ
 đúng phần tử, giữ tham chiếu toàn trang/file; không tuyên bố đã tách riêng effect. Chỉnh sửa khiến
 preview cũ hết hạn phải invalidation rõ; không xuất ảnh cache cũ như kết quả hiện tại.
 
@@ -291,7 +291,7 @@ Các nguồn upstream sau đã được đối chiếu ngày 2026-10-16:
 - [libcdr upstream](https://cgit.freedesktop.org/libreoffice/libcdr/): candidate đã có trong repo. Trang mã nguồn chi tiết không truy cập được trong phiên tra cứu; chưa chốt version coverage/license của bản sẽ build, IR02 phải lấy và audit artifact thực tế.
 - [Ghostscript devices](https://ghostscript.readthedocs.io/en/latest/VectorDevices.html), [SAFER](https://ghostscript.readthedocs.io/en/latest/Use.html#dsafer), [Artifex licensing](https://artifex.com/licensing): conversion có giới hạn và giấy phép cần quyết định.
 - [Microsoft Job limits](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_extended_limit_information): giới hạn memory commit, tách khỏi ngân sách tổng host.
-- Nội bộ: [runtime](../architecture/document-runtime.md), [Spike C](foundation-spikes.md), [quality gates](../quality/gates.md), [interop instructions](../../modules/interop/AGENTS.md) và [worker instructions](../../platform/workers/AGENTS.md).
+- Nội bộ: [runtime](../architecture/document-runtime.md), [kế hoạch tích hợp](performance-storage-automation.md), [quality gates](../quality/gates.md), [interop instructions](../../modules/interop/AGENTS.md) và [worker instructions](../../platform/workers/AGENTS.md).
 
 Việc còn mở có owner và gate: IR02 chốt artifact/license, IR01 chốt schemas/semantics; IR07 quyết
 định PDFium đủ điều kiện editable/production nào; IR08 chọn CDR versions từ corpus hợp lệ;

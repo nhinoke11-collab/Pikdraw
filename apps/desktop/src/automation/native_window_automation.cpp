@@ -2,6 +2,8 @@
 
 #include "pikdraw/desktop/shell/native_window.hpp"
 #include "pikdraw/document/storage/save_recovery.hpp"
+#include "pikdraw/document/storage/native_file.hpp"
+#include "pikdraw/geometry/units/length_unit.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -63,13 +65,10 @@ bool resolve_automation_file(const std::string& file_name, bool create_directory
     }
     std::string name = file_name;
     const auto extension = std::filesystem::path(name).extension().string();
-    if (extension.empty()) name += ".pikdraw";
+    if (extension.empty()) name += document::kNativeDocumentExtension;
     else {
-        auto lowered = extension;
-        std::transform(lowered.begin(), lowered.end(), lowered.begin(),
-            [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
-        if (lowered != ".pikdraw") {
-            diagnostic = "Only native .pikdraw files are available through this grant.";
+        if (!document::is_native_document_path(std::filesystem::path(name))) {
+            diagnostic = "Only native .pr files are available through this grant.";
             return false;
         }
     }
@@ -267,7 +266,8 @@ automation::JsonValue NativeWindowAutomationRuntime::handle(
     if (!operation) return error("INVALID_ARGUMENT", "operation is required.");
 
     if (*operation == "document.create") {
-        if (!only_fields(request, {"operation", "session_handle", "title", "page_width_mm", "page_height_mm"}))
+        if (!only_fields(request, {"operation", "session_handle", "title", "page_width_mm", "page_height_mm",
+                "page_width", "page_height", "length_unit"}))
             return error("INVALID_ARGUMENT", "document.create contains an unknown field.");
         const auto* session = string_field(request, "session_handle");
         if (!session) return error("SESSION_REQUIRED", "Connect to PikDraw with a document.create scope first.");
@@ -282,18 +282,39 @@ automation::JsonValue NativeWindowAutomationRuntime::handle(
         if (!owner) return error("SESSION_EXPIRED", "The automation session is unknown or its document was closed.");
         if (!owner->rpc.has_scope(*session, "document.create"))
             return error("SCOPE_DENIED", "This session was not granted document.create.");
-        const auto* width = request.get("page_width_mm");
-        const auto* height = request.get("page_height_mm");
+        const auto* width_mm = request.get("page_width_mm");
+        const auto* height_mm = request.get("page_height_mm");
+        const auto* width = request.get("page_width");
+        const auto* height = request.get("page_height");
+        const auto* unit_text = string_field(request, "length_unit");
+        const bool has_mm = width_mm || height_mm;
+        const bool has_typed = width || height;
+        double page_width_mm = 0.0;
+        double page_height_mm = 0.0;
+        bool dimensions_valid = false;
+        if (has_mm && !has_typed && !request.get("length_unit") &&
+            width_mm && width_mm->number() && height_mm && height_mm->number() &&
+            std::isfinite(*width_mm->number()) && std::isfinite(*height_mm->number())) {
+            page_width_mm = *width_mm->number();
+            page_height_mm = *height_mm->number();
+            dimensions_valid = true;
+        } else if (has_typed && !has_mm && unit_text && width && width->number() &&
+                   height && height->number() && std::isfinite(*width->number()) &&
+                   std::isfinite(*height->number())) {
+            const auto unit = geometry::units::parse_length_unit_suffix(*unit_text);
+            dimensions_valid = unit && geometry::units::is_physical_length_unit(*unit) &&
+                geometry::units::convert_length_to_mm(*width->number(), *unit, page_width_mm) &&
+                geometry::units::convert_length_to_mm(*height->number(), *unit, page_height_mm);
+        }
         const auto* title = string_field(request, "title");
-        if (!width || !width->number() || !height || !height->number() ||
-            !std::isfinite(*width->number()) || !std::isfinite(*height->number()) ||
-            *width->number() < 10.0 || *width->number() > 20000.0 ||
-            *height->number() < 10.0 || *height->number() > 20000.0 ||
+        if ((request.get("title") && !title) || !dimensions_valid ||
+            page_width_mm < 10.0 || page_width_mm > 20000.0 ||
+            page_height_mm < 10.0 || page_height_mm > 20000.0 ||
             (title && title->size() > 128))
-            return error("INVALID_ARGUMENT", "Page dimensions must be in [10, 20000] mm and title at most 128 UTF-8 bytes.");
+            return error("INVALID_ARGUMENT", "Provide either page_width_mm/page_height_mm or page_width/page_height with a physical length_unit; dimensions must resolve to [10, 20000] mm and title, when provided, must be a UTF-8 string of at most 128 bytes.");
         if (window.tabs().size() >= 32) return error("RESOURCE_LIMIT", "At most 32 document tabs may be open.");
         if (document_write_busy(window)) return error("BUSY_INTERACTION", "Finish the current text or path interaction before creating a document.");
-        window.create_new_tab(title ? *title : "AI Design", *width->number(), *height->number());
+        window.create_new_tab(title ? *title : "AI Design", page_width_mm, page_height_mm);
         auto& created_document = window.active_tab().root->document();
         const auto initial = created_document.current_snapshot();
         const auto document_id = "agent-" + std::to_string(current_process_id()) + "-" +

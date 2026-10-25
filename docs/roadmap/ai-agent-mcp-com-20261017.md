@@ -77,7 +77,7 @@ Không tạo branch/worktree, không commit.
 - A07 editing: tạo line/polyline editable, transform/duplicate/delete theo stable IDs;
   `objects.get` đọc object lồng trong group; style, group/ungroup, align và distribute chạy
   qua batch transaction; undo/redo kiểm revision và có idempotent receipt. `pikdraw.file.open`
-  chỉ đọc native `.pikdraw` trong fixed grant, kiểm file handle/final path và mở thành tab
+  chỉ đọc native `.pr` trong fixed grant, kiểm file handle/final path và mở thành tab
   sạch với document ID mới; tài liệu hiện tại không bị thay, agent phải reconnect trước khi sửa.
   Focused MCP catalog, pipe, COM dispatch và COM-to-pipe E2E tests pass.
 - A08 UI: `Settings > AI Connections…` quản lý nháp read/edit, Apply/Cancel, status thực,
@@ -276,7 +276,7 @@ sử dụng và có đủ glyph tiếng Việt. Nội dung bắt đầu là artw
    bounds/lề/font/limits rồi apply một Undo unit. Không có active selection làm đầu vào.
 5. Đọc snapshot mới; kiểm nội dung Unicode, kích thước, khoảng cách, thứ tự vẽ, safe area,
    missing glyph/overflow. Sửa theo actual report và expected revision mới khi cần.
-6. Lưu `.pikdraw` đúng grant; mở lại vào tài liệu thử riêng, kiểm structure/units/source
+6. Lưu `.pr` đúng grant; mở lại vào tài liệu thử riêng, kiểm structure/units/source
    color/text/effects/IDs theo native contract. Sửa tiếp một đối tượng để chứng minh editable.
 7. Export chỉ khi format và feature của chính thiết kế đạt. SVG có effects/blend chưa
    hỗ trợ thì trả report/refuse hoặc conversion được chọn rõ; native delivery vẫn độc lập.
@@ -395,8 +395,8 @@ các trạng thái không suy ra từ nhãn module registry.
 
 MVP agent = A01–A08, gồm phần cấu hình/quyền/đóng gói. Release công bố cả MCP+COM
 phải đạt A06. A09 mở từng capability; CNC/raster/3D không được gọi available khi chưa đạt.
-Claim paths thực trước mỗi gói; shared CMake/registry/workflow/project-state tuần tự theo
-[protocol](../agents/PROTOCOL.md). Không giao paths chồng lấn hoặc mặc định mở subagents.
+Kiểm source/diff trước mỗi gói; shared CMake/registry/workflow/project-state tuần tự theo
+[workflow](../../AGENTS.md). Không giao paths chồng lấn hoặc mặc định mở subagents.
 
 Stop conditions: write ngoài writer; batch partial commit; retry nhân đôi; conflict bị bỏ qua;
 COM bypass quyền; tool trả pass khi checker thiếu; source color/text/IDs mất sau reopen;

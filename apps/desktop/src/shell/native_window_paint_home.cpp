@@ -120,7 +120,7 @@ void NativeWindow::paint_home_screen(HDC mem_dc, int w, int h) {
         const QuickCard qcards[] = {
             { L"[ + ]", L"Tạo bản vẽ mới (Ctrl+N)", L"Khởi tạo tài liệu vector kích thước tự do theo đơn vị mm chuẩn thi công" },
             { L"[ 📐 ]", L"Tạo từ mẫu thi công", L"Kho mẫu chuẩn: Biển alu, hộp đèn, standee cuốn, bạt in hiflex 3M" },
-            { L"[ 📂 ]", L"Mở tệp đã có (Ctrl+O)", L"Định dạng có adapter: .pikdraw, .svg, .dxf, PNG/JPEG/TIFF" },
+            { L"[ 📂 ]", L"Mở tệp đã có (Ctrl+O)", L"Định dạng có adapter: .pr, .svg, .dxf, PNG/JPEG/TIFF" },
             { L"[ ☁ ]", L"Thư viện đám mây Cloud", L"Đồng bộ thiết kế, bản vẽ duyệt khách hàng và file cắt CNC từ xưởng" }
         };
         for (int i = 0; i < 4; ++i) {

@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
+from native_build_fixture import NativeBuildFixture
 
 ROOT = Path(__file__).resolve().parents[2]
 CMAKE = shutil.which("cmake") or str(ROOT / ".agent/toolchains/python-tools/cmake/data/bin/cmake.exe")
@@ -33,35 +35,9 @@ class CMakePolicyTests(unittest.TestCase):
 
 
 @unittest.skipUnless(os.name == "nt" and shutil.which("powershell"), "Windows runner tests")
-class NativeWorkflowTests(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="pikdraw-native-policy-")
-        self.repo = Path(self.temp.name)
-        self.native = self.repo / "tooling/native"
-        self.native.mkdir(parents=True)
-        test_sources = self.repo / "apps/desktop/tests"
-        test_sources.mkdir(parents=True)
-        (test_sources / "policy_probe.cpp").write_text("int main() { return 0; }\n",
-                                                       encoding="utf-8")
-        (self.repo / ".git").mkdir()
-        shutil.copy2(ROOT / "tooling/native/build.ps1", self.native / "build.ps1")
-        self.log = self.repo / "commands.jsonl"
-        (self.native / "env.ps1").write_text(
-            "function Get-PikDrawToolchain { @{ CMake = (Join-Path $PSScriptRoot 'fake-cmake.ps1'); Clang = $null } }\n"
-            "function Assert-PikDrawPrimarySource([string]$SourceRoot) {\n"
-            " if (-not (Get-Item -LiteralPath (Join-Path $SourceRoot '.git')).PSIsContainer) { throw 'primary source' }\n}\n",
-            encoding="utf-8")
-        (self.native / "fake-cmake.ps1").write_text(
-            "$entry = ConvertTo-Json -InputObject @($args) -Compress\n"
-            "Add-Content -LiteralPath $env:PIKDRAW_NATIVE_TEST_LOG -Value $entry\n"
-            "$global:LASTEXITCODE = if ($env:PIKDRAW_NATIVE_TEST_FAIL) { 23 } else { 0 }\n",
-            encoding="utf-8")
-
-    def tearDown(self):
-        self.temp.cleanup()
-
+class NativeWorkflowTests(NativeBuildFixture, unittest.TestCase):
     def run_build(self, *args, fail=False):
-        env = dict(os.environ, PIKDRAW_NATIVE_TEST_LOG=str(self.log))
+        env = dict(os.environ)
         if fail:
             env["PIKDRAW_NATIVE_TEST_FAIL"] = "yes"
         return subprocess.run(
@@ -72,35 +48,31 @@ class NativeWorkflowTests(unittest.TestCase):
     def test_two_configurations_share_output_and_release_lock(self):
         for configuration in ("Debug", "Release"):
             result = self.run_build("-Configuration", configuration)
-            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertFalse((self.repo / ".agent/native-build.lock").exists())
-        commands = [json.loads(line.lstrip("\ufeff")) for line in self.log.read_text(encoding="utf-8-sig").splitlines()]
-        builds = [entry for entry in commands if entry[0] == "--build"]
+        builds = [entry for entry in self.commands() if "--build" in entry]
         self.assertEqual(len(builds), 2)
-        self.assertEqual({Path(entry[1]).resolve() for entry in builds}, {(self.repo / "build/win-dev").resolve()})
+        self.assertEqual({Path(entry[2]).resolve() for entry in builds}, {(self.repo / "build/win-dev").resolve()})
         self.assertTrue(all(entry[-1] == "pikdraw" for entry in builds), builds)
 
     def test_targeted_test_build_keeps_tests_configured_and_skips_ctest(self):
-        result = self.run_build(
-            "-Test", "-TestTarget", "benchmark_pikdraw_rendering_effects", "-BuildOnly")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse((self.repo / ".agent/native-build.lock").exists())
-        commands = [json.loads(line.lstrip("\ufeff"))
-                    for line in self.log.read_text(encoding="utf-8-sig").splitlines()]
-        configure = next(entry for entry in commands if entry[0] == "--preset")
+        result = self.run_build("-Test", "-TestTarget", "benchmark_pikdraw_rendering_effects", "-BuildOnly")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        commands = self.commands()
+        configure = next(entry for entry in commands if "--preset" in entry)
         self.assertIn("-DPIKDRAW_BUILD_TESTS=ON", configure)
-        builds = [entry for entry in commands if entry[0] == "--build"]
+        builds = [entry for entry in commands if "--build" in entry]
         self.assertEqual(len(builds), 1)
         self.assertEqual(builds[0][-1], "benchmark_pikdraw_rendering_effects")
-        self.assertFalse(any("ctest.exe" in entry[0].lower() for entry in commands))
+        self.assertFalse(any(entry[0] == "ctest" for entry in commands))
 
     def test_active_build_lock_is_preserved(self):
         lock = self.repo / ".agent/native-build.lock"
         lock.parent.mkdir()
         lock.write_text("another-session", encoding="utf-8")
-        result = self.run_build()
+        result = self.run_build("-LockWaitSeconds", "0")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Another session", result.stderr)
+        self.assertIn("still queued", result.stderr)
         self.assertEqual(lock.read_text(), "another-session")
         self.assertFalse(self.log.exists())
 
@@ -108,9 +80,62 @@ class NativeWorkflowTests(unittest.TestCase):
         result = self.run_build(fail=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.repo / ".agent/native-build.lock").exists())
-        commands = self.log.read_text(encoding="utf-8-sig").splitlines()
-        self.assertEqual(len(commands), 1)
+        self.assertEqual(len(self.commands()), 1)
         self.assertEqual(list(self.repo.rglob("*.exe")), [])
+
+    def test_default_preserves_release_configuration(self):
+        self.assertEqual(self.run_build("-Configuration", "Release").returncode, 0)
+        result = self.run_build()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(sum("--preset" in c for c in self.commands()), 1)
+
+    def test_unsafe_bypass_and_implicit_full_suite_are_rejected(self):
+        for args in (("-Force",), ("-NoLock",), ("-Test",), ("-TestsOnly",)):
+            with self.subTest(args=args):
+                self.assertNotEqual(self.run_build(*args).returncode, 0)
+        self.assertFalse(self.log.exists())
+
+    def test_target_automatically_limits_registered_tests(self):
+        result = self.run_build("-Test", "-TestTarget", "test_beta")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        tests = [c for c in self.commands() if c[0] == "ctest" and "-R" in c]
+        self.assertEqual(len(tests), 1)
+        self.assertIn("^(registered_beta)$", tests[0])
+
+    def test_wrapper_forwards_named_array_and_job_options(self):
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+             str(self.repo / "tooling/pikdraw.ps1"), "test", "-TestTarget", "test_alpha,test_beta", "-Jobs", "1"],
+            cwd=self.repo, capture_output=True, text=True, timeout=90)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        builds = [c for c in self.commands() if "--build" in c]
+        self.assertEqual(builds[0][-2:], ["test_alpha", "test_beta"])
+        self.assertEqual(builds[0][builds[0].index("--parallel") + 1], "1")
+
+    def test_submit_and_status_do_not_steal_legacy_lock(self):
+        lock = self.repo / ".agent/native-build.lock"
+        lock.parent.mkdir()
+        lock.write_text("another-session")
+        result = self.run_build("-Submit")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        entry = self.coordinator.entries()[0]
+        status = self.run_build("-Status", "-RequestId", entry["id"])
+        self.assertEqual(status.returncode, 0, status.stderr)
+        self.assertEqual(json.loads(status.stdout)["requests"][0]["state"], "queued")
+        self.assertEqual(lock.read_text(), "another-session")
+        lock.unlink()
+        self.assertEqual(self.finish(entry)["state"], "succeeded")
+
+    def test_retry_restores_own_scope_and_accepts_job_override(self):
+        with patch.dict(os.environ, PIKDRAW_NATIVE_FAIL_TEST="test_alpha"):
+            failed = self.run_build("-Test", "-TestTarget", "test_alpha")
+        self.assertNotEqual(failed.returncode, 0)
+        entry = self.coordinator.entries()[-1]
+        result = self.run_build("-RetryFailed", entry["id"], "-Jobs", "1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        builds = [c for c in self.commands() if "--build" in c]
+        self.assertEqual(builds[-1][builds[-1].index("--parallel") + 1], "1")
+        self.assertEqual(self.coordinator.entries()[-1]["tests"], ["test_alpha"])
 
 
 if __name__ == "__main__":

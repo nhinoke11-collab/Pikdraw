@@ -105,11 +105,13 @@ SourceSnapshot::SourceSnapshot(SourceSnapshot&& other) noexcept
     : read_handle_(std::move(other.read_handle_)),
       staging_directory_(std::move(other.staging_directory_)),
       staging_file_(std::move(other.staging_file_)),
+      owns_staging_file_(other.owns_staging_file_),
       size_bytes_(other.size_bytes_),
       sha256_(other.sha256_),
       token_(other.token_) {
     other.staging_directory_.clear();
     other.staging_file_.clear();
+    other.owns_staging_file_ = false;
     other.size_bytes_ = 0;
     other.sha256_.fill(0);
     other.token_.fill(0);
@@ -121,11 +123,13 @@ SourceSnapshot& SourceSnapshot::operator=(SourceSnapshot&& other) noexcept {
     read_handle_ = std::move(other.read_handle_);
     staging_directory_ = std::move(other.staging_directory_);
     staging_file_ = std::move(other.staging_file_);
+    owns_staging_file_ = other.owns_staging_file_;
     size_bytes_ = other.size_bytes_;
     sha256_ = other.sha256_;
     token_ = other.token_;
     other.staging_directory_.clear();
     other.staging_file_.clear();
+    other.owns_staging_file_ = false;
     other.size_bytes_ = 0;
     other.sha256_.fill(0);
     other.token_.fill(0);
@@ -206,6 +210,7 @@ std::optional<SourceSnapshot> SourceSnapshot::Create(
         return std::nullopt;
     }
     snapshot.staging_file_ = snapshot.staging_directory_ + L"\\source.snapshot";
+    snapshot.owns_staging_file_ = true;
 
     ScopedHandle output(CreateFileW(
         snapshot.staging_file_.c_str(),
@@ -326,12 +331,100 @@ std::optional<SourceSnapshot> SourceSnapshot::Create(
     return snapshot;
 }
 
+std::optional<SourceSnapshot> SourceSnapshot::PinReadOnly(
+    const std::wstring& selected_source,
+    uint64_t max_source_bytes,
+    SourceSnapshotFailure* failure,
+    DWORD* system_error) {
+    SetFailure(SourceSnapshotFailure::None, ERROR_SUCCESS, failure, system_error);
+    if (selected_source.empty() || max_source_bytes == 0) {
+        SetFailure(SourceSnapshotFailure::InvalidLimit, ERROR_INVALID_PARAMETER,
+                   failure, system_error);
+        return std::nullopt;
+    }
+
+    ScopedHandle input(CreateFileW(
+        selected_source.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+        OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_RANDOM_ACCESS,
+        nullptr));
+    if (!input.IsValid()) {
+        SetFailure(SourceSnapshotFailure::SourceOpenFailed, GetLastError(),
+                   failure, system_error);
+        return std::nullopt;
+    }
+
+    FILE_ATTRIBUTE_TAG_INFO source_tag{};
+    FILE_STANDARD_INFO source_info{};
+    if (!GetFileInformationByHandleEx(input.Get(), FileAttributeTagInfo,
+                                      &source_tag, sizeof(source_tag))) {
+        SetFailure(SourceSnapshotFailure::SourceOpenFailed, GetLastError(),
+                   failure, system_error);
+        return std::nullopt;
+    }
+    if ((source_tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+        SetFailure(SourceSnapshotFailure::SourceIsReparsePoint, ERROR_CANT_ACCESS_FILE,
+                   failure, system_error);
+        return std::nullopt;
+    }
+    if (!GetFileInformationByHandleEx(input.Get(), FileStandardInfo,
+                                       &source_info, sizeof(source_info))) {
+        SetFailure(SourceSnapshotFailure::SourceOpenFailed, GetLastError(),
+                   failure, system_error);
+        return std::nullopt;
+    }
+    if (source_info.Directory || source_info.EndOfFile.QuadPart < 0) {
+        SetFailure(SourceSnapshotFailure::SourceIsNotRegularFile, ERROR_INVALID_DATA,
+                   failure, system_error);
+        return std::nullopt;
+    }
+    const auto expected_size = static_cast<uint64_t>(source_info.EndOfFile.QuadPart);
+    if (expected_size > max_source_bytes) {
+        SetFailure(SourceSnapshotFailure::SourceTooLarge, ERROR_FILE_TOO_LARGE,
+                   failure, system_error);
+        return std::nullopt;
+    }
+
+    SourceSnapshot lease;
+    if (!FillRandom(lease.token_.data(), static_cast<ULONG>(lease.token_.size()))) {
+        SetFailure(SourceSnapshotFailure::CryptographicFailure, ERROR_GEN_FAILURE,
+                   failure, system_error);
+        return std::nullopt;
+    }
+    uint64_t hashed_bytes = 0;
+    if (!HashReadOnlyHandle(input.Get(), max_source_bytes, hashed_bytes,
+                            lease.sha256_, system_error)) {
+        const DWORD error = system_error ? *system_error : GetLastError();
+        SetFailure(SourceSnapshotFailure::SourceReadFailed,
+                   error == ERROR_SUCCESS ? ERROR_GEN_FAILURE : error,
+                   failure, system_error);
+        return std::nullopt;
+    }
+
+    FILE_STANDARD_INFO verified_info{};
+    if (hashed_bytes != expected_size ||
+        !GetFileInformationByHandleEx(input.Get(), FileStandardInfo,
+                                      &verified_info, sizeof(verified_info)) ||
+        verified_info.Directory || verified_info.EndOfFile.QuadPart < 0 ||
+        static_cast<uint64_t>(verified_info.EndOfFile.QuadPart) != expected_size) {
+        SetFailure(SourceSnapshotFailure::SnapshotVerificationFailed,
+                   GetLastError() == ERROR_SUCCESS ? ERROR_FILE_INVALID : GetLastError(),
+                   failure, system_error);
+        return std::nullopt;
+    }
+
+    lease.read_handle_ = std::move(input);
+    lease.staging_file_ = selected_source;
+    lease.size_bytes_ = expected_size;
+    return lease;
+}
+
 void SourceSnapshot::Reset() noexcept {
     read_handle_.Close();
-    if (!staging_file_.empty()) DeleteFileW(staging_file_.c_str());
+    if (owns_staging_file_ && !staging_file_.empty()) DeleteFileW(staging_file_.c_str());
     if (!staging_directory_.empty()) RemoveDirectoryW(staging_directory_.c_str());
     staging_file_.clear();
     staging_directory_.clear();
+    owns_staging_file_ = false;
     size_bytes_ = 0;
     sha256_.fill(0);
     token_.fill(0);

@@ -1,0 +1,12 @@
+{
+  "name": "Clipper2",
+  "version": "2.0.1",
+  "upstream": "https://github.com/AngusJohnson/Clipper2",
+  "tag": "Clipper2_2.0.1",
+  "commit": "21ebba05db8894f0c7217ad35ea518080f324946",
+  "archiveUrl": "https://github.com/AngusJohnson/Clipper2/archive/refs/tags/Clipper2_2.0.1.zip",
+  "archiveSha256": "2FBFE548AA1427716510B572446BCEC34C88990DF7DA510039CBDC2EE2406A23",
+  "license": "BSL-1.0",
+  "usage": "Polygon Boolean operations only; PikDraw keeps its exact rectangle path and owns flattening, quantization, range, topology, and tolerance policy.",
+  "sourceFilesCompiled": ["clipper.engine.cpp"]
+}

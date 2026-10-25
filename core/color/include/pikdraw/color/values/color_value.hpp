@@ -1,6 +1,8 @@
 #pragma once
 
 #include "pikdraw/color/values/color_space.hpp"
+#include "pikdraw/color/profiles/profile_resource.hpp"
+#include <memory>
 #include <string>
 #include <variant>
 #include <cmath>
@@ -110,6 +112,32 @@ public:
     [[nodiscard]] const ColorPayload& payload() const noexcept { return payload_; }
     [[nodiscard]] bool is_valid() const noexcept;
 
+    // An explicit source profile overrides the page working profile. A null
+    // resource means the paint inherits the page profile/legacy interpretation.
+    [[nodiscard]] const std::shared_ptr<const ProfileResource>& profile_resource() const noexcept {
+        return profile_resource_;
+    }
+    [[nodiscard]] bool has_same_profile_binding(const ColorValue& other) const noexcept {
+        if (!profile_resource_ || !other.profile_resource_)
+            return !profile_resource_ && !other.profile_resource_;
+        return profile_resource_->identity() == other.profile_resource_->identity();
+    }
+    [[nodiscard]] bool set_profile_resource(
+        std::shared_ptr<const ProfileResource> resource) noexcept {
+        if (resource && resource->identity().color_space != color_space())
+            return false;
+        profile_resource_ = std::move(resource);
+        pending_profile_resource_index_ = 0;
+        return true;
+    }
+    [[nodiscard]] uint32_t pending_profile_resource_index() const noexcept {
+        return pending_profile_resource_index_;
+    }
+    void set_pending_profile_resource_index(uint32_t index) noexcept {
+        profile_resource_.reset();
+        pending_profile_resource_index_ = index;
+    }
+
     [[nodiscard]] const OverprintConfig& overprint() const noexcept { return overprint_; }
     void set_overprint(OverprintConfig op) noexcept { overprint_ = op; }
 
@@ -128,6 +156,10 @@ public:
 private:
     ColorPayload payload_;
     OverprintConfig overprint_{};
+    std::shared_ptr<const ProfileResource> profile_resource_;
+    // Native reader resolves this dictionary reference after it has decoded
+    // the ICC dictionary decoded after page/object records.
+    uint32_t pending_profile_resource_index_{0};
 };
 
 } // namespace pikdraw::color

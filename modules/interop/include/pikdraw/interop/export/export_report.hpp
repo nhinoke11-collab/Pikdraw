@@ -2,6 +2,7 @@
 
 #include "pikdraw/document/model/document_page.hpp"
 #include "pikdraw/document/model/object_id.hpp"
+#include "pikdraw/geometry/primitives/bounds.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -85,6 +86,8 @@ struct ExportFileReceipt {
     std::vector<document::PageId> page_ids;
     std::vector<document::ObjectId> object_ids;
     ExportFileStatus status{ExportFileStatus::Failed};
+    std::optional<document::ArtboardId> artboard_id;
+    std::optional<geometry::Rect2D> bounds;
 };
 
 /// Structured result for one job; paths are for the UI receipt and must be redacted in logs.

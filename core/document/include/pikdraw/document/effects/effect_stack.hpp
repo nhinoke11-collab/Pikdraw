@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string_view>
+#include <type_traits>
 #include <variant>
 #include <vector>
 
@@ -17,6 +18,7 @@ inline constexpr uint32_t kAppearanceSchemaMinor = 0;
 inline constexpr uint32_t kBasicEffectNodeSchemaVersion = 1;
 inline constexpr uint32_t kBasicEffectNodeSchemaMinor = 0;
 inline constexpr uint32_t kDropShadowBlendSchemaMinor = 1;
+inline constexpr uint32_t kExtendedEffectNodeSchemaMinor = 2;
 inline constexpr size_t kMaxEffectsPerObject = 256;
 inline constexpr size_t kMaxEffectsPerDocument = 100'000;
 
@@ -45,7 +47,64 @@ struct DropShadowEffect {
   BlendMode blend_mode{BlendMode::Normal};
 };
 
-using EffectParameters = std::variant<GaussianBlurEffect, DropShadowEffect>;
+struct FeatherEffect {
+  double radius_mm{0.5};
+};
+
+struct OuterGlowEffect {
+  double radius_mm{1.0};
+  color::ColorValue color{color::RGBColor{1.0, 0.9, 0.2, 1.0}};
+  double opacity{0.75};
+};
+
+struct InnerGlowEffect {
+  double radius_mm{1.0};
+  color::ColorValue color{color::RGBColor{1.0, 1.0, 1.0, 1.0}};
+  double opacity{0.75};
+};
+
+struct InnerShadowEffect {
+  double dx_mm{2.0};
+  double dy_mm{-2.0};
+  double sigma_x_mm{1.0};
+  double sigma_y_mm{1.0};
+  color::ColorValue color{color::RGBColor{0.0, 0.0, 0.0, 1.0}};
+  double opacity{0.5};
+  BlendMode blend_mode{BlendMode::Normal};
+};
+
+struct ColorOverlayEffect {
+  color::ColorValue color{color::RGBColor{1.0, 0.0, 0.0, 1.0}};
+  double opacity{1.0};
+  BlendMode blend_mode{BlendMode::Normal};
+};
+
+using EffectParameters = std::variant<
+    GaussianBlurEffect,
+    DropShadowEffect,
+    FeatherEffect,
+    OuterGlowEffect,
+    InnerGlowEffect,
+    InnerShadowEffect,
+    ColorOverlayEffect>;
+
+[[nodiscard]] constexpr uint32_t effect_node_schema_minor(
+    const EffectParameters &parameters) noexcept {
+  return std::visit([](const auto &effect) constexpr -> uint32_t {
+    using T = std::decay_t<decltype(effect)>;
+    if constexpr (std::is_same_v<T, DropShadowEffect>)
+      return effect.blend_mode == BlendMode::Normal
+                 ? kBasicEffectNodeSchemaMinor
+                 : kDropShadowBlendSchemaMinor;
+    else if constexpr (std::is_same_v<T, FeatherEffect> ||
+                       std::is_same_v<T, OuterGlowEffect> ||
+                       std::is_same_v<T, InnerGlowEffect> ||
+                       std::is_same_v<T, InnerShadowEffect> ||
+                       std::is_same_v<T, ColorOverlayEffect>)
+      return kExtendedEffectNodeSchemaMinor;
+    return kBasicEffectNodeSchemaMinor;
+  }, parameters);
+}
 
 struct EffectNode {
   EffectInstanceId id{kInvalidEffectInstanceId};
@@ -74,9 +133,24 @@ struct Appearance {
 
 [[nodiscard]] constexpr std::string_view effect_type_id(
     const EffectParameters &parameters) noexcept {
-  if (std::holds_alternative<GaussianBlurEffect>(parameters))
-    return "pikdraw.effect.gaussian-blur";
-  return "pikdraw.effect.drop-shadow";
+  return std::visit([](const auto &effect) -> std::string_view {
+    using T = std::decay_t<decltype(effect)>;
+    if constexpr (std::is_same_v<T, GaussianBlurEffect>)
+      return "pikdraw.effect.gaussian-blur";
+    else if constexpr (std::is_same_v<T, DropShadowEffect>)
+      return "pikdraw.effect.drop-shadow";
+    else if constexpr (std::is_same_v<T, FeatherEffect>)
+      return "pikdraw.effect.feather";
+    else if constexpr (std::is_same_v<T, OuterGlowEffect>)
+      return "pikdraw.effect.outer-glow";
+    else if constexpr (std::is_same_v<T, InnerGlowEffect>)
+      return "pikdraw.effect.inner-glow";
+    else if constexpr (std::is_same_v<T, InnerShadowEffect>)
+      return "pikdraw.effect.inner-shadow";
+    else if constexpr (std::is_same_v<T, ColorOverlayEffect>)
+      return "pikdraw.effect.color-overlay";
+    return "";
+  }, parameters);
 }
 
 } // namespace pikdraw::document

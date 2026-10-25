@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pikdraw/color/profiles/profile_id.hpp"
+#include "pikdraw/color/profiles/profile_resource.hpp"
 #include <vector>
 #include <optional>
 #include <memory>
@@ -12,8 +13,13 @@ public:
     ProfileRegistry();
 
     void register_profile(ProfileIdentifier id);
+    [[nodiscard]] bool register_resource(std::shared_ptr<const ProfileResource> resource);
     [[nodiscard]] bool has_profile(const std::string& name) const;
     [[nodiscard]] std::optional<ProfileIdentifier> find_profile(const std::string& name) const;
+    [[nodiscard]] std::optional<ProfileIdentifier> find_profile(
+        const ProfileIdentifier& identity) const;
+    [[nodiscard]] std::shared_ptr<const ProfileResource> find_resource(
+        const ProfileIdentifier& identity) const;
 
     [[nodiscard]] const ProfileIdentifier& default_rgb_profile() const noexcept { return default_rgb_; }
     [[nodiscard]] const ProfileIdentifier& default_cmyk_profile() const noexcept { return default_cmyk_; }
@@ -25,6 +31,7 @@ public:
 
 private:
     std::vector<ProfileIdentifier> profiles_;
+    std::vector<std::shared_ptr<const ProfileResource>> resources_;
     ProfileIdentifier default_rgb_;
     ProfileIdentifier default_cmyk_;
     uint64_t generation_{1};

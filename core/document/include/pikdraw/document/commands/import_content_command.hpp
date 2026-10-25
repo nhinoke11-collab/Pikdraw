@@ -2,8 +2,10 @@
 
 #include "pikdraw/document/commands/command.hpp"
 #include "pikdraw/document/model/document_page.hpp"
+#include "pikdraw/document/model/import_fidelity_report.hpp"
 #include "pikdraw/document/snapshots/persistent_map.hpp"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <utility>
@@ -16,6 +18,9 @@ struct ImportedPageContent {
     std::string name;
     Page layout{Page::make_default()};
     std::vector<ObjectVariant> objects;
+    uint32_t source_page_index{0};
+    uint8_t source_page_rotation_quarters_clockwise{0};
+    ImportFidelityReport import_fidelity_report;
 };
 
 /// Applies a page set in one document transaction and one Undo step.
@@ -46,7 +51,8 @@ class ImportContentCommand final : public DocumentCommand {
 public:
     ImportContentCommand(std::vector<Layer> layers, std::vector<ObjectVariant> objects,
         std::optional<std::pair<double, double>> source_page_size_mm = std::nullopt,
-        PageId target_page_id = kInvalidPageId);
+        PageId target_page_id = kInvalidPageId,
+        ImportFidelityReport import_fidelity_report = {});
 
     [[nodiscard]] std::string_view name() const noexcept override { return "Import Content"; }
     CommandResult execute(Document& doc) override;
@@ -59,6 +65,7 @@ private:
     std::vector<DocumentPage> before_pages_;
     PageId before_active_page_id_{kInvalidPageId};
     PageId target_page_id_{kInvalidPageId};
+    ImportFidelityReport import_fidelity_report_;
     bool has_before_{false};
     bool executed_{false};
 };

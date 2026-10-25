@@ -2,7 +2,9 @@
 
 #include "pikdraw/interop/capabilities/format_capabilities.hpp"
 #include "pikdraw/document/snapshots/document_snapshot.hpp"
+#include "pikdraw/geometry/primitives/bounds.hpp"
 #include <iosfwd>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -12,6 +14,7 @@ struct SvgExportOptions {
     bool include_xml_header{true};
     bool pretty_print{true};
     double scale{1.0}; // 1.0 = mm directly in SVG user units
+    std::optional<geometry::Rect2D> bounds;
 };
 
 struct SvgExportResult {

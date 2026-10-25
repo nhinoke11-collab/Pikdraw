@@ -1,6 +1,8 @@
 #include "pikdraw/color/preview/color_transform.hpp"
 #include "pikdraw/color/preview/icc_preview.hpp"
+#include <cmath>
 #include <stdexcept>
+#include <utility>
 
 namespace pikdraw::color {
 
@@ -9,7 +11,10 @@ double calculate_tac(const CMYKColor& cmyk) noexcept {
 }
 
 CMYKColor clamp_tac(const CMYKColor& cmyk, double max_tac_percent) noexcept {
-    const double max_fraction = std::clamp(max_tac_percent / 100.0, 1.0, 4.0);
+    if (!cmyk.is_valid() || !std::isfinite(max_tac_percent) ||
+        max_tac_percent < 100.0 || max_tac_percent > 400.0)
+        return cmyk;
+    const double max_fraction = max_tac_percent / 100.0;
     const double total = cmyk.c + cmyk.m + cmyk.y + cmyk.k;
     if (total <= max_fraction) {
         return cmyk;
@@ -39,32 +44,62 @@ PreviewRGBA simulate_overprint(const PreviewRGBA& background,
     };
 }
 
-ColorValue convert_color_to_mode(const ColorValue& source, DocumentColorMode mode,
+ColorConversionReport convert_color_to_mode_report(const ColorValue& source, DocumentColorMode mode,
                                 const IccPreview* icc, BlackGeneration black_gen,
-                                double max_tac_percent) {
+                                std::optional<double> max_tac_percent) {
     if (!source.is_valid() || !valid_document_color_mode(mode))
         throw std::invalid_argument("Invalid source color or document color mode");
+    if (max_tac_percent && (!std::isfinite(*max_tac_percent) ||
+        *max_tac_percent < 100.0 || *max_tac_percent > 400.0))
+        throw std::invalid_argument("TAC limit must be an explicit value from 100% to 400%");
     if (source.color_space() == ColorSpace::Spot ||
         (mode == DocumentColorMode::Rgb && source.color_space() == ColorSpace::Rgb) ||
         (mode == DocumentColorMode::Cmyk && source.color_space() == ColorSpace::Cmyk))
-        return source;
+        return {source, ColorConversionQuality::Preserved, false, false, false};
     ColorValue result;
     const auto* rgb = std::get_if<RGBColor>(&source.payload());
     bool is_pure_k_overprint = false;
+    bool used_icc = false;
+    bool black_policy_applied = false;
+    bool tac_limited = false;
+    auto apply_tac_limit = [&](const CMYKColor& source_cmyk) {
+        const auto destination_profile = result.profile_resource();
+        if (!max_tac_percent) {
+            result = source_cmyk;
+            if (destination_profile)
+                (void)result.set_profile_resource(destination_profile);
+            return;
+        }
+        const auto limited = clamp_tac(source_cmyk, *max_tac_percent);
+        tac_limited = limited.c != source_cmyk.c || limited.m != source_cmyk.m ||
+            limited.y != source_cmyk.y || limited.k != source_cmyk.k;
+        result = limited;
+        if (destination_profile)
+            (void)result.set_profile_resource(destination_profile);
+    };
 
-    if (mode == DocumentColorMode::Cmyk && rgb && rgb->r <= 0.02 && rgb->g <= 0.02 && rgb->b <= 0.02) {
+    if (source.profile_resource()) {
+        if (!icc || !icc->convert_process(source, mode, result))
+            throw std::invalid_argument(
+                "Bound paint ICC profile does not match an available conversion transform");
+        used_icc = true;
+        if (mode == DocumentColorMode::Cmyk) {
+            if (const auto* c = std::get_if<CMYKColor>(&result.payload())) apply_tac_limit(*c);
+        }
+    } else if (mode == DocumentColorMode::Cmyk && rgb && black_gen != BlackGeneration::None &&
+        rgb->r <= 0.02 && rgb->g <= 0.02 && rgb->b <= 0.02) {
+        black_policy_applied = true;
         if (black_gen == BlackGeneration::PureK100) {
             result = CMYKColor{0, 0, 0, 1, rgb->a};
             is_pure_k_overprint = true;
         } else {
-            result = clamp_tac(CMYKColor{0.40, 0.30, 0.30, 1.00, rgb->a}, max_tac_percent);
+            apply_tac_limit(CMYKColor{0.40, 0.30, 0.30, 1.00, rgb->a});
         }
     } else if (icc && icc->convert_process(source, mode, result)) {
+        used_icc = true;
         // The conversion uses real source/destination ICC files.
         if (mode == DocumentColorMode::Cmyk) {
-            if (const auto* c = std::get_if<CMYKColor>(&result.payload())) {
-                result = clamp_tac(*c, max_tac_percent);
-            }
+            if (const auto* c = std::get_if<CMYKColor>(&result.payload())) apply_tac_limit(*c);
         }
     } else if (const auto* gray = std::get_if<GrayscaleColor>(&source.payload())) {
         result = mode == DocumentColorMode::Cmyk
@@ -78,7 +113,7 @@ ColorValue convert_color_to_mode(const ColorValue& source, DocumentColorMode mod
         } else {
             auto raw_cmyk = CMYKColor{(maximum - rgb->r) / maximum, (maximum - rgb->g) / maximum,
                                       (maximum - rgb->b) / maximum, 1 - maximum, rgb->a};
-            result = clamp_tac(raw_cmyk, max_tac_percent);
+            apply_tac_limit(raw_cmyk);
         }
     } else {
         const auto& c = std::get<CMYKColor>(source.payload());
@@ -90,7 +125,15 @@ ColorValue convert_color_to_mode(const ColorValue& source, DocumentColorMode mod
     } else {
         result.set_overprint(source.overprint());
     }
-    return result;
+    const auto quality = black_policy_applied ? ColorConversionQuality::PresetPolicy
+        : used_icc ? ColorConversionQuality::IccManaged : ColorConversionQuality::Approximate;
+    return {std::move(result), quality, true, black_policy_applied, tac_limited};
+}
+
+ColorValue convert_color_to_mode(const ColorValue& source, DocumentColorMode mode,
+                                const IccPreview* icc, BlackGeneration black_gen,
+                                std::optional<double> max_tac_percent) {
+    return convert_color_to_mode_report(source, mode, icc, black_gen, max_tac_percent).color;
 }
 
 PreviewRGBA to_preview_rgba(const ColorValue& color) noexcept {

@@ -6,6 +6,7 @@
 #include "pikdraw/typography/layout/text_layout.hpp"
 #include "pikdraw/document/commands/command.hpp"
 #include "pikdraw/document/commands/appearance_commands.hpp"
+#include "pikdraw/document/commands/contour_commands.hpp"
 #include "pikdraw/document/commands/transaction_writer.hpp"
 #include "pikdraw/color/values/color_value.hpp"
 #include "pikdraw/interop/adapters/svg_importer.hpp"
@@ -303,7 +304,9 @@ bool DocumentWorkflow::can_add_selected_effect() const {
 
 bool DocumentWorkflow::can_add_selected_effect(
     const document::EffectParameters& parameters) const {
-    if (!valid_effect_parameters(parameters) || !can_add_selected_effect()) return false;
+    if (!valid_effect_parameters(parameters) ||
+        !root_.renderer().backend().supports_effect(parameters) ||
+        !can_add_selected_effect()) return false;
     if (!std::holds_alternative<document::DropShadowEffect>(parameters)) return true;
 
     const auto snapshot = root_.document().current_snapshot();
@@ -360,7 +363,26 @@ std::optional<size_t> DocumentWorkflow::selected_effect_index(
 bool DocumentWorkflow::can_activate_selected_effect(
     const document::EffectParameters& parameters) const {
     if (!valid_effect_parameters(parameters) || !can_edit_selected_appearance()) return false;
-    if (selected_effect_index(parameters)) return true;
+    if (const auto selected = selected_effect_index(parameters)) {
+        const auto snapshot = root_.document().current_snapshot();
+        if (!snapshot) return false;
+        for (const auto id : root_.vector_controller().selection().selected_ids()) {
+            const auto object = snapshot->objects().get(id);
+            const auto* appearance = object ? std::visit(
+                [](const auto& value) -> const document::Appearance* {
+                    using T = std::decay_t<decltype(value)>;
+                    if constexpr (std::is_same_v<T, document::PathObject> ||
+                                  std::is_same_v<T, document::TextObject>)
+                        return &value.appearance;
+                    return nullptr;
+                }, *object) : nullptr;
+            if (!appearance || *selected >= appearance->effects.size() ||
+                !root_.renderer().backend().supports_effect(
+                    appearance->effects[*selected].parameters))
+                return false;
+        }
+        return true;
+    }
 
     const auto snapshot = root_.document().current_snapshot();
     if (!snapshot) return false;
@@ -521,10 +543,7 @@ bool DocumentWorkflow::add_selected_effect(document::EffectParameters parameters
         document::EffectNode node;
         node.id = document::generate_effect_instance_id();
         node.parameters = parameters;
-        if (const auto *shadow =
-                std::get_if<document::DropShadowEffect>(&node.parameters);
-            shadow && shadow->blend_mode != document::BlendMode::Normal)
-            node.schema_minor = document::kDropShadowBlendSchemaMinor;
+        node.schema_minor = document::effect_node_schema_minor(node.parameters);
         appearance.effects.push_back(std::move(node));
         return true;
     });
@@ -537,6 +556,72 @@ bool DocumentWorkflow::clear_selected_effects() {
         appearance.effects.clear();
         return true;
     });
+}
+
+bool DocumentWorkflow::can_clear_all_effects() const {
+    if (!can_edit_selected_appearance()) return false;
+    const auto snapshot = root_.document().current_snapshot();
+    if (!snapshot) return false;
+    for (const auto id : root_.vector_controller().selection().selected_ids()) {
+        const auto object = snapshot->objects().get(id);
+        if (!object) continue;
+        if (const auto *path = std::get_if<document::PathObject>(&*object)) {
+            if (!path->appearance.effects.empty() || path->contour_spec.starts_with("contour:"))
+                return true;
+        } else if (const auto *text = std::get_if<document::TextObject>(&*object)) {
+            if (!text->appearance.effects.empty())
+                return true;
+        }
+    }
+    return false;
+}
+
+bool DocumentWorkflow::clear_all_effects() {
+    if (!can_clear_all_effects()) return false;
+    const auto snapshot = root_.document().current_snapshot();
+    if (!snapshot) return false;
+    std::vector<std::unique_ptr<document::DocumentCommand>> cmds;
+    // 1. Remove contour on paths with contour
+    for (const auto id : root_.vector_controller().selection().selected_ids()) {
+        const auto object = snapshot->objects().get(id);
+        if (!object) continue;
+        if (const auto *path = std::get_if<document::PathObject>(&*object)) {
+            if (path->contour_spec.starts_with("contour:")) {
+                cmds.push_back(std::make_unique<document::RemoveContourCommand>(id));
+            }
+        }
+    }
+    // 2. Clear appearance effects
+    std::vector<document::AppearanceReplacement> replacements;
+    for (const auto id : root_.vector_controller().selection().selected_ids()) {
+        const auto object = snapshot->objects().get(id);
+        if (!object) continue;
+        document::Appearance appearance;
+        if (const auto *path = std::get_if<document::PathObject>(&*object))
+            appearance = path->appearance;
+        else if (const auto *text = std::get_if<document::TextObject>(&*object))
+            appearance = text->appearance;
+        else
+            continue;
+        if (!appearance.effects.empty()) {
+            appearance.effects.clear();
+            replacements.push_back({id, std::move(appearance)});
+        }
+    }
+    if (!replacements.empty()) {
+        cmds.push_back(std::make_unique<document::SetAppearanceCommand>(std::move(replacements)));
+    }
+    if (cmds.empty()) return false;
+    bool ok = false;
+    if (cmds.size() == 1) {
+        ok = root_.document().execute_command(std::move(cmds.front())).success;
+    } else {
+        auto composite = std::make_unique<document::CompositeCommand>("Clear All Effects");
+        for (auto &cmd : cmds) composite->add_command(std::move(cmd));
+        ok = root_.document().execute_command(std::move(composite)).success;
+    }
+    sync_status_bar();
+    return ok;
 }
 
 bool DocumentWorkflow::remove_selected_effect(size_t effect_index) {
@@ -621,6 +706,22 @@ bool DocumentWorkflow::set_selected_effect_sigma(size_t effect_index, bool x_axi
             (x_axis ? shadow->sigma_x_mm : shadow->sigma_y_mm) = sigma_mm;
             return true;
         }
+        if (auto *feather = std::get_if<document::FeatherEffect>(&parameters)) {
+            feather->radius_mm = sigma_mm;
+            return true;
+        }
+        if (auto *outer_glow = std::get_if<document::OuterGlowEffect>(&parameters)) {
+            outer_glow->radius_mm = sigma_mm;
+            return true;
+        }
+        if (auto *inner_glow = std::get_if<document::InnerGlowEffect>(&parameters)) {
+            inner_glow->radius_mm = sigma_mm;
+            return true;
+        }
+        if (auto *inner_shadow = std::get_if<document::InnerShadowEffect>(&parameters)) {
+            (x_axis ? inner_shadow->sigma_x_mm : inner_shadow->sigma_y_mm) = sigma_mm;
+            return true;
+        }
         return false;
     });
 }
@@ -633,27 +734,38 @@ bool DocumentWorkflow::set_selected_effect_offset(size_t effect_index, bool x_ax
     return update_selected_appearance([effect_index, x_axis, offset_mm](
                                           document::Appearance &appearance) {
         if (effect_index >= appearance.effects.size()) return false;
-        auto *shadow = std::get_if<document::DropShadowEffect>(
-            &appearance.effects[effect_index].parameters);
-        if (!shadow) return false;
-        (x_axis ? shadow->dx_mm : shadow->dy_mm) = offset_mm;
-        return true;
+        auto &parameters = appearance.effects[effect_index].parameters;
+        if (auto *shadow = std::get_if<document::DropShadowEffect>(&parameters)) {
+            (x_axis ? shadow->dx_mm : shadow->dy_mm) = offset_mm;
+            return true;
+        }
+        if (auto *inner_shadow = std::get_if<document::InnerShadowEffect>(&parameters)) {
+            (x_axis ? inner_shadow->dx_mm : inner_shadow->dy_mm) = offset_mm;
+            return true;
+        }
+        return false;
     });
 }
 
 bool DocumentWorkflow::set_selected_effect_parameters(
     size_t effect_index, document::EffectParameters parameters) {
-    if (!valid_effect_parameters(parameters) || !can_edit_selected_effect(effect_index))
+    if (!valid_effect_parameters(parameters) ||
+        !root_.renderer().backend().supports_effect(parameters) ||
+        !can_edit_selected_effect(effect_index))
         return false;
     return update_selected_appearance([effect_index, parameters = std::move(parameters)](
                                           document::Appearance& appearance) {
         if (effect_index >= appearance.effects.size() ||
             appearance.effects[effect_index].parameters.index() != parameters.index())
             return false;
-        if (const auto *shadow = std::get_if<document::DropShadowEffect>(&parameters);
-            shadow && shadow->blend_mode != document::BlendMode::Normal)
+        if (parameters.index() >= 2) {
+            appearance.effects[effect_index].schema_minor =
+                document::kExtendedEffectNodeSchemaMinor;
+        } else if (const auto *shadow = std::get_if<document::DropShadowEffect>(&parameters);
+            shadow && shadow->blend_mode != document::BlendMode::Normal) {
             appearance.effects[effect_index].schema_minor =
                 document::kDropShadowBlendSchemaMinor;
+        }
         appearance.effects[effect_index].parameters = parameters;
         return true;
     });
@@ -679,10 +791,24 @@ bool DocumentWorkflow::can_set_selected_effect_blend_mode(
             }, *object) : nullptr;
         if (!appearance || effect_index >= appearance->effects.size())
             return false;
-        const auto &node = appearance->effects[effect_index];
-        if (!std::holds_alternative<document::DropShadowEffect>(node.parameters))
+        const auto &params = appearance->effects[effect_index].parameters;
+        const bool has_blend = std::holds_alternative<document::DropShadowEffect>(params) ||
+                               std::holds_alternative<document::InnerShadowEffect>(params) ||
+                               std::holds_alternative<document::ColorOverlayEffect>(params);
+        if (!has_blend)
             return false;
-        if (mode != document::BlendMode::Normal && node.enabled) {
+        auto candidate = params;
+        if (auto *shadow = std::get_if<document::DropShadowEffect>(&candidate))
+            shadow->blend_mode = mode;
+        else if (auto *shadow = std::get_if<document::InnerShadowEffect>(&candidate))
+            shadow->blend_mode = mode;
+        else if (auto *overlay = std::get_if<document::ColorOverlayEffect>(&candidate))
+            overlay->blend_mode = mode;
+        if (!root_.renderer().backend().supports_effect(candidate))
+            return false;
+        if (mode != document::BlendMode::Normal &&
+            appearance->effects[effect_index].enabled &&
+            std::holds_alternative<document::DropShadowEffect>(params)) {
             for (size_t later = effect_index + 1;
                  later < appearance->effects.size(); ++later) {
                 if (appearance->effects[later].enabled) return false;
@@ -699,13 +825,23 @@ bool DocumentWorkflow::set_selected_effect_blend_mode(
                                           document::Appearance &appearance) {
         if (effect_index >= appearance.effects.size()) return false;
         auto &node = appearance.effects[effect_index];
-        auto *shadow = std::get_if<document::DropShadowEffect>(&node.parameters);
-        if (!shadow) return false;
-        shadow->blend_mode = mode;
-        if (mode != document::BlendMode::Normal ||
-            node.schema_minor == document::kDropShadowBlendSchemaMinor)
-            node.schema_minor = document::kDropShadowBlendSchemaMinor;
-        return true;
+        if (auto *shadow = std::get_if<document::DropShadowEffect>(&node.parameters)) {
+            shadow->blend_mode = mode;
+            if (mode != document::BlendMode::Normal ||
+                node.schema_minor == document::kDropShadowBlendSchemaMinor)
+                node.schema_minor = document::kDropShadowBlendSchemaMinor;
+            return true;
+        }
+        if (auto *inner_shadow = std::get_if<document::InnerShadowEffect>(&node.parameters)) {
+            inner_shadow->blend_mode = mode;
+            return true;
+        }
+
+        if (auto *overlay = std::get_if<document::ColorOverlayEffect>(&node.parameters)) {
+            overlay->blend_mode = mode;
+            return true;
+        }
+        return false;
     });
 }
 
@@ -717,11 +853,28 @@ bool DocumentWorkflow::set_selected_effect_opacity(size_t effect_index,
     return update_selected_appearance([effect_index, normalized_opacity](
                                           document::Appearance &appearance) {
         if (effect_index >= appearance.effects.size()) return false;
-        auto *shadow = std::get_if<document::DropShadowEffect>(
-            &appearance.effects[effect_index].parameters);
-        if (!shadow) return false;
-        shadow->opacity = normalized_opacity;
-        return true;
+        auto &params = appearance.effects[effect_index].parameters;
+        if (auto *shadow = std::get_if<document::DropShadowEffect>(&params)) {
+            shadow->opacity = normalized_opacity;
+            return true;
+        }
+        if (auto *inner_shadow = std::get_if<document::InnerShadowEffect>(&params)) {
+            inner_shadow->opacity = normalized_opacity;
+            return true;
+        }
+        if (auto *outer_glow = std::get_if<document::OuterGlowEffect>(&params)) {
+            outer_glow->opacity = normalized_opacity;
+            return true;
+        }
+        if (auto *inner_glow = std::get_if<document::InnerGlowEffect>(&params)) {
+            inner_glow->opacity = normalized_opacity;
+            return true;
+        }
+        if (auto *overlay = std::get_if<document::ColorOverlayEffect>(&params)) {
+            overlay->opacity = normalized_opacity;
+            return true;
+        }
+        return false;
     });
 }
 
@@ -731,11 +884,28 @@ bool DocumentWorkflow::set_selected_effect_color(size_t effect_index,
     return update_selected_appearance([effect_index, color = std::move(color)](
                                           document::Appearance &appearance) {
         if (effect_index >= appearance.effects.size()) return false;
-        auto *shadow = std::get_if<document::DropShadowEffect>(
-            &appearance.effects[effect_index].parameters);
-        if (!shadow) return false;
-        shadow->color = color;
-        return true;
+        auto &params = appearance.effects[effect_index].parameters;
+        if (auto *shadow = std::get_if<document::DropShadowEffect>(&params)) {
+            shadow->color = color;
+            return true;
+        }
+        if (auto *inner_shadow = std::get_if<document::InnerShadowEffect>(&params)) {
+            inner_shadow->color = color;
+            return true;
+        }
+        if (auto *outer_glow = std::get_if<document::OuterGlowEffect>(&params)) {
+            outer_glow->color = color;
+            return true;
+        }
+        if (auto *inner_glow = std::get_if<document::InnerGlowEffect>(&params)) {
+            inner_glow->color = color;
+            return true;
+        }
+        if (auto *overlay = std::get_if<document::ColorOverlayEffect>(&params)) {
+            overlay->color = color;
+            return true;
+        }
+        return false;
     });
 }
 

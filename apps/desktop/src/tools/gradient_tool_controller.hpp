@@ -5,6 +5,7 @@
 #include "pikdraw/vector/tools/gradient_tool.hpp"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -56,9 +57,16 @@ public:
 
     // Canvas gesture forwarding
     void on_pointer_down(geometry::Point2D object_pos, bool shift, bool ctrl, double hit_tolerance_mm = 3.0);
+    void on_pointer_down_with_hit(
+        geometry::Point2D object_pos, vector::tools::GradientHandleHit hit,
+        bool shift, bool ctrl);
     void on_pointer_move(geometry::Point2D object_pos, bool shift, bool ctrl);
     bool on_pointer_up(geometry::Point2D object_pos);
     void on_cancel();
+    [[nodiscard]] std::optional<geometry::Point2D> world_to_object(
+        geometry::Point2D world_point) const;
+    [[nodiscard]] std::optional<geometry::Point2D> object_to_world(
+        geometry::Point2D object_point) const;
 
     // Properties transaction routing
     bool apply();
@@ -73,9 +81,12 @@ public:
     [[nodiscard]] GradientPropertiesPresenter& presenter() noexcept { return presenter_; }
     [[nodiscard]] const GradientPropertiesPresenter& presenter() const noexcept { return presenter_; }
     [[nodiscard]] const document::GradientPaint* active_draft_paint() const noexcept;
+    [[nodiscard]] document::SnapshotPtr preview_snapshot_for_canvas(
+        document::SnapshotPtr source);
 
 private:
     geometry::Rect2D compute_selection_bounds() const;
+    [[nodiscard]] std::optional<geometry::Transform2D> active_object_transform() const;
     void sync_presenter_from_document();
 
     document::Document& document_;
@@ -85,6 +96,10 @@ private:
     std::vector<document::ObjectId> active_targets_;
     uint64_t selection_generation_{1};
     uint64_t last_document_revision_{0};
+    document::SnapshotPtr preview_source_;
+    document::SnapshotPtr preview_snapshot_;
+    uint64_t preview_presenter_generation_{0};
+    uint64_t preview_tool_generation_{0};
     std::string status_message_;
     bool is_active_{false};
 };

@@ -1,5 +1,6 @@
 #include "../../test_support.hpp"
 #include "pikdraw/vector/precision/snap/direction_snap.hpp"
+#include "pikdraw/vector/precision/snap/layout_snap.hpp"
 #include "pikdraw/geometry/queries/curve_intersections.hpp"
 
 #include <chrono>
@@ -159,6 +160,15 @@ void config_masks_and_presets() {
     CHECK(defaults.options[static_cast<size_t>(SnapOption::SourceNode)]);
     CHECK(defaults.options[static_cast<size_t>(SnapOption::LineMidpoint)]);
     CHECK(!defaults.options[static_cast<size_t>(SnapOption::Grid)]);
+    CHECK(configuration.master_enabled());
+    CHECK(!configuration.option_enabled(SnapOption::Grid));
+    CHECK(configuration.grid_settings().spacing_mm == 10.0);
+    CHECK(configuration.group_enabled(SnapGroup::PageGridGuidesConstruction));
+    CHECK(configuration.set_option_enabled(SnapOption::Grid, true));
+    CHECK(configuration.option_enabled(SnapOption::Grid));
+    CHECK(configuration.set_group_enabled(SnapGroup::PageGridGuidesConstruction, false));
+    CHECK(!configuration.group_enabled(SnapGroup::PageGridGuidesConstruction));
+    CHECK(configuration.set_group_enabled(SnapGroup::PageGridGuidesConstruction, true));
 
     CHECK(configuration.set_direction_mode(DirectionMode::Polar));
     CHECK(configuration.set_polar_preset(45.0));
@@ -443,6 +453,23 @@ void large_source_index_benchmark() {
               << " (single run; no percentile claim)\n";
 }
 
+void snap_index_build_cancellation_is_cooperative() {
+    std::vector<geometry::Point2D> points;
+    points.reserve(4096);
+    for (size_t index = 0; index < 4096; ++index)
+        points.push_back({static_cast<double>(index), static_cast<double>(index % 7)});
+    const auto source = make_snapshot({make_line_object(9000, 90000, points)},
+                                     4, 5, "cancel-snap-build");
+
+    SnapIndexBuildLimits limits;
+    size_t polls = 0;
+    limits.should_cancel = [&] { return ++polls >= 2; };
+    const auto cancelled = SnapSourceIndex::build(source, std::move(limits));
+    CHECK(cancelled.status == SnapIndexBuildStatus::Cancelled);
+    CHECK(!cancelled.index);
+    CHECK(cancelled.entry_count > 0);
+}
+
 void advanced_osnap_features() {
     // 1. AnalyticCenter & Quadrant
     const auto circle_obj = make_arc_circle_object(10, 1000, {100.0, 100.0}, 50.0);
@@ -562,12 +589,121 @@ void advanced_osnap_features() {
     CHECK(std::abs(res_tan.chosen->world_point.y - 125.0) < 1.0);
 }
 
+void layout_snap_uses_bounds_and_equal_gaps() {
+    LayoutSnapRequest repeat;
+    repeat.moving_bounds = {59.0, 0.0, 35.0, 10.0};
+    repeat.references = {{1, {0.0, 0.0, 20.0, 10.0}},
+                        {2, {30.0, 0.0, 20.0, 10.0}}};
+    repeat.dip_per_mm_x = 1.0;
+    repeat.dip_per_mm_y = 1.0;
+    repeat.acquire_radius_dip = 8.0;
+    repeat.alignment_enabled = false;
+    const auto repeated = solve_layout_snap(repeat);
+    CHECK(repeated.snapped);
+    CHECK(std::abs(repeated.accepted_delta.x - 1.0) < 1e-9);
+    CHECK(repeated.guides.size() == 1);
+    CHECK(repeated.guides.front().key.relation == LayoutSnapRelation::EqualSpacing);
+    CHECK(std::abs(repeated.guides.front().spacing_mm - 10.0) < 1e-9);
+
+    LayoutSnapRequest centered;
+    centered.moving_bounds = {42.0, 0.0, 20.0, 20.0};
+    centered.references = {{11, {0.0, 0.0, 20.0, 20.0}},
+                          {12, {80.0, 0.0, 30.0, 20.0}}};
+    centered.alignment_enabled = false;
+    centered.dip_per_mm_x = 1.0;
+    centered.dip_per_mm_y = 1.0;
+    centered.acquire_radius_dip = 8.0;
+    const auto center_solution = solve_layout_snap(centered);
+    CHECK(center_solution.snapped);
+    CHECK(std::abs(center_solution.accepted_delta.x + 2.0) < 1e-9);
+    CHECK(std::abs(center_solution.guides.front().spacing_mm - 20.0) < 1e-9);
+
+    LayoutSnapRequest no_room = centered;
+    no_room.moving_bounds = {24.0, 0.0, 40.0, 20.0};
+    no_room.references[1].bounds = {30.0, 0.0, 30.0, 20.0};
+    const auto rejected = solve_layout_snap(no_room);
+    CHECK(!rejected.snapped);
+    CHECK(rejected.accepted_delta.x == 0.0);
+
+    LayoutSnapRequest alignment;
+    alignment.moving_bounds = {29.0, 0.0, 10.0, 10.0};
+    alignment.references = {{50, {20.0, 0.0, 10.0, 10.0}}};
+    alignment.dip_per_mm_x = 1.0;
+    alignment.dip_per_mm_y = 1.0;
+    alignment.acquire_radius_dip = 8.0;
+    alignment.spacing_enabled = false;
+    const auto acquired = solve_layout_snap(alignment);
+    CHECK(acquired.snapped);
+    CHECK(std::abs(acquired.accepted_delta.x - 1.0) < 1e-9);
+    alignment.moving_bounds.x = 40.0;
+    alignment.previous_acquisition = acquired.acquisition;
+    const auto retained = solve_layout_snap(alignment);
+    CHECK(retained.snapped);
+    CHECK(std::abs(retained.accepted_delta.x + 10.0) < 1e-9);
+
+    LayoutSnapRequest guide_snap;
+    guide_snap.moving_bounds = {20.5, 0.0, 10.0, 10.0};
+    guide_snap.guidelines = {{7, false, 30.0, -100.0, 100.0}};
+    guide_snap.objects_enabled = false;
+    guide_snap.page_enabled = false;
+    guide_snap.spacing_enabled = false;
+    const auto guided = solve_layout_snap(guide_snap);
+    CHECK(guided.snapped);
+    CHECK(std::abs(guided.accepted_delta.x + 0.5) < 1e-9);
+    CHECK(guided.guides.front().key.reference_kind == LayoutSnapReferenceKind::Guideline);
+
+    LayoutSnapRequest page_snap;
+    page_snap.moving_bounds = {1.0, 1.0, 10.0, 10.0};
+    page_snap.references = {{99, {0.0, 0.0, 100.0, 100.0}, LayoutSnapReferenceKind::Page}};
+    page_snap.objects_enabled = false;
+    page_snap.page_enabled = true;
+    page_snap.spacing_enabled = false;
+    const auto on_page = solve_layout_snap(page_snap);
+    CHECK(on_page.snapped);
+    CHECK(std::abs(on_page.accepted_delta.x + 1.0) < 1e-9);
+    CHECK(on_page.guides.front().key.reference_kind == LayoutSnapReferenceKind::Page);
+
+    LayoutSnapRequest artboard_snap = page_snap;
+    artboard_snap.moving_bounds = {1.0, 40.0, 10.0, 10.0};
+    artboard_snap.references = {{100, {0.0, 0.0, 100.0, 100.0},
+        LayoutSnapReferenceKind::Artboard}};
+    const auto on_artboard = solve_layout_snap(artboard_snap);
+    CHECK(on_artboard.snapped);
+    CHECK(std::abs(on_artboard.accepted_delta.x + 1.0) < 1e-9);
+    CHECK(on_artboard.guides.front().key.reference_kind == LayoutSnapReferenceKind::Artboard);
+
+    LayoutSnapRequest resize_edge;
+    resize_edge.moving_bounds = {0.0, 0.0, 100.0, 80.0};
+    resize_edge.raw_delta = {20.0, 5.0};
+    resize_edge.references = {{101, {125.0, 0.0, 50.0, 80.0}}};
+    resize_edge.dip_per_mm_x = 1.0;
+    resize_edge.dip_per_mm_y = 1.0;
+    resize_edge.acquire_radius_dip = 8.0;
+    resize_edge.spacing_enabled = false;
+    resize_edge.moving_feature_mask_x = 0x04; // East edge only; west anchor stays fixed.
+    resize_edge.moving_feature_mask_y = 0;
+    const auto edge_solution = solve_layout_snap(resize_edge);
+    CHECK(edge_solution.snapped);
+    CHECK(edge_solution.acquisition[0].has_value());
+    CHECK(edge_solution.acquisition[0]->moving_feature == 2);
+    CHECK(!edge_solution.acquisition[1].has_value());
+    CHECK(std::abs(edge_solution.accepted_delta.x - 25.0) < 1e-9);
+    CHECK(std::abs(edge_solution.accepted_delta.y - 5.0) < 1e-9);
+
+    resize_edge.moving_feature_mask_x = 0x01; // Fixed west edge cannot acquire from an east drag.
+    const auto fixed_edge_solution = solve_layout_snap(resize_edge);
+    CHECK(!fixed_edge_solution.snapped);
+    CHECK(fixed_edge_solution.accepted_delta.x == 20.0);
+}
+
 int main() {
     return run([] {
         config_masks_and_presets();
         source_candidates_dip_ties_and_hysteresis();
         grid_stale_and_unsupported_filtering();
         large_source_index_benchmark();
+        snap_index_build_cancellation_is_cooperative();
         advanced_osnap_features();
+        layout_snap_uses_bounds_and_equal_gaps();
     });
 }

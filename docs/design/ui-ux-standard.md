@@ -83,7 +83,7 @@ Cùng một panel, không tạo hai bản Properties. Tên `Inspector` trong cod
 
 Tính năng mới trước hết tái dùng bề mặt đang có. Khi cần panel/dialog/bar mới trong phạm vi được giao,
 agent tự đánh giá và ghi trong phiếu vì sao menu + property bar + Properties hiện tại không đáp ứng được,
-rồi thực hiện theo chuẩn; reviewer kiểm lý do và kết quả khi review. Đổi khung chung ngoài scope vẫn cần task có quyền phù hợp.
+rồi thực hiện theo chuẩn; reviewer kiểm lý do và kết quả khi review. Đổi khung chung phải nằm trong yêu cầu người dùng, giữ local edits khác.
 Không đặt toolbar nổi hoặc bảng hướng dẫn mặc định đè lên artwork.
 
 ## 5. Property bar và Properties theo ngữ cảnh
@@ -94,6 +94,30 @@ Properties phải chứa đầy đủ thuộc tính và thiết lập của ch�
 phần ít dùng có thể thu gọn trong section nâng cao. Không lấy overflow hoặc các dialog rời cho từng tham số
 làm nơi duy nhất truy cập phần thiết lập còn lại. Tái dùng Properties bên phải; nếu workflow cần tab/panel
 thuộc tính chuyên dụng, đặt trong cùng hệ dock và tuân thủ quy tắc này, không nhân đôi form.
+
+### 5.1. Quy tắc nghiêm ngặt chống nhồi nhét Property bar (Anti-Overcrowding Rules)
+
+Property bar phía trên có diện tích chiều ngang hữu hạn (đặc biệt ở độ phân giải phổ thông 1366×768 và 1280×720). Mọi agent khi thiết kế UI bắt buộc phải tuân thủ nghiêm ngặt 4 điều cấm sau:
+
+1. **Giới hạn tối đa 3–5 controls trọng yếu**: Property bar chỉ dành riêng cho 3–5 thiết lập quan trọng nhất, có tần suất người dùng điều chỉnh thường xuyên (>80% thời lượng thao tác). Tất cả các tham số cấu hình phụ, tham số dung sai (tolerance), miter limit, tùy chọn chuyên sâu bắt buộc phải đưa vào bảng Properties bên phải.
+2. **Tuyệt đối cấm chuỗi nút hành động dài trên Property bar**: Không được xếp một hàng nút hành động nối đuôi nhau như `[✔ Áp dụng] [⚲ Rã viền] [✕ Xóa] [↺ Hủy]` trên thanh trên. Các nút hành động này phải nằm trong cụm **Hành động (Action Group)** của Bảng Properties bên phải, hoặc kích hoạt qua phím bấm thuận tiện (`Enter`, `Esc`, `Ctrl+K`).
+3. **Tuyệt đối cấm in câu văn hướng dẫn dài lên Property bar**: Không dùng `DrawTextW` để in các chuỗi văn bản gợi ý 50–100 ký tự (như *"Bo góc nhanh: tròn, lõm, vát · Khóa 4 góc đồng bộ · Shift tạo hình vuông..."*) lên Property bar làm chiếm chỗ và tràn giao diện. Toàn bộ câu gợi ý thao tác và phím bổ trợ phải đưa xuống **Status bar ở đáy (Botbar)** hoặc hiển thị qua **Tooltip khi hover chuột**.
+4. **Bắt buộc có nút liên kết nhanh `[⚙ Thuộc tính...]`**: Ở cuối cụm controls trên Property bar, luôn bố trí một nút icon gọn `[⚙]` hoặc `[Thuộc tính ▸]` để người dùng bấm vào là mở/focus ngay vào section tương ứng trên Bảng Properties bên phải.
+
+### 5.2. Chuẩn tương tác của Bảng Properties bên phải (Properties Dock Interactive Standard)
+
+Bảng Properties ở dock bên phải là nơi tập trung đầy đủ 100% thuộc tính và thiết lập của đối tượng hoặc công cụ đang chọn.
+
+1. **Tuyệt đối cấm biến Properties thành bảng text tĩnh**: Không được chỉ dùng `DrawTextW` ghép chuỗi thông tin (như `[Bo góc: Tròn] TL: 0 mm...`) mà không có ô nhập liệu hay nút bấm. Bảng Properties sinh ra là để người dùng xem VÀ chỉnh sửa trực tiếp.
+2. **Tương tác hoàn chỉnh (100% Interactive)**: Mọi thông số hiển thị phải có thành phần điều khiển tương ứng:
+   - Các kích thước, tọa độ, khoảng cách, số bước, dung sai: bắt buộc dùng ô nhập số có đơn vị (`NumericFieldId`), hỗ trợ click nhập số, Enter/Tab, cuộn chuột.
+   - Các chế độ/loại (ví dụ kiểu bo góc, kiểu mối nối, hướng contour): bắt buộc dùng các nút toggle/segmented buttons trực quan kèm icon SVG hoặc ký hiệu chuẩn.
+   - Các tùy chọn bật/tắt (Khóa tỉ lệ, Khóa 4 góc đồng bộ): dùng nút toggle/checkbox có phản hồi trực quan trạng thái Active/Inactive rõ ràng.
+3. **Cấu trúc phân tầng chuẩn của mỗi Section trong Properties**:
+   - **Header**: Tên công cụ / đối tượng đang chọn + Badge tóm tắt trạng thái ngắn gọn.
+   - **Geometry / Transform**: X, Y, W, H, Góc xoay (nếu là đối tượng vẽ).
+   - **Thiết lập chuyên biệt (Feature Settings)**: Toàn bộ tham số cấu hình chính và phụ của chức năng, có nhãn rõ ràng và canh lề chuẩn.
+   - **Khối nút Hành động (Action Group)**: Nằm ở phần dưới cùng của section, bố trí dạng các nút bấm rõ ràng (như `[✔ Áp dụng (Enter)]`, `[⚲ Rã đối tượng (Ctrl+K)]`, `[↺ Đặt lại]`, `[✕ Xóa]`).
 
 Luôn có đường mở/focus đúng section của chức năng từ menu hoặc nút mở rộng có tên rõ trên property bar,
 kể cả khi bảng đang đóng hoặc cửa sổ hẹp. “Luôn có” nghĩa là luôn truy cập được khi ngữ cảnh phù hợp,
@@ -132,6 +156,42 @@ Mỗi field phải chỉ rõ đơn vị, miền hợp lệ, giá trị ban đầ
 không tự sửa source khi chỉ chuyển tool, chuyển tab hoặc mở panel. Lock, read-only, mixed selection,
 busy và unsupported phải phân biệt được. Thay đổi selection trong lúc có bản nháp phải theo policy hủy/giữ rõ ràng.
 
+### 5.3. Ưu tiên chuột, thanh kéo và xem trước trên canvas
+
+Với tham số liên tục người dùng thường điều chỉnh bằng cảm nhận thị giác (độ mờ, bán kính, cường độ,
+khoảng cách, góc), ưu tiên thanh kéo hoặc tay nắm trực tiếp trên canvas. Luôn có ô số và đơn vị bên cạnh
+để nhập chính xác; thanh kéo không thay thế khả năng nhập số. Các tham số rời rạc dùng nút chọn hoặc
+danh sách thay vì một thanh kéo giả. Preview của thao tác trực quan **bật mặc định** khi renderer hỗ trợ.
+
+- **Dễ bắt bằng chuột:** track đủ dài để chỉnh được giá trị; thumb, trạng thái hover/pressed và vị trí hiện tại
+  phải nhìn rõ. Vùng bấm thumb tối thiểu theo token chuột trong [bố cục workspace](../architecture/workspace-layout.md)
+  (24×24 DIP, ưu tiên 28–32 DIP), có thể lớn hơn hình vẽ thumb; paint/hit dùng cùng rect DIP và kiểm ở
+  nhiều mức DPI. Nhấn track đặt giá trị và bắt đầu kéo; khi đã capture, kéo ra ngoài track vẫn điều chỉnh
+  trong miền hợp lệ. Không để label, ô số, scrollbar hoặc vùng kéo dock cướp thao tác của slider.
+- **Một nguồn giá trị:** slider, ô số, preset, tay nắm canvas, Property bar và Properties đọc/ghi cùng
+  trạng thái bản nháp và cùng validation. Giá trị hiển thị phải có đơn vị; nếu multi-selection khác giá trị,
+  hiện `Mixed` thay vì một số giả. Mở/focus panel hoặc hover không sửa document.
+- **Canvas phản hồi trong lúc kéo:** mỗi thay đổi hợp lệ cập nhật preview của đúng đối tượng và tham số;
+  thanh kéo/số phản hồi ngay ở frame UI kế tiếp. Gộp các sự kiện pointer nhanh, ưu tiên mẫu mới nhất;
+  không render đồng bộ nặng trong từng `WM_MOUSEMOVE`. Bản xem trước có định danh thế hệ/revision để kết quả
+  cũ không xuất hiện sau kết quả mới, đổi selection, đổi tab hoặc hủy.
+- **Không giả đồng bộ:** khi canvas chưa kịp hiển thị giá trị mới, giữ frame hợp lệ gần nhất và báo ngắn
+  `Đang cập nhật`; nếu cần, cho biết giá trị của frame đang thấy. Chỉ báo `Đã đồng bộ` khi frame đã trình bày
+  đúng giá trị đang kéo. Preview giảm chất lượng tạm thời được phép khi giữ cùng semantics/màu; sau khi thả
+  phải dựng frame cuối ở chất lượng đúng. Không dùng preview thấp làm dữ liệu xuất hoặc in.
+- **Commit rõ ràng:** một lượt kéo từ mouse down đến mouse up là một thao tác và tối đa một bước Undo nếu
+  giá trị đã đổi. Esc/Cancel hoặc mất capture do đóng/chuyển document hủy draft và trả canvas về trạng thái
+  trước kéo; click không đổi không tăng revision. Tính toán nặng có cancellation, work/memory quota và
+  progress, không giữ UI event loop chờ render.
+- **Nghiệm thu nhìn thấy:** phiếu feature ghi miền slider, miền nhập số, mapping (tuyến tính hay phi tuyến),
+  hành vi click/drag/Shift/Esc, trạng thái busy và mục tiêu độ trễ. Đo pointer-to-present p50/p95 trên
+  NativeWindow thật với fixture công bố; kiểm chuột, DPI, CPU/D2D/WARP, drag nhanh và cancel. Build,
+  snapshot/offscreen hoặc số FPS suy từ CPU không chứng minh canvas đã theo kịp chuột.
+
+Quy tắc này áp dụng cho hiệu ứng, gradient, raster adjustment và mọi control trực quan tương tự; công cụ
+không thể preview trong budget phải nêu giới hạn và trạng thái chờ ngay trong UI. Ví dụ triển khai chi tiết:
+[kế hoạch đại tu Hiệu ứng](features/effects-system-overhaul.md).
+
 ## 6. Icon SVG, nhãn ngắn và trạng thái
 
 - Toolbar/toolbox ưu tiên icon SVG từ hệ icon thống nhất; không dùng emoji hoặc một chữ cái thay hình công cụ.
@@ -161,6 +221,25 @@ ví dụ `0.20 mm` là ô số có đơn vị, không phải button “Nhấn đ
 | Trạng thái lựa chọn | Loại/số đối tượng; thông số đủ dùng | `3 objects · Mixed fill` |
 | Help của tool | Cách bắt đầu, 3–5 bước, thông số chính, sửa lại, hủy và giới hạn | Mở từ Help/F1 nếu binding đã được triển khai; có đường menu thay thế |
 | Lỗi/unsupported | Lý do và cách tiếp tục, gần control hoặc vùng thông báo phù hợp | `Select a path to edit its stroke.` |
+
+### 7.1. Quy chuẩn Tooltip và Botbar Status Hint (Guidance Contract)
+
+Để người dùng luôn nắm bắt được cách sử dụng mà không làm rối mắt hoặc tràn màn hình, mọi chức năng phải tuân thủ 2 kênh hướng dẫn chính:
+
+1. **Botbar (Status bar ở đáy màn hình) — Hướng dẫn ngữ cảnh theo thời gian thực**:
+   - Là nơi duy nhất dành cho câu hướng dẫn thao tác theo từng bước và phím bổ trợ (Modifier keys: Shift/Ctrl/Alt/Esc/Enter). Tuyệt đối không đưa câu hướng dẫn dài lên Property bar.
+   - Định dạng chuẩn 3 phần: `[Hành động hiện tại] · [Phím bổ trợ gợi ý] · [Hoàn tất / Hủy]`.
+   - *Ví dụ chữ nhật*: `Kéo chuột để vẽ hình chữ nhật · Giữ Shift: vẽ hình vuông · Giữ Ctrl: vẽ từ tâm · Esc: hủy`.
+   - *Ví dụ Node tool*: `Nhấp chọn node hoặc kéo quét nhiều node · Shift+Click: chọn thêm · Double-click đoạn thẳng: thêm node · Del: xóa node`.
+   - *Ví dụ Contour*: `Kéo tay cầm trên canvas hoặc chỉnh thông số trên Properties · Enter: Áp dụng · Esc: Hủy bản nháp`.
+   - Khi hover vào một nút bấm hoặc control: Botbar cập nhật gợi ý chi tiết cho nút đó; khi chuột rời đi, khôi phục lại gợi ý của tool hiện hành.
+
+2. **Tooltip khi Hover chuột — Giải nghĩa tức thì cho từng nút bấm / ô nhập**:
+   - Bắt buộc áp dụng cho 100% icon, nút bấm và ô nhập số trên Toolbox, Toolbar, Property bar và Bảng Properties.
+   - Cấu trúc chuẩn 2 dòng:
+     - **Dòng 1 (Tiêu đề & Phím tắt)**: In đậm Tên chức năng + `(Phím tắt)` nếu có. Ví dụ: `Rã viền Contour (Ctrl+K)` hoặc `Công cụ vẽ tự do Freehand (F5)`.
+     - **Dòng 2 (Mô tả tác dụng)**: 1 câu súc tích giải thích rõ chức năng làm gì và ảnh hưởng thế nào đến đối tượng. Ví dụ: `Tách các lớp viền song song thành các đường path vector độc lập để can thiệp từng chi tiết.`
+   - Tránh các mô tả sáo rỗng như: "Bấm vào đây để...", "Nút này dùng để...", "Click to perform action". Dùng động từ hành động trực tiếp.
 
 Status bar ưu tiên lỗi đang cần xử lý → trạng thái thao tác đang chạy → hint tool/focus/hover
 → thông tin selection thường trực. Rời hover thì khôi phục hint/tool state trước đó; không để câu cũ treo mãi.
@@ -207,6 +286,8 @@ Trước code UI: có mục tiêu người dùng, menu chính, action ID, placem
 field/scope/đơn vị, selection matrix, icon, tooltip/status/help, focus/shortcut và Apply/Cancel/Undo trong phiếu.
 Với chức năng nhiều tùy chọn, kiểm bắt buộc có Properties đầy đủ, nhóm nhanh trên bar, đường mở/focus
 và quy tắc đồng bộ hai bề mặt theo mục 5; không chấp nhận chỉ có bar/overflow.
+Nếu có slider/tay nắm/preview, phiếu phải ghi cả hit rect, capture/drag/cancel, đồng bộ canvas và
+giá trị, một bước Undo, busy/stale state cùng phép đo input-to-display theo mục 5.3.
 Agent tự điền và tự kiểm các mục trên, không chờ người dùng duyệt phiếu để tiếp tục. Reviewer trả lại phần
 còn câu “sẽ bố trí sau”, button dài, panel tự phát hoặc thiếu hướng dẫn thao tác khi review chất lượng.
 
@@ -216,6 +297,8 @@ scaling 100/125/150/200% theo thiết bị có sẵn; báo phần chưa đo. Ả
 Kiểm menu/control/hint không bị cắt và canvas vẫn có chỗ làm việc; không tuyên bố pass mọi DPI từ một ảnh.
 Với chức năng nhiều tùy chọn, kiểm mở lại đúng bảng/section khi dock đóng hoặc bar hẹp, tìm và sửa được
 thuộc tính phụ, giá trị trên bar/Properties đồng bộ và mở bảng không đổi dữ liệu/Undo.
+Với slider/tay nắm, kiểm kéo chuột thật qua track và ra ngoài track, Esc/mất capture, preview chậm,
+thả chuột, Undo/Redo và frame cuối trên canvas; báo p50/p95 đã đo hoặc ghi rõ chưa đo.
 
 Đây là **gate review tài liệu và UX thủ công** nối với [quality gates](../quality/gates.md).
 Chưa có checker tự động xác định một UI đã đúng bố cục hoặc dễ dùng. Task hiện tại chỉ đặt quy tắc;

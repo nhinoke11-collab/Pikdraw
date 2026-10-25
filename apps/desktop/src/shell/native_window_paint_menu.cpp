@@ -2,6 +2,8 @@
 #include "native_window_file_menu.hpp"
 #include "native_window_menus.hpp"
 #include "native_window_page_presets.hpp"
+#include "native_window_length_input.hpp"
+#include "../tools/drawing_tool_controller.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cwchar>
@@ -29,7 +31,7 @@ RECT NativeWindow::get_menu_bar_item_rect(int menu_index, int topbar_h) const no
     int natural_total = 0;
     for (const auto& entry : kMenuBarEntries)
         natural_total += menu_item_natural_width(entry, vi);
-    const int available = std::max(1, width_ - 160);
+    const int available = std::max(1, width_ - 260);
     const double factor = std::min(1.0, static_cast<double>(available) / natural_total);
     int left = 148;
     for (int index = 0; index < menu_index; ++index)
@@ -87,6 +89,33 @@ void NativeWindow::paint_main_menu_bar(HDC dc, int width, int topbar_h) {
         DrawTextW(dc, menu_label(kMenuBarEntries[static_cast<size_t>(index)], vi), -1,
                   &label_rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
     }
+    RECT snap_button{width - 104, 5, width - 8, topbar_h - 4};
+    const int snap_split = width - 36;
+    const COLORREF snap_accent = dark ? RGB(0, 242, 195) : RGB(0, 135, 106);
+    const COLORREF snap_background = show_snap_to_popup_
+        ? (dark ? RGB(22, 45, 62) : RGB(236, 253, 245))
+        : (dark ? RGB(18, 28, 42) : RGB(241, 245, 249));
+    const auto snap_brush = CreateSolidBrush(snap_background);
+    const auto snap_pen = CreatePen(PS_SOLID, 1, show_snap_to_popup_ ? snap_accent
+        : (dark ? RGB(45, 58, 73) : RGB(203, 213, 225)));
+    const auto old_snap_pen = SelectObject(dc, snap_pen);
+    const auto old_snap_brush = SelectObject(dc, snap_brush);
+    RoundRect(dc, snap_button.left, snap_button.top, snap_button.right, snap_button.bottom, 5, 5);
+    SelectObject(dc, old_snap_brush); SelectObject(dc, old_snap_pen);
+    DeleteObject(snap_brush); DeleteObject(snap_pen);
+    const auto snap_config = drawing_tool_ ? drawing_tool_->snap_config_snapshot()
+        : vector::precision::snap::SnapConfigSnapshot{};
+    SetTextColor(dc, snap_config.master_enabled ? snap_accent : (dark ? RGB(148, 163, 184) : RGB(100, 116, 139)));
+    RECT snap_text{snap_button.left, snap_button.top, snap_split, snap_button.bottom};
+    DrawTextW(dc, L"Snap", -1, &snap_text, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    const auto split_pen = CreatePen(PS_SOLID, 1, dark ? RGB(45, 58, 73) : RGB(203, 213, 225));
+    const auto old_split_pen = SelectObject(dc, split_pen);
+    MoveToEx(dc, snap_split, snap_button.top + 4, nullptr);
+    LineTo(dc, snap_split, snap_button.bottom - 4);
+    SelectObject(dc, old_split_pen);
+    DeleteObject(split_pen);
+    RECT arrow_text{snap_split, snap_button.top, snap_button.right, snap_button.bottom};
+    DrawTextW(dc, L"▾", -1, &arrow_text, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
     SelectObject(dc, old_font);
     DeleteObject(font);
 }
@@ -95,7 +124,7 @@ void NativeWindow::paint_dropdown_menu(HDC dc, int menu_id, int x, int y) {
     if (menu_id < 0 || menu_id >= static_cast<int>(MenuId::Count)) return;
     const auto items = get_menu_items(static_cast<MenuId>(menu_id));
     if (items.empty()) return;
-    constexpr int width = 300;
+    constexpr int width = kMenuPopupWidth;
     const int height = get_menu_height(static_cast<MenuId>(menu_id));
     x = std::clamp(x, 4, std::max(4, width_ - width - 4));
     y = std::clamp(y, 4, std::max(4, height_ - height - 4));
@@ -140,7 +169,8 @@ void NativeWindow::paint_dropdown_menu(HDC dc, int menu_id, int x, int y) {
             SelectObject(dc, previous);
             DeleteObject(separator);
         } else {
-            const bool hovered = static_cast<int>(item.action) == hovered_menu_item_;
+            const bool hovered = static_cast<int>(item.action) == hovered_menu_item_ ||
+                (item.has_submenu && static_cast<int>(item.action) == open_submenu_action_);
             const bool enabled = !item.is_disabled && is_menu_action_enabled(item.action);
             const COLORREF label_color = item.is_heading ? muted : (!enabled ? muted : (hovered ? accent : normal));
             if (hovered && enabled) {
@@ -150,7 +180,8 @@ void NativeWindow::paint_dropdown_menu(HDC dc, int menu_id, int x, int y) {
                 DeleteObject(row_brush);
             }
             RECT label_rect{x + (item.is_checkable ? 34 : 14), row_y, x + width - 110, row_y + row_height};
-            RECT shortcut_rect{x + width - 106, row_y, x + width - 14, row_y + row_height};
+            RECT shortcut_rect{x + width - 106, row_y,
+                x + width - (item.has_submenu ? 34 : 14), row_y + row_height};
             if (item.is_heading) SelectObject(dc, heading_font);
             SetTextColor(dc, label_color);
             DrawTextW(dc, vi ? item.label_vi : item.label_en, -1, &label_rect,
@@ -166,10 +197,17 @@ void NativeWindow::paint_dropdown_menu(HDC dc, int menu_id, int x, int y) {
                 DrawTextW(dc, is_menu_action_checked(item.action) ? L"✓" : L"□", -1, &check_rect,
                           DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
             }
+            if (item.has_submenu) {
+                RECT arrow_rect{x + width - 30, row_y, x + width - 10, row_y + row_height};
+                SetTextColor(dc, enabled ? (hovered ? accent : muted) : muted);
+                DrawTextW(dc, L"›", -1, &arrow_rect,
+                          DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            }
             if (item.is_heading) SelectObject(dc, font);
         }
         row_y += row_height;
     }
+    if (menu_id == static_cast<int>(MenuId::Text)) paint_text_case_submenu(dc);
     SelectObject(dc, previous_font);
     DeleteObject(heading_font);
     DeleteObject(font);
@@ -322,7 +360,9 @@ void NativeWindow::paint_page_preset_dropdown(HDC dc, int x, int y, int width) {
         SelectObject(dc, font_dims);
         SetTextColor(dc, is_match ? accent : text_mut);
         RECT dim_rect{item_rect.left + 105, item_rect.top, item_rect.right - 8, item_rect.bottom};
-        DrawTextW(dc, entry.dim_label, -1, &dim_rect, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        const auto dim_label = format_length_pair_mm(
+            entry.width_mm, entry.height_mm, display_length_unit_, 4);
+        DrawTextW(dc, dim_label.c_str(), -1, &dim_rect, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
         row_y += kPagePresetRowHeight;
     }

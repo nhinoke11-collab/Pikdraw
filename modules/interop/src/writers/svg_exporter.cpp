@@ -1,14 +1,20 @@
+#include "pikdraw/document/hierarchy/frame_geometry.hpp"
+#include <functional>
 #include "pikdraw/interop/writers/svg_exporter.hpp"
 #include "../path_adapter/svg_path_adapter.hpp"
 #include "pikdraw/color/preview/color_transform.hpp"
+#include "pikdraw/color/preview/icc_preview.hpp"
+#include "pikdraw/color/preview/profile_color_transform.hpp"
 #include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <limits>
 #include <locale>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <type_traits>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <variant>
@@ -31,8 +37,103 @@ std::string xml_escape(const std::string &value) {
   return escaped;
 }
 
-std::string color_to_hex(const color::ColorValue &value) {
-  const auto device = color::to_preview_rgba(value).to_device();
+struct SvgColorConversion {
+  color::ColorValue value;
+  bool profile_needs_report{false};
+  bool converted_to_srgb{false};
+  std::string diagnostic;
+};
+
+class SvgColorContext {
+public:
+  explicit SvgColorContext(
+      std::shared_ptr<const color::ProfileResource> page_profile, double page_height)
+      : basis_{1,0,0,-1,0,page_height}, page_profile_(std::move(page_profile)) {
+    const auto srgb_path = color::IccPreview::system_srgb_profile();
+    if (srgb_path.empty()) return;
+    const auto loaded = color::ProfileResource::load_file(
+        srgb_path, color::ColorSpace::Rgb);
+    if (loaded) destination_srgb_ = loaded.resource;
+  }
+
+  [[nodiscard]] const geometry::Transform2D& basis() const noexcept { return basis_; }
+  [[nodiscard]] SvgColorConversion convert_to_srgb(
+      const color::ColorValue &source) {
+    auto source_profile = source.profile_resource();
+    if (!source_profile && page_profile_ &&
+        page_profile_->identity().color_space == source.color_space())
+      source_profile = page_profile_;
+    if (!source_profile)
+      return {source, false, false, {}};
+    if (source_profile->identity().color_space != color::ColorSpace::Rgb &&
+        source_profile->identity().color_space != color::ColorSpace::Cmyk)
+      return {source, true, false,
+              "Only RGB and CMYK ICC source profiles can be converted to SVG sRGB"};
+    if (!destination_srgb_)
+      return {source, true, false,
+              "The system sRGB output profile is unavailable; source ICC conversion was not applied"};
+    if (source_profile->identity() == destination_srgb_->identity())
+      return {source, false, false, {}};
+
+    const auto &digest = source_profile->identity().checksum_sha256;
+    auto found = transforms_.find(digest);
+    if (found == transforms_.end()) {
+      if (transforms_.size() >= kMaxCachedProfiles)
+        return {source, true, false,
+                "The SVG export ICC transform cache limit was reached"};
+      auto created = color::ProfileColorTransform::create(
+          source_profile, destination_srgb_);
+      found = transforms_.emplace(
+          digest, std::move(created.transform)).first;
+      if (!found->second)
+        return {source, true, false,
+                "Windows CMM could not convert this source ICC profile to sRGB"};
+    }
+    if (!found->second)
+      return {source, true, false,
+              "Windows CMM could not convert this source ICC profile to sRGB"};
+
+    auto profile_bound_source = source;
+    if (!profile_bound_source.profile_resource() &&
+        !profile_bound_source.set_profile_resource(source_profile))
+      return {source, true, false,
+              "The page ICC profile does not match this paint's color space"};
+    color::ColorValue converted;
+    if (!found->second->convert(profile_bound_source, converted))
+      return {source, true, false,
+              "Windows CMM failed while converting this paint to sRGB"};
+    return {std::move(converted), true, true, {}};
+  }
+
+private:
+  geometry::Transform2D basis_;
+  static constexpr size_t kMaxCachedProfiles = 64;
+  std::shared_ptr<const color::ProfileResource> page_profile_;
+  std::shared_ptr<const color::ProfileResource> destination_srgb_;
+  std::unordered_map<std::string,
+      std::shared_ptr<const color::ProfileColorTransform>> transforms_;
+};
+
+std::string color_to_hex(const color::ColorValue &value,
+                         SvgColorContext &color_context,
+                         SvgStreamExportResult &result,
+                         document::ObjectId id,
+                         const char *property) {
+  const auto converted = color_context.convert_to_srgb(value);
+  if (converted.profile_needs_report) {
+    std::string description;
+    if (!converted.diagnostic.empty()) {
+      description = converted.diagnostic + "; SVG hex uses the existing preview fallback";
+    } else if (converted.converted_to_srgb) {
+      description = "Source ICC profile was converted to sRGB; SVG hex does not preserve the source profile binding";
+    } else {
+      description = "The source profile matches sRGB; SVG hex does not preserve the ICC profile resource";
+    }
+    result.report.add_issue(FidelitySeverity::Warning,
+                            "object " + std::to_string(id), property,
+                            std::move(description));
+  }
+  const auto device = color::to_preview_rgba(converted.value).to_device();
   std::ostringstream stream;
   stream << '#' << std::hex << std::setfill('0') << std::setw(2)
          << static_cast<int>(device.r) << std::setw(2)
@@ -99,6 +200,13 @@ void preflight_appearance_export(
     if (const auto *path = std::get_if<document::PathObject>(&*object)) {
       if (path->visible)
         report_unsupported_appearance(result, id, path->appearance);
+    } else if(const auto* group=std::get_if<document::GroupObject>(&*object);group&&group->clip) {
+      const auto* mask=snapshot.objects().lookup_ref(group->clip->mask_object_id);
+      if(!mask||!document::frame_geometry(*mask))result.report.add_issue(FidelitySeverity::Unsupported,
+          "object "+std::to_string(id),"Clip geometry","Unsupported frame geometry");
+    } else if (std::holds_alternative<document::ImageObject>(*object)) {
+      result.report.add_issue(FidelitySeverity::Unsupported,"object "+std::to_string(id),"Raster content",
+          "Embedded SVG raster output is unsupported; use native storage or raster export");
     } else if (const auto *text = std::get_if<document::TextObject>(&*object)) {
       if (text->visible)
         report_unsupported_appearance(result, id, text->appearance);
@@ -130,8 +238,8 @@ void warn_preview_color(SvgStreamExportResult &result, document::ObjectId id,
   if (value.color_space() != color::ColorSpace::Rgb ||
       value.overprint().fill || value.overprint().stroke) {
     result.report.add_issue(
-        FidelitySeverity::Warning, std::to_string(id), property,
-        "Source separation/overprint was converted to an RGB SVG preview color");
+        FidelitySeverity::Warning, "object " + std::to_string(id), property,
+        "Source CMYK/spot/gray paint or overprint metadata was projected to an RGB SVG color; separation/overprint semantics are not preserved");
   }
 }
 
@@ -145,7 +253,8 @@ void write_transform(std::ostream &stream,
 }
 void write_path_element(std::ostream &stream, document::ObjectId id,
                         const document::PathObject &path,
-                        SvgStreamExportResult &result) {
+                        SvgStreamExportResult &result,
+                        SvgColorContext &color_context) {
   if (!path.visible) return;
   std::string issue;
   std::optional<document::EditablePath> migrated;
@@ -166,7 +275,8 @@ void write_path_element(std::ostream &stream, document::ObjectId id,
   }
   stream << "  <path d=\"" << *data << '"';
   if (path.has_fill) {
-    stream << " fill=\"" << color_to_hex(path.fill) << '"';
+    stream << " fill=\"" << color_to_hex(path.fill, color_context, result,
+                                                   id, "fill color") << '"';
     write_paint_opacity(stream, "fill-opacity", path.fill,
                         path.appearance.fill_opacity);
     warn_preview_color(result, id, path.fill, "fill color");
@@ -174,30 +284,34 @@ void write_path_element(std::ostream &stream, document::ObjectId id,
     stream << " fill=\"none\"";
   }
   if (path.has_stroke) {
-    stream << " stroke=\"" << color_to_hex(path.stroke)
+    stream << " stroke=\"" << color_to_hex(path.stroke, color_context, result,
+                                                   id, "stroke color")
            << "\" stroke-width=\"" << path.stroke_width_mm << '"';
     write_paint_opacity(stream, "stroke-opacity", path.stroke,
                         path.appearance.stroke_opacity);
     warn_preview_color(result, id, path.stroke, "stroke color");
   }
+  if(path.path.winding_rule()==geometry::WindingRule::EvenOdd) stream << " fill-rule=\"evenodd\"";
   write_object_opacity(stream, path.appearance.object_opacity);
-  write_transform(stream, path.transform);
+  write_transform(stream, color_context.basis()*path.transform);
   stream << "/>\n";
 }
 
 void write_text_element(std::ostream &stream, document::ObjectId id,
                         const document::TextObject &text,
-                        SvgStreamExportResult &result) {
+                        SvgStreamExportResult &result,
+                        SvgColorContext &color_context) {
   if (!text.visible) return;
-  stream << "  <text x=\"" << text.position.x << "\" y=\""
-         << text.position.y << "\" font-family=\""
+  stream << "  <text x=\"0\" y=\"0\" font-family=\""
          << xml_escape(text.font.family_name) << "\" font-size=\""
-         << text.font.size_pt * 25.4 / 72.0 << "\" fill=\"" << color_to_hex(text.fill)
+         << text.font.size_pt * 25.4 / 72.0 << "\" fill=\""
+         << color_to_hex(text.fill, color_context, result, id, "text color")
          << '"';
   write_paint_opacity(stream, "fill-opacity", text.fill,
                       text.appearance.fill_opacity);
   write_object_opacity(stream, text.appearance.object_opacity);
-  write_transform(stream, text.transform);
+  write_transform(stream, color_context.basis()*text.transform*
+      geometry::Transform2D::translation(text.position.x,text.position.y)*geometry::Transform2D::scale(1,-1));
   stream << '>' << xml_escape(text.text) << "</text>\n";
   warn_preview_color(result, id, text.fill, "text color");
 }
@@ -250,6 +364,13 @@ SvgStreamExportResult SvgExporter::write_to_stream(
                               "A nested object cannot be exported independently until its group transforms are supported");
     }
   }
+  std::function<void(document::ObjectId)> include_children=[&](document::ObjectId id) {
+    const auto* object=snapshot.objects().lookup_ref(id);
+    if(const auto* group=object?std::get_if<document::GroupObject>(object):nullptr)
+      for(auto child:group->children_ids)if(unique_ids.insert(child).second){object_ids.push_back(child);include_children(child);}
+  };
+  const auto requested=object_ids;
+  for(auto id:requested)include_children(id);
   if (!result.report.has_unsupported())
     preflight_appearance_export(snapshot, object_ids, result);
   if (result.report.has_unsupported()) {
@@ -258,15 +379,26 @@ SvgStreamExportResult SvgExporter::write_to_stream(
     return result;
   }
 
+  const auto& page = snapshot.page();
+  const geometry::Rect2D bounds = options.bounds.value_or(
+      geometry::Rect2D{0.0, 0.0, page.width_mm, page.height_mm});
+  if (!bounds.is_finite() || bounds.is_empty()) {
+    result.report.add_issue(FidelitySeverity::Unsupported, "SVG viewport", "Export bounds",
+                            "The export rectangle must be finite and have positive dimensions");
+    result.error_message = "SVG export stopped because the requested viewport is invalid";
+    return result;
+  }
+
   stream.imbue(std::locale::classic());
   stream << std::setprecision(std::numeric_limits<double>::max_digits10);
   if (options.include_xml_header)
     stream << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
 
-  const auto &page = snapshot.page();
+  SvgColorContext color_context(page.color_profile_resource,page.height_mm);
   stream << "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\""
-         << page.width_mm << "mm\" height=\"" << page.height_mm
-         << "mm\" viewBox=\"0 0 " << page.width_mm << ' ' << page.height_mm
+         << bounds.width << "mm\" height=\"" << bounds.height
+         << "mm\" viewBox=\"" << bounds.x << ' ' << bounds.y << ' '
+         << bounds.width << ' ' << bounds.height
          << "\">\n";
 
   bool has_defs = false;
@@ -276,7 +408,8 @@ SvgStreamExportResult SvgExporter::write_to_stream(
       if (grp->is_clipping_container()) {
         const auto *mask = snapshot.objects().lookup_ref(grp->clip->mask_object_id);
         if (mask) {
-          if (const auto *mask_path = std::get_if<document::PathObject>(mask)) {
+          const auto geometry=document::frame_geometry(*mask);
+          if (const auto *mask_path = geometry?&*geometry:nullptr) {
             std::string issue;
             std::optional<document::EditablePath> migrated;
             const document::EditablePath *source = mask_path->authoring_source.get();
@@ -290,9 +423,10 @@ SvgStreamExportResult SvgExporter::write_to_stream(
                 stream << "  <defs>\n";
                 has_defs = true;
               }
-              stream << "    <clipPath id=\"clip_" << grp->id << "\">\n";
+              stream << "    <clipPath id=\"clip_" << grp->id << "\" clipPathUnits=\"userSpaceOnUse\">\n";
               stream << "      <path d=\"" << *data << '"';
-              write_transform(stream, mask_path->transform);
+              stream << " clip-rule=\"" << (mask_path->path.winding_rule()==geometry::WindingRule::EvenOdd?"evenodd":"nonzero") << "\"";
+              write_transform(stream, color_context.basis()*mask_path->transform);
               stream << "/>\n    </clipPath>\n";
             }
           }
@@ -304,52 +438,31 @@ SvgStreamExportResult SvgExporter::write_to_stream(
     stream << "  </defs>\n";
   }
 
-  for (const auto &[id, object] : snapshot.objects().all()) {
-    if (!unique_ids.contains(id) || nested_ids.contains(id))
-      continue;
-    if (const auto *path = std::get_if<document::PathObject>(&object)) {
-      write_path_element(stream, id, *path, result);
-      continue;
+  std::function<void(document::ObjectId)> write_object=[&](document::ObjectId id) {
+    const auto* object=snapshot.objects().lookup_ref(id);
+    if(!object||!unique_ids.contains(id)||!std::visit([](const auto& value){return value.visible;},*object))return;
+    if(const auto* path=std::get_if<document::PathObject>(object)) {write_path_element(stream,id,*path,result,color_context);return;}
+    if(const auto* text=std::get_if<document::TextObject>(object)) {write_text_element(stream,id,*text,result,color_context);return;}
+    const auto* group=std::get_if<document::GroupObject>(object);if(!group)return;
+    stream << "  <g";write_transform(stream,color_context.basis()*group->transform*color_context.basis());stream << ">\n";
+    std::optional<document::PathObject> mask;
+    if(group->clip) {
+      const auto* source=snapshot.objects().lookup_ref(group->clip->mask_object_id);
+      mask=source?document::frame_geometry(*source):std::nullopt;
+      if(!mask) {result.report.add_issue(FidelitySeverity::Unsupported,"object "+std::to_string(id),"Clip geometry","Unsupported frame geometry");return;}
+      if(group->clip->preserve_frame_appearance&&mask->has_fill){auto fill=*mask;fill.has_stroke=false;write_path_element(stream,fill.id,fill,result,color_context);}
+      stream << "  <g clip-path=\"url(#clip_" << id << ")\">\n";
     }
-    if (const auto *text = std::get_if<document::TextObject>(&object)) {
-      write_text_element(stream, id, *text, result);
-      continue;
+    for(auto child:group->children_ids)if(!group->clip||child!=group->clip->mask_object_id)write_object(child);
+    if(group->clip) {
+      stream << "  </g>\n";
+      if(group->clip->preserve_frame_appearance&&mask->has_stroke){auto stroke=*mask;stroke.has_fill=false;write_path_element(stream,stroke.id,stroke,result,color_context);}
     }
-    if (const auto *group = std::get_if<document::GroupObject>(&object)) {
-      if (group->is_clipping_container()) {
-        const auto *mask = snapshot.objects().lookup_ref(group->clip->mask_object_id);
-        const auto *mask_path = mask ? std::get_if<document::PathObject>(mask) : nullptr;
-        if (group->clip->preserve_frame_appearance && mask_path && mask_path->has_fill) {
-          auto fill_mask = *mask_path;
-          fill_mask.has_stroke = false;
-          write_path_element(stream, fill_mask.id, fill_mask, result);
-        }
-        stream << "  <g clip-path=\"url(#clip_" << group->id << ")\"";
-        write_transform(stream, group->transform);
-        stream << ">\n";
-        for (const auto child_id : group->children_ids) {
-          if (child_id == group->clip->mask_object_id) continue;
-          const auto *child = snapshot.objects().lookup_ref(child_id);
-          if (!child) continue;
-          if (const auto *cp = std::get_if<document::PathObject>(child)) {
-            write_path_element(stream, child_id, *cp, result);
-          } else if (const auto *ct = std::get_if<document::TextObject>(child)) {
-            write_text_element(stream, child_id, *ct, result);
-          }
-        }
-        stream << "  </g>\n";
-        if (group->clip->preserve_frame_appearance && mask_path && mask_path->has_stroke && mask_path->stroke_width_mm > 0.0) {
-          auto stroke_mask = *mask_path;
-          stroke_mask.has_fill = false;
-          write_path_element(stream, stroke_mask.id, stroke_mask, result);
-        }
-        continue;
-      }
-      result.report.add_issue(FidelitySeverity::Unsupported,
-                              "object " + std::to_string(id), "Group object",
-                              "SVG group hierarchy and inherited transforms are not exported by this subset");
-      continue;
-    }
+    stream << "  </g>\n";
+  };
+  for(const auto& layer:snapshot.page().layers) {
+    if(!layer.visible || !layer.printable)continue;
+    for(auto id:layer.object_ids)write_object(id);
   }
   if (result.report.has_unsupported()) {
     result.error_message =

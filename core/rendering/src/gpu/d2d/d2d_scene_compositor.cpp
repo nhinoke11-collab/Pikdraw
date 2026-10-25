@@ -3,7 +3,8 @@
 namespace pikdraw::rendering::d2d {
 
 bool draw_page(ID2D1DeviceContext *context, const document::Page &page,
-               const Camera2D &camera, color::DeviceRGBA background) {
+               const Camera2D &camera, color::DeviceRGBA background,
+               float viewport_origin_x, float viewport_origin_y) {
   if (background.a == 0 || page.width_mm <= 0 || page.height_mm <= 0)
     return true;
   ComPtr<ID2D1SolidColorBrush> paper;
@@ -14,8 +15,11 @@ bool draw_page(ID2D1DeviceContext *context, const document::Page &page,
   const auto lower = camera.world_to_screen({0, 0});
   const auto upper = camera.world_to_screen({page.width_mm, page.height_mm});
   context->SetTransform(D2D1::Matrix3x2F::Identity());
-  context->FillRectangle(D2D1::RectF(static_cast<float>(lower.x), static_cast<float>(upper.y),
-                                    static_cast<float>(upper.x), static_cast<float>(lower.y)),
+  context->FillRectangle(D2D1::RectF(
+                             static_cast<float>(lower.x) + viewport_origin_x,
+                             static_cast<float>(upper.y) + viewport_origin_y,
+                             static_cast<float>(upper.x) + viewport_origin_x,
+                             static_cast<float>(lower.y) + viewport_origin_y),
                           paper.Get());
   return true;
 }

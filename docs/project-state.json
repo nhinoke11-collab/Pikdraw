@@ -1,59 +1,66 @@
 {
-    "schema_version":  1,
-    "product":  "PikDraw",
-    "updated_at":  "2026-10-23",
-    "stage":  "M1 single-source native desktop integration",
-    "workflow":  {
-                     "mode":  "single-source",
-                     "agent_system":  "codex",
-                     "source_root":  "C:/Users/CK ART STAGE/Downloads/PikDraw",
-                     "build_directory":  "build/win-dev",
-                     "app_executable":  "build/win-dev/apps/desktop/pikdraw.exe",
-                     "build_runner":  "tooling/native/build.ps1",
-                     "logging_policy":  "Snapshot-only: keep docs/project-state.json \u003c= 8000 bytes, task summaries \u003c= 320 chars, and \u003c= 6 evidence items (\u003c= 240 chars each). Never append historical daily benchmark logs."
-                 },
-    "modules_summary":  {
-                            "total":  18,
-                            "implemented":  [
-                                                "geometry",
-                                                "color",
-                                                "typography",
-                                                "document",
-                                                "rendering",
-                                                "vector",
-                                                "automation",
-                                                "mcp-server",
-                                                "com-server",
-                                                "interop",
-                                                "workers",
-                                                "desktop",
-                                                "tooling"
-                                            ],
-                            "specification":  [
-                                                  "contracts"
-                                              ],
-                            "planned":  [
-                                            "raster",
-                                            "production",
-                                            "scene3d",
-                                            "plugin-sdk"
-                                        ]
-                        },
-    "current_capabilities":  {
-                                 "geometry_and_vector":  "Analytical curves/arcs, adaptive flattening, intersections, dynamic offset/contour, OSnap inference engine, Pen tracing with Shift-only angle snapping and auto-commit to Node tool, direct segment bending (BendSegment) \u0026 multi-node curve conversion, Live Corners with 2x2 property bar, interactive dragging for Round/Scallop/Chamfer with single-step undo batching, Contour floor 0.02 mm; NumericFieldDescriptor maps semantic keys. General filled-path Boolean uses pinned Clipper2 2.0.1 with bounded flattening, checked integer quantization, fill-rule/hole preservation. Layout and Properties page-unit controls route semantic ActionIds; page units drive parser, coordinates, HUD, rulers, fields, tooltips, Snap Grid, presets and import/recovery size labels.",
-                                 "document_and_color":  "Native v17 page/raster/paint ICC; v18 Dimension/Contour + typed Contour CMYK/Spot/alpha/overprint/ICC; reads v2–v17. Contour storage/D2D pixel tests pass. Assign/Convert+Undo cover paint/page/document/selection; SVG/TIFF/JPEG RGB ICC. WIC transform conditional; bound-paint preview passes CPU/D2D.",
-                                 "rendering":  "Windows ViewportRenderer uses Direct2D 1.1 / D3D11 hardware or WARP; full-frame staging/readback writes BGRA directly for GDI. Target/staging bitmaps reused by size; object-local geometry survives pan/zoom, image uploads use 1024-entry/256 MiB LRU. ICC preview and white page rendering connected. AABB BVH culls by page/revision; DamageTracker limits GDI dirty copies. SoftwareRasterizer supports BGRA as CPU fallback/oracle.",
-                                 "desktop_shell":  "Win32 Native Shell shares DIP paint/hit geometry and updates on DPI changes. Gradient Studio: interactive ramp slider, stop pins, midpoint diamonds, presets, reverse/distribute, screen-space canvas handles & live bidirectional sync. Typography: granular delta mutations, Shift+F3 case cycling, linked frames, Combine/Split, Text on Path. PowerClip geometric editing with nested scopes and views.",
-                                 "automation_ecosystem":  "Shared typed AutomationService; MCP Streamable HTTP hosted in desktop process. NativeWindow E2E verifies AC01 600x300 mm Vietnamese layout/font/margins/colors/icons, stable IDs, edit/undo after reopen, 5x2m design, Settings revoke/stale-endpoint. AC02 RPC verifies atomic undo/redo IDs; AC07 RPC verifies 1,000-object paging. AC03 stale-write and active text-draft rejection preserve local edits; AC09 dirty-tab preservation passes. COM registered STA/MTA smoke passes. Stdio MCP sidecar and Windows COM IDispatch local server.",
-                                 "external_vector_import":  "Corpus 4 CDR/3 PDF/AI-PDF/2 EPS imports commit/undo; DXF LINE/LWPOLYLINE/ARC/CIRCLE import preserves editable topology. Raster PNG Release x6 passes (Pillow 6/6, CPU/D2D error 0). RAM waiter 95%, resume, cumulative 5 min. Raster export shares 95%/5 min waiter. BigTIFF Release decoder reads uncompressed RGB(A) strip \u003e4 GiB. ICC SWOP lifecycle and Pillow/LittleCMS assertion pass in Release desktop import corpus; WIC within 1/255 on 3 samples."
-                             },
-    "known_limitations":  [
-                              "Qt 6 and Skia backends are future architectural targets pending unified MinGW/MSVC toolchain ABI; runtime currently standardizes on Win32 Native Shell + Direct2D 1.1 / D3D11 + WARP.",
-                              "Interactive dragging reuses the cached native canvas and updates a small dirty copy when object bounds change; each changed snapshot is still fully rendered/read back by Direct2D. No GPU partial render, tile cache or direct swap-chain presentation is implemented.",
-                              "DPI coverage uses synthetic 120/144/192/96 DPI events and native captures; physical monitor switching, reference-device latency and production fidelity remain unverified.",
-                              "Autosave checkpoints use the UI writer synchronously; startup recovery selection UI is not implemented. Job Object memory/process/UI limits do not by themselves prove filesystem/network containment.",
-                              "CDR uses pinned libcdr-to-SVG subset; PDF/AI use PDFium mapping and EPS uses eps-path-v1 or isolated Ghostscript conversion. PDF page rotations 0/90/180/270 are mapped; object-level rotated/sheared text, effects/clipping, multiple OCG membership, Corel live effects, ICC fidelity, visual/coordinate oracle, all CDR versions, source round-trip, UI runtime, and production remain unverified. Import pauses at 95% RAM and resumes after headroom returns; structural/wire/time limits remain.",
-                              "TAC is not auto-limited during color conversion. Backend and Settings preflight cover process CMYK paints only; output-condition linkage, spot/raster separation, true overprint separations, and proof/gamut oracles remain unimplemented.",
-                              "General path Boolean is a bounded polygon approximation: curve flattening and grid quantization produce an explicit error bound, but near-contact topology and manufacturing acceptance are not proven. General Boundary/Simplify and cooperative cancellation remain unsupported."
-                          ]
+  "schema_version": 1,
+  "product": "PikDraw",
+  "updated_at": "2026-10-25",
+  "stage": "M1 single-source native desktop integration",
+  "workflow": {
+    "mode": "single-source",
+    "agent_system": "shared AGENTS workflow for Codex, Claude and other agents",
+    "source_root": "C:/Users/CK ART STAGE/Downloads/PikDraw",
+    "build_directory": "build/win-dev",
+    "app_executable": "build/win-dev/apps/desktop/pikdraw.exe",
+    "build_runner": "tooling/native/build.ps1",
+    "logging_policy": "Snapshot only, <=8000 bytes. Report directly; delete generated test/build outputs after inspection. Preserve regression sources and user data."
+  },
+  "modules_summary": {
+    "total": 18,
+    "implemented": [
+      "geometry",
+      "color",
+      "typography",
+      "document",
+      "rendering",
+      "vector",
+      "automation",
+      "mcp-server",
+      "com-server",
+      "interop",
+      "workers",
+      "desktop",
+      "tooling"
+    ],
+    "specification": [
+      "contracts"
+    ],
+    "planned": [
+      "scene3d",
+      "plugin-sdk"
+    ],
+    "in_progress": [
+      "raster",
+      "production"
+    ]
+  },
+  "current_capabilities": {
+    "geometry_and_vector": "Analytical curves/arcs, adaptive flattening, intersections, dynamic offset/contour, OSnap inference engine, Pen tracing with Shift-only angle snapping and auto-commit to Node tool, direct segment bending (BendSegment) & multi-node curve conversion, Live Corners with 2x2 property bar, interactive dragging for Round/Scallop/Chamfer with single-step undo batching, Contour floor 0.02 mm; NumericFieldDescriptor maps semantic keys. General filled-path Boolean uses pinned Clipper2 2.0.1 with bounded flattening, checked integer quantization, fill-rule/hole preservation. Layout and Properties page-unit controls route semantic ActionIds; page units drive parser, coordinates, HUD, rulers, fields, tooltips, Snap Grid, presets and import/recovery size labels.",
+    "document_and_color": "Design files .pr only; schema v23/v24, containers v23-v25, reader v2-v25. No fixed file/object/element cap; u32 widths and half-free-RAM read quota remain. Persists ICC/colors, raster graph, fidelity, text/layers/artboards. Persistent AVL map and hierarchy update compatible touched edits; structural changes rebuild. Atomic save streams 1 MiB chunks and patches CRC; load remains full-buffer. Partial raster source/sample dedup; crop-first and in-place pointwise evaluator; async edited RGB+A histogram. Index, lazy assets and bounded streaming load remain.",
+    "rendering": "Windows ViewportRenderer uses Direct2D 1.1/D3D11 hardware or WARP; default NativeWindow reads full BGRA frames for GDI. Opt-in PIKDRAW_DIRECT_PRESENT=1 uses HWND swap-chain canvas without readback and composites GDI chrome, canvas overlays/handles and topmost UI after D2D. Canonical Release app relinked; full desktop-shell CTest passes 1/1 after fixing Artboard status indexing. Modal overlay order still awaits fresh visual capture. Reused targets, 1024-entry/256 MiB image-upload LRU, AABB BVH, ICC preview and GDI dirty-copy cache; SoftwareRasterizer is CPU fallback/oracle.",
+    "desktop_shell": "Win32 Native Shell shares DIP paint/hit geometry and updates on DPI changes. Gradient Studio: interactive ramp slider, stop pins, midpoint diamonds, presets, reverse/distribute, screen-space canvas handles & live bidirectional sync. Typography: granular delta mutations, Shift+F3 case cycling, linked frames, Combine/Split, Text on Path. PowerClip geometric editing with nested scopes and views.",
+    "automation_ecosystem": "Shared typed AutomationService; MCP Streamable HTTP hosted in desktop process. NativeWindow E2E verifies AC01 600x300 mm Vietnamese layout/font/margins/colors/icons, stable IDs, edit/undo after reopen, 5x2m design, Settings revoke/stale-endpoint. AC02 RPC verifies atomic undo/redo IDs; AC07 RPC verifies 1,000-object paging. AC03 stale-write and active text-draft rejection preserve local edits; AC09 dirty-tab preservation passes. COM registered STA/MTA smoke passes. Stdio MCP sidecar and Windows COM IDispatch local server.",
+    "external_vector_import": "CDR/PDF/AI/EPS import and DXF topology; PNG/BigTIFF and CMYK16 TIFF sample oracles. Raster graph v17: U8/U16 tone/color, masks, RGB ICC Assign/Convert, Light/Color Balance/HSL/Vibrance Properties; source provider is session-only. Production: test sheets, TAC, CGATS/CSV ΔE00, .pdmr, WCS job hash. Integrated test, page U16, tiles/proof/plates, driver and physical print remain open."
+  },
+  "known_limitations": [
+    "Qt 6 and Skia backends are future architectural targets pending unified MinGW/MSVC toolchain ABI; runtime currently standardizes on Win32 Native Shell + Direct2D 1.1 / D3D11 + WARP.",
+    "Interactive drag reuses cached canvas and dirty GDI copy, but changed snapshots still render/read back full-frame by default. No GPU partial-render/tile cache. Opt-in HWND swap-chain re-composites GDI canvas handles and topmost UI after D2D; modal fix is compiled/linked but not visually re-captured. DPI migration, visible FPS and input-to-present remain unverified.",
+    "DPI coverage uses synthetic 120/144/192/96 DPI events and native captures; physical monitor switching, reference-device latency and production fidelity remain unverified.",
+    "Auto-recovery writes use bounded jobs over immutable snapshots. Startup scan, selected recovery and UI .pr open run off UI thread; cancellation covers chunked reads, CRC/parse and v24 inflate/CRC windows <=64 KiB. Open/recovery reads and DocumentSnapshot construction remain full-buffer; cancel latency is unknown. Atomic save streams payload and remains uncancelled for durability. Import/export run below normal priority with coalesced progress. Pointer moves keep the latest sample on one 16 ms UI timer and flush before other messages; coalescer and save/recovery tests pass. W0, visible/input latency, shutdown lifecycle and Job Object filesystem/network containment remain unverified.",
+    "CDR uses pinned libcdr-to-SVG subset; PDF/AI use PDFium mapping and EPS uses eps-path-v1 or isolated Ghostscript conversion. PDF page rotations 0/90/180/270 are mapped; object-level rotated/sheared text, effects/clipping, multiple OCG membership, Corel live effects, ICC fidelity, visual/coordinate oracle, all CDR versions, source round-trip, UI runtime, and production remain unverified. Import pauses at 95% RAM and resumes after headroom returns; structural/wire/time limits remain.",
+    "TAC is diagnostic only; not auto-limited. Raster TAC uses RGB-to-CMYK ICC estimates; spot/raster plates, output-condition linkage, overprint and proof/gamut oracle remain open. Test TIFF is sRGB; direct WCS print records destination-profile hash, but driver association and physical print are unverified. CGATS/CSV has .pdmr storage and basic import UI; hard proof remains open.",
+    "General path Boolean is a bounded polygon approximation: curve flattening and grid quantization produce an explicit error bound, but near-contact topology and manufacturing acceptance are not proven. General Boundary/Simplify and cooperative cancellation remain unsupported."
+  ],
+  "roadmap": {
+    "performance_storage_automation": "docs/roadmap/performance-storage-automation.md",
+    "native_pr": "docs/architecture/native-pr-format.md",
+    "image_editing_color_print": "In progress. Raster: U8/U16, histogram, gradient masks, Light/Color Balance/HSL/Vibrance Properties, RGB ICC Assign/Convert; source provider session-only. Native atomic save streams payload chunks; load remains buffered. Production: test sheets, TAC, ΔE00, .pdmr/report, WCS print with destination-profile hash. Integrated Release suite pending. P1/P2/P3/P5/P6/P7 partial: persistent tiles, page U16, monitor/proof, advanced retouch/filters/presets, plates/PDF-X, hard proof. Driver association/physical print/P8 branches remain open."
+  }
 }

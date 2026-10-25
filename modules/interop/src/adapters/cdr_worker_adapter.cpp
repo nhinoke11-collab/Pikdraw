@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -27,7 +28,7 @@ namespace {
 
 constexpr size_t kMaxCdrSvgBytes = UINT32_MAX;
 constexpr size_t kMaxCdrPacketBytes = UINT32_MAX;
-constexpr uint32_t kCdrRasterChunkBytes = 256u * 1024u;
+constexpr size_t kCdrRasterChunkBytes = kMaxRasterChunkPayloadBytes;
 
 struct CdrImageAsset {
     std::string media_type;
@@ -747,7 +748,8 @@ const char* CdrRasterMediaType(RasterImageFormat format) noexcept {
 bool ReplaceCdrImagePlaceholders(const CdrPackage& package,
                                  std::vector<CanonicalImportRecord>& records,
                                  std::string& diagnostic,
-                                 bool& dropped_icc_profile) {
+                                 bool& dropped_icc_profile,
+                                 const CdrMemoryAdmissionCallback& memory_admission) {
     if (package.instances.empty()) return true;
     std::unordered_map<std::string, const CdrImageInstance*> instances_by_source;
     instances_by_source.reserve(package.instances.size());
@@ -766,6 +768,13 @@ bool ReplaceCdrImagePlaceholders(const CdrPackage& package,
     std::vector<bool> seen_instances(package.instances.size() + 1, false);
     std::vector<CanonicalImportRecord> expanded;
     expanded.reserve(records.size() + package.instances.size() * 2);
+    // Track explicit image/chunk lifetimes without imposing a fixed per-format
+    // byte ceiling; the import host applies the shared RAM pressure wait.
+    auto raster_memory_budget = std::make_shared<raster::RasterMemoryBudget>(
+        std::numeric_limits<uint64_t>::max(), [&](uint64_t bytes) {
+            if (!memory_admission) return true;
+            return memory_admission(bytes, diagnostic);
+        });
 
     const auto decode_asset = [&](uint32_t asset_id) -> const RasterImageData* {
         if (asset_id == 0 || asset_id > package.assets.size()) return nullptr;
@@ -776,11 +785,14 @@ bool ReplaceCdrImagePlaceholders(const CdrPackage& package,
         options.max_source_bytes = UINT64_MAX;
         options.max_decoded_pixels = UINT32_MAX / 4;
         options.max_decoded_bytes = UINT32_MAX;
-        options.max_icc_profile_bytes = UINT32_MAX;
+        options.max_icc_profile_bytes = 256u * 1024u;
         options.max_frames = 1;
+        options.memory_budget = raster_memory_budget;
         auto result = RasterImageDecoder::decode(asset.bytes, options);
         if (!result.success) {
-            diagnostic = "CDR embedded image could not be decoded: " + result.message;
+            if (diagnostic.empty())
+                diagnostic = "CDR embedded image could not be decoded (" +
+                    result.diagnostic_code + "): " + result.message;
             return nullptr;
         }
         const char* actual_media_type = CdrRasterMediaType(result.image.format);
@@ -864,9 +876,25 @@ bool ReplaceCdrImagePlaceholders(const CdrPackage& package,
         image.dpi_from_source = decoded->dpi_x != 96.0 || decoded->dpi_y != 96.0;
         image.dpi_x = decoded->dpi_x;
         image.dpi_y = decoded->dpi_y;
-        if (decoded->embedded_icc_profile.size() <= 256u * 1024u)
+        switch (decoded->pixel_color_basis) {
+        case RasterPixelColorBasis::AssumedSRgb:
+            image.preview_pixel_color_basis = 1;
+            break;
+        case RasterPixelColorBasis::ConvertedToSRgb:
+            image.preview_pixel_color_basis = 2;
+            break;
+        case RasterPixelColorBasis::EmbeddedProfileUnapplied:
+            image.preview_pixel_color_basis = 3;
+            break;
+        }
+        const bool icc_metadata_missing = decoded->has_embedded_icc_profile &&
+            (decoded->icc_profile_status != RasterIccProfileStatus::Preserved ||
+             decoded->embedded_icc_profile.size() > 256u * 1024u);
+        if (!decoded->embedded_icc_profile.empty() && !icc_metadata_missing)
             image.icc_profile = decoded->embedded_icc_profile;
-        else
+        else if (decoded->has_embedded_icc_profile)
+            dropped_icc_profile = true;
+        if (decoded->pixel_color_basis == RasterPixelColorBasis::EmbeddedProfileUnapplied)
             dropped_icc_profile = true;
         image.x_mm = 0.0;
         image.y_mm = 0.0;
@@ -876,8 +904,7 @@ bool ReplaceCdrImagePlaceholders(const CdrPackage& package,
         image.placement_transform = placement_transform;
         image.pixel_data_local_id = pixel_data_local_id;
         image.source_data_local_id = source_data_local_id;
-        image.source_bytes_size = static_cast<uint32_t>(
-            package.assets[instance.asset_id - 1].bytes.size());
+        image.source_bytes_size = package.assets[instance.asset_id - 1].bytes.size();
         auto image_record = SerializeImportRecord(image);
         if (!image_record && !image.icc_profile.empty()) {
             image.icc_profile.clear();
@@ -895,13 +922,14 @@ bool ReplaceCdrImagePlaceholders(const CdrPackage& package,
             for (size_t offset = 0; offset < source_bytes.size(); offset += kCdrRasterChunkBytes) {
                 const size_t length = (std::min)(static_cast<size_t>(kCdrRasterChunkBytes),
                                                   source_bytes.size() - offset);
-                ImportRasterSourceChunkRecord chunk;
-                chunk.local_id = image.source_data_local_id;
-                chunk.byte_offset = static_cast<uint32_t>(offset);
-                chunk.total_bytes = image.source_bytes_size;
-                chunk.bytes.assign(source_bytes.begin() + static_cast<std::ptrdiff_t>(offset),
-                                   source_bytes.begin() + static_cast<std::ptrdiff_t>(offset + length));
-                auto chunk_record = SerializeImportRecord(chunk);
+                auto chunk_reservation = raster_memory_budget->try_reserve(length);
+                if (!chunk_reservation) {
+                    diagnostic = "CDR embedded image source chunk exceeds the shared raster memory budget";
+                    return false;
+                }
+                auto chunk_record = SerializeRasterSourceChunk(
+                    image.source_data_local_id, offset,
+                    image.source_bytes_size, source_bytes.subspan(offset, length));
                 if (!chunk_record) {
                     diagnostic = "CDR embedded image source bytes exceed C6 record limits";
                     return false;
@@ -915,20 +943,23 @@ bool ReplaceCdrImagePlaceholders(const CdrPackage& package,
             for (size_t offset = 0; offset < pixels.size(); offset += kCdrRasterChunkBytes) {
                 const size_t length = (std::min)(static_cast<size_t>(kCdrRasterChunkBytes),
                                                   pixels.size() - offset);
-                ImportRasterImageChunkRecord chunk;
-                chunk.local_id = image.pixel_data_local_id;
-                chunk.byte_offset = static_cast<uint32_t>(offset);
-                chunk.total_bytes = image.decoded_pixel_bytes;
-                chunk.bytes.assign(pixels.begin() + static_cast<std::ptrdiff_t>(offset),
-                                   pixels.begin() + static_cast<std::ptrdiff_t>(offset + length));
-                auto chunk_record = SerializeImportRecord(chunk);
+                auto chunk_reservation = raster_memory_budget->try_reserve(length);
+                if (!chunk_reservation) {
+                    diagnostic = "CDR embedded image pixel chunk exceeds the shared raster memory budget";
+                    return false;
+                }
+                auto chunk_record = SerializeRasterImageChunk(
+                    image.pixel_data_local_id, static_cast<uint32_t>(offset),
+                    image.decoded_pixel_bytes, pixels.subspan(offset, length));
                 if (!chunk_record) {
                     diagnostic = "CDR embedded image pixel chunks exceed C6 record limits";
                     return false;
                 }
                 expanded.push_back(std::move(*chunk_record));
             }
-            std::vector<uint8_t>().swap(decoded_assets[instance.asset_id - 1]->pixels_rgba);
+            auto& cached = *decoded_assets[instance.asset_id - 1];
+            std::vector<uint8_t>().swap(cached.pixels_rgba);
+            cached.pixel_memory_reservation.reset();
         }
         seen_instances[instance.instance_id] = true;
     }
@@ -944,9 +975,13 @@ bool ReplaceCdrImagePlaceholders(const CdrPackage& package,
 
 }  // namespace
 
-bool BuildCdrImportRecords(std::span<const uint8_t> source,
-                           std::vector<CanonicalImportRecord>& records,
-                           std::string& diagnostic) {
+namespace {
+template <typename ReleaseSource>
+bool BuildCdrImportRecordsInternal(std::span<const uint8_t> source,
+                                   std::vector<CanonicalImportRecord>& records,
+                                   std::string& diagnostic,
+                                   const CdrMemoryAdmissionCallback& memory_admission,
+                                   ReleaseSource&& release_source) {
     records.clear();
     diagnostic.clear();
     if (source.empty()) {
@@ -968,6 +1003,7 @@ bool BuildCdrImportRecords(std::span<const uint8_t> source,
         uint64_t package_size = 0;
         const int status = convert(source.data(), source.size(), &package_data, &package_size,
                          bridge_diagnostic, static_cast<uint32_t>(sizeof(bridge_diagnostic)));
+        release_source();
         struct PackageGuard {
             uint8_t* data;
             CdrFreePackageFunction release;
@@ -987,8 +1023,10 @@ bool BuildCdrImportRecords(std::span<const uint8_t> source,
             !BuildSvgImportRecords(std::span<const uint8_t>(
                 reinterpret_cast<const uint8_t*>(normalized_svg.data()), normalized_svg.size()),
                 records, diagnostic)) return false;
+        std::string().swap(normalized_svg);
         bool dropped_icc_profile = false;
-        if (!ReplaceCdrImagePlaceholders(package, records, diagnostic, dropped_icc_profile)) {
+        if (!ReplaceCdrImagePlaceholders(package, records, diagnostic,
+                                         dropped_icc_profile, memory_admission)) {
             records.clear();
             return false;
         }
@@ -1003,6 +1041,26 @@ bool BuildCdrImportRecords(std::span<const uint8_t> source,
         return false;
     }
 #endif
+}
+}  // namespace
+
+bool BuildCdrImportRecords(std::span<const uint8_t> source,
+                           std::vector<CanonicalImportRecord>& records,
+                           std::string& diagnostic,
+                           const CdrMemoryAdmissionCallback& memory_admission) {
+    return BuildCdrImportRecordsInternal(source, records, diagnostic,
+                                         memory_admission, [] {});
+}
+
+bool BuildCdrImportRecordsAndReleaseSource(
+    std::vector<uint8_t>& source,
+    std::vector<CanonicalImportRecord>& records,
+    std::string& diagnostic,
+    const CdrMemoryAdmissionCallback& memory_admission) {
+    return BuildCdrImportRecordsInternal(source, records, diagnostic,
+                                         memory_admission, [&source] {
+        std::vector<uint8_t>().swap(source);
+    });
 }
 
 }  // namespace pikdraw::interop

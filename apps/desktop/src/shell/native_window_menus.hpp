@@ -9,6 +9,7 @@
 #include <limits>
 #include <span>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace pikdraw::desktop {
@@ -41,6 +42,10 @@ enum class MenuActionId {
     FileSaveAs,
     FileExport,
     FileExportRaster,
+    FileTestPrint,
+    FilePrintTestSheet,
+    FileImportMeasurementRun,
+    FileCompareMeasurementRuns,
     FileToggleGuidelines,
     FileClearGuidelines,
     FileProperties,
@@ -81,6 +86,9 @@ enum class MenuActionId {
     ViewZoomOut,
     ViewZoom100,
     ViewFitPage,
+    ViewPageFocus,
+    ViewArtboardOverview,
+    ViewFitArtboards,
     ViewToggleGuidelines,
     ViewClearGuidelines,
     ViewSnapGrid,
@@ -95,6 +103,10 @@ enum class MenuActionId {
     LayoutPageAdd,
     LayoutPageDuplicate,
     LayoutPageDelete,
+    LayoutArtboardAdd,
+    LayoutArtboardDuplicate,
+    LayoutArtboardDelete,
+    LayoutArtboardExport,
     LayoutOrientationLandscape,
     LayoutOrientationPortrait,
     LayoutPageA4,
@@ -162,9 +174,37 @@ enum class MenuActionId {
     EffectsExtrude,
     EffectsBevel,
     EffectsClear,
+    EffectsAppearanceFocus,
+    EffectsFeather,
+    EffectsInnerShadow,
+    EffectsOuterGlow,
+    EffectsInnerGlow,
+    EffectsColorOverlay,
+    EffectsClearSelected,
+    EffectsClearAll,
     // Bitmaps
     BitmapsConvert,
     BitmapsEdit,
+    BitmapsExportMaster,
+    BitmapsExportCmykMaster,
+    BitmapsAssignProfile,
+    BitmapsConvertProfileToSrgb,
+    BitmapsCrop,
+    BitmapsExposure,
+    BitmapsLight,
+    BitmapsColorBalance,
+    BitmapsChannelMixer,
+    BitmapsLocalExposureMask,
+    BitmapsAdjustmentMask,
+    BitmapsLevels,
+    BitmapsHsl,
+    BitmapsCurves,
+    BitmapsWhiteBalance,
+    BitmapsVibrance,
+    BitmapsSelectiveHsl,
+    BitmapsCloneStamp,
+    BitmapsFlipHorizontal,
+    BitmapsFlipVertical,
     BitmapsTrace,
     BitmapsColorMask,
     // Text
@@ -209,6 +249,8 @@ enum class MenuActionId {
     ToolPen,
     ToolPolygon,
     ToolGradient,
+    ToolEyedropper,
+    ToolArtboard,
     ToolCustomizeToolbox,
     // Window
     WindowProperties,
@@ -238,7 +280,13 @@ enum class MenuActionId {
     LayoutUnitYard,
     LayoutUnitPoint,
     LayoutUnitPica,
-    EditSelectSameAnyPaintColor
+    EditSelectSameAnyPaintColor,
+    ViewSnapSmartGuides,
+    ViewSnapEqualSpacing,
+    ViewSnapMaster,
+    ViewSnapProperties,
+    ViewSnapPage,
+    ViewSnapGuides
 };
 
 struct MenuItem {
@@ -250,6 +298,7 @@ struct MenuItem {
     bool is_disabled{false};
     bool is_heading{false};
     bool is_checkable{false};
+    bool has_submenu{false};
 };
 
 enum class ObjectContextAction {
@@ -397,6 +446,7 @@ inline constexpr std::array<MenuBarEntry, 12> kMenuBarEntries{{
 inline constexpr int kMenuRowHeight = 27;
 inline constexpr int kMenuSeparatorHeight = 9;
 inline constexpr int kMenuPadding = 4;
+inline constexpr int kMenuPopupWidth = 300;
 
 struct AlignPanelMetrics {
     static constexpr int dock_width = 280;
@@ -429,7 +479,7 @@ struct PageUnitPropertiesMetrics {
 };
 
 // 1. File Menu
-inline constexpr std::array<MenuItem, 11> kFileMenuItems{{
+inline constexpr std::array<MenuItem, 15> kFileMenuItems{{
     {MenuActionId::FileNew, L"New Document", L"Bản vẽ mới", L"Ctrl+N"},
     {MenuActionId::FileOpen, L"Open…", L"Mở…", L"Ctrl+O"},
     {MenuActionId::FileImport, L"Import…", L"Nhập…", L"Ctrl+I"},
@@ -438,6 +488,10 @@ inline constexpr std::array<MenuItem, 11> kFileMenuItems{{
     {MenuActionId::FileSaveAs, L"Save As…", L"Lưu thành…", L"Ctrl+Shift+S"},
     {MenuActionId::FileExport, L"Export SVG…", L"Xuất SVG…", L"Ctrl+E"},
     {MenuActionId::FileExportRaster, L"Export Raster…", L"Xuất Raster…", L""},
+    {MenuActionId::FileTestPrint, L"Export Test Sheet…", L"Xuất bảng in thử…", L""},
+    {MenuActionId::FilePrintTestSheet, L"Print Test Sheet…", L"In bảng thử trực tiếp…", L""},
+    {MenuActionId::FileImportMeasurementRun, L"Import Measurement Run…", L"Nhập số đo màu…", L""},
+    {MenuActionId::FileCompareMeasurementRuns, L"Compare Measurement Runs…", L"So sánh số đo màu…", L""},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::FileProperties, L"Document Properties…", L"Thuộc tính tài liệu…", L"", false, true},
     {MenuActionId::FileExit, L"Exit PikDraw", L"Thoát PikDraw", L"Alt+F4"}
@@ -487,25 +541,34 @@ inline constexpr std::array<MenuItem, 39> kEditMenuItems{{
 }};
 
 // 3. View Menu
-inline constexpr std::array<MenuItem, 14> kViewMenuItems{{
+inline constexpr std::array<MenuItem, 23> kViewMenuItems{{
     {MenuActionId::ViewZoomIn, L"Zoom In", L"Phóng to", L""},
     {MenuActionId::ViewZoomOut, L"Zoom Out", L"Thu nhỏ", L""},
     {MenuActionId::ViewZoom100, L"Zoom 100%", L"Tỷ lệ 100%", L"1"},
     {MenuActionId::ViewFitPage, L"Fit Page to Window", L"Vừa khung nhìn", L"F"},
+    {MenuActionId::ViewPageFocus, L"Page Focus", L"Tập trung theo trang", L"", false, false, false, true},
+    {MenuActionId::ViewArtboardOverview, L"Artboard Overview", L"Tổng quan Artboard", L"", false, false, false, true},
+    {MenuActionId::ViewFitArtboards, L"Fit All Artboards", L"Vừa tất cả Artboard", L""},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::ViewToggleGuidelines, L"Toggle Guidelines", L"Ẩn/Hiện đường gióng", L"Ctrl+;"},
     {MenuActionId::ViewClearGuidelines, L"Clear All Guidelines", L"Xóa hết đường gióng", L"Ctrl+Alt+;"},
     {MenuActionId::Separator, L"", L"", L"", true},
-    {MenuActionId::ViewSnapGrid, L"Snap to Grid", L"Hít vào lưới", L"", false, true},
-    {MenuActionId::ViewSnapObjects, L"Snap to Objects", L"Hít vào đối tượng", L"", false, true},
+    {MenuActionId::ViewSnapGrid, L"Snap to Grid", L"Hít vào lưới", L"", false, false, false, true},
+    {MenuActionId::ViewSnapObjects, L"Snap to Objects", L"Hít vào đối tượng", L"", false, false, false, true},
+    {MenuActionId::ViewSnapSmartGuides, L"Smart Guides", L"Đường gióng thông minh", L"", false, false, false, true},
+    {MenuActionId::ViewSnapEqualSpacing, L"Equal Spacing", L"Khoảng cách bằng nhau", L"", false, false, false, true},
+    {MenuActionId::ViewSnapPage, L"Snap to Page / Artboard", L"Hít vào trang / Artboard", L"", false, false, false, true},
+    {MenuActionId::ViewSnapGuides, L"Snap to Guidelines", L"Hít vào đường gióng", L"", false, false, false, true},
+    {MenuActionId::ViewSnapMaster, L"Snap Off / On", L"Tắt / Bật bắt điểm", L"", false, false, false, true},
+    {MenuActionId::ViewSnapProperties, L"Snap Properties…", L"Thuộc tính Snap…", L""},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::ViewProofColors, L"Proof Colors", L"Mô phỏng màu in", L"Ctrl+Alt+Y", false, false, false, true},
-    {MenuActionId::ViewGamutWarning, L"Proof RGB Difference (Approx.)", L"Sai khác RGB sau proof (gần đúng)", L"Ctrl+Shift+Y", false, false, false, true},
+    {MenuActionId::ViewGamutWarning, L"Gamut Warning (ICC)", L"Cảnh báo ngoài gamut (ICC)", L"Ctrl+Shift+Y", false, false, false, true},
     {MenuActionId::ViewOverprintPreview, L"Overprint Preview (Unavailable)", L"Xem trước in đè (chưa khả dụng)", L"Alt+Shift+Ctrl+Y", false, false, false, true}
 }};
 
 // 4. Layout Menu
-inline constexpr std::array<MenuItem, 24> kLayoutMenuItems{{
+inline constexpr std::array<MenuItem, 29> kLayoutMenuItems{{
     {MenuActionId::LayoutPageSetup, L"Page Setup…", L"Thiết lập trang…", L"", false, true},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::LayoutPagePrevious, L"Previous Page", L"Trang trước", L"Alt+PageUp"},
@@ -513,6 +576,11 @@ inline constexpr std::array<MenuItem, 24> kLayoutMenuItems{{
     {MenuActionId::LayoutPageAdd, L"Add Page", L"Thêm trang", L""},
     {MenuActionId::LayoutPageDuplicate, L"Duplicate Page", L"Nhân đôi trang", L""},
     {MenuActionId::LayoutPageDelete, L"Delete Page", L"Xóa trang", L""},
+    {MenuActionId::LayoutArtboardAdd, L"Add Artboard", L"Thêm Artboard", L""},
+    {MenuActionId::LayoutArtboardDuplicate, L"Duplicate Artboard", L"Nhân đôi Artboard", L""},
+    {MenuActionId::LayoutArtboardDelete, L"Delete Artboard", L"Xóa Artboard", L""},
+    {MenuActionId::LayoutArtboardExport, L"Export Active Artboard…", L"Xuất Artboard đang chọn…", L""},
+    {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::LayoutOrientationLandscape, L"Landscape Orientation", L"Khổ ngang", L""},
     {MenuActionId::LayoutOrientationPortrait, L"Portrait Orientation", L"Khổ dọc", L""},
@@ -595,36 +663,57 @@ inline constexpr std::array<MenuItem, 58> kObjectMenuItems{{
 }};
 
 // 6. Effects Menu
-inline constexpr std::array<MenuItem, 8> kEffectsMenuItems{{
-    {MenuActionId::EffectsGaussianBlur, L"Gaussian Blur", L"Làm mờ Gaussian", L""},
-    {MenuActionId::EffectsDropShadow, L"Drop Shadow", L"Đổ bóng", L""},
+inline constexpr std::array<MenuItem, 15> kEffectsMenuItems{{
+    {MenuActionId::EffectsAppearanceFocus, L"Appearance Properties…", L"Thuộc tính diện mạo…", L""},
+    {MenuActionId::Separator, L"", L"", L"", true},
+    {MenuActionId::EffectsGaussianBlur, L"Gaussian Blur…", L"Làm mờ Gaussian…", L""},
+    {MenuActionId::EffectsFeather, L"Feather…", L"Làm mềm biên (Feather)…", L""},
+    {MenuActionId::EffectsDropShadow, L"Drop Shadow…", L"Đổ bóng (Drop Shadow)…", L""},
+    {MenuActionId::EffectsInnerShadow, L"Inner Shadow…", L"Bóng trong (Inner Shadow)…", L""},
+    {MenuActionId::EffectsOuterGlow, L"Outer Glow…", L"Phát sáng ngoài (Outer Glow)…", L""},
+    {MenuActionId::EffectsInnerGlow, L"Inner Glow…", L"Phát sáng trong (Inner Glow)…", L""},
+    {MenuActionId::EffectsColorOverlay, L"Color Overlay…", L"Phủ màu (Color Overlay)…", L""},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::EffectsContour, L"Contour", L"Tạo viền Contour", L"Ctrl+F9", false, false},
     {MenuActionId::EffectsBreakContourApart, L"Break Contour Apart", L"Rã khối viền Contour", L"Ctrl+K", false, false},
-    {MenuActionId::EffectsExtrude, L"Extrude 3D (M2)…", L"Khối nổi Extrude 3D (M2)…", L"", false, true},
-    {MenuActionId::EffectsBevel, L"Bevel (M2)…", L"Vát cạnh Bevel (M2)…", L"", false, true},
-    {MenuActionId::EffectsClear, L"Clear Effects", L"Xóa hiệu ứng", L"", false, false}
+    {MenuActionId::Separator, L"", L"", L"", true},
+    {MenuActionId::EffectsClear, L"Clear Live Effects", L"Xóa hiệu ứng diện mạo", L"", false, false},
+    {MenuActionId::EffectsClearAll, L"Clear All Effects…", L"Xóa tất cả hiệu ứng (kèm Contour)…", L"", false, false}
 }};
 
 // 7. Bitmaps Menu
-inline constexpr std::array<MenuItem, 5> kBitmapsMenuItems{{
-    {MenuActionId::BitmapsConvert, L"Convert to Bitmap…", L"Chuyển sang ảnh Bitmap…", L"", false, true},
-    {MenuActionId::BitmapsEdit, L"Edit Bitmap…", L"Chỉnh sửa ảnh…", L"", false, true},
+inline constexpr std::array<MenuItem, 24> kBitmapsMenuItems{{
+    {MenuActionId::BitmapsConvert, L"Convert to Bitmap…", L"Chuyển sang ảnh Bitmap…", L"", false, false},
+    {MenuActionId::BitmapsExportMaster, L"Export Bitmap Master (TIFF)…", L"Xuất bản gốc ảnh (TIFF)…", L"", false, false},
+    {MenuActionId::BitmapsExportCmykMaster, L"Export Bitmap Master to CMYK16 TIFF…", L"Xuất ảnh gốc thành TIFF CMYK16…", L"", false, false},
+    {MenuActionId::BitmapsAssignProfile, L"Assign Bitmap Profile…", L"Gán profile ảnh…", L"", false, false},
+    {MenuActionId::BitmapsConvertProfileToSrgb, L"Convert Bitmap Profile to sRGB", L"Chuyển profile ảnh sang sRGB", L"", false, false},
+    {MenuActionId::BitmapsCrop, L"Crop…", L"Cắt ảnh…", L"", false, false},
+    {MenuActionId::BitmapsExposure, L"Exposure…", L"Phơi sáng…", L"", false, false},
+    {MenuActionId::BitmapsLight, L"Light…", L"Ánh sáng…", L"", false, false},
+    {MenuActionId::BitmapsColorBalance, L"Color Balance…", L"Cân bằng màu…", L"", false, false},
+    {MenuActionId::BitmapsChannelMixer, L"Channel Mixer…", L"Bộ trộn kênh…", L"", false, false},
+    {MenuActionId::BitmapsLocalExposureMask, L"Local Exposure Mask…", L"Mặt nạ phơi sáng cục bộ…", L"", false, false},
+    {MenuActionId::BitmapsAdjustmentMask, L"Edit Last Adjustment Mask…", L"Sửa mặt nạ chỉnh màu gần nhất…", L"", false, false},
+    {MenuActionId::BitmapsLevels, L"Levels…", L"Levels…", L"", false, false},
+    {MenuActionId::BitmapsHsl, L"Hue/Saturation/Lightness…", L"Sắc màu/Bão hòa/Độ sáng HSL…", L"", false, false},
+    {MenuActionId::BitmapsCurves, L"Curves…", L"Đường cong…", L"", false, false},
+    {MenuActionId::BitmapsWhiteBalance, L"White Balance…", L"Cân bằng trắng…", L"", false, false},
+    {MenuActionId::BitmapsVibrance, L"Vibrance…", L"Tăng cường màu…", L"", false, false},
+    {MenuActionId::BitmapsSelectiveHsl, L"Selective HSL…", L"HSL theo dải màu…", L"", false, false},
+    {MenuActionId::BitmapsCloneStamp, L"Clone Stamp Dab…", L"Đóng dấu Clone…", L"", false, false},
+    {MenuActionId::BitmapsFlipHorizontal, L"Flip Horizontal", L"Lật ngang", L"", false, false},
+    {MenuActionId::BitmapsFlipVertical, L"Flip Vertical", L"Lật dọc", L"", false, false},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::BitmapsTrace, L"Quick Vectorize / Trace…", L"Vector hóa ảnh (Trace)…", L"", false, true},
     {MenuActionId::BitmapsColorMask, L"Bitmap Color Mask…", L"Mặt nạ màu ảnh…", L"", false, true}
 }};
 
 // Character and paragraph values live in the contextual bar and Properties.
-inline constexpr std::array<MenuItem, 26> kTextMenuItems{{
+inline constexpr std::array<MenuItem, 19> kTextMenuItems{{
     {MenuActionId::TextEdit, L"Edit Text…", L"Sửa văn bản…", L"Ctrl+Shift+T"},
     {MenuActionId::Separator, L"", L"", L"", true},
-    {MenuActionId::Separator, L"Change Case", L"Đổi kiểu hoa / thường", L"Shift+F3", false, true, true},
-    {MenuActionId::TextCaseSentence, L"Sentence case", L"Viết hoa đầu câu", L""},
-    {MenuActionId::TextCaseLower, L"lowercase", L"Chữ thường", L""},
-    {MenuActionId::TextCaseUpper, L"UPPERCASE", L"CHỮ HOA", L""},
-    {MenuActionId::TextCaseTitle, L"Title Case", L"Viết Hoa Từng Từ", L""},
-    {MenuActionId::TextCaseToggle, L"tOGGLE cASE", L"Đảo hoa / thường", L""},
+    {MenuActionId::TextChangeCase, L"Change Case", L"Đổi hoa / thường", L"Shift+F3", false, false, false, false, true},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::TextBullets, L"Bullets", L"Đầu dòng dấu chấm", L""},
     {MenuActionId::TextNumbering, L"Numbering", L"Đầu dòng số thứ tự", L""},
@@ -643,8 +732,22 @@ inline constexpr std::array<MenuItem, 26> kTextMenuItems{{
     {MenuActionId::TextDocker, L"Text Docker / Properties", L"Bảng điều khiển chữ (Docker)", L"Ctrl+T"}
 }};
 
+inline constexpr std::array<MenuItem, 5> kTextCaseSubmenuItems{{
+    {MenuActionId::TextCaseSentence, L"Sentence case", L"Viết hoa đầu câu", L""},
+    {MenuActionId::TextCaseLower, L"lowercase", L"Chữ thường", L""},
+    {MenuActionId::TextCaseUpper, L"UPPERCASE", L"CHỮ HOA", L""},
+    {MenuActionId::TextCaseTitle, L"Title Case", L"Viết Hoa Từng Từ", L""},
+    {MenuActionId::TextCaseToggle, L"tOGGLE cASE", L"Đảo hoa / thường", L""}
+}};
+
+inline std::span<const MenuItem> get_menu_submenu_items(MenuActionId parent) noexcept {
+    return parent == MenuActionId::TextChangeCase
+        ? std::span<const MenuItem>(kTextCaseSubmenuItems)
+        : std::span<const MenuItem>{};
+}
+
 // 9. Tools Menu
-inline constexpr std::array<MenuItem, 11> kToolsMenuItems{{
+inline constexpr std::array<MenuItem, 13> kToolsMenuItems{{
     {MenuActionId::ToolPick, L"Pick Tool (Selection)", L"Công cụ chọn (Pick)", L"V"},
     {MenuActionId::ToolNode, L"Node Edit Tool", L"Chỉnh sửa điểm (Node)", L""},
     {MenuActionId::ToolRectangle, L"Rectangle Tool", L"Vẽ hình chữ nhật", L"R"},
@@ -655,7 +758,9 @@ inline constexpr std::array<MenuItem, 11> kToolsMenuItems{{
     {MenuActionId::ToolLine, L"Line Tool", L"Đoạn thẳng", L"L"},
     {MenuActionId::ToolPolyline, L"Polyline Tool", L"Đường gấp khúc", L"Shift+L"},
     {MenuActionId::ToolPen, L"Pen Tool", L"Công cụ Pen", L""},
-    {MenuActionId::ToolGradient, L"Interactive Gradient Tool", L"Công cụ chuyển sắc tương tác", L"G"}
+    {MenuActionId::ToolGradient, L"Interactive Gradient Tool", L"Công cụ chuyển sắc tương tác", L"G"},
+    {MenuActionId::ToolEyedropper, L"Color Eyedropper", L"Ống hút màu", L"I"},
+    {MenuActionId::ToolArtboard, L"Artboard Tool", L"Công cụ Artboard", L"Shift+O"}
 }};
 
 // 10. Window Menu
@@ -707,8 +812,7 @@ inline std::span<const MenuItem> get_menu_items(MenuId id) noexcept {
     }
 }
 
-inline int get_menu_height(MenuId id) noexcept {
-    const auto items = get_menu_items(id);
+inline int get_menu_height(std::span<const MenuItem> items) noexcept {
     if (items.empty()) return 0;
     int h = 2 * kMenuPadding;
     for (const auto& item : items) {
@@ -717,8 +821,25 @@ inline int get_menu_height(MenuId id) noexcept {
     return h;
 }
 
-inline const MenuItem* get_menu_item_at(MenuId id, int offset_y) noexcept {
-    const auto items = get_menu_items(id);
+inline int get_menu_height(MenuId id) noexcept {
+    return get_menu_height(get_menu_items(id));
+}
+
+inline int get_menu_item_top(std::span<const MenuItem> items, MenuActionId action) noexcept {
+    int y = kMenuPadding;
+    for (const auto& item : items) {
+        const int row_height = item.is_separator ? kMenuSeparatorHeight : kMenuRowHeight;
+        if (!item.is_separator && item.action == action) return y;
+        y += row_height;
+    }
+    return -1;
+}
+
+inline int get_menu_item_top(MenuId id, MenuActionId action) noexcept {
+    return get_menu_item_top(get_menu_items(id), action);
+}
+
+inline const MenuItem* get_menu_item_at(std::span<const MenuItem> items, int offset_y) noexcept {
     int y = kMenuPadding;
     for (const auto& item : items) {
         int rh = item.is_separator ? kMenuSeparatorHeight : kMenuRowHeight;
@@ -730,16 +851,20 @@ inline const MenuItem* get_menu_item_at(MenuId id, int offset_y) noexcept {
     return nullptr;
 }
 
+inline const MenuItem* get_menu_item_at(MenuId id, int offset_y) noexcept {
+    return get_menu_item_at(get_menu_items(id), offset_y);
+}
+
 inline std::optional<MenuActionId> get_menu_action_at(MenuId id, int offset_y) noexcept {
     const auto* item = get_menu_item_at(id, offset_y);
-    if (!item || item->is_disabled) return std::nullopt;
+    if (!item || item->is_disabled || item->has_submenu) return std::nullopt;
     return item->action;
 }
 
 template <typename IsEnabled>
 inline std::optional<MenuActionId> get_adjacent_menu_action(
-    MenuId id, int current_action, int direction, IsEnabled&& is_enabled) noexcept {
-    const auto items = get_menu_items(id);
+    std::span<const MenuItem> items, int current_action, int direction,
+    IsEnabled&& is_enabled) noexcept {
     if (items.empty()) return std::nullopt;
     int current_index = -1;
     for (int i = 0; i < static_cast<int>(items.size()); ++i) {
@@ -761,9 +886,22 @@ inline std::optional<MenuActionId> get_adjacent_menu_action(
     return std::nullopt;
 }
 
+template <typename IsEnabled>
+inline std::optional<MenuActionId> get_adjacent_menu_action(
+    MenuId id, int current_action, int direction, IsEnabled&& is_enabled) noexcept {
+    return get_adjacent_menu_action(get_menu_items(id), current_action, direction,
+                                    std::forward<IsEnabled>(is_enabled));
+}
+
+inline std::optional<MenuActionId> get_adjacent_menu_action(
+    std::span<const MenuItem> items, int current_action, int direction) noexcept {
+    return get_adjacent_menu_action(items, current_action, direction, [](MenuActionId) { return true; });
+}
+
 inline std::optional<MenuActionId> get_adjacent_menu_action(
     MenuId id, int current_action, int direction) noexcept {
-    return get_adjacent_menu_action(id, current_action, direction, [](MenuActionId) { return true; });
+    return get_adjacent_menu_action(get_menu_items(id), current_action, direction,
+                                    [](MenuActionId) { return true; });
 }
 
 } // namespace pikdraw::desktop

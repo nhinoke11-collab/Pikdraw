@@ -163,7 +163,7 @@ void ensure_shortcuts_initialized(NativeWindow& win) {
         { ActionId::kEditDuplicate, "Nhân đôi (Duplicate)", "Duplicate", "Ctrl+D", ShortcutCategory::Edit,
           [&win] { win.workflow().duplicate_selected(5.0, 5.0); InvalidateRect(win.hwnd(), nullptr, FALSE); } },
         { ActionId::kEditDelete, "Xóa đối tượng (Delete)", "Delete", "Delete", ShortcutCategory::Edit,
-          [&win] { win.workflow().delete_selected(); InvalidateRect(win.hwnd(), nullptr, FALSE); } },
+          [&win] { if (!win.delete_selected_guideline()) { win.workflow().delete_selected(); } InvalidateRect(win.hwnd(), nullptr, FALSE); } },
         { ActionId::kObjectGroup, "Nhóm đối tượng (Group)", "Group Objects", "Ctrl+G", ShortcutCategory::Edit,
           [&win] { win.workflow().group_selected(); InvalidateRect(win.hwnd(), nullptr, FALSE); } },
         { ActionId::kObjectUngroup, "Rã nhóm (Ungroup)", "Ungroup Objects", "Ctrl+U", ShortcutCategory::Edit,
@@ -189,9 +189,9 @@ void ensure_shortcuts_initialized(NativeWindow& win) {
         // View / Color Proofing
         { ActionId::kViewProofColors, "Mô phỏng màu in (Proof Colors)", "Proof Colors", "Ctrl+Alt+Y", ShortcutCategory::View,
           [&win] { win.execute_menu_action(static_cast<int>(MenuActionId::ViewProofColors)); } },
-        { ActionId::kViewGamutWarning, "Cảnh báo vượt dải màu (Gamut Warning)", "Gamut Warning", "Ctrl+Shift+Y", ShortcutCategory::View,
+        { ActionId::kViewGamutWarning, "Cảnh báo màu ngoài gamut ICC", "ICC Gamut Warning", "Ctrl+Shift+Y", ShortcutCategory::View,
           [&win] { win.execute_menu_action(static_cast<int>(MenuActionId::ViewGamutWarning)); } },
-        { ActionId::kViewOverprintPreview, "Xem trước in đè (Overprint Preview)", "Overprint Preview", "Alt+Shift+Ctrl+Y", ShortcutCategory::View,
+        { ActionId::kViewOverprintPreview, "Xem trước in đè (chưa khả dụng)", "Overprint Preview (Unavailable)", "Alt+Shift+Ctrl+Y", ShortcutCategory::View,
           [&win] { win.execute_menu_action(static_cast<int>(MenuActionId::ViewOverprintPreview)); } }
     };
 

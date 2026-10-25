@@ -105,7 +105,7 @@ class SpatialCuller {
       const document::EffectNode &node) {
     if (node.id == document::kInvalidEffectInstanceId ||
         node.schema_version != document::kBasicEffectNodeSchemaVersion ||
-        node.schema_minor > document::kDropShadowBlendSchemaMinor)
+        node.schema_minor > document::kExtendedEffectNodeSchemaMinor)
       return false;
     return std::visit(
         [&node](const auto &effect) {
@@ -117,6 +117,40 @@ class SpatialCuller {
                    effect.sigma_x_mm >= 0.0 && effect.sigma_y_mm >= 0.0 &&
                    effect.sigma_x_mm <= geometry::limits::kCanvasMaxMm &&
                    effect.sigma_y_mm <= geometry::limits::kCanvasMaxMm;
+          } else if constexpr (std::is_same_v<T, document::FeatherEffect>) {
+            return node.schema_minor == document::kExtendedEffectNodeSchemaMinor &&
+                   std::isfinite(effect.radius_mm) &&
+                   effect.radius_mm >= 0.0 &&
+                   effect.radius_mm <= geometry::limits::kCanvasMaxMm;
+          } else if constexpr (std::is_same_v<T, document::OuterGlowEffect> ||
+                              std::is_same_v<T, document::InnerGlowEffect>) {
+            return node.schema_minor == document::kExtendedEffectNodeSchemaMinor &&
+                   std::isfinite(effect.radius_mm) &&
+                   effect.radius_mm >= 0.0 &&
+                   effect.radius_mm <= geometry::limits::kCanvasMaxMm &&
+                   effect.color.is_valid() &&
+                   normalized_opacity(effect.opacity);
+          } else if constexpr (std::is_same_v<T, document::InnerShadowEffect>) {
+            return node.schema_minor == document::kExtendedEffectNodeSchemaMinor &&
+                   std::isfinite(effect.dx_mm) &&
+                   std::isfinite(effect.dy_mm) &&
+                   std::abs(effect.dx_mm) <= geometry::limits::kCanvasMaxMm &&
+                   std::abs(effect.dy_mm) <= geometry::limits::kCanvasMaxMm &&
+                   std::isfinite(effect.sigma_x_mm) &&
+                   std::isfinite(effect.sigma_y_mm) &&
+                   effect.sigma_x_mm >= 0.0 && effect.sigma_y_mm >= 0.0 &&
+                   effect.sigma_x_mm <= geometry::limits::kCanvasMaxMm &&
+                   effect.sigma_y_mm <= geometry::limits::kCanvasMaxMm &&
+                   effect.color.is_valid() &&
+                   normalized_opacity(effect.opacity) &&
+                   static_cast<uint8_t>(effect.blend_mode) <=
+                       static_cast<uint8_t>(document::BlendMode::Lighten);
+          } else if constexpr (std::is_same_v<T, document::ColorOverlayEffect>) {
+            return node.schema_minor == document::kExtendedEffectNodeSchemaMinor &&
+                   effect.color.is_valid() &&
+                   normalized_opacity(effect.opacity) &&
+                   static_cast<uint8_t>(effect.blend_mode) <=
+                       static_cast<uint8_t>(document::BlendMode::Lighten);
           } else {
             return std::isfinite(effect.dx_mm) &&
                    std::isfinite(effect.dy_mm) &&
@@ -246,15 +280,29 @@ class SpatialCuller {
       const bool applied = std::visit(
           [&](const auto &effect) {
             using T = std::decay_t<decltype(effect)>;
-            double radius_x = 0.0;
-            double radius_y = 0.0;
-            if (!filter_support_mm(effect.sigma_x_mm, density, radius_x) ||
-                !filter_support_mm(effect.sigma_y_mm, density, radius_y))
-              return false;
-            if constexpr (std::is_same_v<T,
-                                         document::GaussianBlurEffect>) {
+            if constexpr (std::is_same_v<T, document::GaussianBlurEffect>) {
+              double radius_x = 0.0;
+              double radius_y = 0.0;
+              if (!filter_support_mm(effect.sigma_x_mm, density, radius_x) ||
+                  !filter_support_mm(effect.sigma_y_mm, density, radius_y))
+                return false;
               return expand_rect(local_bounds, radius_x, radius_y);
+            } else if constexpr (std::is_same_v<T, document::OuterGlowEffect>) {
+              double radius = 0.0;
+              if (!filter_support_mm(effect.radius_mm, density, radius))
+                return false;
+              return expand_rect(local_bounds, radius, radius);
+            } else if constexpr (std::is_same_v<T, document::FeatherEffect> ||
+                                std::is_same_v<T, document::InnerGlowEffect> ||
+                                std::is_same_v<T, document::InnerShadowEffect> ||
+                                std::is_same_v<T, document::ColorOverlayEffect>) {
+              return true;
             } else {
+              double radius_x = 0.0;
+              double radius_y = 0.0;
+              if (!filter_support_mm(effect.sigma_x_mm, density, radius_x) ||
+                  !filter_support_mm(effect.sigma_y_mm, density, radius_y))
+                return false;
               auto shadow_bounds = local_bounds;
               if (!expand_rect(shadow_bounds, radius_x, radius_y) ||
                   !translate_rect(shadow_bounds, effect.dx_mm,

@@ -2,6 +2,7 @@
 
 #include "pikdraw/document/snapshots/document_snapshot.hpp"
 #include "pikdraw/document/storage/recovery_draft.hpp"
+#include <atomic>
 #include <memory>
 #include <optional>
 #include <string>
@@ -46,7 +47,8 @@ public:
 
   /// Loads document snapshot from file, verifying integrity
   [[nodiscard]] static std::shared_ptr<DocumentSnapshot>
-  load(const std::string &path, std::string *out_error = nullptr);
+  load(const std::string &path, std::string *out_error = nullptr,
+       const std::atomic_bool *cancel_requested = nullptr);
 
   /// Saves an autosave/recovery checkpoint with provenance
   [[nodiscard]] static bool write_recovery_checkpoint(
@@ -56,13 +58,15 @@ public:
   /// Finds the newest valid recovery checkpoint for a document
   [[nodiscard]] static std::optional<RecoveryInfo>
   find_latest_checkpoint(const std::string &recovery_dir,
-                         const std::string &doc_id);
+                         const std::string &doc_id,
+                         const std::atomic_bool *cancel_requested = nullptr);
 
   /// Lists valid checkpoints under a recovery root and its per-document folders.
   /// The result is newest first and bounded to 128 records.
   [[nodiscard]] static std::vector<RecoveryInfo>
   list_recovery_checkpoints(const std::string &recovery_root,
-                            bool *out_truncated = nullptr);
+                            bool *out_truncated = nullptr,
+                            const std::atomic_bool *cancel_requested = nullptr);
 
   /// Removes one valid checkpoint only when it is an immediate child of the
   /// recovery root or one of its direct per-document folders.

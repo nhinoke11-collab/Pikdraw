@@ -69,6 +69,9 @@ int main() {
         feature.spacing_mm = 4.0;
         feature.steps = 2;
         feature.join_type = geometry::JoinType::Miter;
+        feature.has_fill = true;
+        feature.fill_color = color::SpotColor{
+            "BreakSpot", 0.7, {0.1, 0.8, 0.2, 0.5}, true};
 
         doc.execute_command(std::make_unique<ApplyContourCommand>(obj.id, feature));
 
@@ -93,6 +96,9 @@ int main() {
         const auto* c1 = std::get_if<PathObject>(&(*c1_opt));
         assert(c1 != nullptr);
         assert(!c1->path.empty());
+        const auto* c1_spot = std::get_if<color::SpotColor>(&c1->fill.payload());
+        assert(c1->has_fill && c1_spot && c1_spot->spot_name == "BreakSpot" &&
+               c1_spot->tint == 0.7 && c1_spot->alternate_rgb.a == 0.5);
         // Step 1: 40 + 2*4 = 48 mm width
         assert(std::abs(c1->path.bounds().width - 48.0) < 1e-4);
 
@@ -109,7 +115,12 @@ int main() {
         assert(doc.page().layers[0].object_ids.size() == 1);
         assert(!doc.objects().get(contour1_id).has_value());
         assert(!doc.objects().get(contour2_id).has_value());
-        assert(get_object_contour(doc, obj.id).has_value());
+        const auto restored_feature = get_object_contour(doc, obj.id);
+        assert(restored_feature.has_value());
+        const auto* restored_spot = std::get_if<color::SpotColor>(
+            &restored_feature->fill_color.payload());
+        assert(restored_spot && restored_spot->spot_name == "BreakSpot" &&
+               restored_spot->tint == 0.7 && restored_spot->overprint);
 
         // Redo Break Apart: same objects recreated with identical IDs
         bool redo_ok = doc.redo();
@@ -137,6 +148,8 @@ int main() {
         ContourFeature feature;
         feature.direction = geometry::ContourDirection::Outside;
         feature.spacing_mm = 2.0;
+        feature.fill_color = color::SpotColor{
+            "RemoveSpot", 0.4, {0.7, 0.2, 0.9, 0.6}, false};
         doc.execute_command(std::make_unique<ApplyContourCommand>(obj.id, feature));
         assert(get_object_contour(doc, obj.id).has_value());
 
@@ -144,7 +157,12 @@ int main() {
         assert(!get_object_contour(doc, obj.id).has_value());
 
         doc.undo();
-        assert(get_object_contour(doc, obj.id).has_value());
+        const auto restored = get_object_contour(doc, obj.id);
+        assert(restored.has_value());
+        const auto* restored_spot = std::get_if<color::SpotColor>(
+            &restored->fill_color.payload());
+        assert(restored_spot && restored_spot->spot_name == "RemoveSpot" &&
+               restored_spot->alternate_rgb.a == 0.6);
 
         std::cout << "[PASS] remove_contour_command" << std::endl;
     }

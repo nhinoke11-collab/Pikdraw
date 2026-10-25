@@ -1,8 +1,10 @@
+#include "../src/shell/native_window_toolbox.hpp"
 #include "desktop_shell_test_helpers.hpp"
 #include "../src/tools/dimension_tool_controller.hpp"
 #include "pikdraw/document/commands/dimension_commands.hpp"
 #include "pikdraw/document/annotations/dimension_object.hpp"
 #include "pikdraw/document/annotations/dimension_style.hpp"
+#include "pikdraw/geometry/operations/path_cut.hpp"
 
 void test_group_ungroup_and_isolation_mode() {
     pikdraw::desktop::NativeWindow win(1440, 900);
@@ -124,10 +126,20 @@ void test_solid_tools_boolean_knife_and_context_actions() {
     assert(trimmed_obj.has_value());
 
     // 3. Stage 2: Interactive Knife / Split Tool
-    workflow.undo(); // back to r1 and r2
+    assert(workflow.undo()); // back to r1 and r2
     sel.clear();
     sel.select(r1);
     // Cut r1 (40, 40, 80, 60) with a vertical line at x = 70 (from (70, 20) to (70, 120))
+    const auto pre_cut_snapshot = win.root().document().current_snapshot();
+    const auto pre_cut_object = pre_cut_snapshot->objects().get(r1);
+    assert(pre_cut_object.has_value());
+    const auto* pre_cut_path = std::get_if<pikdraw::document::PathObject>(&*pre_cut_object);
+    assert(pre_cut_path && pre_cut_path->has_fill && pre_cut_path->authoring_source);
+    const auto* pre_cut_owner = pre_cut_snapshot->hierarchy().find(r1);
+    assert(pre_cut_owner && pre_cut_snapshot->hierarchy().editable(r1));
+    const auto direct_cut = pikdraw::geometry::cut_path_by_line(
+        pre_cut_path->path.transformed(pre_cut_owner->world), {70.0, 20.0}, {70.0, 120.0});
+    assert(direct_cut.success);
     bool cut_ok = workflow.split_objects_by_line({70.0, 20.0}, {70.0, 120.0});
     assert(cut_ok);
     // r1 is now split into 2 pieces: one width 30 (40..70), one width 50 (70..120)
@@ -229,12 +241,12 @@ void test_contextual_object_action_capabilities() {
     assert(win.root().document().current_snapshot()->revision() == revision_before_overselect);
     assert(selection.count() == 3);
 
-    // Curved paths are rejected instead of silently replacing their shape with bounds.
+    // Curved paths now succeed with vector boolean shaping.
     selection.clear();
     selection.select(first, pikdraw::vector::SelectionMode::Add);
     selection.select(ellipse, pikdraw::vector::SelectionMode::Add);
-    assert(!workflow.can_boolean_operation_selected(pikdraw::geometry::BooleanOp::Intersection));
-    assert(!workflow.boolean_operation_selected(pikdraw::geometry::BooleanOp::Intersection));
+    assert(workflow.can_boolean_operation_selected(pikdraw::geometry::BooleanOp::Intersection));
+    assert(workflow.boolean_operation_selected(pikdraw::geometry::BooleanOp::Intersection, true, true));
     assert(win.root().document().current_snapshot()->objects().get(first).has_value());
     assert(win.root().document().current_snapshot()->objects().get(ellipse).has_value());
 
@@ -447,15 +459,16 @@ void test_align_and_distribute_tools() {
     assert(workflow.undo());
 
     // AC-ALIGN-03 — fixed spacing input accepts decimal comma, validates mm, and applies to two or more objects.
+    win.set_settings_unit_choice(0);
     win.set_distribute_spacing_mm(10.0);
     win.handle_mouse_down(panel_left + 20, AlignPanelMetrics::gap_field_top + 8);
     assert(win.active_numeric_field() == NativeWindow::NumericFieldId::DistributeSpacing);
-    for (int i = 0; i < 4; ++i) win.handle_numeric_char_input(8);
+    while (!win.numeric_input_buffer().empty()) win.handle_numeric_char_input(8);
     for (const wchar_t ch : L"12,5") win.handle_numeric_char_input(ch);
     win.handle_numeric_char_input(13);
     assert(std::abs(win.distribute_spacing_mm() - 12.5) < 1e-9);
     win.start_numeric_input(NativeWindow::NumericFieldId::DistributeSpacing);
-    for (int i = 0; i < 4; ++i) win.handle_numeric_char_input(8);
+    while (!win.numeric_input_buffer().empty()) win.handle_numeric_char_input(8);
     win.handle_numeric_char_input(L'-');
     win.handle_numeric_char_input(L'1');
     win.handle_numeric_char_input(13);
@@ -674,8 +687,8 @@ void test_powerclip_and_clipping_mask_suite() {
     auto& controller = win.root().vector_controller();
     auto& sel = controller.selection();
 
-    // 1. Create content (ellipse) and container mask (rectangle on top)
-    const auto content_id = workflow.add_ellipse(70.0, 70.0, 80.0, 80.0, "#f59e0b", "#d97706", 1.5);
+    // 1. Create content outside container (ellipse) and container mask (rectangle on top)
+    const auto content_id = workflow.add_ellipse(300.0, 300.0, 80.0, 80.0, "#f59e0b", "#d97706", 1.5);
     const auto mask_id = workflow.add_rectangle(50.0, 50.0, 100.0, 100.0, "#00f2c3", "#0ea5e9", 2.0);
     assert(content_id != pikdraw::document::kInvalidObjectId);
     assert(mask_id != pikdraw::document::kInvalidObjectId);
@@ -951,3 +964,120 @@ void test_dimension_tool_and_visual_suite() {
 
 
 
+
+void test_cut_erase_smart_tools_suite() {
+    NativeWindow win(1440, 900);
+    auto& workflow = win.workflow();
+    auto& sel = win.root().vector_controller().selection();
+
+    // 1. AC-CUT-01: Knife cut on concave L-shape with style preservation (no orange proof color)
+    pikdraw::document::PathObject l_shape;
+    l_shape.id = pikdraw::document::generate_object_id();
+    l_shape.name = "L-Shape";
+    l_shape.path.move_to(0.0, 0.0);
+    l_shape.path.line_to(60.0, 0.0);
+    l_shape.path.line_to(60.0, 20.0);
+    l_shape.path.line_to(20.0, 20.0);
+    l_shape.path.line_to(20.0, 60.0);
+    l_shape.path.line_to(0.0, 60.0);
+    l_shape.path.close();
+    l_shape.has_fill = true;
+    l_shape.fill = pikdraw::color::ColorValue{pikdraw::color::RGBColor{0.1, 0.5, 0.9, 1.0}};
+    const auto lid = l_shape.id;
+    assert(win.root().document().execute_command(std::make_unique<pikdraw::document::AddObjectCommand>(l_shape, 0)).success);
+
+    sel.clear();
+    sel.select(lid);
+    bool cut_ok = workflow.cut_objects_by_line({10.0, -10.0}, {10.0, 70.0});
+    assert(cut_ok);
+    assert(sel.count() == 2);
+
+    // Verify pieces preserve original blue fill and no orange color
+    for (const auto pid : sel.selected_ids()) {
+        auto p_obj = win.root().document().current_snapshot()->objects().get(pid);
+        assert(p_obj.has_value());
+        const auto* po = std::get_if<pikdraw::document::PathObject>(&*p_obj);
+        assert(po != nullptr);
+        assert(po->has_fill);
+        const auto& rgb = std::get<pikdraw::color::RGBColor>(po->fill.payload());
+        assert(std::abs(rgb.r - 0.1) < 1e-4);
+        assert(std::abs(rgb.g - 0.5) < 1e-4);
+        assert(std::abs(rgb.b - 0.9) < 1e-4);
+    }
+
+    // Undo restores unsplit L-shape
+    assert(workflow.undo());
+    assert(win.root().document().current_snapshot()->objects().get(lid).has_value());
+
+    // 2. AC-ERASE-01: Vector Eraser sweep and undo
+    pikdraw::document::PathObject rect;
+    rect.id = pikdraw::document::generate_object_id();
+    rect.name = "Eraser Target";
+    rect.path = pikdraw::geometry::Path2D::make_rect(0.0, 0.0, 100.0, 50.0);
+    rect.has_fill = true;
+    const auto rid = rect.id;
+    assert(win.root().document().execute_command(std::make_unique<pikdraw::document::AddObjectCommand>(rect, 0)).success);
+
+    sel.clear();
+    sel.select(rid);
+    std::vector<pikdraw::geometry::Point2D> stroke{{-5.0, 25.0}, {105.0, 25.0}};
+    bool erase_ok = workflow.erase_objects_by_stroke(stroke, 4.0, true);
+    assert(erase_ok);
+    assert(sel.count() >= 2);
+    assert(workflow.undo());
+    assert(win.root().document().current_snapshot()->objects().get(rid).has_value());
+
+    // 3. AC-TRIM-01: Trim Objects Target minus Source
+    const auto target_id = workflow.add_rectangle(0.0, 0.0, 100.0, 100.0);
+    const auto source_id = workflow.add_rectangle(40.0, 40.0, 80.0, 80.0);
+    bool trim_ok = workflow.trim_objects_source_target(target_id, {source_id}, true);
+    assert(trim_ok);
+    assert(win.root().document().current_snapshot()->objects().get(target_id).has_value());
+    assert(win.root().document().current_snapshot()->objects().get(source_id).has_value());
+
+    // The compatibility pointer workflow must use real path geometry and
+    // default to the topmost editable target when nothing is selected.
+    NativeWindow topmost_win(1200, 800);
+    auto& topmost_workflow = topmost_win.workflow();
+    auto& topmost_selection = topmost_win.root().vector_controller().selection();
+    pikdraw::document::PathObject lower;
+    lower.id = pikdraw::document::generate_object_id();
+    lower.path = pikdraw::geometry::Path2D::make_rect(0.0, 0.0, 100.0, 80.0);
+    const auto lower_id = lower.id;
+    pikdraw::document::PathObject upper;
+    upper.id = pikdraw::document::generate_object_id();
+    upper.path = pikdraw::geometry::Path2D::make_rect(0.0, 0.0, 100.0, 80.0);
+    const auto upper_id = upper.id;
+    assert(topmost_win.root().document().execute_command(
+        std::make_unique<pikdraw::document::AddObjectCommand>(lower, 0)).success);
+    assert(topmost_win.root().document().execute_command(
+        std::make_unique<pikdraw::document::AddObjectCommand>(upper, 0)).success);
+    topmost_selection.clear();
+    const auto before_topmost_count = topmost_win.root().document().current_snapshot()->object_count();
+    assert(topmost_workflow.split_objects_by_line({50.0, -10.0}, {50.0, 90.0}));
+    const auto topmost_snapshot = topmost_win.root().document().current_snapshot();
+    assert(topmost_snapshot->object_count() == before_topmost_count + 1);
+    assert(topmost_snapshot->objects().get(lower_id).has_value());
+    assert(topmost_snapshot->objects().get(upper_id).has_value());
+    assert(topmost_selection.count() == 2);
+    const auto lower_after = std::get<pikdraw::document::PathObject>(
+        *topmost_snapshot->objects().get(lower_id));
+    assert(std::abs(lower_after.path.bounds().width - 100.0) < 1e-6);
+    assert(std::abs(lower_after.path.bounds().height - 80.0) < 1e-6);
+    assert(topmost_workflow.undo());
+    assert(topmost_win.root().document().current_snapshot()->object_count() == before_topmost_count);
+
+    NativeWindow noop_trim_win(1000, 700);
+    const auto noop_target = noop_trim_win.workflow().add_rectangle(0.0, 0.0, 40.0, 40.0);
+    const auto noop_source = noop_trim_win.workflow().add_rectangle(200.0, 200.0, 30.0, 30.0);
+    const auto before_noop_revision = noop_trim_win.root().document().revision();
+    assert(!noop_trim_win.workflow().trim_objects_source_target(noop_target, {noop_source}, true));
+    assert(noop_trim_win.root().document().revision() == before_noop_revision);
+
+    // 4. AC-UI-01: Toolbox slot 6 and Cut & Shape actions
+    const auto info = pikdraw::desktop::get_toolbox_slot_info(pikdraw::desktop::ToolboxSlotId::Knife);
+    assert(info.group_id == 6);
+    assert(std::wstring(info.shortcut) == L"K");
+
+    std::cout << "[PASS] test_cut_erase_smart_tools_suite\n";
+}

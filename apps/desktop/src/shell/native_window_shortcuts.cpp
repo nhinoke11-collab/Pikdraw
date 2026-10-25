@@ -5,7 +5,9 @@
 #include "../tools/pen_tool_controller.hpp"
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
+#include "../tools/gradient_tool_controller.hpp"
 #include "../tools/dimension_tool_controller.hpp"
+#include "../tools/annotation/annotation_tool_controller.hpp"
 #include <algorithm>
 
 namespace pikdraw::desktop {
@@ -567,6 +569,12 @@ bool NativeWindow::handle_key_down(WPARAM key) {
                 return true;
             }
         }
+        if (active_tool_ == 17 && annotation_tool_ && annotation_tool_->active()) {
+            if (annotation_tool_->handle_escape()) {
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return true;
+            }
+        }
         if (workflow().is_array_session_active()) {
             workflow().end_array_session();
             array_input_buffer_.clear();
@@ -626,6 +634,11 @@ bool NativeWindow::handle_key_down(WPARAM key) {
         } else {
             root().vector_controller().selection().clear();
             selected_guideline_index_ = -1;
+            if (active_tool_ == 0 && previous_drawing_tool_ > 0) {
+                const int return_tool = previous_drawing_tool_;
+                previous_drawing_tool_ = 0;
+                set_active_tool(return_tool);
+            }
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
         return true;
@@ -633,6 +646,47 @@ bool NativeWindow::handle_key_down(WPARAM key) {
     if (key == VK_DELETE || key == VK_BACK) {
         if (is_inline_text_editing_) {
             return false; // let WM_CHAR handle backspace
+        }
+        if (active_tool_ == 13 && gradient_tool_ && gradient_tool_->active()) {
+            auto& presenter = gradient_tool_->presenter();
+            const auto* paint = presenter.draft_paint();
+            bool attempted_delete = false;
+            if (active_num_field_ == NumericFieldId::None && paint && paint->stops.size() > 2) {
+                const auto stop = std::find_if(paint->stops.begin(), paint->stops.end(),
+                    [&](const auto& item) { return item.id == presenter.selected_stop_id(); });
+                if (stop != paint->stops.end()) {
+                    attempted_delete = true;
+                    const size_t index = static_cast<size_t>(stop - paint->stops.begin());
+                    if (presenter.delete_stop(index)) {
+                        const auto* updated = presenter.draft_paint();
+                        if (updated && !updated->stops.empty())
+                            (void)presenter.select_stop(updated->stops[
+                                std::min(index, updated->stops.size() - 1)].id);
+                        (void)gradient_tool_->tool().set_draft_paint(*presenter.draft_paint());
+                        if (gradient_tool_->apply()) {
+                            status_msg_ = language_ == UILanguage::Vietnamese
+                                ? "Đã xóa Stop đang chọn · Ctrl+Z hoàn tác"
+                                : "Deleted selected stop · Ctrl+Z undoes";
+                            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+                            return true;
+                        }
+                        status_msg_ = language_ == UILanguage::Vietnamese
+                            ? "Không thể xóa Stop · bản nháp được giữ lại"
+                            : "Could not delete the stop · draft is preserved";
+                    }
+                }
+            }
+            if (active_num_field_ == NumericFieldId::None && !attempted_delete && hwnd_)
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Gradient cần ít nhất hai Stop · không có Stop trung gian để xóa"
+                    : "A Gradient needs two stops · no removable intermediate stop is selected";
+            if (!attempted_delete && active_num_field_ == NumericFieldId::None && paint &&
+                paint->stops.size() > 2 && hwnd_)
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Chọn Stop trung gian rồi nhấn Delete để xóa"
+                    : "Select an intermediate stop, then press Delete to remove it";
+            if (active_num_field_ == NumericFieldId::None && hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
         }
         if (active_tool_ == 11 && node_tool_ && node_tool_->active()) {
             if (node_tool_->delete_selected()) {
@@ -691,6 +745,7 @@ bool NativeWindow::handle_key_down(WPARAM key) {
         InvalidateRect(hwnd_, nullptr, FALSE);
         return true;
     }
+    if (key == 'O' && shift) { set_active_tool(14); InvalidateRect(hwnd_, nullptr, FALSE); return true; }
     if (key == VK_F8) { set_active_tool(4); return true; }
     if (key == 'F') { fit_page_to_canvas(); return true; }
     if (key == 'H') { set_active_tool(3); return true; }
@@ -737,7 +792,13 @@ bool NativeWindow::handle_key_down(WPARAM key) {
     if (key == 'K' || key == 'C') { set_active_tool(5); return true; }
     if (key == 'A' || key == 'T') { set_active_tool(4); return true; }
     if (key == 'D') { set_active_tool(10); InvalidateRect(hwnd_, nullptr, FALSE); return true; }
+    if (key == 'I') { set_active_tool(15); InvalidateRect(hwnd_, nullptr, FALSE); return true; }
+    if (key == 'G') { set_active_tool(13); InvalidateRect(hwnd_, nullptr, FALSE); return true; }
     return false;
+}
+
+void NativeWindow::handle_key_up(WPARAM key) noexcept {
+    if (key == VK_SPACE) space_down_ = false;
 }
 
 #endif

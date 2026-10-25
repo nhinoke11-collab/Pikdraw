@@ -74,6 +74,20 @@ public:
     [[nodiscard]] const std::vector<std::pair<document::SubpathId, document::NodeId>>& selected_nodes() const noexcept {
         return selected_nodes_;
     }
+    [[nodiscard]] std::optional<std::pair<document::SubpathId, document::SegmentId>> selected_segment() const noexcept {
+        return selected_segment_;
+    }
+    void set_selected_segment(std::optional<std::pair<document::SubpathId, document::SegmentId>> seg) noexcept {
+        selected_segment_ = seg;
+    }
+    [[nodiscard]] std::optional<std::pair<document::SubpathId, document::SegmentId>> hover_segment() const noexcept {
+        return hover_segment_;
+    }
+    void set_hover_segment(std::optional<std::pair<document::SubpathId, document::SegmentId>> seg) noexcept {
+        hover_segment_ = seg;
+    }
+    [[nodiscard]] bool last_edit_committed() const noexcept { return last_edit_committed_; }
+    [[nodiscard]] const std::string& last_error_message() const noexcept { return last_error_message_; }
     [[nodiscard]] bool is_node_selected(document::SubpathId sub_id, document::NodeId node_id) const noexcept;
     [[nodiscard]] std::optional<geometry::Point2D> single_selected_node_position() const;
     [[nodiscard]] std::optional<document::PathNodeMode> selected_nodes_mode() const;
@@ -116,6 +130,9 @@ private:
 
     std::vector<std::pair<document::SubpathId, document::NodeId>> selected_nodes_;
     std::optional<std::pair<document::SubpathId, document::SegmentId>> selected_segment_;
+    std::optional<std::pair<document::SubpathId, document::SegmentId>> hover_segment_;
+    bool last_edit_committed_{true};
+    std::string last_error_message_{};
     std::optional<NodeHandleRef> active_handle_;
     std::optional<std::pair<document::SubpathId, document::NodeId>> clicked_node_;
 

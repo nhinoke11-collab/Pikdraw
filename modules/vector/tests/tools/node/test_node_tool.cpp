@@ -658,6 +658,76 @@ void test_polygon_corner_drag_in_and_drag_back_out() {
     assert(cur_obj.authoring_source->subpaths[0].nodes.size() == 4);
 }
 
+void test_bend_segment_with_pen_symmetric_nodes_and_curve_hittest() {
+    Document doc("doc-pen-bend-test");
+    PathObject obj;
+    obj.id = generate_object_id();
+    EditablePath path;
+    EditableSubpath sub;
+    sub.id = generate_path_element_id<SubpathId>();
+    sub.closed = true;
+
+    // Create a closed triangle with Symmetric / Smooth nodes (typical from Pen Tool)
+    PathNode n1{generate_path_element_id<NodeId>(), {0.0, 0.0}, PathNodeMode::Symmetric};
+    n1.has_incoming_handle = true;
+    n1.incoming_handle = {-10.0, -5.0};
+    n1.has_outgoing_handle = true;
+    n1.outgoing_handle = {10.0, 5.0};
+
+    PathNode n2{generate_path_element_id<NodeId>(), {100.0, 0.0}, PathNodeMode::Smooth};
+    n2.has_incoming_handle = true;
+    n2.incoming_handle = {90.0, 0.0};
+    n2.has_outgoing_handle = true;
+    n2.outgoing_handle = {110.0, 0.0};
+
+    PathNode n3{generate_path_element_id<NodeId>(), {50.0, 80.0}, PathNodeMode::Corner};
+
+    sub.nodes = {n1, n2, n3};
+    sub.segments.push_back({generate_path_element_id<SegmentId>(), PathSegmentKind::Line});
+    sub.segments.push_back({generate_path_element_id<SegmentId>(), PathSegmentKind::Line});
+    sub.segments.push_back({generate_path_element_id<SegmentId>(), PathSegmentKind::Line});
+
+    path.subpaths.push_back(std::move(sub));
+    obj.set_authoring_source(std::move(path));
+    const auto obj_id = obj.id;
+    doc.execute_command(std::make_unique<AddObjectCommand>(obj));
+
+    NodeTool tool(doc);
+    tool.set_target_object(obj_id);
+
+    // 1. Direct segment bending on segment 0 (between Symmetric node n1 and Smooth node n2)
+    assert(tool.pointer_down({50.0, 0.0}, false, 3.0));
+    assert(tool.drag_mode() == NodeDragMode::BendSegment);
+    assert(tool.pointer_move({50.0, 40.0}));
+    assert(tool.pointer_up({50.0, 40.0}));
+
+    // Must be committed successfully!
+    assert(tool.last_edit_committed());
+    auto snap = doc.current_snapshot();
+    auto cur_obj = std::get<PathObject>(*snap->get_object(obj_id));
+    const auto& res_sub = cur_obj.authoring_source->subpaths[0];
+    assert(res_sub.segments[0].kind == PathSegmentKind::CubicBezier);
+    // n1 and n2 must transition to Cusp to preserve independent handles and pass validation
+    assert(res_sub.nodes[0].mode == PathNodeMode::Cusp);
+    assert(res_sub.nodes[1].mode == PathNodeMode::Cusp);
+    assert(res_sub.nodes[0].has_outgoing_handle);
+    assert(res_sub.nodes[1].has_incoming_handle);
+
+    // 2. Hit-test and bend on the newly curved segment (Phase 3 accuracy)
+    assert(tool.pointer_down({50.0, 38.0}, false, 6.0));
+    assert(tool.drag_mode() == NodeDragMode::BendSegment);
+    assert(tool.pointer_move({50.0, -20.0}));
+    assert(tool.pointer_up({50.0, -20.0}));
+    assert(tool.last_edit_committed());
+
+    // 3. Undo restores previous states cleanly
+    assert(doc.undo());
+    assert(doc.undo());
+    snap = doc.current_snapshot();
+    cur_obj = std::get<PathObject>(*snap->get_object(obj_id));
+    assert(cur_obj.authoring_source->subpaths[0].segments[0].kind == PathSegmentKind::Line);
+}
+
 int main() {
     std::cout << "[test_node_tool] Running NodeTool vector tests...\n";
     test_node_tool_selection_and_drag();
@@ -672,6 +742,7 @@ int main() {
     test_corner_types_round_scallop_chamfer();
     test_single_corner_selection_and_drag();
     test_polygon_corner_drag_in_and_drag_back_out();
+    test_bend_segment_with_pen_symmetric_nodes_and_curve_hittest();
     std::cout << "[test_node_tool] All tests passed!\n";
     return 0;
 }

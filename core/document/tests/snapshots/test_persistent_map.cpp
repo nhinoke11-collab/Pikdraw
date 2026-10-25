@@ -55,6 +55,21 @@ int main() {
         root = root.remove(1000);
         check(!root.contains(1000) && retained.contains(1000), "retained root changed after erase");
         check(std::get<PathObject>(*original).path.size() == 100000, "retained asset lifetime broken");
+
+        auto tracked = retained.with_change_tracking();
+        PathObject updated;
+        updated.id = 1000;
+        tracked = tracked.set(updated.id, updated);
+        auto changed = tracked.changed_ids();
+        check(changed.size() == 1 && changed.front() == updated.id,
+              "transaction tracking lost a touched object ID");
+        tracked = tracked.set(updated.id, updated);
+        changed = tracked.changed_ids();
+        check(changed.size() == 1 && changed.front() == updated.id,
+              "transaction tracking returned duplicate IDs");
+        const auto untracked = tracked.without_change_tracking();
+        check(untracked.changed_ids().empty() && untracked.shares_root_with(tracked),
+              "resetting transaction tracking copied the immutable object tree");
         std::cout << "PASS 3000 randomized map edits + traversal oracle + 100k-node sharing/lifetime\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

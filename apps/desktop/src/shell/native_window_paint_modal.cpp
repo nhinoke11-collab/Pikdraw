@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "native_window_length_input.hpp"
 #include "../automation/native_window_automation.hpp"
 #include <sstream>
 #include <iomanip>
@@ -94,14 +95,14 @@ void NativeWindow::paint_new_document_modal(HDC mem_dc, int w, int h) {
     RECT rc_pre_title = { cx, cy, cx + 400, cy + 18 };
     DrawTextW(mem_dc, is_vi ? L"KHỔ GIẤY TIÊU CHUẨN (PRESETS):" : L"STANDARD PRESETS:", -1, &rc_pre_title, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
 
-    struct PresetInfo { const wchar_t* name; const wchar_t* dims; double w; double h; };
+    struct PresetInfo { const wchar_t* name; double w; double h; };
     PresetInfo presets[] = {
-        { L"A4", L"210 × 297 mm", 210.0, 297.0 },
-        { L"A3", L"297 × 420 mm", 297.0, 420.0 },
-        { L"A2", L"420 × 594 mm", 420.0, 594.0 },
-        { L"Pano 2×1m", L"2000 × 1000 mm", 2000.0, 1000.0 },
-        { L"Banner 3×1m", L"3000 × 1000 mm", 3000.0, 1000.0 },
-        { L"Vuông 1080", L"1080 × 1080 mm", 1080.0, 1080.0 },
+        { L"A4", 210.0, 297.0 },
+        { L"A3", 297.0, 420.0 },
+        { L"A2", 420.0, 594.0 },
+        { L"Pano 2×1m", 2000.0, 1000.0 },
+        { L"Banner 3×1m", 3000.0, 1000.0 },
+        { L"Vuông 1080", 1080.0, 1080.0 },
     };
 
     for (int i = 0; i < 6; ++i) {
@@ -128,7 +129,9 @@ void NativeWindow::paint_new_document_modal(HDC mem_dc, int w, int h) {
         SelectObject(mem_dc, font_norm);
         SetTextColor(mem_dc, m_text_mut);
         RECT rc_pd = { rc_p.left + 8, rc_p.top + 21, rc_p.right - 8, rc_p.bottom - 3 };
-        DrawTextW(mem_dc, presets[i].dims, -1, &rc_pd, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+        const auto dims = format_length_pair_mm(
+            presets[i].w, presets[i].h, display_length_unit_, 4);
+        DrawTextW(mem_dc, dims.c_str(), -1, &rc_pd, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
     }
 
     // Custom Dimensions Form
@@ -161,11 +164,7 @@ void NativeWindow::paint_new_document_modal(HDC mem_dc, int w, int h) {
     if (is_w_focused) {
         w_val = utf8_to_wide(num_input_buffer_) + L"|";
     } else {
-        std::ostringstream sw;
-        sw << std::fixed << std::setprecision(1) << new_doc_w_;
-        std::string s = sw.str();
-        if (s.size() > 2 && s.substr(s.size() - 2) == ".0") s.erase(s.size() - 2);
-        w_val = utf8_to_wide(s) + L" mm";
+        w_val = format_mm_display(new_doc_w_, display_length_unit_, 7);
     }
     RECT rc_w_txt = { rc_w_box.left + 12, rc_w_box.top, rc_w_box.right - 12, rc_w_box.bottom };
     DrawTextW(mem_dc, w_val.c_str(), -1, &rc_w_txt, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
@@ -185,11 +184,7 @@ void NativeWindow::paint_new_document_modal(HDC mem_dc, int w, int h) {
     if (is_h_focused) {
         h_val = utf8_to_wide(num_input_buffer_) + L"|";
     } else {
-        std::ostringstream sh;
-        sh << std::fixed << std::setprecision(1) << new_doc_h_;
-        std::string s = sh.str();
-        if (s.size() > 2 && s.substr(s.size() - 2) == ".0") s.erase(s.size() - 2);
-        h_val = utf8_to_wide(s) + L" mm";
+        h_val = format_mm_display(new_doc_h_, display_length_unit_, 7);
     }
     RECT rc_h_txt = { rc_h_box.left + 12, rc_h_box.top, rc_h_box.right - 12, rc_h_box.bottom };
     DrawTextW(mem_dc, h_val.c_str(), -1, &rc_h_txt, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);

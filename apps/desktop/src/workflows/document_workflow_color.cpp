@@ -11,7 +11,9 @@ namespace pikdraw::desktop {
 
 namespace {
 bool colors_match(const color::ColorValue& a, const color::ColorValue& b, double tolerance = 0.005) {
-    if (a.color_space() != b.color_space()) return false;
+    if (a.color_space() != b.color_space() || !a.has_same_profile_binding(b) ||
+        a.overprint().fill != b.overprint().fill || a.overprint().stroke != b.overprint().stroke)
+        return false;
     return std::visit([&](const auto& val_a) -> bool {
         using T = std::decay_t<decltype(val_a)>;
         if constexpr (std::is_same_v<T, color::RGBColor>) {
@@ -30,7 +32,12 @@ bool colors_match(const color::ColorValue& a, const color::ColorValue& b, double
         } else if constexpr (std::is_same_v<T, color::SpotColor>) {
             const auto& val_b = std::get<color::SpotColor>(b.payload());
             return val_a.spot_name == val_b.spot_name &&
-                   std::abs(val_a.tint - val_b.tint) <= tolerance;
+                   std::abs(val_a.tint - val_b.tint) <= tolerance &&
+                   std::abs(val_a.alternate_rgb.r - val_b.alternate_rgb.r) <= tolerance &&
+                   std::abs(val_a.alternate_rgb.g - val_b.alternate_rgb.g) <= tolerance &&
+                   std::abs(val_a.alternate_rgb.b - val_b.alternate_rgb.b) <= tolerance &&
+                   std::abs(val_a.alternate_rgb.a - val_b.alternate_rgb.a) <= tolerance &&
+                   val_a.overprint == val_b.overprint;
         } else if constexpr (std::is_same_v<T, color::GrayscaleColor>) {
             const auto& val_b = std::get<color::GrayscaleColor>(b.payload());
             return std::abs(val_a.gray - val_b.gray) <= tolerance &&
@@ -44,6 +51,7 @@ struct ObjectColors {
     std::optional<color::ColorValue> fill;
     std::optional<color::ColorValue> stroke;
     bool has_stroke{false};
+    std::vector<color::ColorValue> paints;
     std::vector<color::ColorSpace> spaces;
 };
 
@@ -53,18 +61,24 @@ ObjectColors extract_colors(const document::ObjectVariant& var) {
         using T = std::decay_t<decltype(item)>;
         if constexpr (std::is_same_v<T, document::PathObject>) {
             info.fill = item.fill;
-            info.spaces.push_back(item.fill.color_space());
+            if (item.fill_gradient) {
+                for (const auto& stop : item.fill_gradient->stops) {
+                    info.paints.push_back(stop.color);
+                    info.spaces.push_back(stop.color.color_space());
+                }
+            } else {
+                info.paints.push_back(item.fill);
+                info.spaces.push_back(item.fill.color_space());
+            }
             if (item.has_stroke && item.stroke_width_mm > 0.0) {
                 info.stroke = item.stroke;
                 info.has_stroke = true;
+                info.paints.push_back(item.stroke);
                 info.spaces.push_back(item.stroke.color_space());
-            }
-            if (item.fill_gradient) {
-                for (const auto& s : item.fill_gradient->stops)
-                    info.spaces.push_back(s.color.color_space());
             }
         } else if constexpr (std::is_same_v<T, document::TextObject>) {
             info.fill = item.fill;
+            info.paints.push_back(item.fill);
             info.spaces.push_back(item.fill.color_space());
         }
     }, var);
@@ -74,9 +88,11 @@ ObjectColors extract_colors(const document::ObjectVariant& var) {
 
 bool DocumentWorkflow::convert_document_color_mode(color::DocumentColorMode mode,
     std::shared_ptr<const color::IccPreview> icc) {
+    last_color_conversion_summary_.reset();
     const auto result = root_.document().execute_command(
         std::make_unique<document::ConvertDocumentColorModeCommand>(
             mode, color::default_document_profile(mode), std::move(icc)));
+    last_color_conversion_summary_ = result.color_conversion;
     if (result.success && !result.is_no_change) {
         cancel_effect_draft();
         clear_text_preview();
@@ -95,9 +111,115 @@ bool DocumentWorkflow::set_document_raster_dpi(int32_t dpi) {
 
 bool DocumentWorkflow::set_page_color_mode(document::PageId page_id, color::DocumentColorMode mode,
     std::shared_ptr<const color::IccPreview> icc) {
+    last_color_conversion_summary_.reset();
     const auto result = root_.document().execute_command(
         std::make_unique<document::SetPageColorModeCommand>(
             page_id, mode, color::default_document_profile(mode), std::move(icc)));
+    last_color_conversion_summary_ = result.color_conversion;
+    if (result.success && !result.is_no_change) {
+        cancel_effect_draft();
+        clear_text_preview();
+    }
+    sync_status_bar();
+    return result.success;
+}
+
+bool DocumentWorkflow::convert_page_color_profile(document::PageId page_id,
+    std::shared_ptr<const color::ProfileColorTransform> transform) {
+    last_color_conversion_summary_.reset();
+    const auto result = root_.document().execute_command(
+        std::make_unique<document::ConvertPageColorProfileCommand>(page_id, std::move(transform)));
+    last_color_conversion_summary_ = result.color_conversion;
+    last_color_conversion_error_ = result.error_message;
+    if (result.success && !result.is_no_change) {
+        cancel_effect_draft();
+        clear_text_preview();
+    }
+    sync_status_bar();
+    return result.success;
+}
+
+bool DocumentWorkflow::assign_selected_objects_color_profile(
+    std::shared_ptr<const color::ProfileResource> resource) {
+    last_color_conversion_summary_.reset();
+    last_color_conversion_error_.clear();
+    const auto selected = root_.vector_controller().selection().selected_ids();
+    if (selected.empty()) {
+        last_color_conversion_error_ = "Select at least one paint-bearing object first";
+        sync_status_bar();
+        return false;
+    }
+    const auto result = root_.document().execute_command(
+        std::make_unique<document::AssignObjectsColorProfileCommand>(
+            selected, std::move(resource)));
+    last_color_conversion_error_ = result.error_message;
+    if (result.success && !result.is_no_change) {
+        cancel_effect_draft();
+        clear_text_preview();
+    }
+    sync_status_bar();
+    return result.success;
+}
+
+bool DocumentWorkflow::convert_selected_objects_color_profile(
+    document::PageId page_id,
+    std::shared_ptr<const color::ProfileColorTransform> transform) {
+    last_color_conversion_summary_.reset();
+    last_color_conversion_error_.clear();
+    const auto selected = root_.vector_controller().selection().selected_ids();
+    if (selected.empty()) {
+        last_color_conversion_error_ = "Select at least one paint-bearing object first";
+        sync_status_bar();
+        return false;
+    }
+    const auto result = root_.document().execute_command(
+        std::make_unique<document::ConvertObjectsColorProfileCommand>(
+            selected, page_id, std::move(transform)));
+    last_color_conversion_summary_ = result.color_conversion;
+    last_color_conversion_error_ = result.error_message;
+    if (result.success && !result.is_no_change) {
+        cancel_effect_draft();
+        clear_text_preview();
+    }
+    sync_status_bar();
+    return result.success;
+}
+
+bool DocumentWorkflow::convert_selected_objects_color_profile(
+    document::PageId page_id,
+    std::shared_ptr<const color::ProfileResource> destination,
+    std::vector<std::shared_ptr<const color::ProfileColorTransform>> transforms) {
+    last_color_conversion_summary_.reset();
+    last_color_conversion_error_.clear();
+    const auto selected = root_.vector_controller().selection().selected_ids();
+    if (selected.empty()) {
+        last_color_conversion_error_ = "Select at least one paint-bearing object first";
+        sync_status_bar();
+        return false;
+    }
+    const auto result = root_.document().execute_command(
+        std::make_unique<document::ConvertObjectsColorProfileCommand>(
+            selected, page_id, std::move(destination), std::move(transforms)));
+    last_color_conversion_summary_ = result.color_conversion;
+    last_color_conversion_error_ = result.error_message;
+    if (result.success && !result.is_no_change) {
+        cancel_effect_draft();
+        clear_text_preview();
+    }
+    sync_status_bar();
+    return result.success;
+}
+
+bool DocumentWorkflow::convert_document_color_profile(
+    std::shared_ptr<const color::ProfileResource> destination,
+    std::vector<std::shared_ptr<const color::ProfileColorTransform>> transforms) {
+    last_color_conversion_summary_.reset();
+    last_color_conversion_error_.clear();
+    const auto result = root_.document().execute_command(
+        std::make_unique<document::ConvertDocumentColorProfileCommand>(
+            std::move(destination), std::move(transforms)));
+    last_color_conversion_summary_ = result.color_conversion;
+    last_color_conversion_error_ = result.error_message;
     if (result.success && !result.is_no_change) {
         cancel_effect_draft();
         clear_text_preview();
@@ -116,11 +238,13 @@ bool DocumentWorkflow::set_page_raster_dpi(document::PageId page_id, int32_t dpi
 
 bool DocumentWorkflow::convert_selected_objects_color_mode(color::DocumentColorMode mode,
     std::shared_ptr<const color::IccPreview> icc) {
+    last_color_conversion_summary_.reset();
     const auto selected = root_.vector_controller().selection().selected_ids();
     if (selected.empty()) return false;
     const auto result = root_.document().execute_command(
         std::make_unique<document::ConvertObjectsColorModeCommand>(
             selected, mode, color::default_document_profile(mode), std::move(icc)));
+    last_color_conversion_summary_ = result.color_conversion;
     if (result.success && !result.is_no_change) {
         cancel_effect_draft();
         clear_text_preview();
@@ -149,6 +273,7 @@ std::vector<document::ObjectId> DocumentWorkflow::find_objects_matching_color(
         }
     } else if (reference_color) {
         ref_info.fill = *reference_color;
+        ref_info.paints.push_back(*reference_color);
         ref_info.spaces.push_back(reference_color->color_space());
     }
 
@@ -180,6 +305,15 @@ std::vector<document::ObjectId> DocumentWorkflow::find_objects_matching_color(
                         }
                     }
                 }
+                break;
+            case SelectSameCriterion::AnyPaintColor:
+                matches = std::any_of(ref_info.paints.begin(), ref_info.paints.end(),
+                    [&](const color::ColorValue& source) {
+                        return std::any_of(target_info.paints.begin(), target_info.paints.end(),
+                            [&](const color::ColorValue& target) {
+                                return colors_match(target, source);
+                            });
+                    });
                 break;
             case SelectSameCriterion::ColorSpace:
                 if (ref_info.fill && target_info.fill) {

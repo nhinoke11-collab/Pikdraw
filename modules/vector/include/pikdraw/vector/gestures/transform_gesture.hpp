@@ -1,5 +1,6 @@
 #pragma once
 #include "pikdraw/vector/gestures/edit_target.hpp"
+#include "pikdraw/vector/tools/shape_tools.hpp"
 namespace pikdraw::vector {
 class TransformGesture {
   public:
@@ -15,7 +16,7 @@ class TransformGesture {
                 return false;
         stamp_ = GestureStamp(snapshot);
         start_ = current_ = start;
-        ids_ = std::move(ids);
+        ids_ = snapshot.hierarchy().roots(ids);
         active_ = true;
         return true;
     }
@@ -67,7 +68,7 @@ class TransformGesture {
         }
         auto command = std::make_unique<document::CompositeCommand>("Transform Objects");
         for (auto id : ids_)
-            command->add_command(std::make_unique<document::TransformObjectCommand>(id, delta));
+            command->add_command(make_transformed_object_command(id, *snapshot, delta));
         ids_.clear();
         return doc.execute_command(std::move(command));
     }

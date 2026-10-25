@@ -28,6 +28,17 @@ struct DrawingToolVisualState {
     vector::precision::snap::SnapConfigSnapshot snap_config;
 };
 
+struct DrawingToolGridSnapStatus {
+    bool enabled{false};
+    double spacing_mm{10.0};
+};
+
+struct DrawingSnapQuery {
+    vector::precision::snap::SnapQueryResult result;
+    vector::precision::snap::SnapQueryStamp stamp;
+    vector::precision::snap::SnapCameraTransform camera;
+};
+
 class DrawingToolController {
 public:
     explicit DrawingToolController(document::Document& document,
@@ -38,8 +49,15 @@ public:
 
     [[nodiscard]] bool activate(vector::tools::line::PathDrawingKind kind);
     void cancel() noexcept;
+    void set_active_layer_index(size_t index) noexcept { active_layer_index_ = index; }
+    void set_destination_owner(document::ObjectId id) noexcept { path_.set_destination_owner(id); }
     void pointer_move(geometry::Point2D point, const rendering::Camera2D& camera,
                       double dpi_scale, bool hard_45_lock, bool hard_ortho_lock);
+    [[nodiscard]] DrawingSnapQuery query_snap_point(
+        geometry::Point2D point, const rendering::Camera2D& camera, double dpi_scale,
+        const char* tool_context,
+        std::optional<document::ObjectId> current_source = std::nullopt,
+        std::optional<geometry::Point2D> external_anchor = std::nullopt);
     [[nodiscard]] vector::tools::line::PathDrawingResult confirm_candidate();
     [[nodiscard]] vector::tools::line::PathDrawingResult enter();
     [[nodiscard]] vector::tools::line::PathDrawingResult escape();
@@ -48,11 +66,32 @@ public:
     void erase_numeric_character();
     void clear_numeric_entry() noexcept;
     [[nodiscard]] bool toggle_snap_master();
+    [[nodiscard]] bool toggle_snap_objects();
+    [[nodiscard]] bool toggle_snap_page();
+    [[nodiscard]] bool toggle_snap_guides();
+    [[nodiscard]] bool toggle_smart_guides();
+    [[nodiscard]] bool toggle_smart_spacing();
     [[nodiscard]] bool toggle_snap_option(vector::precision::snap::SnapOption option);
+    [[nodiscard]] bool set_snap_master_enabled(bool enabled);
+    [[nodiscard]] bool set_snap_group_enabled(vector::precision::snap::SnapGroup group,
+                                              bool enabled);
+    [[nodiscard]] bool set_snap_option_enabled(vector::precision::snap::SnapOption option,
+                                               bool enabled);
+    [[nodiscard]] bool set_smart_guides_enabled(bool enabled);
+    [[nodiscard]] bool set_smart_spacing_enabled(bool enabled);
+    [[nodiscard]] bool set_snap_radii(double acquire_radius_dip,
+                                      double release_radius_dip,
+                                      std::string* diagnostic = nullptr);
     [[nodiscard]] bool toggle_direction(vector::precision::snap::DirectionMode mode);
     [[nodiscard]] bool cycle_polar_step();
     [[nodiscard]] bool cycle_profile();
     [[nodiscard]] DrawingToolVisualState visual_state() const;
+    [[nodiscard]] vector::precision::snap::SnapConfigSnapshot snap_config_snapshot() const noexcept {
+        return snap_config_.snapshot();
+    }
+    [[nodiscard]] DrawingToolGridSnapStatus grid_snap_status() const noexcept;
+    [[nodiscard]] bool set_grid_spacing_mm(double spacing_mm,
+                                           std::string* diagnostic = nullptr);
     [[nodiscard]] bool active() const noexcept { return path_.active(); }
     [[nodiscard]] bool has_numeric_entry() const noexcept { return !numeric_entry_.empty(); }
     [[nodiscard]] bool snap_panel_open() const noexcept { return snap_panel_open_; }
@@ -68,6 +107,8 @@ public:
 private:
     [[nodiscard]] vector::precision::snap::SnapCameraTransform camera_transform(
         const rendering::Camera2D& camera, double dpi_scale);
+    [[nodiscard]] vector::precision::numeric::ParseOptions numeric_parse_options() const noexcept;
+    [[nodiscard]] vector::tools::line::PathDrawingResult update_numeric_candidate();
     [[nodiscard]] vector::precision::snap::SnapQueryStamp make_stamp(
         const document::DocumentSnapshot& snapshot, const char* tool_context);
     void apply_configuration();
@@ -91,6 +132,7 @@ private:
     std::string numeric_entry_;
     std::string message_;
     std::string requested_document_id_;
+    size_t active_layer_index_{0};
     uint64_t requested_epoch_{0};
     uint64_t requested_revision_{0};
     std::optional<vector::precision::snap::SnapOption> snap_kind_;

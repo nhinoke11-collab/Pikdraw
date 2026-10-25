@@ -91,14 +91,14 @@ void clone_group_recursive(
         if (!child_opt) continue;
 
         if (std::holds_alternative<GroupObject>(*child_opt)) {
-            clone_group_recursive(child_id, snapshot, shift, result, visited);
+            clone_group_recursive(child_id, snapshot, geometry::Transform2D::identity(), result, visited);
             const auto it = result.id_map.find(child_id);
             if (it != result.id_map.end()) {
                 cloned_group.children_ids.push_back(it->second);
             }
         } else {
             if (visited.insert(child_id).second) {
-                ObjectVariant cloned_child = clone_object(*child_opt, shift);
+                ObjectVariant cloned_child = clone_object(*child_opt);
                 const ObjectId new_child_id = std::visit([](const auto& o) { return o.id; }, cloned_child);
                 result.id_map[child_id] = new_child_id;
                 cloned_group.children_ids.push_back(new_child_id);

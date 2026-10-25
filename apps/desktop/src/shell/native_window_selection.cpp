@@ -1,8 +1,12 @@
+#include "native_window_powerclip_ui.hpp"
 #include "native_window_selection_geometry.hpp"
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/dimension_tool_controller.hpp"
+#include "../tools/artboard_tool_controller.hpp"
+#include "../tools/annotation/annotation_tool_controller.hpp"
 #include "pikdraw/vector/gestures/selection_resize.hpp"
 #include "pikdraw/vector/tools/shape_tools.hpp"
+#include "native_window_length_input.hpp"
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -93,9 +97,10 @@ int NativeWindow::selection_handle_at(int x, int y) const {
         const auto rect = selection_ui::screen_bounds(
             root().renderer().camera(), bounds, canvas_rect(width_, height_));
         const auto pixels = selection_ui::handles(rect);
-        for (size_t i = 0; i < pixels.size(); ++i)
+        for (size_t i = 0; i < pixels.size(); ++i) {
             if (std::abs(x - pixels[i].x) <= 8 && std::abs(y - pixels[i].y) <= 8)
                 return static_cast<int>(i);
+        }
         constexpr int kTol = 6;
         const bool near_h = (x >= rect.left - kTol && x <= rect.right + kTol) &&
                             (std::abs(y - rect.top) <= kTol || std::abs(y - rect.bottom) <= kTol);
@@ -120,11 +125,11 @@ int NativeWindow::selection_handle_at(int x, int y) const {
     if (std::abs(x - rotate.x) <= 8 && std::abs(y - rotate.y) <= 8)
         return 8;
 
-    // Center pivot point (handle 9) - only active and draggable in rotate mode
+    // Center pivot point (handle 9) - active and draggable in both normal selection and rotate modes
     if (is_rotate_mode_) {
         const auto pivot_world = custom_pivot_world_.value_or(bounds->center());
         const auto pivot_screen = selection_ui::pivot_point(root().renderer().camera(), pivot_world, area);
-        if (std::abs(x - pivot_screen.x) <= 8 && std::abs(y - pivot_screen.y) <= 8)
+        if (std::abs(x - pivot_screen.x) <= 6 && std::abs(y - pivot_screen.y) <= 6)
             return 9;
     }
 
@@ -147,14 +152,30 @@ void NativeWindow::cancel_canvas_interaction() {
     resize_handle_ = -1;
     drag_preview_bounds_.reset();
     drag_preview_delta_ = {};
+    smart_guide_reference_revision_ = 0;
+    smart_guide_reference_page_ = document::kInvalidPageId;
+    smart_guide_references_.clear();
+    smart_guide_acquisition_ = {};
+    smart_guide_solution_ = {};
+    smart_guide_moving_bounds_.reset();
+    shape_snap_effective_world_.reset();
+    if (artboard_tool_) artboard_tool_->cancel();
     if (GetCapture() == hwnd_) ReleaseCapture();
 }
 
 void NativeWindow::handle_canvas_mouse_down(int x, int y, unsigned modifiers) {
+    synchronize_powerclip_view();
+    if (powerclip_target_pick_ && handle_powerclip_target_pick(canvas_to_world(x,y))) return;
     if (!is_canvas_point(x, y))
         return;
+    toolbox_keyboard_focus_ = false;
+    toolbox_open_group_ = 0;
     cancel_canvas_interaction();
     SetCapture(hwnd_);
+    if (active_tool_ == 14) {
+        (void)handle_artboard_pointer_down(x, y, modifiers);
+        return;
+    }
     if (active_tool_ == 3) {
         is_panning_ = true;
         last_pointer_x_ = x;
@@ -170,10 +191,21 @@ void NativeWindow::handle_canvas_mouse_down(int x, int y, unsigned modifiers) {
                               : (modifiers & MK_SHIFT) ? vector::SelectionMode::Add
                                                        : vector::SelectionMode::Replace;
     const auto snapshot = root().document().current_snapshot();
+    if (active_tool_ == 0 && artboard_overview_enabled()) {
+        const auto& boards = snapshot->active_page().artboards;
+        for (auto board = boards.rbegin(); board != boards.rend(); ++board) {
+            const auto& world = pointer_down_world_;
+            if (world.x >= board->x_mm && world.x <= board->x_mm + board->width_mm &&
+                world.y >= board->y_mm && world.y <= board->y_mm + board->height_mm) {
+                (void)set_active_artboard(board->id);
+                break;
+            }
+        }
+    }
     pointer_stamp_ = vector::GestureStamp(*snapshot);
     pointer_start_revision_ = snapshot->revision();
     auto &controller = root().vector_controller();
-    if (active_tool_ == 5) {
+    if (active_tool_ == 5 || active_tool_ == 16) {
         is_knife_cutting_ = true;
         knife_start_world_ = pointer_down_world_;
         knife_current_world_ = pointer_down_world_;
@@ -187,6 +219,7 @@ void NativeWindow::handle_canvas_mouse_down(int x, int y, unsigned modifiers) {
         editor.selecting = false;
         resize_handle_ = live_text_handle;
         is_dragging_ = true;
+        pointer_active_ = true;
         drag_preview_bounds_.reset();
         if (live_text_handle == kPendingTextBodyMove) {
             editor.is_moving_frame = true;
@@ -224,7 +257,25 @@ void NativeWindow::handle_canvas_mouse_down(int x, int y, unsigned modifiers) {
         pointer_active_ = false;
         if (is_inline_text_editing_ && handle_inline_text_mouse(x, y, 0, (modifiers & MK_SHIFT) != 0))
             return;
-        if (is_inline_text_editing_) commit_inline_text_editing();
+        if (is_inline_text_editing_) {
+            commit_inline_text_editing();
+            const auto current = root().document().current_snapshot();
+            const double tol = 6.0 / std::max(0.01, root().renderer().camera().zoom());
+            auto hit = vector::SelectionModel::hit_test(pointer_down_world_, *current, tol);
+            if (hit && is_in_isolation_mode() && !is_object_in_isolated_group(*hit)) hit.reset();
+            const auto object = hit ? current->objects().get(*hit) : std::nullopt;
+            if (object && std::holds_alternative<document::TextObject>(*object)) {
+                start_inline_text_editing(pointer_down_world_, *hit);
+            } else if (hit) {
+                set_active_tool(0);
+                controller.set_selection({*hit}, *current);
+            } else {
+                set_active_tool(0);
+                controller.selection().clear();
+            }
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
         const auto current = root().document().current_snapshot();
         auto hit = vector::SelectionModel::hit_test(pointer_down_world_, *current);
         if (hit && is_in_isolation_mode() && !is_object_in_isolated_group(*hit)) hit.reset();
@@ -246,6 +297,7 @@ void NativeWindow::handle_canvas_mouse_down(int x, int y, unsigned modifiers) {
         if (!dimension_tool_) {
             try {
                 dimension_tool_ = std::make_unique<tools::DimensionToolController>(root().document());
+                apply_preferred_dimension_unit();
             } catch (...) {
                 return;
             }
@@ -257,14 +309,35 @@ void NativeWindow::handle_canvas_mouse_down(int x, int y, unsigned modifiers) {
         const bool ortho = (GetKeyState(VK_SHIFT) < 0 || GetKeyState(VK_CONTROL) < 0);
         dimension_tool_->update_snap(pointer_down_world_, zoom, ortho);
         const double tolerance = 6.0 / zoom;
-        auto hit = vector::SelectionModel::hit_test(pointer_down_world_, *snapshot, tolerance);
+        const auto resolved=controller.pick(pointer_down_world_,*snapshot,tolerance);
+            auto hit=resolved?std::optional(resolved->id):std::nullopt;
         dimension_tool_->handle_pointer_press(pointer_down_world_, hit);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    if (active_tool_ == 17) {
+        if (!annotation_tool_) {
+            try {
+                annotation_tool_ = std::make_unique<tools::AnnotationToolController>(root().document());
+            } catch (...) {
+                return;
+            }
+        }
+        if (!annotation_tool_->active()) {
+            annotation_tool_->activate(tools::AnnotationToolMode::DetailView);
+        }
+        const double zoom = root().renderer().camera().zoom();
+        const double tolerance = 6.0 / zoom;
+        const auto resolved = controller.pick(pointer_down_world_, *snapshot, tolerance);
+        auto hit = resolved ? std::optional(resolved->id) : std::nullopt;
+        annotation_tool_->handle_pointer_press(pointer_down_world_, hit);
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
     if (active_tool_ == 12) {
         const double tolerance = 6.0 / root().renderer().camera().zoom();
-        auto hit = vector::SelectionModel::hit_test(pointer_down_world_, *snapshot, tolerance);
+        const auto resolved=controller.pick(pointer_down_world_,*snapshot,tolerance);
+            auto hit=resolved?std::optional(resolved->id):std::nullopt;
         if (hit) {
             const auto obj = snapshot->objects().get(*hit);
             if (obj && std::holds_alternative<document::TextObject>(*obj)) {
@@ -276,6 +349,7 @@ void NativeWindow::handle_canvas_mouse_down(int x, int y, unsigned modifiers) {
                 controller.set_selection({*hit}, *snapshot);
             }
             if (contour_tool_) {
+                contour_applied_ = false;
                 contour_tool_->activate(*hit);
             }
         }
@@ -304,6 +378,7 @@ void NativeWindow::handle_canvas_mouse_down(int x, int y, unsigned modifiers) {
             const int g_idx = guideline_at(x, y);
             if (g_idx >= 0 && g_idx < static_cast<int>(guidelines_.size())) {
                 selected_guideline_index_ = g_idx;
+                root().vector_controller().selection().clear();
                 is_dragging_guideline_ = true;
                 drag_guideline_orientation_ = guidelines_[g_idx].orientation;
                 drag_guideline_pos_mm_ = guidelines_[g_idx].position_mm;
@@ -316,8 +391,10 @@ void NativeWindow::handle_canvas_mouse_down(int x, int y, unsigned modifiers) {
                 return;
             }
         }
-        resize_handle_ =
-            pointer_selection_mode_ == vector::SelectionMode::Replace ? selection_handle_at(x, y) : -1;
+        const bool can_resize = (active_tool_ == 0 || text_transform_handle) &&
+            pointer_selection_mode_ == vector::SelectionMode::Replace;
+        resize_handle_ = can_resize ? selection_handle_at(x, y) : -1;
+        selected_guideline_index_ = -1;
         if (resize_handle_ >= 0) {
             if (resize_handle_ == 9) {
                 is_dragging_ = true;
@@ -327,9 +404,18 @@ void NativeWindow::handle_canvas_mouse_down(int x, int y, unsigned modifiers) {
             }
         } else {
             const double tolerance = 6.0 / root().renderer().camera().zoom();
-            auto hit = vector::SelectionModel::hit_test(pointer_down_world_, *snapshot, tolerance);
+            const auto resolved=controller.pick(pointer_down_world_,*snapshot,tolerance);
+            auto hit=resolved?std::optional(resolved->id):std::nullopt;
+            if(hit && is_in_isolation_mode() && !isolation_reveal_ && !isolation_frame_) {
+                const auto normal=vector::SelectionModel::hit_test(pointer_down_world_,*snapshot,tolerance);
+                if(!normal || !snapshot->hierarchy().contains(*normal,*current_isolated_group_id())) hit.reset();
+            }
             if (hit && is_in_isolation_mode() && !is_object_in_isolated_group(*hit))
                 hit.reset();
+            if(hit && !is_in_isolation_mode() && (GetKeyState(VK_MENU)&0x8000) && workflow().is_clipping_container(*hit)) {
+                const auto clip=*hit; select_powerclip_contents(clip);
+                hit=vector::SelectionModel::hit_test_in_scope(pointer_down_world_,*snapshot,clip,tolerance);
+            }
             if (hit && !is_in_isolation_mode()) {
                 document::ObjectId parent = *hit;
                 while (const auto group = workflow().find_parent_group(parent))
@@ -339,24 +425,13 @@ void NativeWindow::handle_canvas_mouse_down(int x, int y, unsigned modifiers) {
             if (hit) {
                 const bool already_selected = controller.selection().is_selected(*hit);
                 if (is_quick_shape) {
-                    if (pointer_selection_mode_ != vector::SelectionMode::Replace || !already_selected)
-                        controller.selection().select(*hit, pointer_selection_mode_);
-                    if (pointer_selection_mode_ == vector::SelectionMode::Replace)
-                        (void)controller.gesture().begin(pointer_down_world_, controller.selection().selected_ids(), *snapshot);
+                    previous_drawing_tool_ = active_tool_;
+                    set_active_tool(0);
+                    controller.on_resolved_pointer_down(pointer_down_world_, *snapshot, *hit,
+                                                        pointer_selection_mode_);
                 } else {
-                    controller.on_pointer_down(pointer_down_world_, *snapshot, pointer_selection_mode_,
-                                               tolerance);
-                }
-                if (workflow().is_group(*hit) && controller.gesture().is_active()) {
-                    std::vector<document::ObjectId> gesture_ids{*hit};
-                    std::function<void(document::ObjectId)> append_children = [&](document::ObjectId gid) {
-                        const auto go = snapshot->objects().get(gid);
-                        if (const auto* grp = go ? std::get_if<document::GroupObject>(&*go) : nullptr) {
-                            for (const auto cid : grp->children_ids) { gesture_ids.push_back(cid); append_children(cid); }
-                        }
-                    };
-                    append_children(*hit);
-                    (void)controller.gesture().begin(pointer_down_world_, gesture_ids, *snapshot);
+                    controller.on_resolved_pointer_down(pointer_down_world_, *snapshot, *hit,
+                                                        pointer_selection_mode_);
                 }
                 is_dragging_ = controller.gesture().is_active();
                 if (!already_selected) {
@@ -384,6 +459,7 @@ void NativeWindow::handle_canvas_mouse_down(int x, int y, unsigned modifiers) {
 }
 
 void NativeWindow::handle_canvas_mouse_move(int x, int y, unsigned modifiers) {
+    synchronize_powerclip_view();
     if (text_editor_ && text_editor_->selecting && handle_inline_text_mouse(x, y, 1)) return;
     if (is_canvas_point(x, y)) {
         const auto point = canvas_to_world(x, y);
@@ -397,13 +473,22 @@ void NativeWindow::handle_canvas_mouse_move(int x, int y, unsigned modifiers) {
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
+    if (artboard_tool_ && artboard_tool_->active()) {
+        (void)handle_artboard_pointer_move(x, y, modifiers);
+        return;
+    }
     if (!pointer_active_) {
         std::optional<document::ObjectId> hover;
         const bool can_pick = (active_tool_ == 0 || active_tool_ == 1 || active_tool_ == 2 || active_tool_ == 9);
         if (can_pick && is_canvas_point(x, y))
             hover =
-                vector::SelectionModel::hit_test(canvas_to_world(x, y), *root().document().current_snapshot(),
-                                                 6.0 / root().renderer().camera().zoom());
+                vector::SelectionModel::hit_test_in_scope(canvas_to_world(x, y), *root().document().current_snapshot(),
+                    current_isolated_group_id().value_or(0),6.0/root().renderer().camera().zoom(),isolation_frame_);
+        if(powerclip_target_pick_&&is_canvas_point(x,y)) {
+            hover=powerclip_ui::pick_frame(*root().document().current_snapshot(),canvas_to_world(x,y),
+                6.0/root().renderer().camera().zoom(),powerclip_pick_selection_,powerclip_target_pick_==2);
+            status_msg_=hover?"Click to use frame #"+std::to_string(*hover):"Choose an eligible PowerClip frame · Esc cancels";
+        }
         if (hover != hover_object_) {
             hover_object_ = hover;
             InvalidateRect(hwnd_, nullptr, FALSE);
@@ -448,7 +533,13 @@ void NativeWindow::handle_canvas_mouse_move(int x, int y, unsigned modifiers) {
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
+    if (active_tool_ == 17 && annotation_tool_ && annotation_tool_->active()) {
+        annotation_tool_->handle_pointer_move(pointer_current_world_);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
     if (is_contour_dragging_ && active_tool_ == 12 && contour_tool_ && contour_tool_->active()) {
+        contour_applied_ = false;
         const auto target = contour_tool_->target_object();
         const auto snapshot = root().document().current_snapshot();
         const auto* object = snapshot ? snapshot->objects().lookup_ref(target) : nullptr;
@@ -470,10 +561,9 @@ void NativeWindow::handle_canvas_mouse_move(int x, int y, unsigned modifiers) {
             dist = std::round(dist * 10.0) / 10.0;
             contour_tool_->set_spacing_mm(dist);
 
-            std::ostringstream hint;
-            hint << std::fixed << std::setprecision(1) << dist << " mm ("
-                 << (delta >= 0.0 ? "Outside / Ngoài" : "Inside / Trong") << ")";
-            status_msg_ = (language_ == UILanguage::Vietnamese ? "Khoảng cách Contour: " : "Contour spacing: ") + hint.str();
+            status_msg_ = (language_ == UILanguage::Vietnamese ? "Khoảng cách Contour: " : "Contour spacing: ") +
+                format_mm_display_utf8(dist, display_length_unit_, 5) + " (" +
+                (delta >= 0.0 ? "Outside / Ngoài" : "Inside / Trong") + ")";
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
@@ -488,10 +578,9 @@ void NativeWindow::handle_canvas_mouse_move(int x, int y, unsigned modifiers) {
         editor.draft.position = {editor.live_move_start_pos.x + delta.x,
                                  editor.live_move_start_pos.y + delta.y};
         refresh_inline_text_preview();
-        std::ostringstream hint;
-        hint << std::fixed << std::setprecision(1) << editor.draft.position.x << ", "
-             << editor.draft.position.y << " mm";
-        status_msg_ = (language_ == UILanguage::Vietnamese ? "Vị trí chữ: " : "Text position: ") + hint.str();
+        status_msg_ = (language_ == UILanguage::Vietnamese ? "Vị trí chữ: " : "Text position: ") +
+            format_mm_display_utf8(editor.draft.position.x, display_length_unit_, 5) + ", " +
+            format_mm_display_utf8(editor.draft.position.y, display_length_unit_, 5);
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
@@ -562,7 +651,7 @@ void NativeWindow::handle_canvas_mouse_move(int x, int y, unsigned modifiers) {
         if (is_inline_text_editing_) {
             std::ostringstream hint;
             if (baseline.frame_width_mm > 0 && is_horiz) {
-                hint << std::fixed << std::setprecision(1) << editor.draft.frame_width_mm << " mm";
+                hint << format_mm_display_utf8(editor.draft.frame_width_mm, display_length_unit_, 5);
                 status_msg_ = (language_ == UILanguage::Vietnamese ? "Khung chữ: " : "Frame: ") + hint.str();
             } else {
                 hint << std::fixed << std::setprecision(1) << editor.draft.font.size_pt << " pt";
@@ -572,8 +661,12 @@ void NativeWindow::handle_canvas_mouse_move(int x, int y, unsigned modifiers) {
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
-    if (is_creating_shape_)
+    if (is_creating_shape_) {
         shape_drag_modifiers_ = modifiers & (MK_CONTROL | MK_SHIFT);
+        update_layout_snap_preview(*root().document().current_snapshot(), {}, -1, false, true);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
     if (is_knife_cutting_) {
         knife_current_world_ = pointer_current_world_;
         InvalidateRect(hwnd_, nullptr, FALSE);
@@ -593,11 +686,36 @@ void NativeWindow::handle_canvas_mouse_move(int x, int y, unsigned modifiers) {
     }
     if (is_dragging_ && (drag_preview_bounds_ || resize_handle_ == 9) && std::hypot(x - drag_start_x_, y - drag_start_y_) >= 2) {
         if (resize_handle_ == 9) {
-            custom_pivot_world_ = pointer_current_world_;
-            std::ostringstream hint;
-            hint << std::fixed << std::setprecision(1) << pointer_current_world_.x << ", "
-                 << pointer_current_world_.y << " mm";
-            status_msg_ = (language_ == UILanguage::Vietnamese ? "Tâm xoay: " : "Pivot: ") + hint.str();
+            auto new_pivot = pointer_current_world_;
+            if (drag_preview_bounds_) {
+                const auto center = drag_preview_bounds_->center();
+                const double zoom = root().renderer().camera().zoom();
+                const double snap_dist_world = (zoom > 1e-4) ? (7.0 / zoom) : 2.0;
+                if (std::hypot(new_pivot.x - center.x, new_pivot.y - center.y) <= snap_dist_world) {
+                    new_pivot = center;
+                } else {
+                    const geometry::Point2D candidates[] = {
+                        {drag_preview_bounds_->x, drag_preview_bounds_->y},
+                        {drag_preview_bounds_->x + drag_preview_bounds_->width * 0.5, drag_preview_bounds_->y},
+                        {drag_preview_bounds_->right(), drag_preview_bounds_->y},
+                        {drag_preview_bounds_->right(), drag_preview_bounds_->y + drag_preview_bounds_->height * 0.5},
+                        {drag_preview_bounds_->right(), drag_preview_bounds_->bottom()},
+                        {drag_preview_bounds_->x + drag_preview_bounds_->width * 0.5, drag_preview_bounds_->bottom()},
+                        {drag_preview_bounds_->x, drag_preview_bounds_->bottom()},
+                        {drag_preview_bounds_->x, drag_preview_bounds_->y + drag_preview_bounds_->height * 0.5}
+                    };
+                    for (const auto& pt : candidates) {
+                        if (std::hypot(new_pivot.x - pt.x, new_pivot.y - pt.y) <= snap_dist_world) {
+                            new_pivot = pt;
+                            break;
+                        }
+                    }
+                }
+            }
+            custom_pivot_world_ = new_pivot;
+            status_msg_ = (language_ == UILanguage::Vietnamese ? "TÃ¢m xoay: " : "Pivot: ") +
+                format_mm_display_utf8(new_pivot.x, display_length_unit_, 5) + ", " +
+                format_mm_display_utf8(new_pivot.y, display_length_unit_, 5);
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
@@ -626,21 +744,41 @@ void NativeWindow::handle_canvas_mouse_move(int x, int y, unsigned modifiers) {
             status_msg_ = (language_ == UILanguage::Vietnamese ? "Xoay: " : "Rotate: ") + hint.str();
         } else if (resize_handle_ >= 0) {
             const bool preserve = active_tool_ == 4 && is_text_object_selected() && resize_handle_ <= 7;
-            const auto transform = preserve
-                ? text_resize_transform(*drag_preview_bounds_, resize_handle_, delta)
-                : vector::selection_resize_transform(*drag_preview_bounds_, resize_handle_, delta,
-                    (resize_handle_ % 2 == 0) && pointer_preserve_aspect_);
+            const bool preserve_aspect = preserve ||
+                ((resize_handle_ % 2 == 0) && pointer_preserve_aspect_);
+            std::optional<geometry::Transform2D> transform;
+            if (active_tool_ == 0 && !is_rotate_mode_) {
+                update_layout_snap_preview(*root().document().current_snapshot(), delta,
+                                           resize_handle_, preserve_aspect);
+                transform = vector::selection_resize_transform(*drag_preview_bounds_, resize_handle_,
+                    smart_guide_solution_.accepted_delta, preserve_aspect);
+            } else {
+                transform = preserve
+                    ? text_resize_transform(*drag_preview_bounds_, resize_handle_, delta)
+                    : vector::selection_resize_transform(*drag_preview_bounds_, resize_handle_, delta,
+                        (resize_handle_ % 2 == 0) && pointer_preserve_aspect_);
+                smart_guide_solution_ = {};
+                smart_guide_acquisition_ = {};
+                smart_guide_moving_bounds_.reset();
+            }
             if (transform) {
                 (void)gesture.update_transform(*transform);
                 const auto preview = transform->map_rect(*drag_preview_bounds_);
-                std::ostringstream hint;
-                hint << std::fixed << std::setprecision(1) << preview.width << " × " << preview.height << " mm";
-                status_msg_ = (language_ == UILanguage::Vietnamese ? "Kích thước: " : "Scale: ") + hint.str() +
+                const std::string hint = format_mm_display_utf8(preview.width, display_length_unit_, 5) +
+                    " × " + format_mm_display_utf8(preview.height, display_length_unit_, 5);
+                status_msg_ = (language_ == UILanguage::Vietnamese ? "Kích thước: " : "Scale: ") + hint +
                     (preserve ? (language_ == UILanguage::Vietnamese ? " · giữ tỉ lệ chữ" : " · text proportions locked")
                               : (language_ == UILanguage::Vietnamese ? " · tự do" : " · free"));
             }
         } else {
             (void)gesture.update(pointer_current_world_);
+            if (active_tool_ == 0)
+                update_layout_snap_preview(*root().document().current_snapshot(), delta);
+            else {
+                smart_guide_acquisition_ = {};
+                smart_guide_solution_ = {};
+                smart_guide_moving_bounds_.reset();
+            }
         }
     }
     InvalidateRect(hwnd_, nullptr, FALSE);
@@ -649,14 +787,17 @@ void NativeWindow::handle_canvas_mouse_move(int x, int y, unsigned modifiers) {
 geometry::Rect2D NativeWindow::shape_drag_bounds(unsigned modifiers) const {
     const bool ctrl = (modifiers & MK_CONTROL) != 0, shift = (modifiers & MK_SHIFT) != 0;
     return vector::ShapeFactory::constrained_drag_bounds(
-        pointer_down_world_, pointer_current_world_, active_tool_ != 9 && shift, ctrl);
+        pointer_down_world_, is_creating_shape_ && shape_snap_effective_world_
+            ? *shape_snap_effective_world_ : pointer_current_world_, active_tool_ != 9 && shift, ctrl);
 }
 
 double NativeWindow::shape_drag_polygon_rotation(unsigned modifiers) const noexcept {
     if ((modifiers & MK_SHIFT) == 0) return polygon_rotation_degrees_;
     geometry::Rect2D b;
     try { b = shape_drag_bounds(modifiers); } catch (...) { return polygon_rotation_degrees_; }
-    const double dx = pointer_current_world_.x - b.center().x, dy = pointer_current_world_.y - b.center().y;
+    const auto drag_end = is_creating_shape_ && shape_snap_effective_world_
+        ? *shape_snap_effective_world_ : pointer_current_world_;
+    const double dx = drag_end.x - b.center().x, dy = drag_end.y - b.center().y;
     if (std::hypot(dx, dy) <= 1e-12) return polygon_rotation_degrees_;
     return std::round((std::atan2(dy, dx) * 180.0 / 3.14159265358979323846) / 15.0) * 15.0;
 }
@@ -709,22 +850,9 @@ bool NativeWindow::commit_created_shape() {
     object.has_fill = default_style_.has_fill;
     object.has_stroke = default_style_.has_stroke;
     const auto result =
-        root().document().execute_command(std::make_unique<document::AddObjectCommand>(object, 0));
+        root().document().execute_command(std::make_unique<document::AddObjectCommand>(object, active_layer_index()));
     if (result.success) {
-        if (is_in_isolation_mode()) {
-            auto iso_id = *current_isolated_group_id();
-            auto snap = root().document().current_snapshot();
-            auto obj = snap->objects().get(iso_id);
-            if (obj && std::holds_alternative<document::GroupObject>(*obj)) {
-                document::GroupObject updated_grp = std::get<document::GroupObject>(*obj);
-                updated_grp.children_ids.push_back(object.id);
-                auto map = snap->objects().set(iso_id, std::move(updated_grp));
-                root().document().apply_mutation(snap->page(), std::move(map));
-            }
-        }
-        root().vector_controller().set_selection({object.id}, *root().document().current_snapshot());
-        previous_drawing_tool_ = active_tool_;
-        set_active_tool(0);
+        root().vector_controller().selection().clear();
 
         // Kích hoạt chế độ gõ nhanh kích thước ngang dài kiểu SketchUp (chỉ áp dụng cho lần vẽ đầu tiên)
         quick_dimension_active_ = true;
@@ -736,19 +864,27 @@ bool NativeWindow::commit_created_shape() {
         quick_dimension_initial_w_ = bounds.width;
         quick_dimension_initial_h_ = bounds.height;
 
-        std::ostringstream ss_dims;
-        ss_dims << std::fixed << std::setprecision(1) << bounds.width << " × " << bounds.height;
-        std::string dims = ss_dims.str();
+        const std::string dims = format_mm_display_utf8(bounds.width, display_length_unit_, 5) +
+            " × " + format_mm_display_utf8(bounds.height, display_length_unit_, 5);
         status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Đã tạo hình [" + dims + " mm] · Gõ nhanh kích thước (vd: 30,40) rồi nhấn Enter | Esc để hủy"
-            : "Shape created [" + dims + " mm] · Type dimensions (e.g. 30,40) and press Enter | Esc to cancel";
+            ? "Đã tạo hình [" + dims + "] · Gõ kích thước theo đơn vị trang; hậu tố ghi đè (vd: 30,40) · Enter nhận | Esc hủy"
+            : "Shape created [" + dims + "] · Type page-unit dimensions; suffix overrides (e.g. 30,40) · Enter applies | Esc cancels";
     }
     return result.success;
 }
 
 void NativeWindow::handle_canvas_mouse_up(int x, int y, unsigned modifiers) {
+    if (artboard_tool_ && artboard_tool_->active()) {
+        (void)handle_artboard_pointer_up(x, y, modifiers);
+        return;
+    }
     if (active_tool_ == 10 && dimension_tool_ && dimension_tool_->active()) {
         dimension_tool_->handle_pointer_release(pointer_current_world_);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    if (active_tool_ == 17 && annotation_tool_ && annotation_tool_->active()) {
+        annotation_tool_->handle_pointer_release(pointer_current_world_);
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
@@ -795,12 +931,6 @@ void NativeWindow::handle_canvas_mouse_up(int x, int y, unsigned modifiers) {
     if (resize_handle_ == kPendingTextBodyMove) {
         resize_handle_ = -1;
         pointer_active_ = false;
-        const auto current = root().document().current_snapshot();
-        auto hit = vector::SelectionModel::hit_test(pointer_down_world_, *current);
-        if (hit && is_in_isolation_mode() && !is_object_in_isolated_group(*hit)) hit.reset();
-        const auto object = hit ? current->objects().get(*hit) : std::nullopt;
-        if (hit && object && std::holds_alternative<document::TextObject>(*object))
-            start_inline_text_editing(pointer_down_world_, *hit);
         if (hwnd_ && GetCapture() == hwnd_) ReleaseCapture();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
@@ -831,18 +961,22 @@ void NativeWindow::handle_canvas_mouse_up(int x, int y, unsigned modifiers) {
                 root().vector_controller().set_selection({}, *snapshot);
                 is_rotate_mode_ = false;
                 custom_pivot_world_.reset();
-                if (previous_drawing_tool_ > 0) {
-                    set_active_tool(previous_drawing_tool_);
-                    status_msg_ = language_ == UILanguage::Vietnamese
-                        ? "Đã bỏ chọn · Khôi phục công cụ vẽ để tiếp tục tạo hình"
-                        : "Deselected · Resumed drawing tool";
+                if (active_tool_ == 0 && previous_drawing_tool_ > 0) {
+                    const int return_tool = previous_drawing_tool_;
+                    previous_drawing_tool_ = 0;
+                    set_active_tool(return_tool);
                 }
             }
         } else if (is_creating_shape_) {
             changed = commit_created_shape();
         } else if (is_knife_cutting_) {
             knife_current_world_ = pointer_current_world_;
-            changed = workflow().split_objects_by_line(knife_start_world_, knife_current_world_);
+            if (active_tool_ == 16) {
+                std::vector<geometry::Point2D> stroke{knife_start_world_, knife_current_world_};
+                changed = workflow().erase_objects_by_stroke(stroke, 2.0, true);
+            } else {
+                changed = workflow().split_objects_by_line(knife_start_world_, knife_current_world_);
+            }
         } else if (pivot_drag) {
             custom_pivot_world_ = pointer_current_world_;
             changed = true;
@@ -868,7 +1002,17 @@ void NativeWindow::handle_canvas_mouse_up(int x, int y, unsigned modifiers) {
         }
     }
     cancel_canvas_interaction();
+    const auto selected_after_pointer = root().vector_controller().selection().selected_ids();
+    if (!selected_after_pointer.empty()) {
+        const auto selected_snapshot = root().document().current_snapshot();
+        if (selected_snapshot) {
+            const auto* selected_entry = selected_snapshot->hierarchy().find(
+                selected_after_pointer.back());
+            if (selected_entry) set_active_layer_index(selected_entry->layer);
+        }
+    }
     workflow().sync_status_bar();
+    sync_rect_corner_controls_from_selection();
     if (stale) {
         status_msg_ = language_ == UILanguage::Vietnamese ? "Bản vẽ đã đổi; thao tác đã được hủy an toàn." : "Document changed; interaction cancelled.";
     } else if (pivot_drag) {

@@ -43,13 +43,13 @@ public:
         std::vector<document::ObjectId> top_level_ids,
         size_t layer_idx = 0,
         std::optional<size_t> insert_position = std::nullopt,
-        std::string command_name = "Add Cloned Hierarchy"
+        std::string command_name = "Add Cloned Hierarchy", document::ObjectId owner = 0
     )
         : cloned_objects_(std::move(cloned_objects)),
           top_level_ids_(std::move(top_level_ids)),
           layer_idx_(layer_idx),
           insert_position_(insert_position),
-          name_(std::move(command_name)) {}
+          name_(std::move(command_name)), owner_(owner) {}
 
     std::string_view name() const noexcept override { return name_; }
 
@@ -76,11 +76,26 @@ public:
             }
         }
 
-        auto& layer_roots = page.layers[layer_idx_].object_ids;
-        if (insert_position_ && *insert_position_ <= layer_roots.size()) {
-            layer_roots.insert(layer_roots.begin() + *insert_position_, top_level_ids_.begin(), top_level_ids_.end());
+        if (owner_) {
+            const auto snapshot=doc.current_snapshot();
+            const auto* entry=snapshot->hierarchy().find(owner_);
+            auto owner_object=objects.get(owner_);
+            auto* group=owner_object?std::get_if<document::GroupObject>(&*owner_object):nullptr;
+            if(!entry||!group||!snapshot->hierarchy().editable(owner_)) return document::CommandResult::fail("Invalid paste scope");
+            const auto inverse=entry->world.inverted();if(!inverse)return document::CommandResult::fail("Singular paste scope");
+            for(auto id:top_level_ids_) {
+                auto object=*objects.get(id);
+                std::visit([&](auto& value){value.transform=*inverse*value.transform;},object);
+                objects=objects.set(id,object);
+            }
+            const auto at=std::min(insert_position_.value_or(group->children_ids.size()),group->children_ids.size());
+            group->children_ids.insert(group->children_ids.begin()+at,top_level_ids_.begin(),top_level_ids_.end());
+            if(group->clip)group->clip->is_empty_frame=false;
+            objects=objects.set(owner_,*owner_object);
         } else {
-            layer_roots.insert(layer_roots.end(), top_level_ids_.begin(), top_level_ids_.end());
+            auto& roots=page.layers[layer_idx_].object_ids;
+            const auto at=std::min(insert_position_.value_or(roots.size()),roots.size());
+            roots.insert(roots.begin()+at,top_level_ids_.begin(),top_level_ids_.end());
         }
 
         before_page_ = doc.page();
@@ -105,6 +120,7 @@ private:
     size_t layer_idx_{0};
     std::optional<size_t> insert_position_;
     std::string name_;
+    document::ObjectId owner_{0};
     std::optional<document::Page> before_page_;
     std::optional<document::PersistentObjectMap> before_objects_;
     bool executed_{false};
@@ -209,23 +225,7 @@ bool DocumentWorkflow::delete_selected() {
         return false;
 
     const auto snapshot = root_.document().current_snapshot();
-    std::vector<document::ObjectId> to_delete;
-    std::unordered_set<document::ObjectId> seen;
-
-    for (const auto id : controller.selection().selected_ids()) {
-        if (seen.insert(id).second) {
-            to_delete.push_back(id);
-            if (is_group(id)) {
-                std::vector<document::ObjectId> desc;
-                collect_all_descendants(id, snapshot->objects(), desc);
-                for (auto cid : desc) {
-                    if (seen.insert(cid).second) {
-                        to_delete.push_back(cid);
-                    }
-                }
-            }
-        }
-    }
+    const auto to_delete = snapshot->hierarchy().roots(controller.selection().selected_ids());
 
     auto composite = std::make_unique<document::CompositeCommand>("Delete Selected");
     for (auto id : to_delete) {
@@ -260,7 +260,9 @@ bool DocumentWorkflow::copy_selected(void* hwnd) {
 
     for (const auto rid : root_ids) {
         if (auto obj = snapshot->objects().get(rid)) {
-            clip_objects = clip_objects.set(rid, *obj);
+            auto root_object=*obj;
+            std::visit([&](auto& value){value.transform=snapshot->hierarchy().find(rid)->world;},root_object);
+            clip_objects = clip_objects.set(rid, root_object);
             if (const auto* txt = std::get_if<document::TextObject>(&*obj)) {
                 if (!text_accumulator.empty()) text_accumulator += "\n";
                 text_accumulator += txt->text;
@@ -362,9 +364,9 @@ bool DocumentWorkflow::paste(void* hwnd, PastePlacement placement, double offset
                         auto cmd = std::make_unique<AddClonedHierarchyCommand>(
                             std::move(cloned.cloned_objects),
                             cloned.top_level_cloned_ids,
-                            0,
+                            active_layer_index(),
                             insert_pos,
-                            "Paste"
+                            "Paste", root_.vector_controller().selection_scope()
                         );
                         auto& controller = root_.vector_controller();
                         const auto res = root_.document().execute_command(std::move(cmd));
@@ -388,18 +390,16 @@ bool DocumentWorkflow::paste(void* hwnd, PastePlacement placement, double offset
         if (svg_str && !svg_str->empty()) {
             auto res = interop::SvgImporter::import_from_string(*svg_str);
             if (res.success && !res.objects.empty()) {
-                auto composite = std::make_unique<document::CompositeCommand>("Paste SVG");
-                std::vector<document::ObjectId> new_ids;
-                geometry::Transform2D shift = geometry::Transform2D::identity();
-                if (placement == PastePlacement::Offset || placement == PastePlacement::CenterOfViewport) {
-                    shift = geometry::Transform2D::translation(offset_x, offset_y);
-                }
-                for (auto& obj : res.objects) {
-                    std::visit([&shift](auto& o) { o.transform = shift * o.transform; }, obj);
-                    const auto nid = std::visit([](const auto& o) { return o.id; }, obj);
-                    composite->add_command(std::make_unique<document::AddObjectCommand>(std::move(obj), 0));
-                    new_ids.push_back(nid);
-                }
+                document::PersistentObjectMap source_objects;
+                for(const auto& object:res.objects)source_objects=source_objects.set(std::visit([](const auto& value){return value.id;},object),object);
+                document::DocumentSnapshot source{1,0,res.page,source_objects};
+                std::vector<document::ObjectId> roots;
+                for(const auto& layer:res.page.layers)roots.insert(roots.end(),layer.object_ids.begin(),layer.object_ids.end());
+                const auto shift=geometry::Transform2D::translation(offset_x,offset_y);
+                auto cloned=document::clone_hierarchy(roots,source,shift);
+                const auto new_ids=cloned.top_level_cloned_ids;
+                auto composite=std::make_unique<AddClonedHierarchyCommand>(std::move(cloned.cloned_objects),new_ids,active_layer_index(),
+                    std::nullopt,"Paste SVG",root_.vector_controller().selection_scope());
                 const auto cmd_res = root_.document().execute_command(std::move(composite));
                 if (cmd_res.success) {
                     auto& controller = root_.vector_controller();
@@ -453,16 +453,24 @@ bool DocumentWorkflow::duplicate_selected(double offset_x, double offset_y) {
         return false;
 
     const auto shift = geometry::Transform2D::translation(offset_x, offset_y);
-    auto cloned = document::clone_hierarchy(root_ids, *snapshot, shift);
+    auto cloned = document::clone_hierarchy(root_ids, *snapshot);
+    for(auto& object:cloned.cloned_objects) {
+        const auto id=std::visit([](const auto& value){return value.id;},object);
+        for(auto source_id:root_ids) if(cloned.id_map.at(source_id)==id)
+            std::visit([&](auto& value){value.transform=shift*snapshot->hierarchy().find(source_id)->parent_world*value.transform;},object);
+    }
     if (cloned.top_level_cloned_ids.empty())
         return false;
+
+    const auto* source_entry = snapshot->hierarchy().find(root_ids.front());
+    const size_t duplicate_layer = source_entry ? source_entry->layer : active_layer_index();
 
     auto cmd = std::make_unique<AddClonedHierarchyCommand>(
         std::move(cloned.cloned_objects),
         cloned.top_level_cloned_ids,
-        0,
+        duplicate_layer,
         std::nullopt,
-        "Duplicate Selected"
+        "Duplicate Selected", controller.selection_scope()
     );
 
     const auto res = root_.document().execute_command(std::move(cmd));
@@ -473,7 +481,7 @@ bool DocumentWorkflow::duplicate_selected(double offset_x, double offset_y) {
         }
 
         // Start dynamic array session (SketchUp *N / /N)
-        if (std::abs(offset_x) > 1e-6 || std::abs(offset_y) > 1e-6) {
+        if (!controller.selection_scope() && (std::abs(offset_x) > 1e-6 || std::abs(offset_y) > 1e-6)) {
             start_array_session(
                 root_ids,
                 geometry::Point2D{offset_x, offset_y},
@@ -525,6 +533,8 @@ bool DocumentWorkflow::apply_array_multiplier(int count) {
         return false;
 
     const auto snapshot = root_.document().current_snapshot();
+    const auto* source_entry = snapshot->hierarchy().find(array_session_.source_ids.front());
+    const size_t source_layer = source_entry ? source_entry->layer : active_layer_index();
 
     std::vector<document::ObjectVariant> all_new_objects;
     std::vector<document::ObjectId> all_new_top_level_ids;
@@ -548,7 +558,7 @@ bool DocumentWorkflow::apply_array_multiplier(int count) {
         array_session_.current_array_ids,
         std::move(all_new_objects),
         all_new_top_level_ids,
-        0,
+        source_layer,
         "Array Multiplier (*" + std::to_string(count) + ")"
     );
 
@@ -575,6 +585,8 @@ bool DocumentWorkflow::apply_array_divider(int divisions) {
         return false;
 
     const auto snapshot = root_.document().current_snapshot();
+    const auto* source_entry = snapshot->hierarchy().find(array_session_.source_ids.front());
+    const size_t source_layer = source_entry ? source_entry->layer : active_layer_index();
 
     std::vector<document::ObjectVariant> all_new_objects;
     std::vector<document::ObjectId> all_new_top_level_ids;
@@ -598,7 +610,7 @@ bool DocumentWorkflow::apply_array_divider(int divisions) {
         array_session_.current_array_ids,
         std::move(all_new_objects),
         all_new_top_level_ids,
-        0,
+        source_layer,
         "Array Divider (/" + std::to_string(divisions) + ")"
     );
 

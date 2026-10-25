@@ -24,7 +24,18 @@ enum class DimensionSnapType : uint8_t {
     Node,
     Midpoint,
     Center,
-    BoundingBoxCorner
+    BoundingBoxCorner,
+    Intersection,
+    Perpendicular,
+    Quadrant
+};
+
+enum class DimensionAxisLock : uint8_t {
+    Auto = 0,
+    Horizontal,
+    Vertical,
+    Angle45,
+    Aligned
 };
 
 class DimensionToolController {
@@ -33,6 +44,7 @@ public:
 
     void activate(document::DimensionKind kind = document::DimensionKind::Aligned, bool smart_mode = false);
     void deactivate();
+    void set_active_layer_index(size_t index) noexcept { active_layer_index_ = index; }
     [[nodiscard]] bool active() const noexcept { return active_; }
 
     [[nodiscard]] DimensionSessionState state() const noexcept { return state_; }
@@ -50,9 +62,20 @@ public:
     void set_linear_orientation(geometry::LinearOrientation orientation) noexcept;
     [[nodiscard]] geometry::LinearOrientation linear_orientation() const noexcept { return orientation_; }
 
-    void set_continuous_mode(bool enable) noexcept { continuous_mode_ = enable; }
+    void set_axis_lock(DimensionAxisLock lock) noexcept;
+    [[nodiscard]] DimensionAxisLock axis_lock() const noexcept { return axis_lock_; }
+
+    void set_continuous_mode(bool enable) noexcept { continuous_mode_ = enable; if (enable) baseline_mode_ = false; }
     [[nodiscard]] bool continuous_mode() const noexcept { return continuous_mode_; }
     void start_continue_from(
+        geometry::Point2D base_pt,
+        geometry::Point2D placement_pt,
+        document::DimensionKind kind,
+        geometry::LinearOrientation ori);
+
+    void set_baseline_mode(bool enable) noexcept { baseline_mode_ = enable; if (enable) continuous_mode_ = false; }
+    [[nodiscard]] bool baseline_mode() const noexcept { return baseline_mode_; }
+    void start_baseline_from(
         geometry::Point2D base_pt,
         geometry::Point2D placement_pt,
         document::DimensionKind kind,
@@ -85,6 +108,7 @@ private:
     void update_preview();
 
     document::Document& doc_;
+    size_t active_layer_index_{0};
     bool active_{false};
     bool smart_mode_{false};
     document::DimensionKind current_kind_{document::DimensionKind::Aligned};
@@ -106,7 +130,12 @@ private:
     document::ObjectId snapped_object_id_{document::kInvalidObjectId};
     std::optional<uint64_t> snapped_element_id_{std::nullopt};
     bool ortho_active_{false};
+    DimensionAxisLock axis_lock_{DimensionAxisLock::Auto};
     bool continuous_mode_{false};
+    bool baseline_mode_{false};
+    geometry::Point2D baseline_origin_{};
+    int baseline_step_count_{0};
+    geometry::Point2D collinear_dir_{1.0, 0.0};
     geometry::Point2D last_placement_point_{};
     bool has_last_placement_{false};
 };

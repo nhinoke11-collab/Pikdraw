@@ -119,7 +119,7 @@ std::filesystem::path automation_file_path(const std::string& file_name) {
     require(copied > 0 && copied < size, "LOCALAPPDATA is read for test cleanup");
     base.resize(copied);
     return std::filesystem::path(base) / L"PikDraw" / L"automation" / L"files" /
-        (utf8_to_wide(file_name) + L".pikdraw");
+        (utf8_to_wide(file_name) + L".pr");
 }
 
 void exercise_com_client(DWORD ui_thread, std::string& failure, std::string file_name) {

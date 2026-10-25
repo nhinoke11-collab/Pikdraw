@@ -6,6 +6,7 @@
 #include "pikdraw/typography/layout/text_layout.hpp"
 #include "pikdraw/typography/layout/text_on_path.hpp"
 #include "pikdraw/document/commands/command.hpp"
+#include "pikdraw/document/commands/page_commands.hpp"
 #include "pikdraw/document/commands/unit_commands.hpp"
 #include "pikdraw/document/commands/appearance_commands.hpp"
 #include "pikdraw/document/commands/transaction_writer.hpp"
@@ -35,42 +36,6 @@
 
 namespace pikdraw::desktop {
 using namespace detail;
-
-namespace {
-class SetPageSizeCommand final : public document::DocumentCommand {
-public:
-    SetPageSizeCommand(double width_mm, double height_mm)
-        : width_mm_(width_mm), height_mm_(height_mm) {}
-
-    std::string_view name() const noexcept override { return "Set Page Size"; }
-
-    document::CommandResult execute(document::Document& doc) override {
-        auto page = doc.page();
-        if (page.width_mm == width_mm_ && page.height_mm == height_mm_)
-            return document::CommandResult::no_change();
-        previous_size_ = std::pair{page.width_mm, page.height_mm};
-        page.width_mm = width_mm_;
-        page.height_mm = height_mm_;
-        doc.apply_mutation(std::move(page), doc.objects());
-        return document::CommandResult::ok();
-    }
-
-    document::CommandResult undo(document::Document& doc) override {
-        if (!previous_size_)
-            return document::CommandResult::fail("Page size command has no state to restore");
-        auto page = doc.page();
-        page.width_mm = previous_size_->first;
-        page.height_mm = previous_size_->second;
-        doc.apply_mutation(std::move(page), doc.objects());
-        return document::CommandResult::ok();
-    }
-
-private:
-    double width_mm_;
-    double height_mm_;
-    std::optional<std::pair<double, double>> previous_size_;
-};
-} // namespace
 
 DocumentWorkflow::DocumentWorkflow(CompositionRoot& root)
     : root_(root) {}
@@ -499,7 +464,8 @@ void DocumentWorkflow::set_page_size(double page_width_mm, double page_height_mm
     page_height_mm = std::clamp(page_height_mm, 10.0, geometry::kMaxCanvasDimensionMm);
 
     auto& doc = root_.document();
-    doc.execute_command(std::make_unique<SetPageSizeCommand>(page_width_mm, page_height_mm));
+    (void)doc.execute_command(std::make_unique<document::ResizePageCommand>(
+        doc.active_page_id(), page_width_mm, page_height_mm));
     sync_status_bar();
 }
 

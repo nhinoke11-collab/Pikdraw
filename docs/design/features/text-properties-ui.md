@@ -12,7 +12,7 @@ vùng chọn ký tự và phiên nhập vẫn còn hoạt động sau khi kéo. 
 
 | Bề mặt | Quyết định |
 | --- | --- |
-| Menu chính | `Text > Edit Text…` mở phiên soạn trên canvas. `Text > Change Case` có năm lệnh trực tiếp; `Shift+F3` vẫn xoay lowercase → Title Case → UPPERCASE. `Text > Convert to Paragraph / Artistic Text` dùng `Ctrl+F8`. `Window > Properties` mở cùng bảng bên phải. |
+| Menu chính | `Text > Edit Text…` mở phiên soạn trên canvas. `Text > Change Case ▸` mở menu con gồm năm kiểu đổi chữ; `Shift+F3` vẫn xoay lowercase → Title Case → UPPERCASE. `Text > Convert to Paragraph / Artistic Text` dùng `Ctrl+F8`. `Window > Properties` mở cùng bảng bên phải. |
 | Toolbox | Giữ Text tool index 4, `F8` và icon Text hiện tại; không thêm tool/flyout. |
 | Standard toolbar | Không áp dụng; text formatting là ngữ cảnh của Text/đối tượng đang chọn. |
 | Property bar | Giữ các thuộc tính hay sửa nhanh: family, size, B/I/U/S, căn đoạn, line spacing và tracking; dùng chung giá trị với Properties. Không lặp các thuộc tính này thành lệnh riêng trong menu Text. |
@@ -83,7 +83,7 @@ Resize Text đã lưu tạo giao dịch transform và hoàn tác bằng `Ctrl+Z`
 - Cách dùng: chọn Text tool, click để đặt caret và gõ ngay trên canvas; kéo thân để
   di chuyển; rê vào cạnh/góc rồi kéo để scale; không cần rời Text tool. Nhấn `Ctrl+T`
   để mở Properties, chọn họ phông hoặc chỉnh size/style/paragraph/tracking. Nhấn
-  chọn `Text > Change Case` để áp dụng kiểu cụ thể hoặc nhấn `Shift+F3` để xoay
+  mở `Text > Change Case ▸` rồi chọn kiểu cụ thể, hoặc nhấn `Shift+F3` để xoay
   lowercase → Title Case → UPPERCASE. Nhấn `Ctrl+Enter`
   để lưu phiên, `Esc` để hủy.
 - Không có dialog tìm font bằng ảnh, icon mới, toolbox mới, panel mới hay standard
@@ -107,8 +107,9 @@ Resize Text đã lưu tạo giao dịch transform và hoàn tác bằng `Ctrl+Z`
   triển sau, không chạy hay báo kết quả giả.
 - Given Text menu đang mở, When xem các lệnh, Then menu chỉ có lệnh và chuyển đổi;
   family, size, B/I/U/S và alignment được chỉnh ở Property Bar/Properties.
-- Given Change Case, When mở Text menu, Then năm kiểu đổi chữ hiện tên riêng và
-  selection không phù hợp làm lệnh disable; Shift+F3 xoay ba kiểu phổ biến.
+- Given Text menu đang mở, When rê vào `Change Case`, Then năm kiểu đổi chữ hiện
+  trong popup con riêng; Enter/mũi tên phải mở menu con, mũi tên trái/Esc quay về
+  menu Text, và chọn kiểu chỉ kích hoạt khi selection phù hợp. `Shift+F3` xoay ba kiểu phổ biến.
 - Given Fit Text to Path, When chưa chọn đúng một Text và một Path, Then lệnh bị
   disable và tooltip nêu điều kiện; sau khi áp dụng, status chỉ vị trí Reverse,
   Straighten và Undo.

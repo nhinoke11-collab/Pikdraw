@@ -1,15 +1,157 @@
 #include "pikdraw/interop/writers/svg_exporter.hpp"
 #include "pikdraw/interop/adapters/svg_importer.hpp"
+#include "pikdraw/color/preview/icc_preview.hpp"
+#include "pikdraw/color/preview/profile_color_transform.hpp"
 #include "pikdraw/document/document.hpp"
+#include "pikdraw/document/commands/color_commands.hpp"
+#include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <cstdint>
+#include <iomanip>
 #include <iostream>
+#include <optional>
 #include <sstream>
+#include <utility>
 #include <vector>
 
 using namespace pikdraw;
 using namespace pikdraw::interop;
 using namespace pikdraw::document;
+
+void test_svg_explicit_bounds_set_artboard_viewport() {
+    Document document;
+    SvgExportOptions options;
+    options.bounds = geometry::Rect2D{25.0, 40.0, 125.0, 80.0};
+    const auto exported = SvgExporter::export_with_report(
+        *document.current_snapshot(), options);
+    assert(exported.success);
+    assert(exported.svg.find("width=\"125mm\" height=\"80mm\"") != std::string::npos);
+    assert(exported.svg.find("viewBox=\"25 40 125 80\"") != std::string::npos);
+}
+
+void test_profile_bound_rgb_is_converted_to_srgb_for_svg() {
+#ifdef _WIN32
+    using namespace color;
+    const auto srgb = ProfileResource::load_file(
+        IccPreview::system_srgb_profile(), ColorSpace::Rgb);
+    assert(srgb);
+
+    const auto read_be32 = [](const std::vector<uint8_t>& bytes, size_t offset) {
+        assert(offset + 4 <= bytes.size());
+        return (static_cast<uint32_t>(bytes[offset]) << 24) |
+            (static_cast<uint32_t>(bytes[offset + 1]) << 16) |
+            (static_cast<uint32_t>(bytes[offset + 2]) << 8) |
+            static_cast<uint32_t>(bytes[offset + 3]);
+    };
+    const auto write_be32 = [](std::vector<uint8_t>& bytes, size_t offset,
+                               uint32_t value) {
+        assert(offset + 4 <= bytes.size());
+        bytes[offset] = static_cast<uint8_t>(value >> 24);
+        bytes[offset + 1] = static_cast<uint8_t>(value >> 16);
+        bytes[offset + 2] = static_cast<uint8_t>(value >> 8);
+        bytes[offset + 3] = static_cast<uint8_t>(value);
+    };
+    auto alternate_bytes = srgb.resource->bytes();
+    std::fill(alternate_bytes.begin() + 84, alternate_bytes.begin() + 100, 0);
+    const auto tag_count = read_be32(alternate_bytes, 128);
+    std::optional<size_t> red_xyz;
+    std::optional<size_t> green_xyz;
+    for (uint32_t index = 0; index < tag_count; ++index) {
+        const size_t record = 132u + static_cast<size_t>(index) * 12u;
+        if (record + 12 > alternate_bytes.size()) break;
+        const std::string signature(alternate_bytes.begin() +
+                static_cast<ptrdiff_t>(record),
+            alternate_bytes.begin() + static_cast<ptrdiff_t>(record + 4));
+        const auto offset = read_be32(alternate_bytes, record + 4);
+        const auto size = read_be32(alternate_bytes, record + 8);
+        if (offset > alternate_bytes.size() ||
+            size > alternate_bytes.size() - offset || size < 20 ||
+            std::string(alternate_bytes.begin() + offset,
+                alternate_bytes.begin() + offset + 4) != "XYZ ")
+            continue;
+        if (signature == "rXYZ") red_xyz = offset;
+        else if (signature == "gXYZ") green_xyz = offset;
+    }
+    assert(red_xyz && green_xyz);
+    for (const auto [component, delta] :
+         {std::pair<size_t, int32_t>{8, 6554}, {16, 3277}}) {
+        const auto red = static_cast<int32_t>(
+            read_be32(alternate_bytes, *red_xyz + component));
+        const auto green = static_cast<int32_t>(
+            read_be32(alternate_bytes, *green_xyz + component));
+        write_be32(alternate_bytes, *red_xyz + component,
+                   static_cast<uint32_t>(red + delta));
+        write_be32(alternate_bytes, *green_xyz + component,
+                   static_cast<uint32_t>(green - delta));
+    }
+    const auto alternate = ProfileResource::create(
+        "PikDraw SVG alternate primaries", ColorSpace::Rgb,
+        std::move(alternate_bytes));
+    assert(alternate);
+
+    Document doc("svg-profile-bound-rgb");
+    const auto page_id = doc.current_snapshot()->active_page_id();
+    assert(doc.execute_command(std::make_unique<AssignPageColorProfileCommand>(
+        page_id, alternate.resource)).success);
+
+    PathObject path;
+    path.id = generate_object_id();
+    path.path = geometry::Path2D::make_rect(10, 10, 40, 30);
+    path.fill = RGBColor{0.50, 0.40, 0.30, 0.75};
+    assert(path.fill.set_profile_resource(alternate.resource));
+    assert(doc.execute_command(std::make_unique<AddObjectCommand>(path)).success);
+
+    PathObject inherited_profile = path;
+    inherited_profile.id = generate_object_id();
+    inherited_profile.path = geometry::Path2D::make_rect(60, 10, 40, 30);
+    inherited_profile.fill = RGBColor{0.50, 0.40, 0.30, 0.75};
+    assert(doc.execute_command(
+        std::make_unique<AddObjectCommand>(inherited_profile)).success);
+
+    PathObject explicit_srgb = path;
+    explicit_srgb.id = generate_object_id();
+    explicit_srgb.path = geometry::Path2D::make_rect(110, 10, 40, 30);
+    explicit_srgb.fill = RGBColor{0.50, 0.40, 0.30, 0.75};
+    assert(explicit_srgb.fill.set_profile_resource(srgb.resource));
+    assert(doc.execute_command(
+        std::make_unique<AddObjectCommand>(explicit_srgb)).success);
+
+    const auto oracle = ProfileColorTransform::create(
+        alternate.resource, srgb.resource);
+    assert(oracle);
+    ColorValue expected;
+    assert(oracle.transform->convert(path.fill, expected));
+    const auto expected_device = to_preview_rgba(expected).to_device();
+    const auto source_device = to_preview_rgba(path.fill).to_device();
+    std::ostringstream expected_hex;
+    expected_hex << '#' << std::hex << std::setfill('0') << std::setw(2)
+        << static_cast<int>(expected_device.r) << std::setw(2)
+        << static_cast<int>(expected_device.g) << std::setw(2)
+        << static_cast<int>(expected_device.b);
+    std::ostringstream source_hex;
+    source_hex << '#' << std::hex << std::setfill('0') << std::setw(2)
+        << static_cast<int>(source_device.r) << std::setw(2)
+        << static_cast<int>(source_device.g) << std::setw(2)
+        << static_cast<int>(source_device.b);
+    assert(expected_hex.str() != source_hex.str());
+
+    const auto exported = SvgExporter::export_with_report(*doc.current_snapshot());
+    assert(exported.success);
+    assert(exported.svg.find("fill=\"" + expected_hex.str() + "\"") !=
+           std::string::npos);
+    const auto inherited_hex = exported.svg.find(
+        "fill=\"" + expected_hex.str() + "\"",
+        exported.svg.find("fill=\"" + expected_hex.str() + "\"") + 1);
+    assert(inherited_hex != std::string::npos);
+    assert(exported.svg.find("fill=\"" + source_hex.str() + "\"") !=
+           std::string::npos);
+    assert(exported.svg.find("fill-opacity=\"0.75\"") != std::string::npos);
+    assert(!exported.report.is_clean());
+    assert(exported.report.issues().front().severity == FidelitySeverity::Warning);
+    assert(exported.report.issues().front().feature == "fill color");
+#endif
+}
 
 void test_svg_export_and_roundtrip() {
     Document doc("doc-svg-export");
@@ -77,6 +219,10 @@ void test_svg_analytic_arc_and_loss_report() {
     GroupObject group;
     group.id = generate_object_id();
     assert(grouped.execute_command(std::make_unique<AddObjectCommand>(group)).success);
+    const auto group_export = SvgExporter::export_with_report(*grouped.current_snapshot());
+    assert(group_export.success && group_export.svg.find("<g")!=std::string::npos);
+    ImageObject image;image.id=generate_object_id();image.width_px=1;image.height_px=1;image.pixels_rgba={0xff112233};
+    assert(grouped.execute_command(std::make_unique<AddObjectCommand>(image)).success);
     const auto blocked = SvgExporter::export_with_report(*grouped.current_snapshot());
     assert(!blocked.success && blocked.svg.empty() &&
            blocked.report.has_unsupported());
@@ -239,8 +385,45 @@ void test_svg_export_clipping_mask_roundtrip() {
     assert(found_clipping);
 }
 
+void test_svg_nested_clips_preserve_hierarchy_and_winding() {
+    PathObject mask;mask.id=generate_object_id();mask.path=geometry::Path2D::make_rect(0,0,30,30);
+    mask.path.move_to(5,5);mask.path.line_to(20,5);mask.path.line_to(20,20);mask.path.line_to(5,20);mask.path.close();
+    mask.path.set_winding_rule(geometry::WindingRule::EvenOdd);
+    mask.has_stroke=false;
+    PathObject content;content.id=generate_object_id();content.path=geometry::Path2D::make_rect(-10,-10,50,50);content.has_stroke=false;
+    GroupObject clip;clip.id=generate_object_id();clip.children_ids={mask.id,content.id};clip.clip=ClipProperties{};
+    clip.clip->mask_object_id=mask.id;clip.clip->preserve_frame_appearance=false;
+    clip.transform=geometry::Transform2D::translation(7,9);
+    GroupObject parent;parent.id=generate_object_id();parent.children_ids={clip.id};parent.transform=geometry::Transform2D::rotation_degrees(30);
+    auto page=Page::make_default();page.layers[0].object_ids={parent.id};
+    auto objects=PersistentObjectMap{}.set(mask.id,mask).set(content.id,content).set(clip.id,clip).set(parent.id,parent);
+    DocumentSnapshot snapshot{1,0,page,objects};
+    const auto output=SvgExporter::export_with_report(snapshot);
+    assert(output.success);assert(output.svg.find("clip-rule=\"evenodd\"")!=std::string::npos);
+    assert(output.svg.find("transform=")!=std::string::npos);
+    auto imported=SvgImporter::import_from_string(output.svg);
+    if(!imported.success)std::cerr<<imported.error_message<<"\n";
+    assert(imported.success);
+    PersistentObjectMap restored_objects;for(const auto& object:imported.objects)restored_objects=restored_objects.set(std::visit([](const auto& value){return value.id;},object),object);
+    DocumentSnapshot restored{1,0,imported.page,restored_objects};
+    const auto expected=snapshot.hierarchy().find(clip.id)->bounds;
+    for(const auto& object:imported.objects)if(const auto* g=std::get_if<GroupObject>(&object);g&&g->clip){
+        const auto actual=restored.hierarchy().find(g->id)->bounds;
+        assert(actual&&std::abs(actual->x-expected->x)<1e-6&&std::abs(actual->y-expected->y)<1e-6);
+    }
+    assert(std::count_if(imported.objects.begin(),imported.objects.end(),[](const auto& object){
+        const auto* group=std::get_if<GroupObject>(&object);return group&&group->clip;})>=1);
+    std::ostringstream selected;
+    const std::vector<ObjectId> scope{parent.id};
+    const auto scoped=SvgExporter::write_to_stream(snapshot,selected,{},&scope);
+    assert(scoped.success);assert(selected.str().find("clip-path")!=std::string::npos);
+}
+
 int main() {
+    test_svg_explicit_bounds_set_artboard_viewport();
+    test_svg_nested_clips_preserve_hierarchy_and_winding();
     std::cout << "[test_svg_exporter] Running SVG exporter tests...\n";
+    test_profile_bound_rgb_is_converted_to_srgb_for_svg();
     test_svg_export_and_roundtrip();
     test_svg_analytic_arc_and_loss_report();
     test_svg_path_and_text_opacity_mapping();

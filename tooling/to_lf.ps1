@@ -1,0 +1,7 @@
+param([string]$path)
+$bytes = [System.IO.File]::ReadAllBytes($path)
+$text = [System.Text.Encoding]::UTF8.GetString($bytes)
+$normalized = $text.Replace("`r`n", "`n")
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+$outBytes = $utf8NoBom.GetBytes($normalized)
+[System.IO.File]::WriteAllBytes($path, $outBytes)

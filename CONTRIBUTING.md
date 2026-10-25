@@ -1,12 +1,13 @@
 # Đóng góp PikDraw
 
-Đọc AGENTS.md và docs/START.md, nhận task có mục tiêu/nghiệm thu rõ rồi dùng worktree riêng.
-Tính năng mới cần thuộc module hoặc có ADR thêm module; khai báo dependency trong registry.
-Dùng skill phù hợp ở skills/, đọc tài liệu theo nhiệm vụ thay vì nạp toàn bộ repo.
+Dùng workflow trong [AGENTS](AGENTS.md) và [START](docs/START.md), trực tiếp ở source gốc.
+Mọi agent dùng chung quy tắc này. Nạp module/contract theo yêu cầu thay vì đọc tất cả docs.
 
-Mỗi đóng góp gồm code/contract liên quan, checks có evidence, giới hạn còn mở và handoff ngắn.
-Các target về hiệu năng, màu, import và phục hồi chỉ được ghi đạt sau khi đo trên fixture/cấu hình chỉ định.
+Tính năng mới thuộc module sở hữu hành vi; dependency cập nhật registry/modules.json.
+Thay đổi document/schema giữ migration, stable IDs và Undo; consumer dùng chung cần được đối chiếu.
+Chọn checks theo rủi ro, báo lệnh và giới hạn thực. Dọn probe, output và log tạm sau kiểm tra;
+giữ regression tests và fixture dùng lại trong suite.
 
-Không đưa font, ảnh hoặc file của khách hàng vào repository khi chưa có quyền phân phối.
-Mã mới giữ notice phù hợp; dependency mới cần ghi nguồn/phiên bản/giấy phép và kiểm tra tương thích.
-README và docs/project-state.json phản ánh tính năng thực có; roadmap đặt riêng với trạng thái planned.
+Không đưa font, ảnh hoặc thiết kế khách hàng vào repo khi chưa có quyền phân phối.
+Dependency mới ghi nguồn, phiên bản, license và runtime thực sử dụng.
+README/project-state phản ánh code hiện tại; khả năng tương lai ghi riêng với trạng thái kế hoạch.

@@ -20,6 +20,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cstdint>
+#include <limits>
 #include <map>
 #include <vector>
 #include <algorithm>
@@ -112,6 +114,13 @@ bool HasProbeExtension(const std::string& extension) {
     return extension == ".cdr" || extension == ".ai" || extension == ".pdf" ||
         extension == ".eps" || extension == ".dxf" || extension == ".svg" ||
         extension == ".png" || extension == ".jpg" || extension == ".jpeg";
+}
+
+std::chrono::seconds SourceProbeTimeout(uint64_t source_bytes) {
+    constexpr uint64_t bytes_per_second = 8ULL * 1024ULL * 1024ULL;
+    const uint64_t scaled_seconds = source_bytes / bytes_per_second +
+        (source_bytes % bytes_per_second == 0 ? 0 : 1);
+    return std::chrono::seconds(60 + static_cast<int64_t>(scaled_seconds));
 }
 
 } // namespace
@@ -291,9 +300,7 @@ int RunLiveContainment() {
     }
 }
 int RunLocalSourceCorpusProbe(const fs::path& corpus_root) {
-    constexpr uint64_t max_source_bytes = 1024ULL * 1024ULL * 1024ULL;
-    constexpr uint64_t max_corpus_bytes = 4ULL * 1024ULL * 1024ULL * 1024ULL;
-    constexpr size_t max_files = 256;
+    constexpr uint64_t no_test_source_size_cap = std::numeric_limits<uint64_t>::max();
     std::error_code filesystem_error;
     if (!fs::is_directory(corpus_root, filesystem_error) || filesystem_error) {
         std::cerr << "[FAIL] Local corpus directory unavailable\n";
@@ -331,7 +338,7 @@ int RunLocalSourceCorpusProbe(const fs::path& corpus_root) {
     std::vector<fs::path> files;
     const auto options = fs::directory_options::skip_permission_denied;
     for (fs::recursive_directory_iterator it(corpus_root, options, filesystem_error), end;
-         it != end && files.size() <= max_files; it.increment(filesystem_error)) {
+         it != end; it.increment(filesystem_error)) {
         if (filesystem_error) {
             filesystem_error.clear();
             continue;
@@ -360,10 +367,6 @@ int RunLocalSourceCorpusProbe(const fs::path& corpus_root) {
         }
         if (HasProbeExtension(extension)) files.push_back(it->path());
     }
-    if (files.size() > max_files) {
-        std::cerr << "[FAIL] Corpus exceeds local probe limit\n";
-        return 2;
-    }
     std::sort(files.begin(), files.end(), [](const fs::path& left, const fs::path& right) {
         return left.generic_wstring() < right.generic_wstring();
     });
@@ -375,6 +378,7 @@ int RunLocalSourceCorpusProbe(const fs::path& corpus_root) {
     std::vector<LocalProbeRecord> records;
     records.reserve(files.size());
     uint64_t corpus_bytes = 0;
+    bool corpus_bytes_saturated = false;
     bool all_verified = true;
     for (size_t index = 0; index < files.size(); ++index) {
         LocalProbeRecord record;
@@ -389,14 +393,16 @@ int RunLocalSourceCorpusProbe(const fs::path& corpus_root) {
         record.source_bytes = fs::file_size(files[index], filesystem_error);
         if (filesystem_error) {
             record.result = "source_stat_failed";
-        } else if (record.source_bytes > max_source_bytes ||
-                   record.source_bytes > max_corpus_bytes - corpus_bytes) {
-            record.result = "resource_limit";
         } else {
-            corpus_bytes += record.source_bytes;
+            if (record.source_bytes > std::numeric_limits<uint64_t>::max() - corpus_bytes) {
+                corpus_bytes = std::numeric_limits<uint64_t>::max();
+                corpus_bytes_saturated = true;
+            } else {
+                corpus_bytes += record.source_bytes;
+            }
             SourceSnapshotFailure snapshot_failure = SourceSnapshotFailure::None;
             auto snapshot = SourceSnapshot::Create(
-                files[index].wstring(), max_source_bytes, &snapshot_failure);
+                files[index].wstring(), no_test_source_size_cap, &snapshot_failure);
             if (!snapshot) {
                 record.result = SnapshotFailureName(snapshot_failure);
             } else {
@@ -430,7 +436,7 @@ int RunLocalSourceCorpusProbe(const fs::path& corpus_root) {
                         WorkerProcessHost worker;
                         if (!worker.Launch(config)) {
                             record.result = "sandbox_launch_failed";
-                        } else if (!worker.WaitForExit(std::chrono::seconds(60))) {
+                        } else if (!worker.WaitForExit(SourceProbeTimeout(snapshot->SizeBytes()))) {
                             worker.Terminate();
                             record.result = "worker_timeout";
                         } else {
@@ -465,8 +471,10 @@ int RunLocalSourceCorpusProbe(const fs::path& corpus_root) {
             return 2;
         }
         report << "{\"schema_version\":1,\"test_scope\":\"appcontainer_source_read_only_transport\","
-               << "\"parser_executed\":false,\"max_source_bytes\":" << max_source_bytes
-               << ",\"total_source_bytes\":" << corpus_bytes << ",\"samples\":[";
+               << "\"parser_executed\":false,\"max_source_bytes\":null"
+               << ",\"total_source_bytes\":" << corpus_bytes
+               << ",\"total_source_bytes_saturated\":"
+               << (corpus_bytes_saturated ? "true" : "false") << ",\"samples\":[";
         for (size_t i = 0; i < records.size(); ++i) {
             if (i) report << ',';
             const auto& record = records[i];

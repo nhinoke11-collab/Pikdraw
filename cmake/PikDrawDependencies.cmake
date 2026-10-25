@@ -35,6 +35,23 @@ endif()
 set(PIKDRAW_PYTHON_EXECUTABLE "${PIKDRAW_RESOLVED_PYTHON}" CACHE FILEPATH "Python 3 interpreter path" FORCE)
 message(STATUS "PikDraw: Using Python interpreter: ${PIKDRAW_PYTHON_EXECUTABLE}")
 
+set(PIKDRAW_CLIPPER2_ROOT "${CMAKE_SOURCE_DIR}/.agent/toolchains/clipper2-2.0.1" CACHE PATH
+    "Pinned Clipper2 polygon Boolean source directory")
+if(NOT EXISTS "${PIKDRAW_CLIPPER2_ROOT}/src/clipper.engine.cpp" OR
+   NOT EXISTS "${PIKDRAW_CLIPPER2_ROOT}/include/clipper2/clipper.h")
+    message(FATAL_ERROR
+        "Pinned Clipper2 source is missing. Run tooling/native/build.ps1 to install the locked dependency.")
+endif()
+add_library(pikdraw_clipper2 STATIC
+    "${CMAKE_SOURCE_DIR}/third_party/clipper2_engine.cpp")
+target_include_directories(pikdraw_clipper2 SYSTEM PUBLIC
+    "${PIKDRAW_CLIPPER2_ROOT}/include")
+target_include_directories(pikdraw_clipper2 PRIVATE
+    "${PIKDRAW_CLIPPER2_ROOT}/src")
+target_compile_features(pikdraw_clipper2 PUBLIC cxx_std_17)
+target_compile_definitions(pikdraw_clipper2 PUBLIC CLIPPER2_MAX_DECIMAL_PRECISION=8)
+set_target_properties(pikdraw_clipper2 PROPERTIES FOLDER ThirdParty)
+
 if(WIN32)
     if(NOT PDFium_DIR)
         set(PDFium_DIR "${CMAKE_SOURCE_DIR}/.agent/toolchains/pdfium-8100" CACHE PATH
@@ -67,12 +84,22 @@ if(WIN32)
             "${PIKDRAW_LIBCDR_ROOT}/include/libcdr-0.1/libcdr/libcdr.h"
             "${PIKDRAW_LIBCDR_ROOT}/include/librevenge-0.0/librevenge/librevenge.h"
             "${PIKDRAW_LIBCDR_ROOT}/lib/libcdr-0.1.dll.a"
+            "${PIKDRAW_LIBCDR_ROOT}/lib/libz.a"
+            "${PIKDRAW_LIBCDR_ROOT}/include/zlib.h"
             "${PIKDRAW_LIBCDR_ROOT}/bin/libcdr-0.1.dll")
         if(NOT EXISTS "${required_path}")
             message(FATAL_ERROR
                 "Pinned libcdr development/runtime package is missing. Run tooling/native/setup-libcdr.ps1 first.")
         endif()
     endforeach()
+
+    # Native .pr chunk compression uses the pinned zlib-ng compatibility build
+    # already present in the locked libcdr toolchain. Static linkage keeps the
+    # storage codec independent of another runtime DLL.
+    add_library(pikdraw_zlib STATIC IMPORTED GLOBAL)
+    set_target_properties(pikdraw_zlib PROPERTIES
+        IMPORTED_LOCATION "${PIKDRAW_LIBCDR_ROOT}/lib/libz.a"
+        INTERFACE_INCLUDE_DIRECTORIES "${PIKDRAW_LIBCDR_ROOT}/include")
 
     get_filename_component(PIKDRAW_COMPILER_RUNTIME_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
     set(PIKDRAW_LIBCDR_RUNTIME_DLLS

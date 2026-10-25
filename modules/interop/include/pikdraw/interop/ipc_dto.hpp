@@ -31,9 +31,11 @@ inline constexpr uint32_t IPC_V2_FEATURE_SOURCE_HANDLE = 1u << 0;
 inline constexpr uint32_t IPC_V2_FEATURE_CHECKED_PROPOSAL_STREAM = 1u << 1;
 inline constexpr uint32_t IPC_V2_FEATURE_SOURCE_PAGE_SELECTION = 1u << 2;
 inline constexpr uint32_t IPC_V2_FEATURE_RASTER_SOURCE_ASSETS = 1u << 3;
+inline constexpr uint32_t IPC_V2_FEATURE_RASTER_RGBA16LE = 1u << 4;
 inline constexpr uint32_t IPC_V2_SUPPORTED_FEATURES =
     IPC_V2_FEATURE_SOURCE_HANDLE | IPC_V2_FEATURE_CHECKED_PROPOSAL_STREAM |
-    IPC_V2_FEATURE_SOURCE_PAGE_SELECTION | IPC_V2_FEATURE_RASTER_SOURCE_ASSETS;
+    IPC_V2_FEATURE_SOURCE_PAGE_SELECTION | IPC_V2_FEATURE_RASTER_SOURCE_ASSETS |
+    IPC_V2_FEATURE_RASTER_RGBA16LE;
 
 enum class MessageType : uint16_t {
     Ping = 1,
@@ -48,6 +50,7 @@ enum class MessageType : uint16_t {
     V2ProposalChunk = 33,
     V2ImportEnd = 34,
     V2ErrorResponse = 35,
+    V2MemoryWait = 36,
     ErrorResponse = 99
 };
 
@@ -125,6 +128,17 @@ struct V2ProposalChunk {
     uint32_t checksum_crc32{0};
     std::vector<uint16_t> record_types;
     std::vector<uint8_t> canonical_record_bytes;
+};
+
+// Zero-copy view into an already received V2ProposalChunk frame payload. The
+// canonical bytes remain valid only while the caller keeps that payload alive.
+struct V2ProposalChunkView {
+    V2JobIdentity job;
+    uint32_t chunk_ordinal{0};
+    uint64_t first_record_ordinal{0};
+    uint32_t record_count{0};
+    uint32_t checksum_crc32{0};
+    std::span<const uint8_t> canonical_record_bytes;
 };
 
 struct V2ImportEnd {
@@ -218,6 +232,8 @@ struct CanaryPayloadResponse {
     const V2ProposalChunk& chunk, uint32_t sequence_id);
 [[nodiscard]] std::optional<V2ProposalChunk> DeserializeV2ProposalChunk(
     std::span<const uint8_t> packet);
+[[nodiscard]] std::optional<V2ProposalChunkView> DeserializeV2ProposalChunkPayload(
+    std::span<const uint8_t> payload);
 [[nodiscard]] std::vector<uint8_t> SerializeV2ImportEnd(
     const V2ImportEnd& end, uint32_t sequence_id);
 [[nodiscard]] std::optional<V2ImportEnd> DeserializeV2ImportEnd(

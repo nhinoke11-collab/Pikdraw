@@ -1,151 +1,97 @@
-# Contract C7: Actions, UI Development Loop, and Localization
+# Contract C7: Actions, native UI và ngôn ngữ
 
-Version: 1.1.0
-Status: M0 action IDs remain locked; drawing-tool actions and context bindings proposed pending consumer review
-Producers: `modules/desktop`
-Consumers: `modules/vector`, `modules/raster`, `modules/production`, `modules/plugin_host`
+Version: 1.2.0 (đồng bộ tài liệu; không đổi action IDs/runtime).
+Audited: 2026-10-24, source đang làm việc.
+Producer: `apps/desktop`. Consumers: native shell, tool/workflow controllers và automation bindings liên quan.
+Status: Win32 Native Shell; Qt/QSS/.ui/.rcc chưa phải giao diện runtime.
 
----
+## 1. Action identity và khả năng thực thi
 
-## 1. Stable Action Identifiers
+Action dùng stable string `action.<domain>.<verb>[.<qualifier>]`. Tên hiển thị/ngôn ngữ/shortcut
+không phải identity. Giữ ID khi đổi label, menu hoặc icon; đổi semantics cần review consumer.
 
-All user-facing commands, shortcuts, menus, and toolbar buttons map to hierarchical stable string identifiers:
+`ActionId` là danh mục tên, không phải danh sách feature đã chạy. Một action cần được register,
+có handler/enable-state đúng context và được gọi từ UI thực tế. Placeholder/status message hoặc
+một constant không chứng minh cloud/print/plugin/feature tương ứng đã hoàn thành.
 
-```
-action.<domain>.<verb>[.<qualifier>]
-```
+| Nhóm có binding trong source | Ví dụ và nơi kiểm tra |
+| --- | --- |
+| File/document | `action.file.new`, `.open`, `.save`, `.save_as`, `.import`, `.export`; kiểm workflow và native menu handlers. Design save/open dùng `.pr` theo C5. |
+| Edit | `action.edit.undo`, `.redo`, `.cut`, `.copy`, `.paste`, `.delete`; phải dùng document command hoặc clipboard workflow tương ứng. |
+| Tool | `action.tool.node_edit`, `.line`, `.polyline`, `.pen`, `.contour` có native registration; kiểm controller và đường pointer/key trước claim hành vi. |
+| Snap panel | `action.tool.snap_panel` hiện bind F3 để mở/đóng panel, không phải shortcut snap-master theo đề xuất cũ. |
+| Appearance/Properties | Các entry hiện hành đi qua workflow/controller; danh mục action không tự cấp scope group/layer mà model chưa hỗ trợ. |
 
-### Core Action Catalog
-- **File Domain (CorelDRAW Workflow Reference)**:
-  - `action.file.new` (Ctrl+N)
-  - `action.file.new_from_template`
-  - `action.file.open` (Ctrl+O)
-  - `action.file.open_cloud`
-  - `action.file.open_recent`
-  - `action.file.close` (Ctrl+W)
-  - `action.file.close_all`
-  - `action.file.save` (Ctrl+S)
-  - `action.file.save_as` (Ctrl+Shift+S)
-  - `action.file.save_cloud`
-  - `action.file.save_template`
-  - `action.file.revert`
-  - `action.file.acquire_image`
-  - `action.file.import` (Ctrl+I)
-  - `action.file.export` (Ctrl+E)
-  - `action.file.export_for`
-  - `action.file.publish_pdf`
-  - `action.file.print` (Ctrl+P)
-  - `action.file.print_preview`
-  - `action.file.properties`
-  - `action.file.exit` (Alt+F4)
-- **Home & Navigation Domain**:
-  - `action.view.home` (Trang chủ / Home Screen) (Alt+H)
-- **Edit Domain**:
-  - `action.edit.undo`
-  - `action.edit.redo`
-  - `action.edit.cut`
-  - `action.edit.copy`
-  - `action.edit.paste`
-  - `action.edit.delete`
-  - `action.edit.select_all`
-- **View Domain**:
-  - `action.view.zoom_in`
-  - `action.view.zoom_out`
-  - `action.view.zoom_100`
-  - `action.view.fit_all`
-  - `action.view.reload_ui` (Development mode)
-- **Tool Domain**:
-  - `action.tool.select`
-  - `action.tool.node_edit`
-  - `action.tool.pen`
-  - `action.tool.rectangle`
-  - `action.tool.ellipse`
-  - `action.tool.text`
-  - `action.tool.gradient` (`tool.gradient.activate`)
-- **Object Domain**:
-  - `action.object.group`
-  - `action.object.ungroup`
-  - `action.object.to_curves`
-  - `action.object.boolean_union`
-  - `action.object.boolean_difference`
-  - `action.object.fill.gradient.properties` (`object.fill.gradient.properties`)
-- **Gradient Domain**:
-  - `action.gradient.type`
-  - `action.gradient.stop.add`
-  - `action.gradient.stop.delete`
-  - `action.gradient.stop.color`
-  - `action.gradient.stop.position`
-  - `action.gradient.stop.opacity`
-  - `action.gradient.segment.midpoint`
-  - `action.gradient.geometry`
-  - `action.gradient.reverse`
-  - `action.gradient.fit`
-  - `action.gradient.spread`
-  - `action.gradient.apply`
-  - `action.gradient.cancel`
+Line/Polyline hiện register L/Shift+L; Pen/Node không có default shortcut trong đoạn native
+registration đó. Không sao chép F-key từ mockup hoặc doc cũ thành binding đã xác minh.
+Shortcut runtime còn phụ thuộc remapping, focus và tool session.
 
----
+## 2. Command routing và UI surfaces
 
+Menu, toolbox/toolbar, contextual property bar và Properties phải gọi chung semantics/validation/
+document scope và Undo. Mở panel/chọn tool là interaction state; thay thuộc tính source là
+document command. Multi-selection cần phân biệt mixed/disabled/unsupported; không ghi một giá trị
+mặc định đè lên toàn selection khi chỉ mở UI.
 
-## 2. Development-Time UI Reload Loop
+Feature spec ghi menu path, action ID, toolbox/toolbar, bar/Properties, phạm vi/trạng thái field,
+SVG icon, label, tooltip/focus help, status hint và hướng dẫn dùng. Mục không áp dụng ghi rõ.
+Áp [UI/UX standard](../docs/design/ui-ux-standard.md), [workspace layout](../docs/architecture/workspace-layout.md)
+và [feature UI template](../docs/design/feature-ui-template.md). Tài liệu này không đổi bố cục UI.
 
-To enable rapid UI iteration without long recompilations:
-- **Separation of View and Presenter**:
-  - Views are defined in `.ui` forms and styled via QSS (`themes/*.qss`).
-  - Presenters and Document Controllers bind to the View interface via generation-guarded signal/slot connections.
-- **Reload UI Mechanism (`action.view.reload_ui` / `F5`)**:
-  1. Re-parses `.ui` XML and `.qss` style sheets from disk.
-  2. Constructs the new widget tree in memory.
-  3. Swaps the central layout and reconnects presenters with incremented `ui_generation`.
-  4. Active document state, undo history, and viewport camera parameters are 100% preserved.
-- **Safety**:
-  - Development-time loose-file loading is compiled out in Release builds; production builds package verified binary Qt resources (`.rcc`).
+`ActionDispatcher` có register/dispatch, enable-state và shortcut map. Register/remap có logic
+giải quyết trùng binding; không giả định mọi tool key đi qua map này, vì native pointer/key
+handlers còn xử lý draft, text/IME và numeric fields. Luồng tương đương phải được kiểm tra cùng nhau.
 
----
+## 3. Focus, modifiers và draft
 
-## 3. Localization and Multilingual Support
+Text/IME/numeric controls sở hữu phím trong scope của mình; canvas chỉ nhận chord đúng context.
+Không nuốt AltGr/OS-reserved chords. Reserved Save As Ctrl+Shift+S phải được phân biệt với modifier
+đang giữ trong gesture. Một chord không được kích hoạt hai edit ngoài ý muốn.
 
-- **Catalog Structure**: Key-value JSON translation files located in `locales/`:
-  - `locales/en_US.json` (English - Base reference)
-  - `locales/vi_VN.json` (Vietnamese - Primary user locale)
-- **Key Hierarchy**: Keys strictly mirror action and UI component domains (e.g. `"action.file.save": "Lưu tệp"`).
-- **Runtime Language Switching**: Changing language re-translates existing action titles and tooltip labels dynamically without restarting the application.
+Snap preferences/direction/masks không dirty document; guide/geometry đã commit thì theo C2.
+Screen acquisition radius theo DIP, source/numeric constraints theo mm/C1. Tắt snap acquisition
+không tự xóa numeric locks hoặc hình học đã xác nhận. Draft cancel không tạo document Undo.
 
----
+Drawing semantics và các profile modifier được đặc tả tại [drawing semantics](drawing/semantics.json)
+và [drawing README](drawing/README.md). Các đề xuất như Ctrl/Shift constrain theo profile,
+Alt center/break handles, temporary Node và held-S bypass phải đối chiếu controller/shortcut
+handler trước khi công bố. Đây không phải xác nhận mọi tool đã triển khai toàn bộ profile.
+Pan/zoom trong draft cũng cần evidence lifecycle theo C2/C3.
 
-## 4. UI organization and visual guidance (documentation update 2026-10-16)
+## 4. Development reload: giới hạn thực tế
 
-The design authority is [ADR 0008](../docs/decisions/0008-editor-ui-organization.md),
-[UI/UX standard](../docs/design/ui-ux-standard.md) and [workspace layout](../docs/architecture/workspace-layout.md).
-The former mandatory Cyber HTML palette, fonts and fixed-pixel shell table are superseded as visual guidance.
-They are not new document/plugin/IPC fields; this documentation update does not change runtime tokens or geometry storage.
+Runtime hiện là Win32/C++ với native shell/rendering. `UIReloadController` còn tồn tại như helper
+kiểm chuỗi QSS/manifest, generation và handler-count; nó không chứng minh desktop parse Qt `.ui`,
+dựng/swap Qt widget tree hoặc đóng gói `.rcc` trong Release. Các file mockup/Qt/QSS là tư liệu hoặc
+prototype. F5 hot reload toàn giao diện và giữ nguyên mọi state chưa phải bảo đảm của runtime.
 
-Before UI implementation, complete the [feature UI template](../docs/design/feature-ui-template.md): primary menu,
-action IDs, toolbar/toolbox placement, contextual property bar, Properties sections, field scopes/states,
-SVG icons, concise labels, tooltip/focus help, status hints and usage help. Equivalent entry points share
-actions and values; opening a panel remains distinct from editing document properties.
-Use the workspace's DIP-based density guidance and the app's shared theme resources, not per-feature styling.
-Historical HTML/SVG mockups are references only and are not evidence of a working native UI.
+Thay đổi native layout/paint/controller đi qua quy trình build native hiện hành. Nếu phát triển
+reload thật, phải có rollback layout, focus/IME, selection, camera, draft/history và stale-handler
+gates riêng; không lấy thành công của helper làm evidence UX.
 
-This is a design/manual-review policy update. Action IDs/version, localization bindings, modifier precedence,
-document/source units and sections 1–3/5 remain unchanged. No runtime adoption or automated UX checker is claimed;
-implementation and any machine-consumed token/API change require their own scope, consumer review and validation.
+## 5. Ngôn ngữ
 
----
+`UILanguage` và native labels/callbacks hỗ trợ tiếng Việt/English. `set_language` có đường cập nhật
+shell; nhiều chuỗi vẫn viết trực tiếp ở source. Các catalog trong `locales/` không phải bằng chứng
+toàn bộ text/tooltip/modal được nạp từ JSON hoặc đổi ngôn ngữ đồng bộ ở mọi control.
 
-## 5. Drawing actions, snap controls, and modifier profiles (extension 1.1)
+Label ngắn và Unicode đúng; action ID/units/file schema giữ nguyên khi đổi ngôn ngữ. Chỉ công bố
+locale coverage sau audit reachable surfaces, fallback, text clipping, tooltip và focus/IME.
 
-New stable action IDs are added without claiming that a runtime handler exists:
+## 6. Automation và feature tương lai
 
-- Tools: `action.tool.line`, `action.tool.polyline`, `action.tool.pencil`, `action.tool.curvature`, and `action.tool.polygon`.
-- Snap and direction: `action.snap.toggle`, `action.snap.open_config`, `action.snap.select_all`, `action.snap.clear_all`, `action.snap.direction.free`, `action.snap.direction.ortho`, and `action.snap.direction.polar`.
-- Precision/session: `action.precision.hud.toggle`, `action.pen.finish`, `action.pen.cancel_draft`, `action.shape.from_center`, `action.shape.keep_center`, and `action.preference.input_profile.select`.
-- Individual snap options use `action.snap.option.<group>.<option>` with the option IDs in `contracts/drawing/semantics.json`. Unknown options are rejected rather than silently accepted.
+MCP/COM dùng semantic service và document guards, không click theo pixel/đọc label để đoán action.
+Xem [automation quickstart](../docs/development/automation-quickstart.md). Action ID UI và tool name
+automation là hai API có mapping tường minh, không được tự biến mọi action thành callable write.
+Nesting/CNC/3D/raster/AI dùng cùng workflow/Properties khi có scope phù hợp, dependency theo registry;
+plugin loader hoặc commercial licensing chưa được xác nhận chỉ từ menu/catalog.
 
-Snap masks, direction parameters, angle lists, modifier profiles, and per-tool overrides are user/workspace preferences and do not dirty or revise a document. Committed guides, construction geometry, and shape parameters are document data and follow C2 commands/undo. The master snap action only enables/disables automatic candidate acquisition; it preserves child masks and never disables numeric locks, explicit shape constraints, Ortho, Polar, or the active gesture modifier.
+## 7. Source authority và kiểm chứng
 
-Continuous modifier behavior is resolved by focus scope, active tool, pointer phase, then exact chord. Text controls and IME composition own their keys before the canvas; AltGr and OS-reserved chords are not interpreted as PikDraw modifiers. A chord performs one named action or one declared composite, not two overlapping actions. The action descriptor records context and conflict policy; no global handler may guess from only the key code.
+- [Action IDs](../apps/desktop/include/pikdraw/desktop/actions/action_id.hpp), [dispatcher](../apps/desktop/src/actions/action_dispatcher.cpp).
+- [Native registration](../apps/desktop/src/shell/native_window.cpp), [menu actions](../apps/desktop/src/shell/native_window_menu_actions.cpp), [shortcut handling](../apps/desktop/src/shell/native_window_shortcuts.cpp).
+- [Reload helper](../apps/desktop/src/development/ui_reload_controller.cpp).
+- Regression liên quan: [desktop shell](../apps/desktop/tests/test_desktop_shell.cpp), [drawing UI](../apps/desktop/tests/test_drawing_tool_ui.cpp), [Pen native shell](../apps/desktop/tests/test_pen_native_shell.cpp).
 
-Default profile semantics are stable: PikDraw/Illustrator-inspired uses Shift to constrain angle/aspect, Alt to draw a rectangle/ellipse from center, and Shift+Alt for both. Corel-inspired uses Ctrl to constrain, Shift for center, and Ctrl+Shift for both. Alt breaks Bézier handles in both profiles; with the constrain key it both constrains the handle angle and breaks the opposite handle. Temporary Node in an active Pen session uses Ctrl in the PikDraw/Illustrator-inspired profiles and held F2 in Corel-inspired. Shift+click adds/removes nodes in Node. Holding S in the canvas bypasses automatic snap only when no reserved command chord consumes S; it does not bypass numeric or geometric constraints. Space+drag and middle-button drag pan.
-
-F3 is the proposed default for the snap-master action. Other function-key defaults are not locked by this contract. The current native UI advertises F10 for Node, Shift+F2 for Zoom to Selection, and F8 for Text, while the current key handler does not implement all of those advertised bindings. D09 must reconcile the action map and product labels before assigning F-keys to Ortho/Polar/HUD. These actions remain available through named menu/command entries and user-remappable bindings. In particular, Corel Ctrl+Shift center-constrained drawing and the existing Ctrl+Shift+S Save As chord must be tested as a conflict vector; the reserved Save As chord wins when its terminal S key is pressed, so S-bypass is inactive for that exact chord. The user can turn snap off with the master action before the gesture.
+Source có binding không thay thế kiểm tra thao tác native. Lượt này cập nhật tài liệu, không chạy
+lại UI/native tests hoặc tuyên bố mọi menu/shortcut đạt acceptance.

@@ -1,41 +1,38 @@
-# PikDraw Native Tooling
+# Công cụ phát triển PikDraw
 
-Cung cấp công cụ phát triển, biên dịch và kiểm thử trực tiếp cho PikDraw.
+Quy tắc chung duy nhất: [AGENTS](../AGENTS.md).
+Cú pháp, hàng đợi giữa các task, cấu hình Auto, test theo target, retry và cleanup:
+[Native build](../docs/development/native-build.md).
+Không lặp workflow ở README module hoặc ADR.
 
-## 1. CLI điều phối nhanh (`tooling/pikdraw.ps1`)
+Runner chính là tooling/native/build.ps1. tooling/pikdraw.ps1 cung cấp alias:
 
-Entry point duy nhất cho các tác vụ thường ngày:
+| Alias | Tác vụ |
+| --- | --- |
+| doctor | Kiểm tra toolchain và registry |
+| build | Chuyển option sang native/build.ps1, gồm -Status/-Submit/-Wait |
+| test -TestTarget tên | Build và chạy test đã chọn; -AllTests mới chạy toàn bộ |
+| check -Suite architecture/contract | Kiểm tra Python, không build C++ |
+| check -Suite unit/all | Kiểm tra full suite tường minh |
+| run | Mở app canonical; build trước nếu chưa có |
+| package | Build và kiểm ZIP Release |
 
-- **Kiểm tra môi trường / sức khỏe repo:**
-  ```powershell
-  .\tooling\pikdraw.ps1 doctor
-  ```
-- **Biên dịch ứng dụng (Native Win32 C++20):**
-  ```powershell
-  .\tooling\pikdraw.ps1 build
-  ```
-- **Chạy kiểm thử C++:**
-  ```powershell
-  .\tooling\pikdraw.ps1 test
-  .\tooling\pikdraw.ps1 test -TestTarget test_svg_dxf_import
-  ```
-- **Chạy kiểm tra kiến trúc / hợp đồng:**
-  ```powershell
-  .\tooling\pikdraw.ps1 check -Suite architecture
-  ```
-- **Khởi chạy ứng dụng:**
-  ```powershell
-  .\tooling\pikdraw.ps1 run
-  ```
-- **Đóng gói bản phát hành:**
-  ```powershell
-  .\tooling\pikdraw.ps1 package
-  ```
+Ví dụ:
 
-## 2. Các script thực thi native (`tooling/native/`)
+~~~powershell
+.\tooling\pikdraw.ps1 build -Status
+.\tooling\pikdraw.ps1 test -Submit -TestTarget test_pikdraw_document_storage
+.\tooling\pikdraw.ps1 check -Suite architecture
+~~~
 
-- `build.ps1`: Trình chạy build native với chính sách single build tree (`build/win-dev`) và khóa build an toàn `.agent/native-build.lock`.
-- `check.ps1`: Trình kiểm tra tự động kiến trúc (architecture gates), fixtures và contracts.
-- `env.ps1`: Tự động tìm kiếm toolchain cục bộ (Python 3.10+, CMake, Ninja, Clang, MSVC).
-- `dev.ps1`: Khởi tạo môi trường phát triển Win32.
-- `package.ps1`: Đóng gói Release desktop, MCP sidecar và COM local server.
+Các lệnh task/context cũ đã bỏ, không trả kết quả thành công giả.
+Không cần task create/claim/lease hoặc context packet để sửa code.
+
+Trong native/: env.ps1 tìm Python/CMake/Ninja/compiler; build_broker.py và build_state.py
+là implementation nội bộ của runner, không là entrypoint thay thế.
+dev.ps1 -Build giữ cấu hình hiện có. package.ps1 dùng cùng runner và khóa build.
+clean-test-artifacts.ps1 chỉ dọn output đã xác minh, xem hướng dẫn chính trước khi Apply.
+
+Regression của runner ở tests/harness/test_native_workflow.py và test_build_broker.py.
+Suite dùng workspace tạm riêng và CMake/CTest giả để kiểm tra tranh chấp, scope, lỗi/retry;
+nó không xác nhận build hay UX của ứng dụng C++.

@@ -1,6 +1,12 @@
 #include "desktop_shell_test_helpers.hpp"
 #include "pikdraw/desktop/shell/native_style_color_model.hpp"
+#include "../src/shell/native_window_eyedropper.hpp"
+#include "../src/shell/native_window_raster_dock_metrics.hpp"
 #include "../src/shell/native_window_toolbox.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <string_view>
 
 void test_toolbox_customization_and_node_tool_slot();
 void test_compact_icons_and_hover_tooltips();
@@ -15,6 +21,7 @@ void test_ai_connections_settings_draft_state();
 void test_fill_and_stroke_opacity_properties();
 void test_contextual_object_action_capabilities();
 void test_solid_tools_boolean_knife_and_context_actions();
+void test_cut_erase_smart_tools_suite();
 void test_numeric_keyboard_input_property_bar();
 void test_corel_pick_auto_select_resume_guidelines_and_space_shortcut();
 void test_effects_toolbox_flyout();
@@ -53,6 +60,99 @@ void test_shell_geometry_resolutions_and_dpi() {
     assert(areaDpi200.y == 144.0);
 
     std::cout << "[PASS] test_shell_geometry_resolutions_and_dpi\n";
+}
+
+void test_eyedropper_bitmap_rows_follow_rendering() {
+    pikdraw::document::ImageObject image;
+    image.bounds_rect = {10.0, 20.0, 40.0, 20.0};
+    image.width_px = 4;
+    image.height_px = 2;
+    const auto top_left = pikdraw::desktop::eyedropper_detail::bitmap_pixel_address(
+        image, pikdraw::geometry::Transform2D::identity(), {15.0, 35.0});
+    assert(top_left && top_left->x == 0 && top_left->y == 0);
+    const auto bottom_left = pikdraw::desktop::eyedropper_detail::bitmap_pixel_address(
+        image, pikdraw::geometry::Transform2D::identity(), {15.0, 25.0});
+    assert(bottom_left && bottom_left->x == 0 && bottom_left->y == 1);
+    const auto translated = pikdraw::desktop::eyedropper_detail::bitmap_pixel_address(
+        image, pikdraw::geometry::Transform2D::translation(100.0, 200.0),
+        {115.0, 235.0});
+    assert(translated && translated->x == 0 && translated->y == 0);
+    assert(!pikdraw::desktop::eyedropper_detail::bitmap_pixel_address(
+        image, pikdraw::geometry::Transform2D::identity(), {50.0, 35.0}));
+    std::cout << "[PASS] eyedropper bitmap sample coordinates match image row order\n";
+}
+
+void test_eyedropper_readout_uses_one_exact_source_color_model() {
+    pikdraw::desktop::CanvasColorSample sample;
+    sample.color_value = pikdraw::color::RGBColor{
+        0.0, 165.0 / 255.0, 203.0 / 255.0, 1.0};
+    const auto rgb = pikdraw::desktop::eyedropper_detail::format_sample_color(sample);
+    assert(rgb == "RGB 0,165,203");
+
+    sample.color_value = pikdraw::color::CMYKColor{0.1234567, 0.19, 0.0, 0.2, 1.0};
+    const auto cmyk = pikdraw::desktop::eyedropper_detail::format_sample_color(sample);
+    assert(cmyk == "CMYK C12.34567 M19 Y0 K20");
+    std::cout << "[PASS] eyedropper readout shows one native RGB or CMYK model\n";
+}
+
+void test_raster_dock_tab_hit_testing_matches_paint_order() {
+    using namespace pikdraw::desktop::raster_dock_metrics;
+    constexpr int panel_left = 420;
+    constexpr int tab_width = (kInspectorPanelWidth -
+        kRasterAdjustmentTabGap * (kRasterAdjustmentTabCount - 1)) /
+        kRasterAdjustmentTabCount;
+    for (int tab = 0; tab < kRasterAdjustmentTabCount; ++tab) {
+        const int left = panel_left + tab * (tab_width + kRasterAdjustmentTabGap);
+        const int center = left + tab_width / 2;
+        assert(raster_adjustment_tab_from_x(center, panel_left) == tab + 1);
+    }
+    const auto gradient = get_toolbox_slot_info(ToolboxSlotId::Gradient);
+    const auto eyedropper = get_toolbox_slot_info(ToolboxSlotId::Eyedropper);
+    assert(gradient.group_id == 4);
+    assert(eyedropper.group_id == gradient.group_id);
+    std::cout << "[PASS] raster tabs and eyedropper flyout use displayed order\n";
+}
+
+void test_convert_to_bitmap_keeps_alpha_undo_and_reported_dpi_consistent() {
+    NativeWindow win(1440, 900);
+    const auto shape = win.workflow().add_rectangle(
+        100.0, 100.0, 10.0, 10.0, "#ff0000", "#000000", 0.5);
+    auto& selection = win.root().vector_controller().selection();
+    selection.select(shape);
+    assert(win.can_convert_selected_to_bitmap());
+    assert(win.convert_selected_to_bitmap(300));
+    const auto converted = win.root().document().current_snapshot();
+    assert(converted && converted->page().layers[0].object_ids.size() == 1);
+    const auto bitmap_id = converted->page().layers[0].object_ids.front();
+    const auto* bitmap_value = converted->objects().lookup_ref(bitmap_id);
+    assert(bitmap_value && std::holds_alternative<pikdraw::document::ImageObject>(*bitmap_value));
+    const auto& bitmap = std::get<pikdraw::document::ImageObject>(*bitmap_value);
+    assert(bitmap.width_px > 4 && bitmap.width_px < 2048);
+    assert(std::abs(bitmap.source.dpi_x - 300.0) < 1.0);
+    assert(!bitmap.source.dpi_from_source);
+    const auto pixels = bitmap.rgba_pixels();
+    assert(std::any_of(pixels.begin(), pixels.end(), [](uint32_t packed) {
+        return static_cast<uint8_t>(packed & 0xffu) == 0;
+    }));
+    assert(win.root().document().undo());
+    const auto restored = win.root().document().current_snapshot();
+    assert(restored && restored->objects().lookup_ref(shape));
+    assert(!restored->objects().lookup_ref(bitmap_id));
+
+    NativeWindow capped(1440, 900);
+    const auto large = capped.workflow().add_rectangle(
+        100.0, 100.0, 600.0, 40.0, "#00ff00", "", 0.0);
+    capped.root().vector_controller().selection().select(large);
+    assert(capped.convert_selected_to_bitmap(300));
+    const auto capped_snapshot = capped.root().document().current_snapshot();
+    assert(capped_snapshot);
+    const auto capped_id = capped_snapshot->page().layers[0].object_ids.front();
+    const auto* capped_obj = capped_snapshot->objects().lookup_ref(capped_id);
+    assert(capped_obj && std::holds_alternative<pikdraw::document::ImageObject>(*capped_obj));
+    const auto& capped_bitmap = std::get<pikdraw::document::ImageObject>(*capped_obj);
+    assert(capped_bitmap.width_px == 2048);
+    assert(capped_bitmap.source.dpi_x < 300.0);
+    std::cout << "[PASS] bitmap conversion preserves alpha/undo and reports capped DPI\n";
 }
 
 void test_workspace_state_and_capabilities() {
@@ -329,31 +429,24 @@ void test_vector_and_bitmap_interactions() {
     assert(img.width_px == 160 && img.height_px == 120);
     assert(img.pixels_rgba.size() == 160 * 120);
 
-    // 2. Knife Split on Bitmap with 30mm Separation
+    // 2. Vector Knife must reject a bitmap rather than split its bounding box.
     sel.clear();
     sel.select(bmp_id);
+    const auto before_bitmap_cut_revision = win.root().document().revision();
     bool split_ok = workflow.split_objects_by_line({70.0, 20.0}, {70.0, 140.0}, 30.0);
-    assert(split_ok);
-    assert(sel.count() == 2);
-
-    auto piece1_b = workflow.get_object_bounds(sel.selected_ids()[0]);
-    auto piece2_b = workflow.get_object_bounds(sel.selected_ids()[1]);
-    assert(piece1_b.has_value() && piece2_b.has_value());
-    // Verify physical gap between the two separated bitmap pieces
-    double left_right_edge = std::min(piece1_b->right(), piece2_b->right());
-    double right_left_edge = std::max(piece1_b->x, piece2_b->x);
-    double gap = right_left_edge - left_right_edge;
-    assert(gap >= 29.0); // Exact 30mm separation gap
-
-    // 3. Undo restores original bitmap
-    assert(workflow.undo());
+    assert(!split_ok);
+    assert(win.root().document().revision() == before_bitmap_cut_revision);
+    assert(sel.count() == 1 && sel.selected_ids().front() == bmp_id);
     assert(win.root().document().current_snapshot()->objects().get(bmp_id).has_value());
 
-    // 4. Vector on Bitmap Cookie-Cutter / Trim
+    // 3. The bitmap remains intact after the unsupported vector operation.
+    assert(win.root().document().current_snapshot()->objects().get(bmp_id).has_value());
+
+    // 4. Copy a bitmap crop using the vector object's bounding box.
     const auto cutter_id = workflow.add_ellipse(60.0, 60.0, 20.0, 20.0, "#00f2c3", "#0ea5e9", 2.0);
     assert(cutter_id != pikdraw::document::kInvalidObjectId);
-    bool trim_ok = workflow.trim_bitmap_with_vector(bmp_id, cutter_id, 25.0);
-    assert(trim_ok);
+    bool crop_ok = workflow.create_bitmap_crop_from_vector_bounds(bmp_id, cutter_id, 25.0);
+    assert(crop_ok);
 
     std::cout << "[PASS] test_vector_and_bitmap_interactions\n";
 }
@@ -421,8 +514,10 @@ void test_canvas_rulers_and_guidelines() {
         win.handle_mouse_down(menu_bar_x, 20);
         assert(win.open_menu_id() == static_cast<int>(MenuId::View));
     };
-    const int view_menu_x = 260;
-    const int toggle_guidelines_y = 38 + kMenuPadding + 4 * kMenuRowHeight +
+    const auto view_menu_x = [&win]() {
+        return win.language() == UILanguage::Vietnamese ? 300 : 260;
+    };
+    const int toggle_guidelines_y = 38 + kMenuPadding + 7 * kMenuRowHeight +
         kMenuSeparatorHeight + kMenuRowHeight / 2;
     const int clear_guidelines_y = toggle_guidelines_y + kMenuRowHeight;
 
@@ -437,7 +532,7 @@ void test_canvas_rulers_and_guidelines() {
     capture_shell_screenshot(win, "m1_pikdraw_guidelines_menu_toggle_vi.bmp");
 
     // Click Toggle Guidelines in the View menu.
-    win.handle_mouse_down(view_menu_x, toggle_guidelines_y);
+    win.handle_mouse_down(view_menu_x(), toggle_guidelines_y);
     assert(!win.is_menu_open());
     assert(!win.show_guidelines()); // Hidden!
 
@@ -447,7 +542,7 @@ void test_canvas_rulers_and_guidelines() {
 
     // Click Clear All Guidelines in the View menu.
     click_view_menu();
-    win.handle_mouse_down(view_menu_x, clear_guidelines_y);
+    win.handle_mouse_down(view_menu_x(), clear_guidelines_y);
     assert(!win.is_menu_open());
     assert(win.guideline_count() == 0); // All guidelines cleared!
 
@@ -536,7 +631,14 @@ void test_selection_borderless_default_stroke_none_and_hairline_zoom() {
     win.handle_mouse_move(end_x, end_y, 0);
     win.handle_mouse_up(end_x, end_y, 0);
 
-    // Shape must be created and automatically selected with Pick tool
+    // Giá»¯ nguyÃªn Rectangle tool Ä‘á»ƒ váº½ tiáº¿p
+    assert(win.active_tool() == 1);
+
+    // Click vÃ o Ä‘á»‘i tÆ°á»£ng vá»«a táº¡o -> Chuyá»ƒn sang Select tool (tool 0) vÃ  chá»n Ä‘á»‘i tÆ°á»£ng
+    const int center_x = (start_x + end_x) / 2;
+    const int center_y = (start_y + end_y) / 2;
+    win.handle_mouse_down(center_x, center_y, 0);
+    win.handle_mouse_up(center_x, center_y, 0);
     assert(win.active_tool() == 0);
     const auto& selection = win.root().vector_controller().selection();
     assert(selection.count() == 1);
@@ -790,9 +892,9 @@ void test_source_color_models_and_object_overprint_patches() {
 
 void test_toolbox_customization_and_node_tool_slot() {
     NativeWindow win(1440, 900);
-    // 1. Initial defaults: 12 slots visible.
+    // 1. Initial defaults: 14 slots visible.
     const auto initial_slots = win.visible_toolbox_slots();
-    assert(initial_slots.size() == 12);
+    assert(initial_slots.size() == 14);
     assert(initial_slots[0] == ToolboxSlotId::Pick);
     assert(initial_slots[1] == ToolboxSlotId::Node);
     assert(initial_slots[2] == ToolboxSlotId::QuickShapes);
@@ -804,33 +906,40 @@ void test_toolbox_customization_and_node_tool_slot() {
     assert(initial_slots[8] == ToolboxSlotId::DropShadow);
     assert(initial_slots[9] == ToolboxSlotId::Contour);
     assert(initial_slots[10] == ToolboxSlotId::Gradient);
-    assert(initial_slots[11] == ToolboxSlotId::Dimension);
+    assert(initial_slots[11] == ToolboxSlotId::Eyedropper);
+    assert(initial_slots[12] == ToolboxSlotId::Dimension);
+    assert(initial_slots[13] == ToolboxSlotId::Artboard);
 
     // 2. Direct click on Row 1 activates Node tool (tool 11).
     win.set_active_tool(0);
     assert(win.active_tool() == 0);
-    win.handle_mouse_down(26, 172); // Row 1: Node tool (y=172)
+    const auto rc_node = win.get_toolbox_slot_rect(1);
+    win.handle_mouse_down((rc_node.left + rc_node.right) / 2, (rc_node.top + rc_node.bottom) / 2);
     assert(win.active_tool() == 11);
 
     // Direct click on Row 0 activates Pick tool (tool 0).
-    win.handle_mouse_down(26, 130); // Row 0: Pick tool (y=130)
+    const auto rc_pick = win.get_toolbox_slot_rect(0);
+    win.handle_mouse_down((rc_pick.left + rc_pick.right) / 2, (rc_pick.top + rc_pick.bottom) / 2);
     assert(win.active_tool() == 0);
 
-    // Direct click on Row 11 activates Dimension tool (tool 10).
-    win.handle_mouse_down(26, 112 + 11 * 42 + 20); // Row 11: Dimension tool
+    // Direct click on Dimension tool activates Dimension tool (tool 10).
+    const int dim_idx = win.get_visible_index_for_slot(ToolboxSlotId::Dimension);
+    const auto rc_dim = win.get_toolbox_slot_rect(dim_idx);
+    win.handle_mouse_down((rc_dim.left + rc_dim.right) / 2, (rc_dim.top + rc_dim.bottom) / 2);
     assert(win.active_tool() == 10);
     win.set_active_tool(0);
 
-    // 3. Quick Customize [+] button at bottom of toolbox strip (row 12, y=636).
+    // 3. Quick Customize [+] button at bottom of toolbox strip.
     assert(!win.is_toolbox_customize_open());
-    win.handle_mouse_down(26, 636);
+    const auto rc_plus = win.get_toolbox_plus_rect(static_cast<int>(win.visible_toolbox_slots().size()));
+    win.handle_mouse_down((rc_plus.left + rc_plus.right) / 2, (rc_plus.top + rc_plus.bottom) / 2);
     assert(win.is_toolbox_customize_open());
 
     // Toggle slot visibility from Quick Customize flyout (e.g. toggle Knife, slot 6)
     assert(win.is_toolbox_slot_visible(ToolboxSlotId::Knife));
     win.toggle_toolbox_slot_visible(ToolboxSlotId::Knife);
     assert(!win.is_toolbox_slot_visible(ToolboxSlotId::Knife));
-    assert(win.visible_toolbox_slots().size() == 11);
+    assert(win.visible_toolbox_slots().size() == 13);
 
     // Pick tool is mandatory and cannot be hidden
     assert(win.is_toolbox_slot_visible(ToolboxSlotId::Pick));
@@ -843,15 +952,14 @@ void test_toolbox_customization_and_node_tool_slot() {
     assert(win.is_toolbox_edit_mode());
 
     // Clicking delete badge [-] on top right of a toolbox item (e.g. row 1 Node tool)
-    // Row 1 is Node: ty = 112 + 1*42 = 154. Delete badge is x >= 32, y <= ty + 16 (154..170).
     assert(win.is_toolbox_slot_visible(ToolboxSlotId::Node));
-    win.handle_mouse_down(38, 160); // Click [-] badge on row 1
+    win.handle_mouse_down(rc_node.right - 4, rc_node.top + 4); // Click [-] badge on row 1
     assert(!win.is_toolbox_slot_visible(ToolboxSlotId::Node));
-    assert(win.visible_toolbox_slots().size() == 10);
-
-    // Reset defaults restores all 12 slots and disables edit mode
-    win.reset_toolbox_slots_default();
     assert(win.visible_toolbox_slots().size() == 12);
+
+    // Reset defaults restores all 14 slots and disables edit mode
+    win.reset_toolbox_slots_default();
+    assert(win.visible_toolbox_slots().size() == 14);
     assert(win.is_toolbox_slot_visible(ToolboxSlotId::Node));
     assert(win.is_toolbox_slot_visible(ToolboxSlotId::Knife));
     assert(win.is_toolbox_slot_visible(ToolboxSlotId::Dimension));
@@ -869,9 +977,20 @@ void test_toolbox_customization_and_node_tool_slot() {
     std::cout << "[PASS] test_toolbox_customization_and_node_tool_slot\n";
 }
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2 && std::string_view(argv[1]) == "--bitmap-eyedropper-regressions") {
+        test_eyedropper_bitmap_rows_follow_rendering();
+        test_eyedropper_readout_uses_one_exact_source_color_model();
+        test_raster_dock_tab_hit_testing_matches_paint_order();
+        test_convert_to_bitmap_keeps_alpha_undo_and_reported_dpi_consistent();
+        return 0;
+    }
     std::cout << "=== Running Desktop Shell Tests ===\n";
     test_shell_geometry_resolutions_and_dpi();
+    test_eyedropper_bitmap_rows_follow_rendering();
+    test_eyedropper_readout_uses_one_exact_source_color_model();
+    test_raster_dock_tab_hit_testing_matches_paint_order();
+    test_convert_to_bitmap_keeps_alpha_undo_and_reported_dpi_consistent();
     test_workspace_state_and_capabilities();
     test_status_bar_metrics_and_vietnamese_labels();
     test_native_window_theme_and_settings_state();
@@ -884,6 +1003,7 @@ int main() {
     test_delete_key_shortcut_and_undo_redo();
     test_group_ungroup_and_isolation_mode();
     test_solid_tools_boolean_knife_and_context_actions();
+    test_cut_erase_smart_tools_suite();
     test_contextual_object_action_capabilities();
     test_vector_and_bitmap_interactions();
     test_typography_inline_editing_ribbon_and_table();

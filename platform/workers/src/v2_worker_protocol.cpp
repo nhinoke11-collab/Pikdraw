@@ -6,14 +6,17 @@
 #include "pikdraw/interop/adapters/eps_worker_adapter.hpp"
 #include "pikdraw/interop/adapters/pdf_worker_adapter.hpp"
 #include "pikdraw/interop/adapters/raster_worker_adapter.hpp"
+#include "pikdraw/interop/adapters/raster_image_decoder.hpp"
 #include "pikdraw/interop/adapters/svg_worker_adapter.hpp"
 #include "pikdraw/workers/source_snapshot.hpp"
+#include "pikdraw/workers/job_object.hpp"
 
 #include <bcrypt.h>
 #include <algorithm>
 #include <array>
 #include <cstring>
 #include <limits>
+#include <mutex>
 #include <optional>
 #include <vector>
 
@@ -177,19 +180,193 @@ bool ReadVerifiedSource(HANDLE source, uint64_t expected_bytes, std::vector<uint
     return SetFilePointerEx(source, beginning, nullptr, FILE_BEGIN) != FALSE;
 }
 
+class HandleRasterByteSource final : public RasterByteSource {
+public:
+    HandleRasterByteSource(HANDLE handle, uint64_t size) noexcept
+        : handle_(handle), size_(size) {}
+
+    uint64_t size_bytes() const noexcept override { return size_; }
+
+    bool read_at(uint64_t offset, std::span<uint8_t> destination,
+                 size_t& bytes_read) const noexcept override {
+        bytes_read = 0;
+        if (handle_ == INVALID_HANDLE_VALUE || offset > size_) return false;
+        const uint64_t available = size_ - offset;
+        const size_t requested = static_cast<size_t>((std::min)(
+            available, static_cast<uint64_t>(destination.size())));
+        std::lock_guard lock(mutex_);
+        if (offset > static_cast<uint64_t>(std::numeric_limits<LONGLONG>::max()))
+            return false;
+        LARGE_INTEGER position{};
+        position.QuadPart = static_cast<LONGLONG>(offset);
+        if (!SetFilePointerEx(handle_, position, nullptr, FILE_BEGIN)) return false;
+        while (bytes_read < requested) {
+            const size_t remaining = requested - bytes_read;
+            const DWORD count = static_cast<DWORD>((std::min)(
+                remaining, static_cast<size_t>(MAXDWORD)));
+            DWORD received = 0;
+            if (!ReadFile(handle_, destination.data() + bytes_read, count, &received, nullptr) ||
+                received == 0)
+                return false;
+            bytes_read += received;
+        }
+        return true;
+    }
+
+private:
+    HANDLE handle_{INVALID_HANDLE_VALUE};
+    uint64_t size_{0};
+    mutable std::mutex mutex_;
+};
+
 bool SendError(HANDLE output, uint32_t sequence, uint32_t code, const char* diagnostic);
+
+bool SendRasterImportProposal(HANDLE output, const V2ImportBegin& request,
+                              const RasterByteSource& source,
+                              uint32_t request_sequence, uint32_t frame_index,
+                              bool preserve_16bit,
+                              uint32_t& next_response_sequence,
+                              SystemMemoryPressureWaiter& memory_waiter) {
+    constexpr size_t chunk_target_bytes = IPC_V2_MAX_FRAME_BYTES - 256;
+    V2ProposalChunk chunk;
+    chunk.job = request.job;
+    Sha256Accumulator digest_accumulator;
+    if (!digest_accumulator.Initialize()) return false;
+    uint64_t stream_bytes = 0;
+    uint32_t next_record_ordinal = 0;
+    uint32_t chunks_sent = 0;
+    size_t record_count = 0;
+    std::string diagnostic;
+
+    const auto ram_wait_diagnostic = [](SystemMemoryWaitResult result) {
+        return result == SystemMemoryWaitResult::TimedOut
+            ? "system RAM pressure wait timed out after 5 minutes"
+            : "raster import could not continue while waiting for system RAM";
+    };
+    const auto flush_chunk = [&]() {
+        if (chunk.record_count == 0 || chunks_sent >= IPC_MAX_OBJECTS) return false;
+        chunk.checksum_crc32 = V2ProposalRecordsCrc32(chunk.canonical_record_bytes);
+        const auto packet = SerializeV2ProposalChunk(
+            chunk, request_sequence + chunks_sent);
+        if (packet.empty() || !WritePacket(output, packet)) return false;
+        ++chunks_sent;
+        next_response_sequence = request_sequence + chunks_sent;
+        chunk = {};
+        chunk.job = request.job;
+        chunk.chunk_ordinal = chunks_sent;
+        chunk.first_record_ordinal = next_record_ordinal;
+        return true;
+    };
+    const RasterImportRecordSink sink = [&](CanonicalImportRecord&& record) {
+        if (record_count >= IPC_MAX_OBJECTS ||
+            record.payload.size() > IPC_V2_MAX_RECORD_BYTES ||
+            record.payload.size() > chunk_target_bytes - 8) {
+            diagnostic = "raster proposal exceeds the structural record size limit";
+            return false;
+        }
+        const size_t framed_bytes = 8 + record.payload.size();
+        if (framed_bytes > std::numeric_limits<uint64_t>::max() - stream_bytes) {
+            diagnostic = "raster proposal byte count overflow";
+            return false;
+        }
+        if (chunk.record_count > 0 &&
+            chunk.canonical_record_bytes.size() + framed_bytes > chunk_target_bytes &&
+            !flush_chunk()) {
+            if (diagnostic.empty()) diagnostic = "raster proposal chunk could not be sent";
+            return false;
+        }
+        const auto memory_result = memory_waiter.WaitForHeadroom(
+            framed_bytes);
+        if (memory_result != SystemMemoryWaitResult::Ready) {
+            diagnostic = ram_wait_diagnostic(memory_result);
+            return false;
+        }
+        const size_t record_start = chunk.canonical_record_bytes.size();
+        if (!AppendV2ProposalRecord(chunk.canonical_record_bytes,
+                static_cast<uint16_t>(record.type), record.payload)) {
+            diagnostic = "raster proposal record could not be framed";
+            return false;
+        }
+        if (!digest_accumulator.Update(std::span<const uint8_t>(
+                chunk.canonical_record_bytes.data() + record_start, framed_bytes))) {
+            diagnostic = "raster proposal digest could not be updated";
+            return false;
+        }
+        stream_bytes += framed_bytes;
+        ++chunk.record_count;
+        ++next_record_ordinal;
+        ++record_count;
+        return true;
+    };
+
+    bool built = false;
+    try {
+        const RasterMemoryAdmissionCallback memory_admission =
+            [&](uint64_t additional_bytes, std::string& memory_diagnostic) {
+                if (additional_bytes > SIZE_MAX) {
+                    memory_diagnostic = "raster staging allocation exceeds process address space";
+                    return false;
+                }
+                const auto waited = memory_waiter.WaitForHeadroom(
+                    static_cast<size_t>(additional_bytes));
+                if (waited == SystemMemoryWaitResult::Ready) return true;
+                memory_diagnostic = ram_wait_diagnostic(waited);
+                return false;
+            };
+        built = StreamRasterImportRecords(
+            source, frame_index, sink, diagnostic, memory_admission, preserve_16bit);
+    } catch (...) {
+        diagnostic = "Raster proposal stream allocation failed.";
+    }
+    if (!built) {
+        const char* fallback = "Raster source rejected by its decoder, record representation, or system RAM admission";
+        return SendError(output, request_sequence + chunks_sent, 3,
+                         diagnostic.empty() ? fallback : diagnostic.c_str());
+    }
+    if (record_count == 0 || !flush_chunk()) return false;
+
+    IpcV2Digest digest{};
+    if (!digest_accumulator.Finish(digest)) return false;
+    V2ImportEnd end;
+    end.job = request.job;
+    end.chunk_count = chunks_sent;
+    end.record_count = static_cast<uint32_t>(record_count);
+    end.canonical_bytes = stream_bytes;
+    end.canonical_sha256 = digest;
+    end.fidelity_report_complete = true;
+    const auto packet = SerializeV2ImportEnd(
+        end, request_sequence + chunks_sent);
+    return !packet.empty() && WritePacket(output, packet);
+}
 
 template <typename Builder>
 bool SendImportProposal(HANDLE output, const V2ImportBegin& request,
                         std::vector<uint8_t>& source,
                         uint32_t request_sequence, std::string_view format,
-                        size_t max_records, Builder&& build_records) {
+                        size_t max_records, uint32_t& next_response_sequence,
+                        SystemMemoryPressureWaiter& memory_waiter,
+                        Builder&& build_records) {
     const uint32_t first_response_sequence = request_sequence;
     std::vector<CanonicalImportRecord> records;
     std::string diagnostic;
+    const auto wait_for_memory = [&](uint64_t bytes) {
+        if (bytes > SIZE_MAX) {
+            diagnostic = "import staging allocation exceeds process address space";
+            return false;
+        }
+        const auto waited = memory_waiter.WaitForHeadroom(
+            static_cast<size_t>(bytes));
+        if (waited == SystemMemoryWaitResult::Ready) return true;
+        diagnostic = waited == SystemMemoryWaitResult::TimedOut
+            ? "system RAM pressure wait timed out after 5 minutes"
+            : "import could not continue while waiting for system RAM";
+        return false;
+    };
+    if (!wait_for_memory(1))
+        return SendError(output, next_response_sequence, 3, diagnostic.c_str());
     if (!build_records(source, records, diagnostic)) {
         const char* fallback = format == "DXF" ? "DXF subset rejected source"
-            : format == "RASTER" ? "Raster source rejected by the bounded RGBA8 profile"
+            : format == "RASTER" ? "Raster source rejected by the RGBA8 representation or decoder"
                                   : "SVG subset rejected source";
         return SendError(output, request_sequence, 3,
                          diagnostic.empty() ? fallback : diagnostic.c_str());
@@ -200,6 +377,8 @@ bool SendImportProposal(HANDLE output, const V2ImportBegin& request,
     // Adapter records own all decoded values now; release the source snapshot before
     // framing and transmitting the proposal to avoid holding both full representations.
     std::vector<uint8_t>().swap(source);
+    if (!wait_for_memory(1))
+        return SendError(output, next_response_sequence, 3, diagnostic.c_str());
 
     constexpr size_t chunk_target_bytes = IPC_V2_MAX_FRAME_BYTES - 256;
     uint64_t stream_bytes = 0;
@@ -231,20 +410,21 @@ bool SendImportProposal(HANDLE output, const V2ImportBegin& request,
     uint32_t next_record_ordinal = 0;
     uint32_t chunks_sent = 0;
     try {
-        chunk.canonical_record_bytes.reserve(256 * 1024);
         for (auto& record : records) {
             const size_t framed_bytes = 8 + record.payload.size();
+            if (!wait_for_memory(framed_bytes))
+                return SendError(output, next_response_sequence, 3, diagnostic.c_str());
             if (chunk.record_count > 0 && chunk.canonical_record_bytes.size() + framed_bytes > chunk_target_bytes) {
                 chunk.checksum_crc32 = V2ProposalRecordsCrc32(chunk.canonical_record_bytes);
                 const auto packet = SerializeV2ProposalChunk(
                     chunk, first_response_sequence + chunks_sent);
                 if (packet.empty() || !WritePacket(output, packet)) return false;
                 ++chunks_sent;
+                next_response_sequence = first_response_sequence + chunks_sent;
                 chunk = {};
                 chunk.job = request.job;
                 chunk.chunk_ordinal = chunks_sent;
                 chunk.first_record_ordinal = next_record_ordinal;
-                chunk.canonical_record_bytes.reserve(256 * 1024);
             }
             const size_t record_start = chunk.canonical_record_bytes.size();
             if (!AppendV2ProposalRecord(chunk.canonical_record_bytes, static_cast<uint16_t>(record.type), record.payload)) {
@@ -263,6 +443,7 @@ bool SendImportProposal(HANDLE output, const V2ImportBegin& request,
             chunk, first_response_sequence + chunks_sent);
         if (packet.empty() || !WritePacket(output, packet)) return false;
         ++chunks_sent;
+        next_response_sequence = first_response_sequence + chunks_sent;
     } catch (...) {
         return false;
     }
@@ -281,6 +462,25 @@ bool SendImportProposal(HANDLE output, const V2ImportBegin& request,
 
 bool SendError(HANDLE output, uint32_t sequence, uint32_t code, const char* diagnostic) {
     return WritePacket(output, SerializeV2ErrorResponse({code, diagnostic}, sequence));
+}
+
+bool SendMemoryWaitStatus(HANDLE output, uint32_t sequence,
+                          const V2JobIdentity& job, size_t required_bytes) {
+    using namespace pikdraw::interop;
+    const auto identity = SerializeV2FrameIdentityPrefix(
+        V2FrameIdentity{job.source_token, job.generation});
+    std::array<uint8_t, IPC_V2_IDENTITY_PREFIX_BYTES + sizeof(uint64_t)> payload{};
+    std::copy(identity.begin(), identity.end(), payload.begin());
+    const auto required = static_cast<uint64_t>(required_bytes);
+    for (size_t index = 0; index < sizeof(required); ++index)
+        payload[IPC_V2_IDENTITY_PREFIX_BYTES + index] =
+            static_cast<uint8_t>((required >> (index * 8)) & 0xff);
+    try {
+        const auto packet = SerializeV2Frame(MessageType::V2MemoryWait, sequence, payload);
+        return !packet.empty() && WritePacket(output, packet);
+    } catch (...) {
+        return false;
+    }
 }
 
 bool Negotiate(HANDLE output, const IpcHeader& header, std::span<const uint8_t> packet,
@@ -309,6 +509,13 @@ bool HandleImportBegin(
     constexpr uint32_t required = IPC_V2_FEATURE_SOURCE_HANDLE | IPC_V2_FEATURE_CHECKED_PROPOSAL_STREAM;
     const auto request = DeserializeV2ImportBegin(packet);
     if (!request || header.sequence_id != 1 || (accepted_features & required) != required) return false;
+    uint32_t next_response_sequence = header.sequence_id;
+    SystemMemoryPressureWaiter memory_waiter(
+        kSystemMemoryPressureWaitLimit, {}, {}, {},
+        [&](size_t required_bytes) {
+            (void)SendMemoryWaitStatus(output, next_response_sequence,
+                                       request->job, required_bytes);
+        });
     if (!VerifySource(source, *request)) return SendError(output, header.sequence_id, 2, "source capability hash mismatch");
     const bool is_svg = request->format_id == "SVG" &&
         FormatCapabilities::is_worker_import_profile_supported(
@@ -329,9 +536,10 @@ bool HandleImportBegin(
             "CDR image preservation requires raster source asset support");
     }
     if (request->source_page_index &&
-        ((accepted_features & IPC_V2_FEATURE_SOURCE_PAGE_SELECTION) == 0 || (!is_pdf && !is_ai))) {
+        ((accepted_features & IPC_V2_FEATURE_SOURCE_PAGE_SELECTION) == 0 ||
+         (!is_pdf && !is_ai && request->format_id != "TIFF"))) {
         return SendError(output, header.sequence_id, 1,
-            "source page selection is supported only by the PDF page import profile");
+            "source page selection is supported only by PDF/AI and TIFF import profiles");
     }
     const bool is_png = request->format_id == "PNG";
     const bool is_jpeg = request->format_id == "JPEG";
@@ -346,50 +554,92 @@ bool HandleImportBegin(
             "no native editable import adapter is registered for this format/profile");
     }
     const uint64_t source_limit = is_dxf ? DxfImporter::kMaxSourceBytes :
-        static_cast<uint64_t>(SIZE_MAX);
+        is_raster ? kRasterRecordByteLimit : static_cast<uint64_t>(SIZE_MAX);
     if (request->source_bytes > source_limit) {
-        return SendError(output, header.sequence_id, 4, "source exceeds the addressable size for this worker build");
-    }
-    std::vector<uint8_t> source_bytes;
-    if (!ReadVerifiedSource(source, request->source_bytes, source_bytes)) {
-        return SendError(output, header.sequence_id, 2, "source capability read failed");
-    }
-    if (is_dxf) {
-        return SendImportProposal(output, *request, source_bytes, header.sequence_id,
-            "DXF", DxfImporter::kMaxObjects * 4 + 2, BuildDxfImportRecords);
+        return SendError(output, header.sequence_id, 4, is_raster
+            ? "raster source exceeds the 32-bit raster-source record representation"
+            : "source exceeds the addressable size for this worker build");
     }
     if (is_raster) {
+        HandleRasterByteSource raster_source(source, request->source_bytes);
+        return SendRasterImportProposal(output, *request, raster_source,
+            header.sequence_id, request->source_page_index.value_or(0),
+            (accepted_features & IPC_V2_FEATURE_RASTER_RGBA16LE) != 0,
+            next_response_sequence, memory_waiter);
+    }
+    const auto source_wait = memory_waiter.WaitForHeadroom(
+        static_cast<size_t>(request->source_bytes));
+    if (source_wait != SystemMemoryWaitResult::Ready)
+        return SendError(output, header.sequence_id, 3,
+            source_wait == SystemMemoryWaitResult::TimedOut
+                ? "system RAM pressure wait timed out after 5 minutes"
+                : "import could not continue while waiting for system RAM");
+    std::vector<uint8_t> source_bytes;
+    if (!ReadVerifiedSource(source, request->source_bytes, source_bytes))
+        return SendError(output, header.sequence_id, 2, "source capability read failed");
+    if (is_dxf) {
         return SendImportProposal(output, *request, source_bytes, header.sequence_id,
-            "RASTER", IPC_MAX_OBJECTS, BuildRasterImportRecords);
+            "DXF", DxfImporter::kMaxObjects * 4 + 2, next_response_sequence,
+            memory_waiter, BuildDxfImportRecords);
     }
     if (is_pdf || is_ai) {
         const bool ai_representation = is_ai;
         const std::string_view profile = request->profile_id;
         const bool page_set_profile = profile == "pdf-page-set-v3" ||
             profile == "ai-pdf-compatible-page-set-v3";
+        const bool source_manifest_profile = profile == "pdf-print-source-v1";
         const std::optional<uint32_t> source_page_index = request->source_page_index;
         return SendImportProposal(output, *request, source_bytes, header.sequence_id,
-            is_ai ? "AI" : "PDF", IPC_MAX_OBJECTS,
-            [ai_representation, page_set_profile, source_page_index](std::span<const uint8_t> bytes,
+            is_ai ? "AI" : "PDF", IPC_MAX_OBJECTS, next_response_sequence,
+            memory_waiter,
+            [ai_representation, page_set_profile, source_manifest_profile,
+             source_page_index](std::span<const uint8_t> bytes,
                                 std::vector<CanonicalImportRecord>& records,
                                 std::string& diagnostic) {
                 if (page_set_profile)
                     return BuildPdfPageSetImportRecords(bytes, ai_representation, records,
                                                         diagnostic, source_page_index);
+                if (source_manifest_profile)
+                    return BuildPdfSourceManifestImportRecords(bytes, records,
+                                                                diagnostic, source_page_index);
                 return BuildPdfImportRecords(bytes, ai_representation, records, diagnostic,
                     source_page_index.value_or(0));
             });
     }
     if (is_eps) {
         return SendImportProposal(output, *request, source_bytes, header.sequence_id,
-            "EPS", IPC_MAX_OBJECTS, BuildEpsImportRecords);
+            "EPS", IPC_MAX_OBJECTS, next_response_sequence, memory_waiter,
+            BuildEpsImportRecords);
     }
     if (is_cdr) {
         return SendImportProposal(output, *request, source_bytes, header.sequence_id,
-            "CorelDRAW", IPC_MAX_OBJECTS, BuildCdrImportRecords);
+            "CorelDRAW", IPC_MAX_OBJECTS, next_response_sequence, memory_waiter,
+            [&memory_waiter](std::vector<uint8_t>& bytes,
+               std::vector<CanonicalImportRecord>& records,
+               std::string& diagnostic) {
+                return BuildCdrImportRecordsAndReleaseSource(bytes, records,
+                    diagnostic,
+                    [&memory_waiter](uint64_t additional_bytes,
+                                     std::string& memory_diagnostic) {
+                        if (additional_bytes > SIZE_MAX) {
+                            memory_diagnostic =
+                                "CDR raster staging exceeds process address space";
+                            return false;
+                        }
+                        const auto waited = memory_waiter.WaitForHeadroom(
+                            static_cast<size_t>(additional_bytes));
+                        if (waited == SystemMemoryWaitResult::Ready) return true;
+                        memory_diagnostic = waited == SystemMemoryWaitResult::TimedOut
+                            ? "system RAM pressure wait timed out after 5 minutes"
+                            : "CDR import could not continue while waiting for system RAM";
+                        return false;
+                    });
+            });
     }
     return SendImportProposal(output, *request, source_bytes, header.sequence_id,
-        "SVG", SvgImporter::kMaxObjects * 2 + 2, BuildSvgImportRecords);
+        "SVG", SvgImporter::kMaxObjects * 2 + 2, next_response_sequence,
+        memory_waiter,
+        BuildSvgImportRecords);
 }
 
 bool SendFixtureStream(HANDLE output, const V2ImportBegin& request, uint32_t sequence, std::string_view mode) {
@@ -401,6 +651,10 @@ bool SendFixtureStream(HANDLE output, const V2ImportBegin& request, uint32_t seq
         oversized.payload_bytes = static_cast<uint32_t>(IPC_V2_MAX_FRAME_BYTES + 1);
         return WriteExact(output, &oversized, sizeof(oversized));
     }
+
+    if (mode == "--test-v2-stream-memory-wait" &&
+        !SendMemoryWaitStatus(output, sequence, request.job, 1))
+        return false;
 
     const std::array<uint8_t, 3> sample_payload{0x11, 0x22, 0x33};
     V2ProposalChunk chunk;

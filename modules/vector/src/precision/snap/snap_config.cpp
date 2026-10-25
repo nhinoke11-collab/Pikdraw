@@ -211,6 +211,16 @@ SnapConfiguration::SnapConfiguration() {
     state_.configured_priorities = default_priorities();
 }
 
+bool SnapConfiguration::option_enabled(SnapOption option) const noexcept {
+    if (!valid_option(option)) return false;
+    return state_.options[index_of(option)];
+}
+
+bool SnapConfiguration::group_enabled(SnapGroup group) const noexcept {
+    if (!valid_group(group)) return false;
+    return state_.groups[index_of(group)];
+}
+
 bool SnapConfiguration::bump_generation() noexcept {
     if (state_.generation == std::numeric_limits<uint64_t>::max()) return false;
     ++state_.generation;
@@ -226,6 +236,20 @@ bool SnapConfiguration::set_master_enabled(bool enabled) noexcept {
 
 bool SnapConfiguration::toggle_master() noexcept {
     return set_master_enabled(!state_.master_enabled);
+}
+
+bool SnapConfiguration::set_smart_guides_enabled(bool enabled) noexcept {
+    if (state_.smart_guides_enabled == enabled) return true;
+    if (!bump_generation()) return false;
+    state_.smart_guides_enabled = enabled;
+    return true;
+}
+
+bool SnapConfiguration::set_smart_spacing_enabled(bool enabled) noexcept {
+    if (state_.smart_spacing_enabled == enabled) return true;
+    if (!bump_generation()) return false;
+    state_.smart_spacing_enabled = enabled;
+    return true;
 }
 
 bool SnapConfiguration::set_group_enabled(SnapGroup group, bool enabled) noexcept {

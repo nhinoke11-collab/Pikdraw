@@ -86,10 +86,11 @@ void test_typography_inline_editing_ribbon_and_table() {
     // ----------------------------------------------------
     sel.clear();
     sel.select(text_id);
+    const auto before_text_cut_revision = win.root().document().revision();
     bool split_text_ok = workflow.split_objects_by_line({50.0, 30.0}, {50.0, 90.0}, 20.0);
-    assert(split_text_ok);
-    assert(sel.count() == 2);
-    assert(workflow.undo());
+    assert(!split_text_ok);
+    assert(win.root().document().revision() == before_text_cut_revision);
+    assert(win.root().document().current_snapshot()->objects().get(text_id).has_value());
 
     // ----------------------------------------------------
     // Item 4: On-Canvas Inline Editing, Typography Ribbon & Corel Table
@@ -242,7 +243,7 @@ void test_typography_inline_editing_ribbon_and_table() {
     assert(updated.font.postscript_name == "Keep-Imported-Face-Identity");
     assert(updated.frame_width_mm == 34 && updated.line_spacing_ratio == 1.4);
     assert(updated.transform.tx == 7 && updated.transform.ty == 9);
-    const auto native_path = shell_screenshot_path("canvas-text-serialization.pikdraw");
+    const auto native_path = shell_screenshot_path("canvas-text-serialization.pr");
     assert(editor.workflow().save_native(native_path.string()));
     assert(editor.workflow().open_native(native_path.string()));
     auto reopened = std::get<pikdraw::document::TextObject>(
@@ -275,7 +276,8 @@ void test_typography_inline_editing_ribbon_and_table() {
     NativeWindow text_scale(1440, 900);
     text_scale.set_active_tool(4);
     auto& scale_camera = text_scale.root().renderer().camera();
-    scale_camera.set_viewport_size(1440 - 352, 900 - 148);
+    const auto scale_canvas = text_scale.canvas_rect(1440, 900);
+    scale_camera.set_viewport_size(scale_canvas.right - scale_canvas.left, scale_canvas.bottom - scale_canvas.top);
     text_scale.start_inline_text_editing({50, 80});
     for (char value : std::string("Scale directly"))
         text_scale.handle_inline_text_character(static_cast<unsigned char>(value));
@@ -326,7 +328,8 @@ void test_typography_inline_editing_ribbon_and_table() {
     NativeWindow live_scale(1440, 900);
     live_scale.set_active_tool(4);
     auto& live_camera = live_scale.root().renderer().camera();
-    live_camera.set_viewport_size(1440 - 352, 900 - 148);
+    const auto live_canvas = live_scale.canvas_rect(1440, 900);
+    live_camera.set_viewport_size(live_canvas.right - live_canvas.left, live_canvas.bottom - live_canvas.top);
     live_scale.start_inline_text_editing({60, 80});
     for (char value : std::string("Keep proportions"))
         live_scale.handle_inline_text_character(static_cast<unsigned char>(value));
@@ -457,7 +460,8 @@ void test_typography_inline_editing_ribbon_and_table() {
     NativeWindow frame(1440, 900);
     frame.set_active_tool(4);
     auto& camera = frame.root().renderer().camera();
-    camera.set_viewport_size(1440 - 352, 900 - 148);
+    const auto frame_canvas = frame.canvas_rect(1440, 900);
+    camera.set_viewport_size(frame_canvas.right - frame_canvas.left, frame_canvas.bottom - frame_canvas.top);
     const auto canvas_point = [&](pikdraw::geometry::Point2D world) {
         const auto screen = camera.world_to_screen(world);
         return std::pair<int, int>{72 + static_cast<int>(screen.x), 122 + static_cast<int>(screen.y)};
@@ -492,7 +496,8 @@ void test_typography_inline_editing_ribbon_and_table() {
     NativeWindow live_edit(1440, 900);
     live_edit.set_active_tool(4);
     auto& live_cam = live_edit.root().renderer().camera();
-    live_cam.set_viewport_size(1440 - 352, 900 - 148);
+    const auto live_edit_canvas = live_edit.canvas_rect(1440, 900);
+    live_cam.set_viewport_size(live_edit_canvas.right - live_edit_canvas.left, live_edit_canvas.bottom - live_edit_canvas.top);
     live_edit.start_inline_text_editing({50, 70});
     for (char c : std::string("Corel live move"))
         live_edit.handle_inline_text_character(static_cast<unsigned char>(c));
@@ -546,7 +551,8 @@ void test_typography_inline_editing_ribbon_and_table() {
     NativeWindow para_win(1440, 900);
     para_win.set_active_tool(4);
     auto& p_cam = para_win.root().renderer().camera();
-    p_cam.set_viewport_size(1440 - 352, 900 - 148);
+    const auto para_canvas = para_win.canvas_rect(1440, 900);
+    p_cam.set_viewport_size(para_canvas.right - para_canvas.left, para_canvas.bottom - para_canvas.top);
     const auto p_canvas_point = [&](pikdraw::geometry::Point2D world) {
         const auto screen = p_cam.world_to_screen(world);
         return std::pair<int, int>{72 + static_cast<int>(screen.x), 122 + static_cast<int>(screen.y)};

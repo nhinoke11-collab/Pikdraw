@@ -52,6 +52,7 @@ struct PathDrawingResult {
 
 class PathDrawingTool {
 public:
+    void set_destination_owner(document::ObjectId id) noexcept { destination_owner_=id; }
     [[nodiscard]] PathDrawingResult begin(
         PathDrawingKind kind, document::SnapshotPtr base,
         size_t target_layer = 0,
@@ -106,6 +107,7 @@ private:
 
     PathDrawingKind kind_{PathDrawingKind::Line};
     size_t target_layer_{0};
+    document::ObjectId destination_owner_{0};
     interaction::ToolSessionLimits limits_{};
     interaction::ToolSession session_;
     document::SnapshotPtr base_snapshot_;

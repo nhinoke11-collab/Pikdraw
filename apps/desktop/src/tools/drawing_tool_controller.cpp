@@ -63,6 +63,17 @@ DrawingToolController::DrawingToolController(document::Document& document,
     if (!loaded.diagnostic.empty()) message_ = loaded.diagnostic;
 }
 
+vector::precision::numeric::ParseOptions DrawingToolController::numeric_parse_options() const noexcept {
+    const auto snapshot = document_.current_snapshot();
+    const auto unit = snapshot ? snapshot->page().display_length_unit
+                               : preferences_.default_length_unit;
+    return vector::precision::numeric::ParseOptions{'.', unit};
+}
+
+vector::tools::line::PathDrawingResult DrawingToolController::update_numeric_candidate() {
+    return path_.update_numeric_candidate(numeric_entry_, numeric_parse_options());
+}
+
 bool DrawingToolController::activate(PathDrawingKind kind) {
     cancel();
     const auto snapshot = document_.current_snapshot();
@@ -167,7 +178,7 @@ void DrawingToolController::pointer_move(geometry::Point2D point,
     const auto configuration = snap_config_.snapshot();
     if (index_) {
         SnapQueryContext query_context;
-        query_context.active_layer_index = 0;
+        query_context.active_layer_index = active_layer_index_;
         query_context.current_stamp = stamp;
         query_context.previous_acquisition = snap_acquisition_;
         query = index_->query(stamp, point, transform, configuration,
@@ -206,6 +217,54 @@ void DrawingToolController::pointer_move(geometry::Point2D point,
         snap_kind_ = query.chosen->key.kind;
 }
 
+DrawingSnapQuery DrawingToolController::query_snap_point(
+    geometry::Point2D point, const rendering::Camera2D& camera, double dpi_scale,
+    const char* tool_context, std::optional<document::ObjectId> current_source,
+    std::optional<geometry::Point2D> external_anchor) {
+    using namespace vector::precision::snap;
+    DrawingSnapQuery output;
+    output.result.status = SnapQueryStatus::InvalidInput;
+    if (!point.is_finite() || !std::isfinite(dpi_scale) || dpi_scale <= 0.0 ||
+        !tool_context || !*tool_context) return output;
+    const auto snapshot = document_.current_snapshot();
+    if (!snapshot) return output;
+    if (requested_document_id_ != snapshot->document_id() ||
+        requested_epoch_ != snapshot->epoch() || requested_revision_ != snapshot->revision()) {
+        requested_document_id_ = snapshot->document_id();
+        requested_epoch_ = snapshot->epoch();
+        requested_revision_ = snapshot->revision();
+        index_.reset();
+        index_ready_ = false;
+        index_failed_ = false;
+        snap_acquisition_.reset();
+        index_worker_.request(snapshot);
+    }
+    const auto built = index_worker_.result_for(*snapshot);
+    if (built.index) {
+        index_ = built.index;
+        index_ready_ = true;
+    } else if (!built.diagnostic.empty()) {
+        message_ = built.diagnostic;
+        index_failed_ = true;
+    }
+
+    output.camera = camera_transform(camera, dpi_scale);
+    output.stamp = make_stamp(*snapshot, tool_context);
+    output.result.status = SnapQueryStatus::Success;
+    output.result.stamp = output.stamp;
+    if (!index_) return output;
+    SnapQueryContext context;
+    context.active_layer_index = active_layer_index_;
+    context.current_source_object_id = current_source;
+    context.current_stamp = output.stamp;
+    context.previous_acquisition = snap_acquisition_;
+    context.external_anchor = external_anchor;
+    output.result = index_->query(output.stamp, point, output.camera,
+        snap_config_.snapshot(), capabilities_, context);
+    snap_acquisition_ = output.result.next_acquisition;
+    return output;
+}
+
 PathDrawingResult DrawingToolController::confirm_candidate() {
     const auto result = path_.confirm_candidate(document_);
     numeric_entry_.clear();
@@ -222,7 +281,7 @@ PathDrawingResult DrawingToolController::confirm_candidate() {
 PathDrawingResult DrawingToolController::enter() {
     PathDrawingResult result;
     if (!numeric_entry_.empty()) {
-        result = path_.update_numeric_candidate(numeric_entry_);
+        result = update_numeric_candidate();
         if (result.code == vector::tools::line::PathDrawingResultCode::PreviewUpdated)
             result = path_.confirm_candidate(document_);
         if (result.code == vector::tools::line::PathDrawingResultCode::Applied || result.committed())
@@ -261,10 +320,12 @@ bool DrawingToolController::append_numeric_character(char value) {
         return false;
     numeric_entry_.push_back(value);
     if (path_.points().empty()) {
-        message_ = "First numeric point: #x;y mm";
+        const auto unit = numeric_parse_options().default_length_unit;
+        message_ = "First numeric point: #x;y " +
+            std::string(geometry::units::length_unit_suffix(unit));
         return true;
     }
-    const auto result = path_.update_numeric_candidate(numeric_entry_);
+    const auto result = update_numeric_candidate();
     update_result_message(result);
     return true;
 }
@@ -275,7 +336,7 @@ void DrawingToolController::erase_numeric_character() {
         snap_kind_.reset();
         return;
     }
-    const auto result = path_.update_numeric_candidate(numeric_entry_);
+    const auto result = update_numeric_candidate();
     update_result_message(result);
 }
 
@@ -284,24 +345,120 @@ void DrawingToolController::clear_numeric_entry() noexcept {
 }
 
 bool DrawingToolController::toggle_snap_master() {
-    if (!snap_config_.toggle_master()) return false;
-    preferences_.snap_master = snap_config_.snapshot().master_enabled;
+    return set_snap_master_enabled(!snap_config_.master_enabled());
+}
+
+bool DrawingToolController::toggle_snap_objects() {
+    return set_snap_group_enabled(SnapGroup::ObjectPoints,
+        !snap_config_.group_enabled(SnapGroup::ObjectPoints));
+}
+
+bool DrawingToolController::toggle_snap_page() {
+    using vector::precision::snap::SnapOption;
+    const bool enabled = !snap_config_.option_enabled(SnapOption::PageEdge);
+    if (!snap_config_.set_option_enabled(SnapOption::PageEdge, enabled) ||
+        !snap_config_.set_option_enabled(SnapOption::PageCenter, enabled)) return false;
+    preferences_.snap_page = enabled;
     save_preferences();
     return true;
 }
 
+bool DrawingToolController::toggle_snap_guides() {
+    using vector::precision::snap::SnapOption;
+    const bool enabled = !snap_config_.option_enabled(SnapOption::Guide);
+    if (!snap_config_.set_option_enabled(SnapOption::Guide, enabled)) return false;
+    preferences_.snap_guides = enabled;
+    save_preferences();
+    return true;
+}
+
+bool DrawingToolController::toggle_smart_guides() {
+    return set_smart_guides_enabled(!snap_config_.snapshot().smart_guides_enabled);
+}
+
+bool DrawingToolController::toggle_smart_spacing() {
+    return set_smart_spacing_enabled(!snap_config_.snapshot().smart_spacing_enabled);
+}
+
 bool DrawingToolController::toggle_snap_option(SnapOption option) {
-    const bool enabled = !snap_config_.snapshot().options[static_cast<size_t>(option)];
-    if (!snap_config_.set_option_enabled(option, enabled)) return false;
-    auto& value = preferences_;
-    switch (option) {
-    case SnapOption::Endpoint: value.endpoint = enabled; break;
-    case SnapOption::SourceNode: value.source_node = enabled; break;
-    case SnapOption::LineMidpoint: value.line_midpoint = enabled; break;
-    case SnapOption::Grid: value.grid = enabled; break;
-    default: return false;
+    return set_snap_option_enabled(option,
+        !snap_config_.snapshot().options[static_cast<size_t>(option)]);
+}
+
+bool DrawingToolController::set_snap_master_enabled(bool enabled) {
+    if (!snap_config_.set_master_enabled(enabled)) return false;
+    preferences_.snap_master = enabled;
+    save_preferences();
+    return true;
+}
+
+bool DrawingToolController::set_snap_group_enabled(SnapGroup group, bool enabled) {
+    if (!snap_config_.set_group_enabled(group, enabled)) return false;
+    const auto index = static_cast<size_t>(group);
+    if (index >= preferences_.snap_groups.size()) return false;
+    preferences_.snap_groups[index] = enabled;
+    if (group == SnapGroup::ObjectPoints) preferences_.snap_objects = enabled;
+    save_preferences();
+    return true;
+}
+
+bool DrawingToolController::set_snap_option_enabled(SnapOption option, bool enabled) {
+    if (static_cast<size_t>(option) >= vector::precision::snap::kSnapOptionCount)
+        return false;
+    using vector::precision::snap::SnapOption;
+    if (option == SnapOption::PageEdge || option == SnapOption::PageCenter) {
+        if (!snap_config_.set_option_enabled(SnapOption::PageEdge, enabled) ||
+            !snap_config_.set_option_enabled(SnapOption::PageCenter, enabled)) return false;
+        preferences_.snap_page = enabled;
+        preferences_.snap_options[static_cast<size_t>(SnapOption::PageEdge)] = enabled;
+        preferences_.snap_options[static_cast<size_t>(SnapOption::PageCenter)] = enabled;
+    } else {
+        if (!snap_config_.set_option_enabled(option, enabled)) return false;
+        preferences_.snap_options[static_cast<size_t>(option)] = enabled;
+        switch (option) {
+        case SnapOption::Endpoint: preferences_.endpoint = enabled; break;
+        case SnapOption::SourceNode: preferences_.source_node = enabled; break;
+        case SnapOption::LineMidpoint: preferences_.line_midpoint = enabled; break;
+        case SnapOption::Grid: preferences_.grid = enabled; break;
+        case SnapOption::Guide: preferences_.snap_guides = enabled; break;
+        default: break;
+        }
     }
     save_preferences();
+    return true;
+}
+
+bool DrawingToolController::set_smart_guides_enabled(bool enabled) {
+    if (!snap_config_.set_smart_guides_enabled(enabled)) return false;
+    preferences_.smart_guides = enabled;
+    save_preferences();
+    return true;
+}
+
+bool DrawingToolController::set_smart_spacing_enabled(bool enabled) {
+    if (!snap_config_.set_smart_spacing_enabled(enabled)) return false;
+    preferences_.smart_spacing = enabled;
+    save_preferences();
+    return true;
+}
+
+bool DrawingToolController::set_snap_radii(double acquire_radius_dip,
+                                            double release_radius_dip,
+                                            std::string* diagnostic) {
+    if (!snap_config_.set_hysteresis(acquire_radius_dip, release_radius_dip)) {
+        if (diagnostic) *diagnostic = "Snap radii must be 1–64 DIP with release >= acquire";
+        return false;
+    }
+    const auto old_acquire = preferences_.snap_acquire_radius_dip;
+    const auto old_release = preferences_.snap_release_radius_dip;
+    preferences_.snap_acquire_radius_dip = acquire_radius_dip;
+    preferences_.snap_release_radius_dip = release_radius_dip;
+    if (!save_drawing_preferences(preference_path_, preferences_, diagnostic)) {
+        preferences_.snap_acquire_radius_dip = old_acquire;
+        preferences_.snap_release_radius_dip = old_release;
+        (void)snap_config_.set_hysteresis(old_acquire, old_release);
+        return false;
+    }
     return true;
 }
 
@@ -348,6 +505,39 @@ DrawingToolVisualState DrawingToolController::visual_state() const {
     state.profile = preferences_.profile;
     state.snap_config = snap_config_.snapshot();
     return state;
+}
+
+DrawingToolGridSnapStatus DrawingToolController::grid_snap_status() const noexcept {
+    using vector::precision::snap::SnapOption;
+    using vector::precision::snap::group_for_option;
+    const auto grid = snap_config_.grid_settings();
+    return {snap_config_.master_enabled() &&
+                snap_config_.group_enabled(group_for_option(SnapOption::Grid)) &&
+                snap_config_.option_enabled(SnapOption::Grid),
+            grid.spacing_mm};
+}
+
+bool DrawingToolController::set_grid_spacing_mm(double spacing_mm,
+                                                std::string* diagnostic) {
+    if (!is_valid_grid_spacing_mm(spacing_mm)) {
+        if (diagnostic) *diagnostic = "Grid spacing is outside the supported range";
+        return false;
+    }
+    const auto previous_grid = snap_config_.grid_settings();
+    const double previous_preference = preferences_.grid_spacing_mm;
+    auto grid = snap_config_.grid_settings();
+    grid.spacing_mm = spacing_mm;
+    if (!snap_config_.set_grid(grid)) {
+        if (diagnostic) *diagnostic = "Grid configuration could not be updated";
+        return false;
+    }
+    preferences_.grid_spacing_mm = spacing_mm;
+    if (!save_drawing_preferences(preference_path_, preferences_, diagnostic)) {
+        preferences_.grid_spacing_mm = previous_preference;
+        (void)snap_config_.set_grid(previous_grid);
+        return false;
+    }
+    return true;
 }
 
 void DrawingToolController::suspend_for_pan() noexcept {

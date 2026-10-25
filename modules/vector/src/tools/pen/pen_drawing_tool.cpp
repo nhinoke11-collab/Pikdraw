@@ -1,3 +1,4 @@
+#include "pikdraw/document/commands/clip_commands.hpp"
 #include "pikdraw/vector/tools/pen/pen_drawing_tool.hpp"
 
 #include "pikdraw/document/commands/path_commands.hpp"
@@ -457,8 +458,8 @@ PenDrawingResult PenDrawingTool::finish_path(document::Document& document,
     try {
         object.set_authoring_source(std::move(source));
         const auto result = document.execute_command(
-            std::make_unique<document::AddObjectCommand>(
-                std::move(object), target_layer_));
+            std::make_unique<document::AddScopedObjectCommand>(
+                std::move(object), destination_owner_, target_layer_));
         if (!result.success)
             return {PenDrawingResultCode::CommandFailed, result.error_message, {}, {}};
     } catch (const std::exception& error) {

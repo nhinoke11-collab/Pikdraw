@@ -75,12 +75,63 @@ JsonValue tool_definition_with_schema(std::string_view name, std::string_view ti
         {"description", std::string(description)}, {"inputSchema", std::move(input_schema)}};
 }
 
+JsonValue rectangle_input_schema() {
+    const auto unit = JsonValue::Object{{"type", "string"}, {"enum", JsonValue::Array{
+        JsonValue("mm"), JsonValue("cm"), JsonValue("m"), JsonValue("in"),
+        JsonValue("ft"), JsonValue("yd"), JsonValue("pt"), JsonValue("pc")}}};
+    JsonValue::Array millimeter_fields{
+        JsonValue("x_mm"), JsonValue("y_mm"), JsonValue("width_mm"), JsonValue("height_mm")};
+    JsonValue::Array typed_fields{
+        JsonValue("length_unit"), JsonValue("x"), JsonValue("y"),
+        JsonValue("width"), JsonValue("height")};
+    const auto excludes = [](std::initializer_list<std::string_view> fields) {
+        JsonValue::Array alternatives;
+        for (const auto field : fields)
+            alternatives.emplace_back(JsonValue::Object{{"required", JsonValue::Array{JsonValue(std::string(field))}}});
+        return JsonValue::Object{{"anyOf", std::move(alternatives)}};
+    };
+    JsonValue::Object mm_form{{"required", millimeter_fields}};
+    mm_form["not"] = excludes({"length_unit", "x", "y", "width", "height", "stroke_width"});
+    JsonValue::Object typed_form{{"required", typed_fields}};
+    typed_form["not"] = excludes({"x_mm", "y_mm", "width_mm", "height_mm", "stroke_width_mm"});
+    JsonValue::Array forms{JsonValue(std::move(mm_form)), JsonValue(std::move(typed_form))};
+    return JsonValue::Object{
+        {"type", "object"},
+        {"properties", JsonValue::Object{
+            {"session_handle", JsonValue::Object{{"type", "string"}}},
+            {"request_id", JsonValue::Object{{"type", "string"}, {"minLength", 1}, {"maxLength", 128}}},
+            {"idempotency_key", JsonValue::Object{{"type", "string"}, {"minLength", 1}, {"maxLength", 128}}},
+            {"expected_epoch", JsonValue::Object{{"type", "string"}, {"pattern", "^[0-9]+$"}}},
+            {"expected_revision", JsonValue::Object{{"type", "string"}, {"pattern", "^[0-9]+$"}}},
+            {"x_mm", JsonValue::Object{{"type", "number"}}}, {"y_mm", JsonValue::Object{{"type", "number"}}},
+            {"width_mm", JsonValue::Object{{"type", "number"}, {"exclusiveMinimum", 0}}},
+            {"height_mm", JsonValue::Object{{"type", "number"}, {"exclusiveMinimum", 0}}},
+            {"x", JsonValue::Object{{"type", "number"}}}, {"y", JsonValue::Object{{"type", "number"}}},
+            {"width", JsonValue::Object{{"type", "number"}, {"exclusiveMinimum", 0}}},
+            {"height", JsonValue::Object{{"type", "number"}, {"exclusiveMinimum", 0}}},
+            {"length_unit", unit},
+            {"layer_index", JsonValue::Object{{"type", "integer"}, {"minimum", 0}, {"maximum", 4095}}},
+            {"stroke_width_mm", JsonValue::Object{{"type", "number"}, {"minimum", 0}}},
+            {"stroke_width", JsonValue::Object{{"type", "number"}, {"minimum", 0}}}}},
+        {"required", JsonValue::Array{JsonValue("session_handle"), JsonValue("request_id"),
+            JsonValue("idempotency_key"), JsonValue("expected_epoch"), JsonValue("expected_revision")}},
+        {"oneOf", std::move(forms)}, {"additionalProperties", false}};
+}
+
 JsonValue batch_input_schema(bool write) {
     const auto rgb_color = schema(R"json({"type":"object","properties":{"model":{"const":"rgb"},"channels":{"type":"object","properties":{"r":{"type":"number","minimum":0,"maximum":1},"g":{"type":"number","minimum":0,"maximum":1},"b":{"type":"number","minimum":0,"maximum":1},"alpha":{"type":"number","minimum":0,"maximum":1}},"required":["r","g","b"],"additionalProperties":false}},"required":["model","channels"],"additionalProperties":false})json");
+    const auto unit = JsonValue::Object{{"type", "string"}, {"enum", JsonValue::Array{
+        JsonValue("mm"), JsonValue("cm"), JsonValue("m"), JsonValue("in"),
+        JsonValue("ft"), JsonValue("yd"), JsonValue("pt"), JsonValue("pc")}}};
     const auto point = JsonValue::Object{{"type", "object"},
         {"properties", JsonValue::Object{{"x_mm", JsonValue::Object{{"type", "number"}}},
                                          {"y_mm", JsonValue::Object{{"type", "number"}}}}},
         {"required", JsonValue::Array{JsonValue("x_mm"), JsonValue("y_mm")}},
+        {"additionalProperties", false}};
+    const auto typed_point = JsonValue::Object{{"type", "object"},
+        {"properties", JsonValue::Object{{"x", JsonValue::Object{{"type", "number"}}},
+                                         {"y", JsonValue::Object{{"type", "number"}}}}},
+        {"required", JsonValue::Array{JsonValue("x"), JsonValue("y")}},
         {"additionalProperties", false}};
     const auto make_operation = [](JsonValue::Object properties, JsonValue::Array required) {
         return JsonValue::Object{{"type", "object"}, {"properties", std::move(properties)},
@@ -88,18 +139,41 @@ JsonValue batch_input_schema(bool write) {
     };
     const auto string_id = JsonValue::Object{{"type", "string"}, {"pattern", "^[0-9]+$"}};
     JsonValue::Array operation_variants;
-    operation_variants.emplace_back(make_operation({
+    JsonValue::Object rectangle_batch_schema = make_operation({
         {"op", JsonValue::Object{{"enum", JsonValue::Array{JsonValue("object.create_rectangle"), JsonValue("object.create_ellipse")}}}},
         {"client_ref", JsonValue::Object{{"type", "string"}, {"minLength", 1}, {"maxLength", 64}}},
         {"name", JsonValue::Object{{"type", "string"}, {"maxLength", 256}}},
         {"x_mm", JsonValue::Object{{"type", "number"}}}, {"y_mm", JsonValue::Object{{"type", "number"}}},
         {"width_mm", JsonValue::Object{{"type", "number"}, {"exclusiveMinimum", 0}}},
         {"height_mm", JsonValue::Object{{"type", "number"}, {"exclusiveMinimum", 0}}},
+        {"x", JsonValue::Object{{"type", "number"}}}, {"y", JsonValue::Object{{"type", "number"}}},
+        {"width", JsonValue::Object{{"type", "number"}, {"exclusiveMinimum", 0}}},
+        {"height", JsonValue::Object{{"type", "number"}, {"exclusiveMinimum", 0}}},
+        {"length_unit", unit},
         {"layer_index", JsonValue::Object{{"type", "integer"}, {"minimum", 0}, {"maximum", 4095}}},
         {"fill", rgb_color}, {"stroke", rgb_color},
-        {"stroke_width_mm", JsonValue::Object{{"type", "number"}, {"minimum", 0}}}},
-        {"op", "x_mm", "y_mm", "width_mm", "height_mm"}));
-    operation_variants.emplace_back(make_operation({
+        {"stroke_width_mm", JsonValue::Object{{"type", "number"}, {"minimum", 0}}},
+        {"stroke_width", JsonValue::Object{{"type", "number"}, {"minimum", 0}}}}, {"op"});
+    rectangle_batch_schema["oneOf"] = JsonValue::Array{
+        JsonValue::Object{{"required", JsonValue::Array{JsonValue("x_mm"), JsonValue("y_mm"),
+            JsonValue("width_mm"), JsonValue("height_mm")}},
+            {"not", JsonValue::Object{{"anyOf", JsonValue::Array{
+                JsonValue::Object{{"required", JsonValue::Array{JsonValue("length_unit")}}},
+                JsonValue::Object{{"required", JsonValue::Array{JsonValue("x")}}},
+                JsonValue::Object{{"required", JsonValue::Array{JsonValue("y")}}},
+                JsonValue::Object{{"required", JsonValue::Array{JsonValue("width")}}},
+                JsonValue::Object{{"required", JsonValue::Array{JsonValue("height")}}},
+                JsonValue::Object{{"required", JsonValue::Array{JsonValue("stroke_width")}}}}}}}},
+        JsonValue::Object{{"required", JsonValue::Array{JsonValue("length_unit"), JsonValue("x"),
+            JsonValue("y"), JsonValue("width"), JsonValue("height")}},
+            {"not", JsonValue::Object{{"anyOf", JsonValue::Array{
+                JsonValue::Object{{"required", JsonValue::Array{JsonValue("x_mm")}}},
+                JsonValue::Object{{"required", JsonValue::Array{JsonValue("y_mm")}}},
+                JsonValue::Object{{"required", JsonValue::Array{JsonValue("width_mm")}}},
+                JsonValue::Object{{"required", JsonValue::Array{JsonValue("height_mm")}}},
+                JsonValue::Object{{"required", JsonValue::Array{JsonValue("stroke_width_mm")}}}}}}}}};
+    operation_variants.emplace_back(std::move(rectangle_batch_schema));
+    JsonValue::Object text_batch_schema = make_operation({
         {"op", JsonValue::Object{{"const", "object.create_text"}}},
         {"client_ref", JsonValue::Object{{"type", "string"}, {"minLength", 1}, {"maxLength", 64}}},
         {"name", JsonValue::Object{{"type", "string"}, {"maxLength", 256}}},
@@ -112,44 +186,82 @@ JsonValue batch_input_schema(bool write) {
         {"alignment", JsonValue::Object{{"enum", JsonValue::Array{JsonValue("left"), JsonValue("center"), JsonValue("right")}}}},
         {"underline", JsonValue::Object{{"type", "boolean"}}},
         {"x_mm", JsonValue::Object{{"type", "number"}}}, {"y_mm", JsonValue::Object{{"type", "number"}}},
+        {"x", JsonValue::Object{{"type", "number"}}}, {"y", JsonValue::Object{{"type", "number"}}},
+        {"length_unit", unit},
         {"layer_index", JsonValue::Object{{"type", "integer"}, {"minimum", 0}, {"maximum", 4095}}},
-        {"fill", rgb_color}}, {"op", "text", "font_family", "x_mm", "y_mm"}));
-    operation_variants.emplace_back(make_operation({
+        {"fill", rgb_color}}, {"op", "text", "font_family"});
+    text_batch_schema["oneOf"] = JsonValue::Array{
+        JsonValue::Object{{"required", JsonValue::Array{JsonValue("x_mm"), JsonValue("y_mm")}},
+            {"not", JsonValue::Object{{"anyOf", JsonValue::Array{
+                JsonValue::Object{{"required", JsonValue::Array{JsonValue("length_unit")}}},
+                JsonValue::Object{{"required", JsonValue::Array{JsonValue("x")}}},
+                JsonValue::Object{{"required", JsonValue::Array{JsonValue("y")}}}}}}}},
+        JsonValue::Object{{"required", JsonValue::Array{JsonValue("length_unit"), JsonValue("x"), JsonValue("y")}},
+            {"not", JsonValue::Object{{"anyOf", JsonValue::Array{
+                JsonValue::Object{{"required", JsonValue::Array{JsonValue("x_mm")}}},
+                JsonValue::Object{{"required", JsonValue::Array{JsonValue("y_mm")}}}}}}}}};
+    operation_variants.emplace_back(std::move(text_batch_schema));
+    JsonValue::Object line_batch_schema = make_operation({
         {"op", JsonValue::Object{{"const", "object.create_line"}}},
         {"client_ref", JsonValue::Object{{"type", "string"}, {"minLength", 1}, {"maxLength", 64}}},
         {"name", JsonValue::Object{{"type", "string"}, {"maxLength", 256}}},
         {"points_mm", JsonValue::Object{{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", point}}},
+        {"points", JsonValue::Object{{"type", "array"}, {"minItems", 2}, {"maxItems", 2}, {"items", typed_point}}},
+        {"length_unit", unit},
         {"layer_index", JsonValue::Object{{"type", "integer"}, {"minimum", 0}, {"maximum", 4095}}},
         {"fill", rgb_color}, {"stroke", rgb_color},
-        {"stroke_width_mm", JsonValue::Object{{"type", "number"}, {"minimum", 0}}}},
-        {"op", "points_mm"}));
-    operation_variants.emplace_back(make_operation({
+        {"stroke_width_mm", JsonValue::Object{{"type", "number"}, {"minimum", 0}}},
+        {"stroke_width", JsonValue::Object{{"type", "number"}, {"minimum", 0}}}}, {"op"});
+    const JsonValue line_point_forms = JsonValue::Array{
+        JsonValue::Object{{"required", JsonValue::Array{JsonValue("points_mm")}},
+            {"not", JsonValue::Object{{"anyOf", JsonValue::Array{
+                JsonValue::Object{{"required", JsonValue::Array{JsonValue("length_unit")}}},
+                JsonValue::Object{{"required", JsonValue::Array{JsonValue("points")}}},
+                JsonValue::Object{{"required", JsonValue::Array{JsonValue("stroke_width")}}}}}}}},
+        JsonValue::Object{{"required", JsonValue::Array{JsonValue("length_unit"), JsonValue("points")}},
+            {"not", JsonValue::Object{{"anyOf", JsonValue::Array{
+                JsonValue::Object{{"required", JsonValue::Array{JsonValue("points_mm")}}},
+                JsonValue::Object{{"required", JsonValue::Array{JsonValue("stroke_width_mm")}}}}}}}}};
+    line_batch_schema["oneOf"] = line_point_forms;
+    operation_variants.emplace_back(std::move(line_batch_schema));
+    JsonValue::Object polyline_batch_schema = make_operation({
         {"op", JsonValue::Object{{"const", "object.create_polyline"}}},
         {"client_ref", JsonValue::Object{{"type", "string"}, {"minLength", 1}, {"maxLength", 64}}},
         {"name", JsonValue::Object{{"type", "string"}, {"maxLength", 256}}},
         {"points_mm", JsonValue::Object{{"type", "array"}, {"minItems", 2}, {"maxItems", 4096}, {"items", point}}},
+        {"points", JsonValue::Object{{"type", "array"}, {"minItems", 2}, {"maxItems", 4096}, {"items", typed_point}}},
+        {"length_unit", unit},
         {"closed", JsonValue::Object{{"type", "boolean"}}},
         {"layer_index", JsonValue::Object{{"type", "integer"}, {"minimum", 0}, {"maximum", 4095}}},
         {"fill", rgb_color}, {"stroke", rgb_color},
-        {"stroke_width_mm", JsonValue::Object{{"type", "number"}, {"minimum", 0}}}},
-        {"op", "points_mm"}));
+        {"stroke_width_mm", JsonValue::Object{{"type", "number"}, {"minimum", 0}}},
+        {"stroke_width", JsonValue::Object{{"type", "number"}, {"minimum", 0}}}}, {"op"});
+    polyline_batch_schema["oneOf"] = line_point_forms;
+    operation_variants.emplace_back(std::move(polyline_batch_schema));
     operation_variants.emplace_back(make_operation({
         {"op", JsonValue::Object{{"const", "object.transform"}}},
         {"target_ids", JsonValue::Object{{"type", "array"}, {"minItems", 1}, {"maxItems", 256},
             {"uniqueItems", true}, {"items", string_id}}},
         {"translate_x_mm", JsonValue::Object{{"type", "number"}}},
         {"translate_y_mm", JsonValue::Object{{"type", "number"}}},
+        {"translate_x", JsonValue::Object{{"type", "number"}}},
+        {"translate_y", JsonValue::Object{{"type", "number"}}},
         {"scale_x", JsonValue::Object{{"type", "number"}, {"minimum", 0.0001}, {"maximum", 10000}}},
         {"scale_y", JsonValue::Object{{"type", "number"}, {"minimum", 0.0001}, {"maximum", 10000}}},
         {"rotation_degrees", JsonValue::Object{{"type", "number"}, {"minimum", -360000}, {"maximum", 360000}}},
-        {"pivot_x_mm", JsonValue::Object{{"type", "number"}}}, {"pivot_y_mm", JsonValue::Object{{"type", "number"}}}},
+        {"pivot_x_mm", JsonValue::Object{{"type", "number"}}}, {"pivot_y_mm", JsonValue::Object{{"type", "number"}}},
+        {"pivot_x", JsonValue::Object{{"type", "number"}}}, {"pivot_y", JsonValue::Object{{"type", "number"}}},
+        {"length_unit", unit}},
         {"op", "target_ids"}));
     operation_variants.emplace_back(make_operation({
         {"op", JsonValue::Object{{"const", "object.duplicate"}}},
         {"target_ids", JsonValue::Object{{"type", "array"}, {"minItems", 1}, {"maxItems", 64},
             {"uniqueItems", true}, {"items", string_id}}},
         {"offset_x_mm", JsonValue::Object{{"type", "number"}}},
-        {"offset_y_mm", JsonValue::Object{{"type", "number"}}}}, {"op", "target_ids"}));
+        {"offset_y_mm", JsonValue::Object{{"type", "number"}}},
+        {"offset_x", JsonValue::Object{{"type", "number"}}},
+        {"offset_y", JsonValue::Object{{"type", "number"}}},
+        {"length_unit", unit}}, {"op", "target_ids"}));
     operation_variants.emplace_back(make_operation({
         {"op", JsonValue::Object{{"const", "object.delete"}}},
         {"target_ids", JsonValue::Object{{"type", "array"}, {"minItems", 1}, {"maxItems", 256},
@@ -159,7 +271,9 @@ JsonValue batch_input_schema(bool write) {
         {"target_ids", JsonValue::Object{{"type", "array"}, {"minItems", 1}, {"maxItems", 256},
             {"uniqueItems", true}, {"items", string_id}}},
         {"fill", rgb_color}, {"stroke", rgb_color},
-        {"stroke_width_mm", JsonValue::Object{{"type", "number"}, {"minimum", 0}}}},
+        {"stroke_width_mm", JsonValue::Object{{"type", "number"}, {"minimum", 0}}},
+        {"stroke_width", JsonValue::Object{{"type", "number"}, {"minimum", 0}}},
+        {"length_unit", unit}},
         {"op", "target_ids"}));
     operation_variants.emplace_back(make_operation({
         {"op", JsonValue::Object{{"const", "object.group"}}},
@@ -218,8 +332,8 @@ JsonValue tools() {
         "Read the connected document identity, epoch, revision, page size and dirty state without using the screen.",
         R"({"type":"object","properties":{"session_handle":{"type":"string"}},"required":["session_handle"],"additionalProperties":false})"));
     result.emplace_back(tool_definition("pikdraw.document.create", "Create an automation document",
-        "Create a new document tab only through a connected session granted document.create. Connect again to the returned document before editing it.",
-        R"({"type":"object","properties":{"session_handle":{"type":"string"},"title":{"type":"string","maxLength":128},"page_width_mm":{"type":"number","minimum":10,"maximum":20000},"page_height_mm":{"type":"number","minimum":10,"maximum":20000}},"required":["session_handle","page_width_mm","page_height_mm"],"additionalProperties":false})"));
+        "Create a new document tab through a document.create session. Supply canonical mm dimensions or dimensions with an explicit physical length_unit; connect again to the returned document before editing it.",
+        R"({"type":"object","properties":{"session_handle":{"type":"string"},"title":{"type":"string","maxLength":128},"page_width_mm":{"type":"number","minimum":10,"maximum":20000},"page_height_mm":{"type":"number","minimum":10,"maximum":20000},"page_width":{"type":"number","exclusiveMinimum":0},"page_height":{"type":"number","exclusiveMinimum":0},"length_unit":{"type":"string","enum":["mm","cm","m","in","ft","yd","pt","pc"]}},"required":["session_handle"],"oneOf":[{"required":["page_width_mm","page_height_mm"],"not":{"anyOf":[{"required":["page_width"]},{"required":["page_height"]},{"required":["length_unit"]}]}},{"required":["page_width","page_height","length_unit"],"not":{"anyOf":[{"required":["page_width_mm"]},{"required":["page_height_mm"]}]}}],"additionalProperties":false})"));
     result.emplace_back(tool_definition("pikdraw.font.query", "Resolve a font",
         "Resolve a requested installed font face and report exact family, style, and fallback status.",
         R"({"type":"object","properties":{"session_handle":{"type":"string"},"font_family":{"type":"string","minLength":1,"maxLength":256},"font_postscript_name":{"type":"string","maxLength":256},"font_weight":{"type":"integer","minimum":100,"maximum":900},"font_italic":{"type":"boolean"},"font_size_pt":{"type":"number","exclusiveMinimum":0,"maximum":10000}},"required":["session_handle","font_family"],"additionalProperties":false})"));
@@ -239,8 +353,11 @@ JsonValue tools() {
         "Load a saved native file from the app's local automation files folder and report its parsed page, revision, object IDs and object count without replacing the active document.",
         R"({"type":"object","properties":{"session_handle":{"type":"string"},"file_name":{"type":"string","minLength":1,"maxLength":100}},"required":["session_handle","file_name"],"additionalProperties":false})"));
     result.emplace_back(tool_definition("pikdraw.objects.query", "Query document objects",
-        "Read a page of committed document objects. Keep epoch and revision from the first page for stable paging; restart if the document changes.",
-        R"({"type":"object","properties":{"session_handle":{"type":"string"},"offset":{"type":"string","pattern":"^[0-9]+$"},"limit":{"type":"integer","minimum":1,"maximum":100},"expected_epoch":{"type":"string","pattern":"^[0-9]+$"},"expected_revision":{"type":"string","pattern":"^[0-9]+$"}},"required":["session_handle"],"additionalProperties":false})"));
+        "Read committed top-level objects on the active page. Use type, object_id, layer_index or region_mm filters before pagination; use fields for concise metadata. Keep epoch/revision and reuse the returned cursor with the same filters. Numeric offset remains supported for older clients.",
+        R"({"type":"object","properties":{"session_handle":{"type":"string"},"offset":{"type":"string","pattern":"^[0-9]+$"},"cursor":{"type":"string","maxLength":128,"pattern":"^(v1:[0-9]+:[0-9]+|v2:[0-9]+:[0-9]+:[0-9]+:[0-9]+:[0-9]+)$"},"limit":{"type":"integer","minimum":1,"maximum":100},"fields":{"type":"array","minItems":1,"maxItems":6,"uniqueItems":true,"items":{"type":"string","enum":["id","type","name","layer_index","bounds","bounds_quality"]}},"object_id":{"type":"string","pattern":"^[1-9][0-9]*$"},"layer_index":{"type":"integer","minimum":0},"type":{"type":"string","enum":["path","text","group","image"]},"region_mm":{"type":"object","properties":{"x_mm":{"type":"number"},"y_mm":{"type":"number"},"width_mm":{"type":"number","exclusiveMinimum":0},"height_mm":{"type":"number","exclusiveMinimum":0}},"required":["x_mm","y_mm","width_mm","height_mm"],"additionalProperties":false},"expected_epoch":{"type":"string","pattern":"^[0-9]+$"},"expected_revision":{"type":"string","pattern":"^[0-9]+$"}},"required":["session_handle"],"additionalProperties":false})"));
+    result.emplace_back(tool_definition("pikdraw.objects.changes", "Read object changes since revision",
+        "Read up to 4,096 changed stable IDs across a bounded revision delta. If contiguous is false or requires_full_query is true, changed_ids is empty and run objects.query to resynchronize.",
+        R"({"type":"object","properties":{"session_handle":{"type":"string"},"expected_epoch":{"type":"string","pattern":"^[0-9]+$"},"from_revision":{"type":"string","pattern":"^[0-9]+$"}},"required":["session_handle","expected_epoch","from_revision"],"additionalProperties":false})"));
     result.emplace_back(tool_definition("pikdraw.objects.get", "Get one document object",
         "Read one object by stable ID, including its style, editable path nodes, children and source geometry, under an explicit document epoch and revision.",
         R"({"type":"object","properties":{"session_handle":{"type":"string"},"object_id":{"type":"string","pattern":"^[0-9]+$"},"expected_epoch":{"type":"string","pattern":"^[0-9]+$"},"expected_revision":{"type":"string","pattern":"^[0-9]+$"}},"required":["session_handle","object_id","expected_epoch","expected_revision"],"additionalProperties":false})"));
@@ -259,9 +376,9 @@ JsonValue tools() {
     result.emplace_back(tool_definition("pikdraw.history.redo", "Redo one document transaction",
         "Redo one committed document transaction only if the supplied epoch and revision still match; writes require request_id and idempotency_key.",
         R"({"type":"object","properties":{"session_handle":{"type":"string"},"request_id":{"type":"string","minLength":1,"maxLength":128},"idempotency_key":{"type":"string","minLength":1,"maxLength":128},"expected_epoch":{"type":"string","pattern":"^[0-9]+$"},"expected_revision":{"type":"string","pattern":"^[0-9]+$"}},"required":["session_handle","request_id","idempotency_key","expected_epoch","expected_revision"],"additionalProperties":false})"));
-    result.emplace_back(tool_definition("pikdraw.object.create_rectangle", "Create rectangle",
-        "Create one editable vector rectangle in millimeters through PikDraw's document command writer. Uses explicit epoch and revision; stale writes are rejected.",
-        R"({"type":"object","properties":{"session_handle":{"type":"string"},"request_id":{"type":"string","minLength":1,"maxLength":128},"idempotency_key":{"type":"string","minLength":1,"maxLength":128},"expected_epoch":{"type":"string","pattern":"^[0-9]+$"},"expected_revision":{"type":"string","pattern":"^[0-9]+$"},"x_mm":{"type":"number"},"y_mm":{"type":"number"},"width_mm":{"type":"number","exclusiveMinimum":0},"height_mm":{"type":"number","exclusiveMinimum":0},"layer_index":{"type":"integer","minimum":0,"maximum":4095},"stroke_width_mm":{"type":"number","minimum":0}},"required":["session_handle","request_id","idempotency_key","expected_epoch","expected_revision","x_mm","y_mm","width_mm","height_mm"],"additionalProperties":false})"));
+    result.emplace_back(tool_definition_with_schema("pikdraw.object.create_rectangle", "Create rectangle",
+        "Create one editable vector rectangle through PikDraw's document command writer. Geometry accepts explicit *_mm values or numeric x/y/width/height with length_unit mm/cm/m/in/ft/yd/pt/pc. Pixel units need a DPI basis and are rejected. Uses explicit epoch and revision; stale writes are rejected.",
+        rectangle_input_schema()));
     result.emplace_back(tool_definition("pikdraw.disconnect", "Disconnect from PikDraw",
         "Disconnect an application session and discard its local handle.",
         R"({"type":"object","properties":{"session_handle":{"type":"string"}},"required":["session_handle"],"additionalProperties":false})"));
@@ -507,6 +624,7 @@ JsonValue McpServer::dispatch_tool(std::string_view name, const JsonValue& argum
     else if (name == "pikdraw.text.measure") operation = "text.measure";
     else if (name == "pikdraw.document.validate") operation = "document.validate";
     else if (name == "pikdraw.objects.query") operation = "objects.query";
+    else if (name == "pikdraw.objects.changes") operation = "objects.changes";
     else if (name == "pikdraw.objects.get") operation = "objects.get";
     else if (name == "pikdraw.request.get") operation = "request.get";
     else if (name == "pikdraw.history.undo") operation = "history.undo";

@@ -85,7 +85,8 @@ public:
                 return profile == "dxf-entities-v1";
             case FormatType::Pdf:
                 return profile == "pdf-page-vector-v2" ||
-                       profile == "pdf-page-set-v3";
+                       profile == "pdf-page-set-v3" ||
+                       profile == "pdf-print-source-v1";
             case FormatType::Ai:
                 return profile == "ai-pdf-compatible-vector-v2" ||
                        profile == "ai-pdf-compatible-page-set-v3";

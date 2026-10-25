@@ -1,5 +1,9 @@
 # Kế hoạch Hoàn thiện Hệ thống Màu sắc PikDraw Đạt Tiêu chuẩn Hiển thị & In ấn Công nghiệp
 
+> **Cập nhật hướng thực thi 20/10/2026:** đọc [source audit và C00–C09](existing-feature-upgrade-20261020/color-management-plan.md) cùng [kế hoạch triển khai](existing-feature-upgrade-20261020/implementation-plan.md) trước khi sửa. Các mô tả “chưa có”/“đã đạt” bên dưới là bối cảnh của bản plan trước, không là trạng thái runtime hiện hành. Source đã có Windows CMM, proof/gamut controls và black/TAC helpers; overprint helper chưa chứng minh compositor. Proof shortcut hiện là Ctrl+Alt+Y, Ctrl+Y giữ Redo; TAC và rich-black recipe phụ thuộc output condition, không phải giới hạn/công thức chung. Giữ các mục tiêu/AC cũ, đối chiếu với AC-CM và capability thực; chưa có chứng nhận in công nghiệp từ đợt audit này.
+
+> Các tên target test đề xuất ở phần dưới chưa chắc đã được tạo trong CMake. Agent dùng danh sách target và lệnh đã đối chiếu ở C00–C09/implementation-plan, không chạy tên đề xuất như target đã có.
+
 **Mã kế hoạch**: `PLAN-COLOR-STANDARDS-20261020`  
 **Ngày lập**: 20/10/2026  
 **Mô-đun liên quan**: `core/color`, `core/document`, `core/rendering`, `modules/interop`, `apps/desktop`  

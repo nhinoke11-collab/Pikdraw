@@ -1,5 +1,7 @@
 #include "pikdraw/document/commands/contour_commands.hpp"
 #include "pikdraw/document/document.hpp"
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <mutex>
 #include <sstream>
@@ -96,6 +98,10 @@ std::optional<ContourFeature> get_object_contour(const PathObject& obj) {
     }
     auto feat = deserialize_contour_feature(obj.contour_spec);
     if (feat) {
+        if (obj.contour_paints) {
+            feat->outline_color = obj.contour_paints->outline;
+            feat->fill_color = obj.contour_paints->fill;
+        }
         feat->target_id = obj.id;
         const auto res = evaluate_contour(obj, *feat);
         for (const auto& step : res.steps) {
@@ -150,7 +156,11 @@ geometry::ContourResult evaluate_contour(const PathObject& object, const Contour
     req.steps = feature.steps;
     req.join_type = feature.join_type;
     req.miter_limit = feature.miter_limit;
-    req.arc_tolerance_mm = feature.arc_tolerance_mm;
+    // Older contour:v1 records may store 0.005 mm. Keep their serialized value
+    // until an explicit edit, while rendering them at the supported 0.02 mm floor.
+    req.arc_tolerance_mm = std::isfinite(feature.arc_tolerance_mm)
+        ? std::max(feature.arc_tolerance_mm, geometry::kContourMinimumArcToleranceMm)
+        : geometry::kContourDefaultArcToleranceMm;
 
     return geometry::compute_contour(req);
 }
@@ -161,6 +171,13 @@ ApplyContourCommand::ApplyContourCommand(ObjectId target_id, ContourFeature feat
     : target_id_(target_id), feature_(std::move(feature)) {}
 
 CommandResult ApplyContourCommand::execute(Document& doc) {
+    if (!std::isfinite(feature_.arc_tolerance_mm) ||
+        feature_.arc_tolerance_mm < geometry::kContourMinimumArcToleranceMm ||
+        feature_.arc_tolerance_mm > 1.0) {
+        return CommandResult::fail("Contour tolerance must be between 0.02 and 1 mm");
+    }
+    if (!feature_.outline_color.is_valid() || !feature_.fill_color.is_valid())
+        return CommandResult::fail("Contour colors must be valid source colors");
     const auto opt = doc.objects().get(target_id_);
     if (!opt) {
         return CommandResult::fail("Target object not found for ApplyContourCommand");
@@ -187,6 +204,8 @@ CommandResult ApplyContourCommand::execute(Document& doc) {
 
     PathObject updated = *path_obj;
     updated.contour_spec = serialize_contour_feature(feature_);
+    updated.contour_paints = PathContourPaints{
+        feature_.outline_color, feature_.fill_color};
 
     set_attached_contour(target_id_, feature_);
     PersistentObjectMap map = doc.objects().set(target_id_, updated);
@@ -206,9 +225,12 @@ CommandResult ApplyContourCommand::undo(Document& doc) {
             PathObject updated = *path_obj;
             if (previous_feature_) {
                 updated.contour_spec = serialize_contour_feature(*previous_feature_);
+                updated.contour_paints = PathContourPaints{
+                    previous_feature_->outline_color, previous_feature_->fill_color};
                 set_attached_contour(target_id_, *previous_feature_);
             } else {
                 updated.contour_spec.clear();
+                updated.contour_paints.reset();
                 remove_attached_contour(target_id_);
             }
             PersistentObjectMap map = doc.objects().set(target_id_, updated);
@@ -291,6 +313,7 @@ CommandResult BreakContourApartCommand::execute(Document& doc) {
     // Clear contour_spec from source object
     PathObject updated_source = *path_obj;
     updated_source.contour_spec.clear();
+    updated_source.contour_paints.reset();
 
     PersistentObjectMap map = doc.objects().set(target_id_, updated_source);
     for (const auto& obj : created_objects_) {
@@ -334,6 +357,8 @@ CommandResult BreakContourApartCommand::undo(Document& doc) {
             PathObject updated = *path_obj;
             if (previous_feature_) {
                 updated.contour_spec = serialize_contour_feature(*previous_feature_);
+                updated.contour_paints = PathContourPaints{
+                    previous_feature_->outline_color, previous_feature_->fill_color};
                 set_attached_contour(target_id_, *previous_feature_);
             }
             map = map.set(target_id_, updated);
@@ -363,6 +388,7 @@ CommandResult RemoveContourCommand::execute(Document& doc) {
 
     PathObject updated = *path_obj;
     updated.contour_spec.clear();
+    updated.contour_paints.reset();
     remove_attached_contour(target_id_);
 
     PersistentObjectMap map = doc.objects().set(target_id_, updated);
@@ -380,6 +406,8 @@ CommandResult RemoveContourCommand::undo(Document& doc) {
         if (const auto* path_obj = std::get_if<PathObject>(&(*opt))) {
             PathObject updated = *path_obj;
             updated.contour_spec = serialize_contour_feature(*previous_feature_);
+            updated.contour_paints = PathContourPaints{
+                previous_feature_->outline_color, previous_feature_->fill_color};
             set_attached_contour(target_id_, *previous_feature_);
             PersistentObjectMap map = doc.objects().set(target_id_, updated);
             doc.apply_mutation(doc.page(), std::move(map));

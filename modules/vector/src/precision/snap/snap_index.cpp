@@ -152,8 +152,14 @@ void include_bounds(SnapWorldBounds& target, const SnapWorldBounds& other) noexc
 }
 
 size_t build_tree(std::vector<IndexedPoint>& points, std::vector<SnapSourceIndex::Impl::Node>& nodes,
-                 size_t first, size_t last, size_t depth) {
+                 size_t first, size_t last, size_t depth,
+                 const std::function<bool()>& should_cancel, size_t& work_count,
+                 bool& cancelled) {
     if (first >= last) return kNoNode;
+    if (((++work_count & 255u) == 0u) && should_cancel && should_cancel()) {
+        cancelled = true;
+        return kNoNode;
+    }
     const size_t middle = first + (last - first) / 2;
     const size_t axis = depth % 2;
     const auto compare = [axis](const IndexedPoint& left, const IndexedPoint& right) {
@@ -171,8 +177,12 @@ size_t build_tree(std::vector<IndexedPoint>& points, std::vector<SnapSourceIndex
                      points.begin() + static_cast<std::ptrdiff_t>(last), compare);
     const size_t index = nodes.size();
     nodes.push_back({points[middle], kNoNode, kNoNode, point_bounds(points[middle].world_point)});
-    const size_t left = build_tree(points, nodes, first, middle, depth + 1);
-    const size_t right = build_tree(points, nodes, middle + 1, last, depth + 1);
+    const size_t left = build_tree(points, nodes, first, middle, depth + 1,
+                                   should_cancel, work_count, cancelled);
+    if (cancelled) return kNoNode;
+    const size_t right = build_tree(points, nodes, middle + 1, last, depth + 1,
+                                    should_cancel, work_count, cancelled);
+    if (cancelled) return kNoNode;
     nodes[index].left = left;
     nodes[index].right = right;
     if (left != kNoNode) include_bounds(nodes[index].bounds, nodes[left].bounds);
@@ -267,6 +277,13 @@ SnapIndexBuildResult SnapSourceIndex::build(const document::DocumentSnapshot& so
     if (source.document_id().empty() || source.epoch() == 0 || limits.max_entries == 0)
         return {SnapIndexBuildStatus::InvalidSource, {}, 0,
                 "A source index requires a document identity and a positive entry limit"};
+    if (limits.should_cancel && limits.should_cancel())
+        return {SnapIndexBuildStatus::Cancelled, {}, 0, "Source snap index build was cancelled"};
+    size_t cancellation_work = 0;
+    const auto cancellation_requested = [&]() {
+        return limits.should_cancel && ((++cancellation_work & 255u) == 0u) &&
+            limits.should_cancel();
+    };
     std::unordered_map<document::ObjectId, LayerInfo> layers;
     size_t layer_index = 0;
     for (const auto& layer : source.page().layers) {
@@ -280,9 +297,17 @@ SnapIndexBuildResult SnapSourceIndex::build(const document::DocumentSnapshot& so
     size_t entry_count = 0;
     bool limit_exceeded = false;
     bool invalid = false;
+    bool cancelled = false;
     for (const auto& [id, value] : source.objects().all()) {
-        const auto* object = std::get_if<document::PathObject>(&value);
-        if (!object || !object->authoring_source) continue;
+        if (cancellation_requested()) { cancelled = true; break; }
+        const auto* source_object = std::get_if<document::PathObject>(&value);
+        if (!source_object || !source_object->authoring_source) continue;
+        const auto* hierarchy=source.hierarchy().find(id);
+        if(!hierarchy) { invalid=true; break; }
+        auto world_object=*source_object; world_object.transform=hierarchy->world;
+        world_object.visible=hierarchy->visible; world_object.locked=hierarchy->locked;
+        const auto* object=&world_object;
+        layers.insert_or_assign(id,LayerInfo{hierarchy->layer,hierarchy->visible,hierarchy->locked});
         const auto layer = layers.find(id);
         if (layer == layers.end() || id == document::kInvalidObjectId ||
             !object->transform.is_finite()) {
@@ -291,6 +316,7 @@ SnapIndexBuildResult SnapSourceIndex::build(const document::DocumentSnapshot& so
         }
         const auto& source_path = *object->authoring_source;
         for (const auto& subpath : source_path.subpaths) {
+            if (cancellation_requested()) { cancelled = true; break; }
             const size_t expected_segments = subpath.closed ? subpath.nodes.size()
                 : (subpath.nodes.empty() ? 0 : subpath.nodes.size() - 1);
             if (subpath.nodes.empty() || (subpath.closed && subpath.nodes.size() < 2) ||
@@ -299,6 +325,7 @@ SnapIndexBuildResult SnapSourceIndex::build(const document::DocumentSnapshot& so
                 break;
             }
             for (size_t i = 0; i < subpath.nodes.size(); ++i) {
+                if (cancellation_requested()) { cancelled = true; break; }
                 const bool open_endpoint = !subpath.closed &&
                     (i == 0 || i + 1 == subpath.nodes.size());
                 const auto kind = open_endpoint ? SnapOption::Endpoint : SnapOption::SourceNode;
@@ -307,8 +334,9 @@ SnapIndexBuildResult SnapSourceIndex::build(const document::DocumentSnapshot& so
                     limits.max_entries, entry_count, limit_exceeded, invalid);
                 if (limit_exceeded || invalid) break;
             }
-            if (limit_exceeded || invalid) break;
+            if (limit_exceeded || invalid || cancelled) break;
             for (size_t i = 0; i < subpath.segments.size(); ++i) {
+                if (cancellation_requested()) { cancelled = true; break; }
                 const auto& segment = subpath.segments[i];
                 const auto& start = subpath.nodes[i].anchor;
                 const auto& end = subpath.nodes[(i + 1) % subpath.nodes.size()].anchor;
@@ -384,10 +412,14 @@ SnapIndexBuildResult SnapSourceIndex::build(const document::DocumentSnapshot& so
                 }
                 if (limit_exceeded || invalid) break;
             }
-            if (limit_exceeded || invalid) break;
+            if (limit_exceeded || invalid || cancelled) break;
         }
-        if (limit_exceeded || invalid) break;
+        if (limit_exceeded || invalid || cancelled) break;
     }
+    if (!cancelled && limits.should_cancel && limits.should_cancel()) cancelled = true;
+    if (cancelled)
+        return {SnapIndexBuildStatus::Cancelled, {}, entry_count,
+                "Source snap index build was cancelled"};
     if (limit_exceeded)
         return {SnapIndexBuildStatus::EntryLimitExceeded, {}, entry_count,
                 "Source snap index reached its configured candidate limit"};
@@ -403,12 +435,21 @@ SnapIndexBuildResult SnapSourceIndex::build(const document::DocumentSnapshot& so
     impl->entry_count = entry_count;
     impl->curves = std::move(indexed_curves);
     for (size_t kind = 0; kind < kSnapOptionCount; ++kind) {
+        if (limits.should_cancel && limits.should_cancel())
+            return {SnapIndexBuildStatus::Cancelled, {}, entry_count,
+                    "Source snap index build was cancelled"};
         auto& source_points = points[kind];
         if (source_points.empty()) continue;
         auto& tree = impl->trees[kind];
         tree.nodes.reserve(source_points.size());
         tree.entry_count = source_points.size();
-        tree.root = build_tree(source_points, tree.nodes, 0, source_points.size(), 0);
+        size_t tree_work = 0;
+        bool tree_cancelled = false;
+        tree.root = build_tree(source_points, tree.nodes, 0, source_points.size(), 0,
+            limits.should_cancel, tree_work, tree_cancelled);
+        if (tree_cancelled || (limits.should_cancel && limits.should_cancel()))
+            return {SnapIndexBuildStatus::Cancelled, {}, entry_count,
+                    "Source snap index build was cancelled"};
     }
     auto index = std::shared_ptr<const SnapSourceIndex>(new SnapSourceIndex(std::move(impl)));
     return {SnapIndexBuildStatus::Success, std::move(index), entry_count, {}};

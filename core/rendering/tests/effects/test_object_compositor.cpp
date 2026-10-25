@@ -731,6 +731,129 @@ void default_appearance_keeps_the_existing_fast_path_pixels() {
         "default appearance changed the existing direct-render fast path");
 }
 
+void extended_effects_render_correctly() {
+  constexpr int32_t width = 64;
+  constexpr int32_t height = 64;
+  std::vector<uint8_t> pixels(static_cast<size_t>(width) * height * 4, 0);
+  PixelBufferTarget target{pixels.data(), width, height, width * 4};
+  Camera2D camera({0, 0}, 1.0, width, height);
+
+  PathObject path = overlap_path();
+  path.has_stroke = false;
+
+  std::vector<uint8_t> baseline(pixels.size(), 0);
+  PixelBufferTarget baseline_target{baseline.data(), width, height, width * 4};
+  check(raster::paint(path, camera, baseline_target),
+        "extended effect baseline failed to render");
+
+  // 1. FeatherEffect: edge alpha should soften while center remains opaque
+  Appearance feather_app;
+  EffectNode feather_node;
+  feather_node.id = 5001;
+  feather_node.schema_minor = kExtendedEffectNodeSchemaMinor;
+  feather_node.parameters = FeatherEffect{2.0};
+  feather_app.effects.push_back(feather_node);
+  check(effects::render_path_with_appearance(path, feather_app, camera, target),
+        "feather effect failed to render");
+  check(alpha_at(pixels, width, 32, 32) > 200, "feather center should remain mostly opaque");
+  check(alpha_at(pixels, width, 22, 32) < alpha_at(baseline, width, 22, 32),
+        "feather did not reduce alpha at the source edge");
+
+  // 2. OuterGlowEffect: should render successfully
+  std::fill(pixels.begin(), pixels.end(), 0);
+  Appearance outer_glow_app;
+  EffectNode og_node;
+  og_node.id = 5002;
+  og_node.schema_minor = kExtendedEffectNodeSchemaMinor;
+  og_node.parameters = OuterGlowEffect{4.0, color::RGBColor{1.0, 1.0, 0.0, 1.0}, 0.8};
+  outer_glow_app.effects.push_back(og_node);
+  check(effects::render_path_with_appearance(path, outer_glow_app, camera, target),
+        "outer glow effect failed to render");
+  check(alpha_at(pixels, width, 46, 32) > 0,
+        "outer glow did not produce pixels outside the source bounds");
+
+  // 3. ColorOverlayEffect: overlays color onto existing shape
+  std::fill(pixels.begin(), pixels.end(), 0);
+  Appearance overlay_app;
+  EffectNode co_node;
+  co_node.id = 5003;
+  co_node.schema_minor = kExtendedEffectNodeSchemaMinor;
+  co_node.parameters = ColorOverlayEffect{color::RGBColor{0.0, 1.0, 0.0, 1.0}, 1.0, BlendMode::Normal};
+  overlay_app.effects.push_back(co_node);
+  check(effects::render_path_with_appearance(path, overlay_app, camera, target),
+        "color overlay effect failed to render");
+  const size_t center_idx = (static_cast<size_t>(32) * width + 32) * 4;
+  check(pixels[center_idx + 1] > 200, "color overlay green channel should be dominant");
+  check(alpha_at(pixels, width, 32, 32) == alpha_at(baseline, width, 32, 32),
+        "color overlay changed source alpha");
+
+  std::fill(pixels.begin(), pixels.end(), 0);
+  overlay_app.effects.front().parameters = ColorOverlayEffect{
+      color::RGBColor{0.0, 1.0, 0.0, 1.0}, 1.0, BlendMode::Multiply};
+  check(effects::render_path_with_appearance(path, overlay_app, camera, target),
+        "multiply color overlay failed to render");
+  check(pixels[center_idx] < 8 && pixels[center_idx + 1] < 8 &&
+            pixels[center_idx + 2] < 8 &&
+            alpha_at(pixels, width, 32, 32) == alpha_at(baseline, width, 32, 32),
+        "multiply color overlay was ignored or changed source alpha");
+
+  // 4. InnerGlowEffect: should render within shape
+  std::fill(pixels.begin(), pixels.end(), 0);
+  Appearance inner_glow_app;
+  EffectNode ig_node;
+  ig_node.id = 5004;
+  ig_node.schema_minor = kExtendedEffectNodeSchemaMinor;
+  ig_node.parameters = InnerGlowEffect{2.0, color::RGBColor{1.0, 1.0, 1.0, 1.0}, 0.75};
+  inner_glow_app.effects.push_back(ig_node);
+  check(effects::render_path_with_appearance(path, inner_glow_app, camera, target),
+        "inner glow effect failed to render");
+  check(alpha_at(pixels, width, 21, 32) == 0 &&
+            pixels[(static_cast<size_t>(23) * width + 23) * 4 + 1] >
+                baseline[(static_cast<size_t>(23) * width + 23) * 4 + 1] &&
+            pixels[center_idx + 1] == baseline[center_idx + 1],
+        "inner glow escaped the source mask or changed the solid center");
+
+  // 5. InnerShadowEffect: should render within shape
+  std::fill(pixels.begin(), pixels.end(), 0);
+  Appearance inner_shadow_app;
+  EffectNode is_node;
+  is_node.id = 5005;
+  is_node.schema_minor = kExtendedEffectNodeSchemaMinor;
+  InnerShadowEffect is_effect;
+  is_effect.dx_mm = 5.0;
+  is_effect.dy_mm = 0.0;
+  is_effect.sigma_x_mm = 2.0;
+  is_effect.sigma_y_mm = 2.0;
+  is_effect.color = color::RGBColor{0.25, 0.1, 0.5, 1.0};
+  is_effect.opacity = 0.6;
+  is_effect.blend_mode = BlendMode::Normal;
+  is_node.parameters = is_effect;
+  inner_shadow_app.effects.push_back(is_node);
+  check(effects::render_path_with_appearance(path, inner_shadow_app, camera, target),
+        "inner shadow effect failed to render");
+  const auto normal_shadow = pixels;
+  uint8_t max_shadow_green = 0;
+  for (size_t index = 1; index < normal_shadow.size(); index += 4)
+    max_shadow_green = std::max(max_shadow_green, normal_shadow[index]);
+  check(max_shadow_green > 0 && max_shadow_green < 50,
+        "inner shadow tint must be linearized before compositing");
+  std::fill(pixels.begin(), pixels.end(), 0);
+  std::get<InnerShadowEffect>(inner_shadow_app.effects.front().parameters)
+      .blend_mode = BlendMode::Multiply;
+  check(effects::render_path_with_appearance(path, inner_shadow_app, camera, target),
+        "multiply inner shadow effect failed to render");
+  bool same_alpha = true;
+  bool different_rgb = false;
+  for (size_t index = 0; index < pixels.size(); index += 4) {
+    same_alpha = same_alpha && pixels[index + 3] == normal_shadow[index + 3];
+    different_rgb = different_rgb || pixels[index] != normal_shadow[index] ||
+                    pixels[index + 1] != normal_shadow[index + 1] ||
+                    pixels[index + 2] != normal_shadow[index + 2];
+  }
+  check(same_alpha && different_rgb,
+        "inner shadow blend mode was ignored or changed source alpha");
+}
+
 void software_rasterizer_uses_path_appearance_over_page_backdrop() {
   Document document("opacity-renderer-acceptance");
   PathObject path;
@@ -782,6 +905,7 @@ int main() {
     software_rasterizer_keeps_offscreen_source_when_shadow_reaches_viewport();
     default_appearance_keeps_the_existing_fast_path_pixels();
     software_rasterizer_uses_path_appearance_over_page_backdrop();
+    extended_effects_render_correctly();
     std::cout << "PASS opacity, Blend, Gaussian Blur, Drop Shadow, ordered stack, "
                  "atomic failure, culling and default fast path\n";
   } catch (const std::exception &error) {

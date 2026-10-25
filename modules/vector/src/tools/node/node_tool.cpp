@@ -315,34 +315,121 @@ std::optional<std::pair<document::SubpathId, document::NodeId>> NodeTool::hit_te
     return std::nullopt;
 }
 
+static double distance_to_segment(
+    const document::EditableSubpath& sub, size_t i, const geometry::Transform2D& tr,
+    const geometry::Point2D& pt, double& out_t) {
+    const size_t n = sub.nodes.size();
+    const size_t next_i = (i + 1) % n;
+    const auto p0 = tr.map_point(sub.nodes[i].anchor);
+    const auto p3 = tr.map_point(sub.nodes[next_i].anchor);
+    const auto& seg = sub.segments[i];
+
+    if (seg.kind == document::PathSegmentKind::CubicBezier ||
+        sub.nodes[i].has_outgoing_handle || sub.nodes[next_i].has_incoming_handle) {
+        const auto [s_in, s_out] = document::editable_path_handles_for(sub, i);
+        const auto [e_in, e_out] = document::editable_path_handles_for(sub, next_i);
+        (void)s_in; (void)e_out;
+        const auto p1 = tr.map_point(s_out);
+        const auto p2 = tr.map_point(e_in);
+
+        constexpr int kSamples = 24;
+        double min_dist = std::numeric_limits<double>::max();
+        double best_t = 0.5;
+        auto eval_cubic = [&](double t) {
+            const double u = 1.0 - t;
+            const double tt = t * t;
+            const double uu = u * u;
+            const double uuu = uu * u;
+            const double ttt = tt * t;
+            return p0 * uuu + p1 * (3.0 * uu * t) + p2 * (3.0 * u * tt) + p3 * ttt;
+        };
+
+        auto prev_pt = p0;
+        for (int s = 1; s <= kSamples; ++s) {
+            double t = static_cast<double>(s) / kSamples;
+            auto curr_pt = eval_cubic(t);
+            auto v = curr_pt - prev_pt;
+            double len_sq = v.x * v.x + v.y * v.y;
+            if (len_sq > 1e-12) {
+                double seg_t = std::clamp(((pt - prev_pt).x * v.x + (pt - prev_pt).y * v.y) / len_sq, 0.0, 1.0);
+                auto proj = prev_pt + v * seg_t;
+                double d = proj.distance_to(pt);
+                if (d < min_dist) {
+                    min_dist = d;
+                    best_t = (static_cast<double>(s - 1) + seg_t) / kSamples;
+                }
+            }
+            prev_pt = curr_pt;
+        }
+        out_t = best_t;
+        return min_dist;
+    } else if (seg.kind == document::PathSegmentKind::QuadraticBezier) {
+        const auto q = tr.map_point(seg.quadratic_control);
+        constexpr int kSamples = 16;
+        double min_dist = std::numeric_limits<double>::max();
+        double best_t = 0.5;
+        auto eval_quad = [&](double t) {
+            const double u = 1.0 - t;
+            return p0 * (u * u) + q * (2.0 * u * t) + p3 * (t * t);
+        };
+        auto prev_pt = p0;
+        for (int s = 1; s <= kSamples; ++s) {
+            double t = static_cast<double>(s) / kSamples;
+            auto curr_pt = eval_quad(t);
+            auto v = curr_pt - prev_pt;
+            double len_sq = v.x * v.x + v.y * v.y;
+            if (len_sq > 1e-12) {
+                double seg_t = std::clamp(((pt - prev_pt).x * v.x + (pt - prev_pt).y * v.y) / len_sq, 0.0, 1.0);
+                auto proj = prev_pt + v * seg_t;
+                double d = proj.distance_to(pt);
+                if (d < min_dist) {
+                    min_dist = d;
+                    best_t = (static_cast<double>(s - 1) + seg_t) / kSamples;
+                }
+            }
+            prev_pt = curr_pt;
+        }
+        out_t = best_t;
+        return min_dist;
+    } else {
+        const auto v = p3 - p0;
+        const double len_sq = v.x * v.x + v.y * v.y;
+        if (len_sq < 1e-12) {
+            out_t = 0.5;
+            return p0.distance_to(pt);
+        }
+        double t = std::clamp(((pt - p0).x * v.x + (pt - p0).y * v.y) / len_sq, 0.0, 1.0);
+        out_t = t;
+        return (p0 + v * t).distance_to(pt);
+    }
+}
+
 std::optional<std::pair<document::SubpathId, document::SegmentId>> NodeTool::hit_test_segment(
     geometry::Point2D world_pos, double tol, double* out_t) const {
     const auto* path = get_editable_path();
     if (!path) return std::nullopt;
     const auto tr = target_transform();
 
+    double best_dist = std::numeric_limits<double>::max();
+    std::optional<std::pair<document::SubpathId, document::SegmentId>> best_hit;
+    double best_hit_t = 0.5;
+
     for (const auto& sub : path->subpaths) {
         const size_t seg_count = sub.segments.size();
         for (size_t i = 0; i < seg_count; ++i) {
-            const size_t next_i = (i + 1) % sub.nodes.size();
-            const auto p0 = tr.map_point(sub.nodes[i].anchor);
-            const auto p1 = tr.map_point(sub.nodes[next_i].anchor);
-
-            const auto v = p1 - p0;
-            const double len_sq = v.x * v.x + v.y * v.y;
-            if (len_sq < 1e-12) continue;
-
-            const auto w = world_pos - p0;
-            double t = (w.x * v.x + w.y * v.y) / len_sq;
-            t = std::clamp(t, 0.0, 1.0);
-            const auto proj = p0 + v * t;
-            if (proj.distance_to(world_pos) <= tol) {
-                if (out_t) *out_t = t;
-                return std::make_pair(sub.id, sub.segments[i].id);
+            double seg_t = 0.5;
+            double dist = distance_to_segment(sub, i, tr, world_pos, seg_t);
+            if (dist <= tol && dist < best_dist) {
+                best_dist = dist;
+                best_hit = std::make_pair(sub.id, sub.segments[i].id);
+                best_hit_t = seg_t;
             }
         }
     }
-    return std::nullopt;
+    if (best_hit && out_t) {
+        *out_t = best_hit_t;
+    }
+    return best_hit;
 }
 
 bool NodeTool::pointer_down(geometry::Point2D world_pos, bool shift, double tol, double zoom) {
@@ -459,8 +546,16 @@ bool NodeTool::pointer_down(geometry::Point2D world_pos, bool shift, double tol,
 
                     if (sub.segments[i].kind == document::PathSegmentKind::CubicBezier) {
                         asd.was_cubic = true;
-                        asd.original_c1_world = tr.map_point(sub.nodes[i].has_outgoing_handle ? sub.nodes[i].outgoing_handle : sub.nodes[i].anchor);
-                        asd.original_c2_world = tr.map_point(sub.nodes[next_i].has_incoming_handle ? sub.nodes[next_i].incoming_handle : sub.nodes[next_i].anchor);
+                        const auto [s_in, s_out] = document::editable_path_handles_for(sub, i);
+                        const auto [e_in, e_out] = document::editable_path_handles_for(sub, next_i);
+                        (void)s_in; (void)e_out;
+                        asd.original_c1_world = tr.map_point(s_out);
+                        asd.original_c2_world = tr.map_point(e_in);
+                    } else if (sub.segments[i].kind == document::PathSegmentKind::QuadraticBezier) {
+                        asd.was_cubic = true;
+                        const auto q_world = tr.map_point(sub.segments[i].quadratic_control);
+                        asd.original_c1_world = asd.p0_world + (q_world - asd.p0_world) * (2.0 / 3.0);
+                        asd.original_c2_world = asd.p3_world + (q_world - asd.p3_world) * (2.0 / 3.0);
                     } else {
                         asd.was_cubic = false;
                         asd.original_c1_world = asd.p0_world + (asd.p3_world - asd.p0_world) * (1.0 / 3.0);
@@ -653,15 +748,23 @@ bool NodeTool::pointer_up(geometry::Point2D world_pos) {
             auto cmd = std::make_unique<document::BendSegmentCommand>(
                 target_object_id_, active_segment_drag_->subpath_id, active_segment_drag_->segment_id,
                 c1_local, c2_local);
-            (void)document_.execute_command(std::move(cmd));
-            selected_nodes_ = {
-                {active_segment_drag_->subpath_id, active_segment_drag_->start_node_id},
-                {active_segment_drag_->subpath_id, active_segment_drag_->end_node_id}
-            };
-            selected_segment_.reset();
+            const auto res = document_.execute_command(std::move(cmd));
+            if (res.success) {
+                last_edit_committed_ = true;
+                last_error_message_.clear();
+                selected_segment_ = std::make_pair(active_segment_drag_->subpath_id, active_segment_drag_->segment_id);
+                selected_nodes_ = {
+                    {active_segment_drag_->subpath_id, active_segment_drag_->start_node_id},
+                    {active_segment_drag_->subpath_id, active_segment_drag_->end_node_id}
+                };
+            } else {
+                last_edit_committed_ = false;
+                last_error_message_ = res.error_message;
+            }
         } else if (!dragged) {
             selected_segment_ = std::make_pair(active_segment_drag_->subpath_id, active_segment_drag_->segment_id);
             selected_nodes_.clear();
+            last_edit_committed_ = true;
         }
     }
 
@@ -858,6 +961,7 @@ void NodeTool::select_all() {
 void NodeTool::clear_selection() {
     selected_nodes_.clear();
     selected_segment_.reset();
+    hover_segment_.reset();
     active_handle_.reset();
 }
 

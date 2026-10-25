@@ -4,9 +4,13 @@
 #include "pikdraw/desktop/actions/action_id.hpp"
 #include "native_window_menus.hpp"
 #include "native_window_page_presets.hpp"
+#include "native_window_length_input.hpp"
 #include "native_canvas_frame.hpp"
+#include "../performance/canvas_trace.hpp"
 #include "native_window_document_color.hpp"
 #include "pikdraw/color/preview/color_transform.hpp"
+#include "pikdraw/color/preview/icc_preview.hpp"
+#include "pikdraw/color/profiles/profile_resource.hpp"
 #ifdef _WIN32
 #include "../clipboard/native_clipboard.hpp"
 #endif
@@ -16,8 +20,12 @@
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/gradient_tool_controller.hpp"
 #include "../tools/dimension_tool_controller.hpp"
+#include "../tools/artboard_tool_controller.hpp"
+#include "../tools/annotation/annotation_tool_controller.hpp"
 #include "pikdraw/vector/tools/shape_tools.hpp"
 #include "pikdraw/document/commands/path_commands.hpp"
+#include "pikdraw/raster/edit_preview_service.hpp"
+#include "pikdraw/raster/analysis/histogram_service.hpp"
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -54,29 +62,224 @@ std::string NativeWindow::wide_to_utf8(const std::wstring& wide) {
 }
 
 void NativeWindow::initialize_default_tab() {
+    const auto drawing_preferences = tools::load_drawing_preferences(tools::drawing_preferences_path());
+    display_length_unit_ = drawing_preferences.value.default_length_unit;
+    settings_artboard_overview_choice_ = drawing_preferences.value.artboard_overview;
     DocumentTab tab;
     tab.id = "doc-1";
     tab.title = (language_ == UILanguage::Vietnamese) ? "Bản vẽ 1" : "Document 1";
     tab.page_width_mm = 297.0;
     tab.page_height_mm = 210.0;
     tab.unit = "mm";
+    tab.artboard_overview = drawing_preferences.value.artboard_overview;
     tab.root = std::make_unique<CompositionRoot>();
     tab.root->initialize(static_cast<double>(width_), static_cast<double>(height_), 1.0);
     tab.root->renderer().backend().set_canvas_background(canvas_background_color());
     tab.workflow = std::make_unique<DocumentWorkflow>(*tab.root);
-    tab.workflow->new_document(297.0, 210.0, color::DocumentColorMode::Cmyk, 300);
+    tab.workflow->new_document(297.0, 210.0, color::DocumentColorMode::Cmyk, 300,
+                               display_length_unit_);
+    if (const auto snapshot = tab.root->document().current_snapshot())
+        tab.active_artboard_id = snapshot->active_page().artboards.front().id;
     register_drawing_actions(*tab.root);
     tabs_.push_back(std::move(tab));
     active_tab_index_ = 0;
     document_path_ = active_tab().file_path;
     bind_drawing_tool_to_active_document();
+    const auto unit = display_length_unit_;
+    settings_unit_choice_ = unit == geometry::units::LengthUnit::Millimeter ? 0
+        : unit == geometry::units::LengthUnit::Centimeter ? 1
+        : unit == geometry::units::LengthUnit::Inch ? 2
+        : unit == geometry::units::LengthUnit::Point ? 3
+        : unit == geometry::units::LengthUnit::Meter ? 4
+        : unit == geometry::units::LengthUnit::Foot ? 5
+        : unit == geometry::units::LengthUnit::Yard ? 6 : 7;
 #ifdef _WIN32
     load_color_preferences();
 #endif
 }
 
 void NativeWindow::register_drawing_actions(CompositionRoot& document_root) {
+    document_root.renderer().backend().set_raster_image_resolver(
+        [this](const document::DocumentSnapshot& snapshot,
+               const document::ImageObject& image) {
+            return raster_preview_service_
+                ? raster_preview_service_->find(snapshot, image)
+                : std::shared_ptr<const document::ImageObject>{};
+        });
     auto& dispatcher = document_root.window().action_dispatcher();
+    register_powerclip_actions(document_root);
+    const auto register_page_unit = [&](std::string_view id, const char* title_vi,
+        const char* title_en, geometry::units::LengthUnit unit, const char* suffix) {
+        dispatcher.register_action({std::string(id), title_vi, title_en, "",
+            [this, unit, suffix] {
+                if (!workflow().set_page_display_length_unit(
+                        root().document().active_page_id(), unit))
+                    return;
+                sync_display_unit_from_active_page();
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? std::string("Đơn vị trang: ") + suffix + " · kích thước thật giữ nguyên · Ctrl+Z"
+                    : std::string("Page unit: ") + suffix + " · physical dimensions are unchanged · Ctrl+Z";
+#ifdef _WIN32
+                if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+            },
+            [this] { return !root().document().is_content_locked(); }});
+    };
+    register_page_unit(actions::ActionId::kPageUnitsMillimeter,
+        "Millimeters (mm)", "Millimeters (mm)", geometry::units::LengthUnit::Millimeter, "mm");
+    register_page_unit(actions::ActionId::kPageUnitsCentimeter,
+        "Centimeters (cm)", "Centimeters (cm)", geometry::units::LengthUnit::Centimeter, "cm");
+    register_page_unit(actions::ActionId::kPageUnitsMeter,
+        "Meters (m)", "Meters (m)", geometry::units::LengthUnit::Meter, "m");
+    register_page_unit(actions::ActionId::kPageUnitsInch,
+        "Inches (in)", "Inches (in)", geometry::units::LengthUnit::Inch, "in");
+    register_page_unit(actions::ActionId::kPageUnitsFoot,
+        "Feet (ft)", "Feet (ft)", geometry::units::LengthUnit::Foot, "ft");
+    register_page_unit(actions::ActionId::kPageUnitsYard,
+        "Yards (yd)", "Yards (yd)", geometry::units::LengthUnit::Yard, "yd");
+    register_page_unit(actions::ActionId::kPageUnitsPoint,
+        "Points (pt)", "Points (pt)", geometry::units::LengthUnit::Point, "pt");
+    register_page_unit(actions::ActionId::kPageUnitsPica,
+        "Picas (pc)", "Picas (pc)", geometry::units::LengthUnit::Pica, "pc");
+    dispatcher.register_action({std::string(actions::ActionId::kColorAssignProfile),
+        "Gán ICC cho trang hiện tại", "Assign ICC to active page", "",
+        [this] { assign_active_page_color_profile(); },
+        [this] { return !root().document().is_content_locked(); }});
+    dispatcher.register_action({std::string(actions::ActionId::kColorConvertProfile),
+        "Chuyển profile ICC của trang hiện tại", "Convert active page ICC profile", "",
+        [this] { convert_active_page_color_profile(); },
+        [this] {
+            const auto snapshot = root().document().current_snapshot();
+            return snapshot && snapshot->page().color_profile_resource &&
+                !root().document().is_content_locked();
+        }});
+    dispatcher.register_action({std::string(actions::ActionId::kColorAssignSelectionProfile),
+        "Gán ICC cho màu của đối tượng chọn", "Assign ICC to selected paints", "",
+        [this] { assign_selected_paint_color_profile(); },
+        [this] {
+            return !root().document().is_content_locked() &&
+                !root().vector_controller().selection().selected_ids().empty();
+        }});
+    dispatcher.register_action({std::string(actions::ActionId::kColorConvertSelectionProfile),
+        "Chuyển ICC màu đối tượng chọn", "Convert selected paint ICC profiles", "",
+        [this] { convert_selected_paint_color_profile(); },
+        [this] {
+            const auto snapshot = root().document().current_snapshot();
+            return snapshot && !root().document().is_content_locked() &&
+                !root().vector_controller().selection().selected_ids().empty();
+        }});
+    dispatcher.register_action({std::string(actions::ActionId::kBitmapCrop),
+        "Cắt ảnh raster", "Crop raster image", "",
+        [this] { edit_selected_bitmap_crop(); },
+        [this] { return can_edit_selected_bitmap(); }});
+    dispatcher.register_action({std::string(actions::ActionId::kBitmapExportMaster),
+        "Xuất bản gốc ảnh raster", "Export raster bitmap master", "",
+        [this] { export_selected_bitmap_master(); },
+        [this] { return can_export_selected_bitmap_master(); }});
+    dispatcher.register_action({std::string(actions::ActionId::kBitmapExportCmykMaster),
+        "Xuất TIFF CMYK16 ảnh raster", "Export raster bitmap master to CMYK16 TIFF", "",
+        [this] { export_selected_bitmap_master_cmyk(); },
+        [this] { return can_export_selected_bitmap_cmyk_master(); }});
+    dispatcher.register_action({std::string(actions::ActionId::kFileTestPrint),
+        "Xuất bảng in thử ảnh raster", "Export a frozen, ICC-managed raster test sheet", "",
+        [this] { export_selected_bitmap_test_sheet(); },
+        [this] { return can_export_selected_bitmap_test_sheet(); }});
+    dispatcher.register_action({std::string(actions::ActionId::kFilePrintTestSheet),
+        "In bảng thử ảnh raster qua Windows WCS", "Print a frozen raster test sheet through Windows WCS with separate driver ICM disabled to avoid double conversion", "",
+        [this] { print_selected_bitmap_test_sheet(); },
+        [this] { return can_export_selected_bitmap_test_sheet(); }});
+    dispatcher.register_action({std::string(actions::ActionId::kFileImportMeasurementRun),
+        "Nhập số đo màu và lưu run", "Import a bounded CGATS/CSV measurement run and save its immutable artifact", "",
+        [this] { import_measurement_run(); }, nullptr});
+    dispatcher.register_action({std::string(actions::ActionId::kFileCompareMeasurementRuns),
+        "So sánh hai Measurement Run theo điều kiện đã kiểm tra", "Compare two Measurement Runs with matching chart and print conditions, then save a CSV report", "",
+        [this] { compare_measurement_runs(); }, nullptr});
+    dispatcher.register_action({std::string(actions::ActionId::kBitmapAssignProfile),
+        "Gán ICC RGB cho ảnh raster", "Assign an RGB ICC interpretation to the selected raster without changing channel values; the canvas preview updates through the ICC worker",
+        "", [this] { assign_selected_bitmap_profile(); },
+        [this] { return can_assign_selected_bitmap_profile(); }});
+    dispatcher.register_action({std::string(actions::ActionId::kBitmapConvertProfileToSrgb),
+        "Chuyển profile ICC ảnh raster sang sRGB",
+        "Convert the selected raster's embedded RGB ICC profile to system sRGB using relative colorimetric intent; black point compensation is off",
+        "", [this] { convert_selected_bitmap_profile_to_srgb(); },
+        [this] { return can_convert_selected_bitmap_profile_to_srgb(); }});
+    dispatcher.register_action({std::string(actions::ActionId::kBitmapAdjustExposure),
+        "Chỉnh phơi sáng ảnh raster", "Adjust raster image exposure", "",
+        [this] { edit_selected_bitmap_exposure(); },
+        [this] { return can_edit_selected_bitmap(true); }});
+    dispatcher.register_action({std::string(actions::ActionId::kBitmapAdjustLight),
+        "Chỉnh ánh sáng ảnh raster", "Adjust exposure, contrast and tonal ranges in linear-light sRGB", "",
+        [this] { edit_selected_bitmap_light(); },
+        [this] { return can_edit_selected_bitmap(true); }});
+    dispatcher.register_action({std::string(actions::ActionId::kBitmapAdjustColorBalance),
+        "Cân bằng màu ảnh raster", "Adjust red/cyan, green/magenta and blue/yellow by tonal range in linear-light sRGB", "",
+        [this] { edit_selected_bitmap_color_balance(); },
+        [this] { return can_edit_selected_bitmap(true); }});
+    dispatcher.register_action({std::string(actions::ActionId::kBitmapAdjustChannelMixer),
+        "Trộn kênh RGB của ảnh raster", "Mix RGB channels with a linear-light matrix and preserve alpha",
+        "", [this] { edit_selected_bitmap_channel_mixer(); },
+        [this] { return can_edit_selected_bitmap(true); }});
+    dispatcher.register_action({std::string(actions::ActionId::kBitmapLocalExposureMask),
+        "Tạo phơi sáng cục bộ với mặt nạ",
+        "Create a feathered rectangle, left-to-right linear gradient, or radial gradient mask on the selected RGB raster; graph edits are undoable and saved in the native document",
+        "", [this] { edit_selected_bitmap_local_exposure_mask(); },
+        [this] { return can_edit_selected_bitmap(true); }});
+    dispatcher.register_action({std::string(actions::ActionId::kBitmapAdjustLevels),
+        "Chỉnh Levels ảnh raster", "Adjust raster image levels", "",
+        [this] { edit_selected_bitmap_levels(); },
+        [this] { return can_edit_selected_bitmap(true); }});
+    dispatcher.register_action({std::string(actions::ActionId::kBitmapAdjustHsl),
+        "Chỉnh HSL ảnh raster", "Adjust encoded-sRGB hue, saturation, and lightness", "",
+        [this] { edit_selected_bitmap_hsl(); },
+        [this] { return can_edit_selected_bitmap(true); }});
+    dispatcher.register_action({std::string(actions::ActionId::kBitmapAdjustCurves),
+        "Chỉnh Curves ảnh raster", "Adjust encoded-sRGB tone curves", "",
+        [this] { edit_selected_bitmap_curves(); },
+        [this] { return can_edit_selected_bitmap(true); }});
+    dispatcher.register_action({std::string(actions::ActionId::kBitmapAdjustWhiteBalance),
+        "Cân bằng trắng tương đối cho ảnh raster",
+        "Adjust relative temperature and tint in linear-light sRGB; this is not a Kelvin reading",
+        "", [this] { edit_selected_bitmap_white_balance(); },
+        [this] { return can_edit_selected_bitmap(true); }});
+    dispatcher.register_action({std::string(actions::ActionId::kBitmapAdjustVibrance),
+        "Tăng cường màu ít bão hòa cho ảnh raster",
+        "Increase muted encoded-sRGB colors more than already saturated colors",
+        "", [this] { edit_selected_bitmap_vibrance(); },
+        [this] { return can_edit_selected_bitmap(true); }});
+    dispatcher.register_action({std::string(actions::ActionId::kBitmapAdjustSelectiveHsl),
+        "Chỉnh HSL theo dải màu cho ảnh raster",
+        "Adjust one feathered encoded-sRGB hue range; neutral gray and alpha are preserved",
+        "", [this] { edit_selected_bitmap_selective_hsl(); },
+        [this] { return can_edit_selected_bitmap(true); }});
+    dispatcher.register_action({std::string(actions::ActionId::kBitmapCloneStamp),
+        "Thêm một nét Clone Stamp không phá hủy",
+        "Apply one deterministic, soft circular Clone Stamp dab from a frozen source sample",
+        "", [this] { edit_selected_bitmap_clone_stamp(); },
+        [this] { return can_edit_selected_bitmap(true); }});
+    dispatcher.register_action({std::string(actions::ActionId::kBitmapFlipHorizontal),
+        "Lật ảnh theo chiều ngang", "Flip raster image horizontally", "",
+        [this] { flip_selected_bitmap(true); },
+        [this] { return can_edit_selected_bitmap(); }});
+    dispatcher.register_action({std::string(actions::ActionId::kBitmapFlipVertical),
+        "Lật ảnh theo chiều dọc", "Flip raster image vertically", "",
+        [this] { flip_selected_bitmap(false); },
+        [this] { return can_edit_selected_bitmap(); }});
+    dispatcher.register_action({std::string(actions::ActionId::kColorConvertDocumentProfile),
+        "Chuyển tất cả trang sang profile ICC đích", "Convert all pages to a destination ICC profile", "",
+        [this] { convert_document_color_profile(); },
+        [this] {
+            const auto snapshot = root().document().current_snapshot();
+            return snapshot && !snapshot->pages().empty() && !root().document().is_content_locked() &&
+                std::all_of(snapshot->pages().begin(), snapshot->pages().end(), [](const auto& page) {
+                    const auto& profile = page.layout.color_profile_resource;
+                    if (!profile) return false;
+                    if (profile->identity().color_space == color::ColorSpace::Rgb)
+                        return page.layout.color_mode == color::DocumentColorMode::Rgb;
+                    if (profile->identity().color_space == color::ColorSpace::Cmyk)
+                        return page.layout.color_mode == color::DocumentColorMode::Cmyk;
+                    return false;
+                });
+        }});
     document_color_ui::register_actions(dispatcher, [this](color::DocumentColorMode mode) {
 #ifdef _WIN32
         const auto snapshot = root().document().current_snapshot();
@@ -87,13 +290,35 @@ void NativeWindow::register_drawing_actions(CompositionRoot& document_root) {
 #endif
         const bool success = workflow().convert_document_color_mode(mode, color_preview_);
         if (success) {
+            update_color_preview_options();
             default_style_.fill = color::convert_color_to_mode(default_style_.fill, mode, color_preview_.get());
             default_style_.stroke = color::convert_color_to_mode(default_style_.stroke, mode, color_preview_.get());
         }
         const std::string mode_name = mode == color::DocumentColorMode::Cmyk ? "CMYK" : "RGB";
-        const bool icc_active = color_preview_ && color_preview_->has_cmyk_transform();
-        const std::string conversion_method = icc_active ? "ICC"
-            : (language_ == UILanguage::Vietnamese ? "gần đúng" : "approximate");
+        std::string conversion_method;
+        if (const auto& report = workflow().last_color_conversion_summary(); report) {
+            const bool vi = language_ == UILanguage::Vietnamese;
+            if (report->icc_managed > 0)
+                conversion_method = (vi ? "ICC " : "ICC ") + std::to_string(report->icc_managed);
+            if (report->approximate > 0) {
+                if (!conversion_method.empty()) conversion_method += " · ";
+                conversion_method += (vi ? "gần đúng " : "fallback ") + std::to_string(report->approximate);
+            }
+            if (report->preset_policy > 0) {
+                if (!conversion_method.empty()) conversion_method += " · ";
+                conversion_method += (vi ? "chính sách đen " : "black policy ") +
+                    std::to_string(report->preset_policy);
+            }
+            if (report->tac_limited > 0) {
+                if (!conversion_method.empty()) conversion_method += " · ";
+                conversion_method += "TAC " + std::to_string(report->tac_limited);
+            }
+            if (conversion_method.empty())
+                conversion_method = vi ? "không cần đổi màu process" : "no process paint conversion needed";
+        } else {
+            conversion_method = language_ == UILanguage::Vietnamese
+                ? "không cần đổi màu process" : "no process paint conversion needed";
+        }
         status_msg_ = success ? (language_ == UILanguage::Vietnamese
             ? "Hệ màu tài liệu: " + mode_name + " · " + conversion_method + " · Ctrl+Z hoàn tác"
             : "Document color mode: " + mode_name + " · " + conversion_method + " · Ctrl+Z to undo")
@@ -129,6 +354,18 @@ void NativeWindow::register_drawing_actions(CompositionRoot& document_root) {
         "Hiệu ứng viền Contour", "Contour Effect", "Ctrl+F9", [this] { trigger_effects_contour(); }, nullptr});
     dispatcher.register_action({std::string(actions::ActionId::kObjectContourBreakApart),
         "Rã khối viền Contour", "Break Contour Apart", "Ctrl+K", [this] { trigger_break_contour_apart(); }, nullptr});
+    dispatcher.register_action({std::string(actions::ActionId::kToolKnife),
+        "Dao cắt vector", "Knife Tool", "K", [this] { set_active_tool(5); }, nullptr});
+    dispatcher.register_action({std::string(actions::ActionId::kToolVectorEraser),
+        "Tẩy vector", "Vector Eraser", "Shift+E", [this] { set_active_tool(16); }, nullptr});
+    dispatcher.register_action({std::string(actions::ActionId::kObjectTrimSourceTarget),
+        "Cắt Target (đối tượng chọn đầu) bằng các Source còn lại…",
+        "Trim Objects (first selected is Target)", "", [this] {
+            const auto& sel = root().vector_controller().selection().selected_ids();
+            if (sel.size() >= 2) {
+                workflow().trim_objects_source_target(sel[0], {sel.begin() + 1, sel.end()}, true);
+            }
+        }, nullptr});
     dispatcher.register_action({std::string(actions::ActionId::kToolSnapPanel),
         "Bắt điểm và hướng", "Snap and Direction", "F3", [this] {
             if (drawing_tool_) drawing_tool_->toggle_snap_panel();
@@ -173,6 +410,8 @@ void NativeWindow::bind_drawing_tool_to_active_document() {
     root().vector_controller().set_mode(mode);
     drawing_tool_ = std::make_unique<tools::DrawingToolController>(root().document());
     pen_tool_ = std::make_unique<tools::PenToolController>(root().document());
+    drawing_tool_->set_destination_owner(current_isolated_group_id().value_or(0));
+    pen_tool_->set_destination_owner(current_isolated_group_id().value_or(0));
     node_tool_ = std::make_unique<tools::NodeToolController>(root().document());
     contour_tool_ = std::make_unique<tools::ContourToolController>(root().document());
     if (active_tool_ == 6 || active_tool_ == 7) {
@@ -239,6 +478,15 @@ const DocumentWorkflow& NativeWindow::workflow() const noexcept {
     return *active_tab().workflow;
 }
 
+geometry::units::LengthUnit NativeWindow::display_length_unit() const noexcept {
+    if (!tabs_.empty() && active_tab().root) {
+        if (const auto snapshot = active_tab().root->document().current_snapshot()) {
+            return snapshot->page().display_length_unit;
+        }
+    }
+    return display_length_unit_;
+}
+
 bool NativeWindow::drawing_snap_panel_open() const noexcept {
     return drawing_tool_ && drawing_tool_->snap_panel_open();
 }
@@ -256,12 +504,15 @@ size_t NativeWindow::drawing_path_point_count() const noexcept {
 }
 
 void NativeWindow::switch_to_tab(size_t index) noexcept {
+    if(index!=active_tab_index_) exit_all_isolation();
     if (index < tabs_.size() && index != active_tab_index_) {
+        if (active_num_field_ != NumericFieldId::None) cancel_numeric_field();
         if (is_inline_text_editing_) commit_inline_text_editing();
         if (drawing_tool_) drawing_tool_->cancel();
         active_tab_index_ = index;
         ++view_generation_;
         document_path_ = active_tab().file_path;
+        sync_display_unit_from_active_page();
         bind_drawing_tool_to_active_document();
         fit_page_to_canvas();
 #ifdef _WIN32
@@ -272,6 +523,11 @@ void NativeWindow::switch_to_tab(size_t index) noexcept {
 
 void NativeWindow::close_tab(size_t index) noexcept {
     if (index >= tabs_.size()) return;
+#ifdef _WIN32
+    request_cancel_native_open_for_tab(tabs_[index].id);
+#endif
+    if (index == active_tab_index_ && active_num_field_ != NumericFieldId::None)
+        cancel_numeric_field();
     if (is_inline_text_editing_) commit_inline_text_editing();
     if (tabs_.size() > 1) {
         const bool closing_active = index == active_tab_index_;
@@ -288,14 +544,20 @@ void NativeWindow::close_tab(size_t index) noexcept {
         }
         if (closing_active) ++view_generation_;
         document_path_ = active_tab().file_path;
-        if (closing_active) bind_drawing_tool_to_active_document();
+        if (closing_active) {
+            sync_display_unit_from_active_page();
+            bind_drawing_tool_to_active_document();
+        }
         fit_page_to_canvas();
 #ifdef _WIN32
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 #endif
     } else {
         if (drawing_tool_) drawing_tool_->cancel();
-        workflow().new_document(297.0, 210.0, color::DocumentColorMode::Cmyk, 300);
+        const auto defaults = tools::load_drawing_preferences(tools::drawing_preferences_path());
+        workflow().new_document(297.0, 210.0, color::DocumentColorMode::Cmyk, 300,
+                                defaults.value.default_length_unit);
+        sync_display_unit_from_active_page();
         bind_drawing_tool_to_active_document();
         active_tab().title = (language_ == UILanguage::Vietnamese) ? "Bản vẽ 1" : "Document 1";
         active_tab().file_path = "";
@@ -322,14 +584,21 @@ void NativeWindow::create_new_tab(const std::string& title, double w_mm, double 
     tab.root->initialize(static_cast<double>(width_), static_cast<double>(height_), 1.0);
     tab.root->renderer().backend().set_canvas_background(canvas_background_color());
     tab.workflow = std::make_unique<DocumentWorkflow>(*tab.root);
+    const auto defaults = tools::load_drawing_preferences(tools::drawing_preferences_path());
+    settings_artboard_overview_choice_ = defaults.value.artboard_overview;
+    tab.artboard_overview = defaults.value.artboard_overview;
     tab.workflow->new_document(w_mm, h_mm, color_mode == "CMYK"
-        ? color::DocumentColorMode::Cmyk : color::DocumentColorMode::Rgb, dpi);
+        ? color::DocumentColorMode::Cmyk : color::DocumentColorMode::Rgb, dpi,
+        defaults.value.default_length_unit);
+    if (const auto snapshot = tab.root->document().current_snapshot())
+        tab.active_artboard_id = snapshot->active_page().artboards.front().id;
     register_drawing_actions(*tab.root);
     if (drawing_tool_) drawing_tool_->cancel();
     tabs_.push_back(std::move(tab));
     active_tab_index_ = tabs_.size() - 1;
     ++view_generation_;
     document_path_ = active_tab().file_path;
+    sync_display_unit_from_active_page();
     bind_drawing_tool_to_active_document();
     fit_page_to_canvas();
 #ifdef _WIN32
@@ -433,9 +702,11 @@ void NativeWindow::select_page_preset(int preset_index) noexcept {
                                     : std::max(entry.width_mm, entry.height_mm);
     set_active_page_size(target_w, target_h);
     show_page_preset_dropdown_ = false;
+    const auto dimensions = wide_to_utf8(format_length_pair_mm(
+        target_w, target_h, display_length_unit_, 4));
     status_msg_ = (language_ == UILanguage::Vietnamese)
-        ? std::string("Đã chọn khổ giấy: ") + wide_to_utf8(entry.name) + " (" + wide_to_utf8(entry.dim_label) + ")"
-        : std::string("Selected page preset: ") + wide_to_utf8(entry.name) + " (" + wide_to_utf8(entry.dim_label) + ")";
+        ? std::string("Đã chọn khổ giấy: ") + wide_to_utf8(entry.name) + " (" + dimensions + ")"
+        : std::string("Selected page preset: ") + wide_to_utf8(entry.name) + " (" + dimensions + ")";
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 #endif
@@ -490,9 +761,7 @@ void NativeWindow::resize_selected_object(double delta_w, double delta_h, bool c
 void NativeWindow::move_selected_object(double delta_x, double delta_y) {
     const auto ids = root().vector_controller().selection().selected_ids();
     if (ids.empty()) return;
-    for (const auto id : ids) {
-        workflow().transform_object(id, delta_x, delta_y);
-    }
+    workflow().transform_selected(geometry::Transform2D::translation(delta_x,delta_y),"Move Selected");
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 #endif
@@ -581,16 +850,41 @@ NativeWindow::NativeWindow(int width, int height)
     : width_(width),
       height_(height),
       shell_(static_cast<double>(width), static_cast<double>(height), 1.0) {
+    const auto raster_preview_rgb = color::ProfileResource::load_file(
+        color::IccPreview::system_srgb_profile(), color::ColorSpace::Rgb);
+    raster_preview_service_ = std::make_unique<raster::RasterEditPreviewService>(
+        512ULL * 1024ULL * 1024ULL, 192ULL * 1024ULL * 1024ULL,
+        raster_preview_rgb.resource);
+    raster_histogram_service_ =
+        std::make_unique<raster::RasterHistogramService>();
+    initialize_performance_trace();
+    record_performance_event(CanvasTraceKind::StartupBegin);
     initialize_default_tab();
     fit_page_to_canvas();
 }
 
 NativeWindow::~NativeWindow() {
+    for (auto& tab : tabs_)
+        if (tab.root)
+            tab.root->renderer().backend().set_raster_image_resolver({});
+    raster_preview_service_.reset();
+    raster_histogram_service_.reset();
 #ifdef _WIN32
+    join_recovery_scan_worker();
+    join_native_file_job();
+#endif
+    shutdown_performance_trace();
+#ifdef _WIN32
+    join_autosave_jobs();
     cancel_export_job();
+    cancel_raster_export_job();
+    cancel_test_sheet_job();
+    cancel_raster_profile_conversion();
+    cancel_import_placement();
 #endif
     mcp_runtime_.reset();
 #ifdef _WIN32
+    cleanup_direct_present_target();
     cleanup_canvas_cache();
     cleanup_backbuffer();
     cleanup_ui_fonts();

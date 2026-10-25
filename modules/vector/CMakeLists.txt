@@ -21,6 +21,7 @@ add_library(pikdraw_vector STATIC
     src/precision/numeric/numeric_input.cpp
     src/precision/snap/snap_config.cpp
     src/precision/snap/snap_index.cpp
+    src/precision/snap/layout_snap.cpp
     src/precision/snap/snap_math.cpp
     src/precision/snap/direction_snap.cpp
     src/tools/line/path_drawing_tool.cpp
@@ -28,6 +29,7 @@ add_library(pikdraw_vector STATIC
     src/tools/line/path_object_builder.cpp
     src/tools/pen/pen_drawing_tool.cpp
     src/tools/node/node_tool.cpp
+    src/tools/cut_tool_controller.cpp
     src/tools/contour/contour_tool.cpp
     src/tools/gradient_tool.cpp
 )
@@ -72,5 +74,6 @@ if(PIKDRAW_BUILD_TESTS)
     add_vector_test(test_pikdraw_vector_line_polyline tests/tools/line/test_path_drawing_tool.cpp)
     add_vector_test(test_pikdraw_vector_node tests/tools/node/test_node_tool.cpp)
     add_vector_test(test_pikdraw_vector_contour tests/tools/contour/test_contour_tool.cpp)
+    add_vector_test(test_pikdraw_vector_cut_tool tests/tools/test_cut_tool_controller.cpp)
     add_vector_test(test_pikdraw_vector_gradient tests/tools/test_gradient_tool.cpp)
 endif()

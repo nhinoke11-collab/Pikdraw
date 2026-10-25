@@ -10,6 +10,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -75,17 +76,20 @@ struct GradientGeometryProjection {
     const std::vector<document::ObjectId>& target_ids);
 
 /// Presenter coordinating the Properties dock, contextual property bar,
-/// and local draft edits. Supports Enter confirmation without commit,
-/// and Apply / Cancel lifecycle.
+/// and shared draft edits. Native shell commits completed interactions through
+/// the controller; Cancel is reserved for transient or stale edits.
 class GradientPropertiesPresenter {
 public:
     GradientPropertiesPresenter() = default;
 
     void load_selection(const GradientSelectionSummary& summary, const geometry::Rect2D& combined_bounds);
 
-    [[nodiscard]] bool has_draft() const noexcept { return draft_paint_.has_value(); }
+    [[nodiscard]] bool has_draft() const noexcept { return static_cast<bool>(draft_paint_); }
     [[nodiscard]] const document::GradientPaint* draft_paint() const noexcept {
-        return draft_paint_.has_value() ? &*draft_paint_ : nullptr;
+        return draft_paint_.get();
+    }
+    [[nodiscard]] std::shared_ptr<document::GradientPaint> shared_draft_paint() const noexcept {
+        return draft_paint_;
     }
     [[nodiscard]] bool is_dirty() const noexcept { return is_dirty_; }
     [[nodiscard]] bool preview_enabled() const noexcept { return preview_enabled_; }
@@ -136,7 +140,7 @@ private:
 
     GradientSelectionSummary summary_;
     geometry::Rect2D bounds_{0.0, 0.0, 100.0, 100.0};
-    std::optional<document::GradientPaint> draft_paint_;
+    std::shared_ptr<document::GradientPaint> draft_paint_;
     uint64_t selected_stop_id_{0};
 
     bool is_dirty_{false};

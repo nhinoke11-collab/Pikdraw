@@ -64,9 +64,17 @@ CommandResult ImportPagesCommand::execute(Document& doc) {
         std::vector<DocumentPage> prepared_pages;
         prepared_pages.reserve(pages_.size());
         try {
-            for (size_t index = 0; index < pages_.size(); ++index)
-                prepared_pages.push_back(make_document_page(
-                    pages_[index].name, pages_[index].layout, std::move(object_maps[index])));
+            for (size_t index = 0; index < pages_.size(); ++index) {
+                const auto& imported = pages_[index];
+                if (!imported.import_fidelity_report.format_name.empty() &&
+                    !imported.import_fidelity_report.is_valid())
+                    return CommandResult::fail("Imported page has invalid fidelity report metadata");
+                auto page = make_document_page(
+                    imported.name, imported.layout, std::move(object_maps[index]));
+                if (!imported.import_fidelity_report.format_name.empty())
+                    page.import_fidelity_reports.push_back(imported.import_fidelity_report);
+                prepared_pages.push_back(std::move(page));
+            }
         } catch (const std::exception& error) {
             return CommandResult::fail(
                 std::string("Could not allocate imported page identities: ") + error.what());
@@ -111,13 +119,18 @@ CommandResult ImportPagesCommand::undo(Document& doc) {
 ImportContentCommand::ImportContentCommand(std::vector<Layer> layers,
                                            std::vector<ObjectVariant> objects,
                                            std::optional<std::pair<double, double>> source_page_size_mm,
-                                           PageId target_page_id)
+                                           PageId target_page_id,
+                                           ImportFidelityReport import_fidelity_report)
     : imported_layers_(std::move(layers)), imported_objects_(std::move(objects)),
-      source_page_size_mm_(std::move(source_page_size_mm)), target_page_id_(target_page_id) {}
+      source_page_size_mm_(std::move(source_page_size_mm)), target_page_id_(target_page_id),
+      import_fidelity_report_(std::move(import_fidelity_report)) {}
 
 CommandResult ImportContentCommand::execute(Document& doc) {
     if (executed_ || imported_layers_.empty() || imported_objects_.empty())
         return CommandResult::fail("Import proposal is empty or already applied");
+    if (!import_fidelity_report_.format_name.empty() &&
+        !import_fidelity_report_.is_valid())
+        return CommandResult::fail("Import fidelity report metadata is invalid");
 
     if (target_page_id_ == kInvalidPageId) target_page_id_ = doc.active_page_id();
     const PageId target_page_id = target_page_id_;
@@ -194,6 +207,15 @@ CommandResult ImportContentCommand::execute(Document& doc) {
 
     target_page->layout = std::move(next_page);
     target_page->objects = std::move(next_objects);
+    for (auto& artboard : target_page->artboards) {
+        if (!artboard.linked_to_page_bounds) continue;
+        artboard.x_mm = 0.0;
+        artboard.y_mm = 0.0;
+        artboard.width_mm = target_page->layout.width_mm;
+        artboard.height_mm = target_page->layout.height_mm;
+    }
+    if (!import_fidelity_report_.format_name.empty())
+        target_page->import_fidelity_reports.push_back(import_fidelity_report_);
     if (!has_before_) {
         before_pages_ = doc.pages();
         before_active_page_id_ = doc.active_page_id();

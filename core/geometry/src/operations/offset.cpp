@@ -301,9 +301,10 @@ ContourResult compute_contour(const ContourRequest& request) {
         result.error_message = "Miter limit must be finite and between 1.0 and 100.0";
         return result;
     }
-    if (!std::isfinite(request.arc_tolerance_mm) || request.arc_tolerance_mm <= 0.0) {
+    if (!std::isfinite(request.arc_tolerance_mm) ||
+        request.arc_tolerance_mm < kContourMinimumArcToleranceMm || request.arc_tolerance_mm > 1.0) {
         result.status = OffsetStatus::InvalidInput;
-        result.error_message = "Arc tolerance must be positive and finite";
+        result.error_message = "Contour arc tolerance must be finite and between 0.02 and 1 mm";
         return result;
     }
 
@@ -404,7 +405,7 @@ ContourResult compute_contour(const ContourRequest& request) {
     }
 
     // General polygon / path offset
-    const double tol = std::clamp(request.arc_tolerance_mm, 0.02, 1.0);
+    const double tol = std::min(request.arc_tolerance_mm, 1.0);
     const auto flat_res = flatten_path_checked(request.path, {tol, 16});
     if (flat_res.status != FlatteningStatus::Success) {
         result.status = OffsetStatus::InvalidInput;

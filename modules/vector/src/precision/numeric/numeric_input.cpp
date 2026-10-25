@@ -69,6 +69,8 @@ Diagnostic validate_input(std::string_view input, ParseOptions options) {
         return {ErrorCode::InvalidLocale, 0};
     if (input.size() > max_input_bytes)
         return {ErrorCode::InputTooLong, max_input_bytes};
+    if (options.pixel_dpi && (!std::isfinite(*options.pixel_dpi) || *options.pixel_dpi <= 0.0))
+        return {ErrorCode::InvalidUnitContext, 0};
     for (char value : input) {
         if (!is_space(value))
             return {};
@@ -186,6 +188,19 @@ class ExpressionParser {
         if (!value)
             return false;
         if (value->dimension == Dimension::Scalar) {
+            if (expected == Dimension::Length) {
+                const auto factor = geometry::units::millimeters_per_unit(
+                    options_.default_length_unit, options_.pixel_dpi);
+                if (!factor) {
+                    set_error(ErrorCode::MissingUnitContext, offset);
+                    return false;
+                }
+                value->value *= *factor;
+                if (!std::isfinite(value->value)) {
+                    set_error(result_error(value->value), offset);
+                    return false;
+                }
+            }
             value->dimension = expected;
             return true;
         }
@@ -398,21 +413,120 @@ class ExpressionParser {
             return std::nullopt;
         }
 
+        const bool integer_number = digits_after == 0 &&
+            input_.find_first_of("eE", start) >= position_;
+        const std::size_t integer_end = position_;
         skip_spaces();
-        const std::size_t unit_start = position_;
-        while (!at_end() && is_alpha(input_[position_]))
-            ++position_;
-        const std::string_view unit = input_.substr(unit_start, position_ - unit_start);
+        std::size_t unit_start = position_;
+        std::string_view unit;
+        bool consumed_fraction = false;
+        if (integer_number && position_ > integer_end) {
+            std::size_t cursor = position_;
+            const std::size_t numerator_start = cursor;
+            while (cursor < input_.size() && is_digit(input_[cursor]))
+                ++cursor;
+            if (cursor > numerator_start && cursor < input_.size() && input_[cursor] == '/') {
+                const std::size_t slash = cursor++;
+                const std::size_t denominator_start = cursor;
+                while (cursor < input_.size() && is_digit(input_[cursor]))
+                    ++cursor;
+                const std::size_t denominator_end = cursor;
+                while (cursor < input_.size() && is_space(input_[cursor]))
+                    ++cursor;
+                const std::size_t suffix_start = cursor;
+                while (cursor < input_.size() && is_alpha(input_[cursor]))
+                    ++cursor;
+                if (cursor > suffix_start) {
+                    if (!count_token(numerator_start) || !count_token(slash) ||
+                        !count_token(denominator_start))
+                        return std::nullopt;
+                    double numerator = 0.0;
+                    double denominator = 0.0;
+                    const auto parsed_numerator = std::from_chars(
+                        input_.data() + numerator_start, input_.data() + slash, numerator);
+                    const auto parsed_denominator = std::from_chars(
+                        input_.data() + denominator_start, input_.data() + denominator_end,
+                        denominator);
+                    if (parsed_numerator.ec != std::errc{} ||
+                        parsed_denominator.ec != std::errc{}) {
+                        set_error(ErrorCode::Overflow, numerator_start);
+                        return std::nullopt;
+                    }
+                    if (denominator == 0.0) {
+                        set_error(ErrorCode::DivisionByZero, denominator_start);
+                        return std::nullopt;
+                    }
+                    value += numerator / denominator;
+                    if (!std::isfinite(value)) {
+                        set_error(result_error(value), start);
+                        return std::nullopt;
+                    }
+                    unit_start = suffix_start;
+                    unit = input_.substr(suffix_start, cursor - suffix_start);
+                    position_ = cursor;
+                    consumed_fraction = true;
+                }
+            }
+        }
+        if (!consumed_fraction && integer_number && !at_end() && input_[position_] == '/') {
+            std::size_t cursor = position_ + 1;
+            const std::size_t denominator_start = cursor;
+            while (cursor < input_.size() && is_digit(input_[cursor]))
+                ++cursor;
+            if (cursor > denominator_start) {
+                const std::size_t denominator_end = cursor;
+                while (cursor < input_.size() && is_space(input_[cursor]))
+                    ++cursor;
+                const std::size_t suffix_start = cursor;
+                while (cursor < input_.size() && is_alpha(input_[cursor]))
+                    ++cursor;
+                if (cursor > suffix_start) {
+                    double denominator = 0.0;
+                    const auto parsed_denominator = std::from_chars(
+                        input_.data() + denominator_start, input_.data() + denominator_end, denominator);
+                    if (parsed_denominator.ec != std::errc{} || denominator == 0.0) {
+                        set_error(denominator == 0.0 ? ErrorCode::DivisionByZero : ErrorCode::InvalidSyntax,
+                                  denominator_start);
+                        return std::nullopt;
+                    }
+                    if (!count_token(position_) || !count_token(denominator_start))
+                        return std::nullopt;
+                    value /= denominator;
+                    if (!std::isfinite(value)) {
+                        set_error(result_error(value), start);
+                        return std::nullopt;
+                    }
+                    unit_start = suffix_start;
+                    unit = input_.substr(suffix_start, cursor - suffix_start);
+                    position_ = cursor;
+                    consumed_fraction = true;
+                }
+            }
+        }
+        if (!consumed_fraction) {
+            skip_spaces();
+            unit_start = position_;
+            while (!at_end() && is_alpha(input_[position_]))
+                ++position_;
+            unit = input_.substr(unit_start, position_ - unit_start);
+        }
         if (unit.empty())
             return Quantity{value, Dimension::Scalar};
-        if (unit == "mm")
-            return Quantity{value, Dimension::Length};
-        if (unit == "cm")
-            return scale(value, 10.0, Dimension::Length, unit_start);
-        if (unit == "in")
-            return scale(value, 25.4, Dimension::Length, unit_start);
-        if (unit == "pt")
-            return scale(value, 25.4 / 72.0, Dimension::Length, unit_start);
+        const auto length_factor = [&](geometry::units::LengthUnit length_unit) {
+            return geometry::units::millimeters_per_unit(length_unit,
+                length_unit == geometry::units::LengthUnit::Pixel ? options_.pixel_dpi : std::nullopt);
+        };
+        const auto parse_length = [&](geometry::units::LengthUnit length_unit)
+            -> std::optional<Quantity> {
+            const auto factor = length_factor(length_unit);
+            if (!factor) {
+                set_error(ErrorCode::MissingUnitContext, unit_start);
+                return std::nullopt;
+            }
+            return scale(value, *factor, Dimension::Length, unit_start);
+        };
+        if (const auto length_unit = geometry::units::parse_length_unit_suffix(unit))
+            return parse_length(*length_unit);
         if (unit == "deg")
             return Quantity{value, Dimension::Angle};
         if (unit == "rad")
@@ -454,8 +568,16 @@ ParseResult<double> parse_length_mm(std::string_view input, ParseOptions options
     if (!parsed)
         return failure<double>(parsed.diagnostic.code, parsed.diagnostic.offset);
     Quantity value = *parsed.value;
-    if (value.dimension == Dimension::Scalar)
+    if (value.dimension == Dimension::Scalar) {
+        const auto factor = geometry::units::millimeters_per_unit(
+            options.default_length_unit, options.pixel_dpi);
+        if (!factor)
+            return failure<double>(ErrorCode::MissingUnitContext, 0);
+        value.value *= *factor;
+        if (!std::isfinite(value.value))
+            return failure<double>(result_error(value.value), 0);
         value.dimension = Dimension::Length;
+    }
     if (value.dimension != Dimension::Length)
         return failure<double>(ErrorCode::WrongDimension, 0);
     return success(value.value);

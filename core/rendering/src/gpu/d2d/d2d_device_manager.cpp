@@ -1,5 +1,7 @@
 #include "d2d_internal.hpp"
 #include <iostream>
+#include <cstdlib>
+#include <string_view>
 
 namespace pikdraw::rendering::d2d {
 
@@ -11,7 +13,9 @@ D2DDeviceManager::~D2DDeviceManager() {
 
 bool D2DDeviceManager::initialize() {
   // First attempt hardware device
-  if (create_d3d_device(D3D_DRIVER_TYPE_HARDWARE)) {
+  const auto* driver=std::getenv("PIKDRAW_D3D_DRIVER");
+  const bool force_warp=driver&&std::string_view(driver)=="warp";
+  if (!force_warp && create_d3d_device(D3D_DRIVER_TYPE_HARDWARE)) {
     is_hardware_ = true;
   } else {
     // Graceful fallback to WARP software rasterizer on GPU pipeline

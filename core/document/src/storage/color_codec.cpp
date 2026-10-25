@@ -13,7 +13,8 @@ color::RGBColor read_rgb(Reader &reader) {
 }
 } // namespace
 
-void write_color(Writer &writer, const color::ColorValue &value) {
+void write_color(Writer &writer, const color::ColorValue &value,
+                 const ProfileResourceIndexMap *profile_indices) {
   if (!value.is_valid())
     throw std::invalid_argument("Invalid source color");
   writer.u8(static_cast<uint8_t>(value.payload().index()));
@@ -41,9 +42,20 @@ void write_color(Writer &writer, const color::ColorValue &value) {
         }
       },
       value.payload());
+  if (profile_indices) {
+    const auto &resource = value.profile_resource();
+    uint32_t index = 0;
+    if (resource) {
+      const auto found = profile_indices->find(resource.get());
+      if (found == profile_indices->end())
+        throw std::invalid_argument("Paint ICC resource is absent from native dictionary");
+      index = found->second;
+    }
+    writer.u32(index);
+  }
 }
 
-color::ColorValue read_color(Reader &reader) {
+color::ColorValue read_color(Reader &reader, bool include_profile_binding) {
   const auto tag = reader.u8();
   const bool fill = reader.flag();
   const bool stroke = reader.flag();
@@ -72,6 +84,8 @@ color::ColorValue read_color(Reader &reader) {
     throw std::invalid_argument("Unknown native source color tag");
   }
   result.set_overprint({fill, stroke});
+  if (include_profile_binding)
+    result.set_pending_profile_resource_index(reader.u32());
   if (!result.is_valid())
     throw std::invalid_argument("Invalid native source color");
   return result;

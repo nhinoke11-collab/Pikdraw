@@ -36,6 +36,9 @@ public:
     void set_miter_limit(double limit);
     [[nodiscard]] double miter_limit() const noexcept;
 
+    bool set_arc_tolerance_mm(double tolerance);
+    [[nodiscard]] double arc_tolerance_mm() const noexcept;
+
     void set_outline_color(color::ColorValue col) noexcept { tool_->set_outline_color(std::move(col)); }
     [[nodiscard]] const color::ColorValue& outline_color() const noexcept { return tool_->outline_color(); }
 

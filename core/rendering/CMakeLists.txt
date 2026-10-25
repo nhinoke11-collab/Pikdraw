@@ -57,6 +57,8 @@ endif()
 # state before entering this function.
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|i[3-6]86)$" OR
    CMAKE_GENERATOR_PLATFORM MATCHES "^(Win32|x64)$")
+    set_source_files_properties(src/effects/gaussian_blur_avx.cpp
+        PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
     if(MSVC)
         set_source_files_properties(src/effects/gaussian_blur_avx.cpp
             PROPERTIES COMPILE_OPTIONS "/arch:AVX")
@@ -96,7 +98,17 @@ if(PIKDRAW_BUILD_TESTS)
     add_rendering_test(test_pikdraw_rendering_camera tests/camera/test_camera.cpp)
     add_rendering_test(test_pikdraw_rendering_culling tests/culling/test_culling.cpp)
     add_rendering_test(test_pikdraw_rendering_rasterizer tests/rasterizer/test_rasterizer.cpp)
+    add_test(NAME test_pikdraw_swap_chain COMMAND test_pikdraw_rendering_rasterizer --swapchain-only)
+    set_tests_properties(test_pikdraw_swap_chain PROPERTIES TIMEOUT 60 RUN_SERIAL TRUE)
+    add_test(NAME test_pikdraw_swap_chain_benchmark COMMAND test_pikdraw_rendering_rasterizer --swapchain-benchmark-only)
+    set_tests_properties(test_pikdraw_swap_chain_benchmark PROPERTIES TIMEOUT 120 RUN_SERIAL TRUE)
+    add_test(NAME test_pikdraw_powerclip_warp COMMAND test_pikdraw_rendering_rasterizer --powerclip-only)
+    set_tests_properties(test_pikdraw_powerclip_warp PROPERTIES ENVIRONMENT "PIKDRAW_D3D_DRIVER=warp" TIMEOUT 60 RUN_SERIAL TRUE)
+    add_test(NAME test_pikdraw_swap_chain_warp COMMAND test_pikdraw_rendering_rasterizer --swapchain-only)
+    set_tests_properties(test_pikdraw_swap_chain_warp PROPERTIES ENVIRONMENT "PIKDRAW_D3D_DRIVER=warp" TIMEOUT 60 RUN_SERIAL TRUE)
     target_sources(test_pikdraw_rendering_rasterizer PRIVATE tests/rasterizer/test_document_raster_dpi.cpp)
+    target_compile_definitions(test_pikdraw_rendering_rasterizer PRIVATE
+        $<$<CONFIG:Release>:PIKDRAW_RELEASE_BENCHMARK>)
     add_rendering_test(test_pikdraw_rendering_authoring_path_adapter tests/rasterizer/test_authoring_path_adapter.cpp)
     add_rendering_test(test_pikdraw_rendering_effect_compositor tests/effects/test_object_compositor.cpp)
     add_rendering_test(test_pikdraw_rendering_float_scratch_paint tests/rasterizer/test_float_scratch_paint.cpp)

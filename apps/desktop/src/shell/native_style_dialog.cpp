@@ -1,10 +1,13 @@
 #include "native_style_dialog.hpp"
 #include "native_style_dialog_math.hpp"
+#include "native_window_length_input.hpp"
 #include "pikdraw/desktop/shell/native_style_color_model.hpp"
+#include "pikdraw/color/preview/profile_color_transform.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <iostream>
+#include <memory>
 #include <vector>
 #ifdef _WIN32
 #include <windowsx.h>
@@ -30,8 +33,14 @@ struct EditorState {
     double width{0.0};
     bool stroke{false}, vi{false}, mixed_color{false}, mixed_overprint{false};
     bool dark{false};
+    geometry::units::LengthUnit display_unit{geometry::units::LengthUnit::Millimeter};
     DragTarget drag_target{DragTarget::None};
     ColorEditContext context{ColorEditContext::Generic};
+    const color::IccPreview* icc{nullptr};
+    std::shared_ptr<const color::ProfileResource> srgb_profile;
+    std::shared_ptr<const color::ProfileColorTransform> source_to_srgb;
+    std::shared_ptr<const color::ProfileColorTransform> srgb_to_original;
+    bool profile_conversion_failed{false};
     Model model{Model::Rgb};
     ViewerMode viewer{ViewerMode::Hsb};
     std::optional<color::DocumentColorMode> document_mode;
@@ -93,18 +102,37 @@ std::optional<double> read_number_from_hwnd(HWND edit, double maximum) {
     return parse_number(buffer, maximum);
 }
 
+std::wstring format_width_for_display(double width_mm, geometry::units::LengthUnit unit) {
+    const auto value = length_value_from_mm(width_mm, unit).value_or(width_mm);
+    std::wostringstream formatted;
+    formatted << std::setprecision(7) << value;
+    return formatted.str();
+}
+
+std::optional<double> read_width_from_hwnd(HWND edit, geometry::units::LengthUnit unit) {
+    if (!edit) return std::nullopt;
+    wchar_t buffer[128]{};
+    GetWindowTextW(edit, buffer, 128);
+    std::string input;
+    for (const wchar_t* cursor = buffer; *cursor; ++cursor) {
+        if (*cursor > 0x7f) return std::nullopt;
+        input.push_back(static_cast<char>(*cursor));
+    }
+    try {
+        const double width_mm = parse_length_input_mm(input, unit);
+        if (!std::isfinite(width_mm) || width_mm < 0.0 || width_mm > 10000.0)
+            return std::nullopt;
+        return width_mm;
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
 void set_edit_text_if_changed(HWND edit, const std::wstring &text) {
     if (!edit) return;
     wchar_t current[64]{};
     GetWindowTextW(edit, current, 64);
     if (text != current) SetWindowTextW(edit, text.c_str());
-}
-
-COLORREF colorref_from(const color::ColorValue &value) {
-    const auto rgb = rgb_from(value);
-    return RGB(static_cast<BYTE>(std::clamp(std::lround(rgb.r * 255.0), 0L, 255L)),
-               static_cast<BYTE>(std::clamp(std::lround(rgb.g * 255.0), 0L, 255L)),
-               static_cast<BYTE>(std::clamp(std::lround(rgb.b * 255.0), 0L, 255L)));
 }
 
 void assign_viewer_ids(EditorState &state) {
@@ -148,6 +176,41 @@ color::RGBColor current_active_rgb(const EditorState &state) {
     return hsv_to_rgb(state.current_hue, state.current_sat, state.current_val, state.current_alpha);
 }
 
+color::RGBColor editor_rgb_from(const color::ColorValue& value,
+                                const EditorState& state) {
+    if (value.profile_resource()) {
+        if (state.source_to_srgb &&
+            value.profile_resource()->identity() ==
+                state.source_to_srgb->source_profile().identity()) {
+            color::ColorValue converted;
+            if (state.source_to_srgb->convert(value, converted)) {
+                if (const auto* rgb = std::get_if<color::RGBColor>(&converted.payload()))
+                    return *rgb;
+            }
+        }
+        const auto preview = color::to_preview_rgba(value);
+        return {preview.r, preview.g, preview.b, preview.a};
+    }
+    return rgb_from(value, state.icc);
+}
+
+bool assign_cmyk_draft(EditorState& state, double c, double m,
+                       double y, double k, double alpha) {
+    auto next = color::ColorValue::make_cmyk(c, m, y, k, alpha);
+    next.set_overprint(state.draft.overprint());
+    auto profile = state.draft.profile_resource();
+    if (!profile && state.original.color_space() == color::ColorSpace::Cmyk)
+        profile = state.original.profile_resource();
+    if (profile && !next.set_profile_resource(std::move(profile))) {
+        state.profile_conversion_failed = true;
+        return false;
+    }
+    state.draft = std::move(next);
+    state.color_changed = true;
+    state.profile_conversion_failed = false;
+    return true;
+}
+
 void sync_inputs_from_state(HWND dialog, EditorState &state) {
     (void)dialog;
     state.populating = true;
@@ -185,7 +248,7 @@ void sync_inputs_from_state(HWND dialog, EditorState &state) {
 
     set_edit_text_if_changed(state.edit_opacity, format_channel_number(state.current_alpha * 100.0, 0));
     if (state.stroke) {
-        set_edit_text_if_changed(state.edit_width, format_channel_number(state.width, 2));
+        set_edit_text_if_changed(state.edit_width, format_width_for_display(state.width, state.display_unit));
     }
     state.populating = false;
 }
@@ -194,7 +257,37 @@ void apply_active_color_to_draft(EditorState &state) {
     const auto rgb = current_active_rgb(state);
     auto next = color::ColorValue::make_rgb(rgb.r, rgb.g, rgb.b, rgb.a);
     next.set_overprint(state.draft.overprint());
-    state.draft = source_color::convert(next, state.model);
+    const bool same_bound_process_space =
+        (state.model == Model::Rgb &&
+         state.original.color_space() == color::ColorSpace::Rgb) ||
+        (state.model == Model::Cmyk &&
+         state.original.color_space() == color::ColorSpace::Cmyk);
+    if (same_bound_process_space && state.original.profile_resource()) {
+        const auto& profile = state.original.profile_resource();
+        color::ColorValue converted;
+        const bool is_srgb = state.srgb_profile &&
+            state.srgb_profile->identity() == profile->identity();
+        const bool transformed = is_srgb
+            ? (converted = next, true)
+            : state.srgb_to_original &&
+                state.srgb_to_original->convert(next, converted);
+        if (!transformed || !converted.set_profile_resource(profile)) {
+            state.profile_conversion_failed = true;
+            return;
+        }
+        state.draft = std::move(converted);
+        state.profile_conversion_failed = false;
+        state.color_changed = true;
+        return;
+    }
+    auto converted = source_color::convert(next, state.model, state.icc);
+    const auto& original_profile = state.original.profile_resource();
+    if (original_profile && converted.color_space() == state.original.color_space()) {
+        state.profile_conversion_failed = true;
+        return;
+    }
+    state.draft = std::move(converted);
+    state.profile_conversion_failed = false;
     state.color_changed = true;
 }
 
@@ -361,8 +454,13 @@ void update_picker_from_mouse(HWND dialog, EditorState &state, int x, int y) {
 
 void draw_swatch(HWND dialog, const DRAWITEMSTRUCT &item, const EditorState &state) {
     (void)dialog;
-    const auto rgb = colorref_from(item.CtlID == 120 ? state.original : state.draft);
-    HBRUSH brush = CreateSolidBrush(rgb), old_b = static_cast<HBRUSH>(SelectObject(item.hDC, brush));
+    const auto rgb = editor_rgb_from(item.CtlID == 120 ? state.original : state.draft,
+                                     state);
+    const auto colorref = RGB(
+        static_cast<BYTE>(std::clamp(std::lround(rgb.r * 255.0), 0L, 255L)),
+        static_cast<BYTE>(std::clamp(std::lround(rgb.g * 255.0), 0L, 255L)),
+        static_cast<BYTE>(std::clamp(std::lround(rgb.b * 255.0), 0L, 255L)));
+    HBRUSH brush = CreateSolidBrush(colorref), old_b = static_cast<HBRUSH>(SelectObject(item.hDC, brush));
     HPEN pen = CreatePen(PS_SOLID, 1, state.border), old_p = static_cast<HPEN>(SelectObject(item.hDC, pen));
     RoundRect(item.hDC, item.rcItem.left, item.rcItem.top, item.rcItem.right, item.rcItem.bottom, 4, 4);
     SelectObject(item.hDC, old_b); SelectObject(item.hDC, old_p);
@@ -431,7 +529,7 @@ void initialize_editor(HWND dialog, EditorState &state) {
     state.background_brush = CreateSolidBrush(state.background);
     state.edit_brush = CreateSolidBrush(state.edit_background);
 
-    const auto rgb = rgb_from(state.draft);
+    const auto rgb = editor_rgb_from(state.draft, state);
     const auto hsv = to_hsv(rgb, 0.0);
     state.current_hue = hsv.h;
     state.current_sat = hsv.s;
@@ -510,9 +608,11 @@ void initialize_editor(HWND dialog, EditorState &state) {
     control(dialog, L"STATIC", L"%", 0, 440, 168, 14, 18, 0, state.font_small);
 
     control(dialog, L"STATIC", state.vi ? L"Dày:" : L"W:", SS_RIGHT, 366, 194, 24, 18, 313, state.font);
-    state.edit_width = control(dialog, L"EDIT", format_channel_number(state.width, 2).c_str(),
-                               ES_AUTOHSCROLL | ES_RIGHT | WS_TABSTOP, 392, 192, 44, 21, 206, state.font);
-    control(dialog, L"STATIC", L"mm", 0, 440, 194, 20, 18, 314, state.font_small);
+    const auto width_text = format_width_for_display(state.width, state.display_unit);
+    state.edit_width = control(dialog, L"EDIT", width_text.c_str(),
+                               ES_AUTOHSCROLL | ES_RIGHT | WS_TABSTOP, 392, 192, 64, 21, 206, state.font);
+    const auto unit_text = display_length_unit_suffix_wide(state.display_unit);
+    control(dialog, L"STATIC", unit_text.c_str(), 0, 460, 194, 22, 18, 314, state.font_small);
     EnableWindow(state.edit_width, state.stroke);
     ShowWindow(GetDlgItem(dialog, 313), state.stroke ? SW_SHOW : SW_HIDE);
     ShowWindow(state.edit_width, state.stroke ? SW_SHOW : SW_HIDE);
@@ -580,8 +680,8 @@ void on_color_input_changed(HWND dialog, EditorState &state, int id) {
                 state.current_sat = hsv.s;
                 state.current_val = hsv.v;
                 if (state.model == Model::Cmyk) {
-                    state.draft = color::ColorValue::make_cmyk(*c / 100.0, *m / 100.0, *y / 100.0, *k / 100.0, state.current_alpha);
-                    state.color_changed = true;
+                    (void)assign_cmyk_draft(state, *c / 100.0, *m / 100.0,
+                        *y / 100.0, *k / 100.0, state.current_alpha);
                 } else {
                     apply_active_color_to_draft(state);
                 }
@@ -616,8 +716,8 @@ void on_color_input_changed(HWND dialog, EditorState &state, int id) {
             state.current_sat = hsv.s;
             state.current_val = hsv.v;
             if (state.model == Model::Cmyk) {
-                state.draft = color::ColorValue::make_cmyk(*c / 100.0, *m / 100.0, *y / 100.0, *k / 100.0, state.current_alpha);
-                state.color_changed = true;
+                (void)assign_cmyk_draft(state, *c / 100.0, *m / 100.0,
+                    *y / 100.0, *k / 100.0, state.current_alpha);
             } else {
                 apply_active_color_to_draft(state);
             }
@@ -644,8 +744,8 @@ void on_color_input_changed(HWND dialog, EditorState &state, int id) {
             state.current_alpha = *a / 100.0;
             if (state.model == Model::Cmyk) {
                 if (const auto *cmyk = std::get_if<color::CMYKColor>(&state.draft.payload())) {
-                    state.draft = color::ColorValue::make_cmyk(cmyk->c, cmyk->m, cmyk->y, cmyk->k, state.current_alpha);
-                    state.color_changed = true;
+                    (void)assign_cmyk_draft(state, cmyk->c, cmyk->m,
+                        cmyk->y, cmyk->k, state.current_alpha);
                 } else {
                     apply_active_color_to_draft(state);
                 }
@@ -792,7 +892,7 @@ INT_PTR CALLBACK editor_proc(HWND dialog, UINT message, WPARAM wparam, LPARAM lp
     if (id == 100 && HIWORD(wparam) == CBN_SELCHANGE) {
         const auto selected = SendDlgItemMessageW(dialog, 100, CB_GETCURSEL, 0, 0);
         const auto target = model_from_index(static_cast<int>(SendDlgItemMessageW(dialog, 100, CB_GETITEMDATA, selected, 0)));
-        state->draft = source_color::convert(state->draft, target);
+        state->draft = source_color::convert(state->draft, target, state->icc);
         state->model = target;
         state->color_changed = true;
         apply_active_color_to_draft(*state);
@@ -824,7 +924,34 @@ INT_PTR CALLBACK editor_proc(HWND dialog, UINT message, WPARAM wparam, LPARAM lp
         return TRUE;
     }
     if (id == IDOK) {
-        const auto width = read_number_from_hwnd(state->edit_width, 10000.0).value_or(state->width);
+        if (state->profile_conversion_failed) {
+            MessageBoxW(dialog,
+                state->vi
+                    ? L"Không thể áp dụng thay đổi màu vì chưa tạo được phép chuyển ICC phù hợp. Hãy thử profile khác hoặc hủy thay đổi màu."
+                    : L"The color change cannot be applied because a matching ICC transform is unavailable. Choose another profile or cancel the color change.",
+                state->vi ? L"Không thể chuyển màu ICC" : L"ICC color conversion unavailable",
+                MB_OK | MB_ICONWARNING);
+            return TRUE;
+        }
+        double width = state->width;
+        if (state->stroke && state->width_changed) {
+            const auto parsed_width = read_width_from_hwnd(state->edit_width, state->display_unit);
+            if (!parsed_width) {
+                const auto max_width = format_mm_display(10000.0, state->display_unit, 4);
+                const auto message = state->vi
+                    ? std::wstring(L"Nhập độ rộng nét hợp lệ theo đơn vị trang hoặc thêm hậu tố đơn vị (0–") +
+                        max_width + L")."
+                    : std::wstring(L"Enter a valid stroke width in the page unit or add a unit suffix (0–") +
+                        max_width + L").";
+                MessageBoxW(dialog,
+                    message.c_str(),
+                    state->vi ? L"Độ rộng nét không hợp lệ" : L"Invalid stroke width",
+                    MB_OK | MB_ICONWARNING);
+                SetFocus(state->edit_width);
+                return TRUE;
+            }
+            width = *parsed_width;
+        }
         if (!state->color_changed) state->draft = state->original;
         const auto overprint = state->overprint_changed
             ? std::optional<bool>{SendDlgItemMessageW(dialog, kOverprintId, BM_GETCHECK, 0, 0) == BST_CHECKED}
@@ -842,17 +969,39 @@ INT_PTR CALLBACK editor_proc(HWND dialog, UINT message, WPARAM wparam, LPARAM lp
 std::optional<StyleEditorResult> edit_source_color(HWND owner, const color::ColorValue &initial,
     double width_mm, bool stroke, bool vietnamese, ColorEditContext context,
     bool mixed_color, bool mixed_overprint, std::optional<color::DocumentColorMode> document_mode,
-    bool dark_theme) {
+    bool dark_theme, const color::IccPreview* icc, geometry::units::LengthUnit display_unit) {
     struct EmptyDialog { DLGTEMPLATE dialog; WORD menu{0}, klass{0}, title{0}; } layout{};
     layout.dialog.style = WS_POPUP | WS_CAPTION | WS_SYSMENU | DS_MODALFRAME | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
     layout.dialog.cx = 242;
     layout.dialog.cy = 163;
     EditorState state;
     state.original = initial; state.draft = initial; state.width = width_mm;
+    state.display_unit = display_unit;
     state.document_mode = document_mode;
     state.stroke = stroke; state.vi = vietnamese; state.context = context;
     state.mixed_color = mixed_color; state.mixed_overprint = mixed_overprint;
     state.dark = dark_theme;
+    state.icc = icc;
+    if (const auto source_profile = initial.profile_resource()) {
+        auto srgb = color::ProfileResource::load_file(
+            color::IccPreview::system_srgb_profile(), color::ColorSpace::Rgb);
+        if (srgb) {
+            state.srgb_profile = srgb.resource;
+            if (source_profile->identity() != srgb.resource->identity()) {
+                const auto preview_transform = color::ProfileColorTransform::create(
+                    source_profile, srgb.resource);
+                if (preview_transform)
+                    state.source_to_srgb = preview_transform.transform;
+            }
+            if (initial.color_space() == color::ColorSpace::Cmyk ||
+                initial.color_space() == color::ColorSpace::Rgb) {
+                const auto edit_transform = color::ProfileColorTransform::create(
+                    srgb.resource, source_profile);
+                if (edit_transform)
+                    state.srgb_to_original = edit_transform.transform;
+            }
+        }
+    }
     DialogBoxIndirectParamW(GetModuleHandleW(nullptr), &layout.dialog, owner, editor_proc,
                             reinterpret_cast<LPARAM>(&state));
     return state.result;

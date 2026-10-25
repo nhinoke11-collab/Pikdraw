@@ -75,15 +75,24 @@ int main() {
             const std::string fixture_name(reinterpret_cast<const char*>(encoded_name.data()),
                                            encoded_name.size());
             std::ifstream input(entry.path(), std::ios::binary);
-            const std::vector<uint8_t> source((std::istreambuf_iterator<char>(input)), {});
+            std::vector<uint8_t> source((std::istreambuf_iterator<char>(input)), {});
             records.clear();
             diagnostic.clear();
+            size_t memory_admission_calls = 0;
+            uint64_t largest_memory_admission = 0;
             if (!input.good() && !input.eof()) {
                 std::cerr << "Could not read CDR corpus fixture [" << fixture_name << "]\n";
                 ++failures;
                 continue;
             }
-            const bool converted = BuildCdrImportRecords(source, records, diagnostic);
+            const bool converted = BuildCdrImportRecordsAndReleaseSource(
+                source, records, diagnostic,
+                [&](uint64_t bytes, std::string&) {
+                    ++memory_admission_calls;
+                    largest_memory_admission = (std::max)(largest_memory_admission, bytes);
+                    return true;
+                });
+            assert(source.empty());
             if (!converted) {
                 std::cerr << "CDR adapter rejected [" << fixture_name << "]: " << diagnostic << '\n';
                 ++failures;
@@ -221,7 +230,9 @@ int main() {
                       << image_count << " embedded images, " << image_chunk_count
                       << " image-data chunks, " << arc_element_count << " arc segments, max raster " << max_image_width << 'x'
                       << max_image_height << " px, " << total_decoded_image_bytes
-                      << " decoded bytes across placements";
+                      << " decoded bytes across placements, RAM admission calls="
+                      << memory_admission_calls << ", largest request="
+                      << largest_memory_admission << " bytes";
             if (std::isfinite(min_x) && std::isfinite(min_y) &&
                 std::isfinite(max_x) && std::isfinite(max_y)) {
                 std::cout << ", painted path bounds [" << min_x << ',' << min_y << "]..["
@@ -243,8 +254,11 @@ int main() {
                           << "]..[" << image_max_x << ',' << image_max_y << "] mm";
             }
             std::cout << ".\n";
-            if (image_count != 0) assert(image_chunk_count != 0);
-            if (image_count != 0) assert(source_chunk_count != 0);
+            if (image_count != 0) {
+                assert(image_chunk_count != 0);
+                assert(source_chunk_count != 0);
+                assert(memory_admission_calls > 0 && largest_memory_admission > 0);
+            }
         }
         assert(fixture_count > 0);
         assert(failures == 0);
@@ -255,9 +269,11 @@ int main() {
     if (fixture && *fixture) {
         std::ifstream input(std::filesystem::path(fixture), std::ios::binary);
         assert(input.good());
-        const std::vector<uint8_t> source((std::istreambuf_iterator<char>(input)), {});
+        std::vector<uint8_t> source((std::istreambuf_iterator<char>(input)), {});
         assert(!source.empty());
-        const bool converted = BuildCdrImportRecords(source, records, diagnostic);
+        const bool converted = BuildCdrImportRecordsAndReleaseSource(
+            source, records, diagnostic);
+        assert(source.empty());
         if (!converted) std::cerr << "Real CDR adapter rejected fixture: " << diagnostic << '\n';
         assert(converted);
         size_t page_count = 0, layer_count = 0, path_count = 0, text_count = 0;

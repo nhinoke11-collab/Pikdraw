@@ -1,7 +1,7 @@
 # Launch the one shared native application.
 param(
     [ValidateSet('Preview', 'Editor')][string]$Mode = 'Editor',
-    [ValidateSet('Debug', 'Release')][string]$Configuration = 'Debug',
+    [ValidateSet('Auto', 'Debug', 'Release')][string]$Configuration = 'Auto',
     [string]$Scenario = 'basic',
     [switch]$ForceSoftware,
     [switch]$Build,

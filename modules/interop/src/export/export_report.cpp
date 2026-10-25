@@ -154,9 +154,11 @@ ExportReportValidation validate_export_job_report(const ExportJobReport& report)
         if (!valid_file_status(file.status) || file.path.empty() ||
             file.snapshot_revision != report.snapshot_revision ||
             !has_unique_nonzero_ids(file.page_ids) ||
-            !has_unique_nonzero_ids(file.object_ids))
+            !has_unique_nonzero_ids(file.object_ids) ||
+            (file.artboard_id && (*file.artboard_id == 0 || !file.bounds)) ||
+            (file.bounds && (!file.bounds->is_finite() || file.bounds->is_empty())))
             return reject(ExportReportError::InvalidFileReceipt,
-                          "File receipts need a path, unique scope IDs and the job snapshot revision.");
+                          "File receipts need a path, unique scope IDs, valid optional artboard bounds and the job revision.");
         if (file.status == ExportFileStatus::Committed) {
             if (file.byte_size == 0 || !is_sha256_hex(file.sha256_hex))
                 return reject(ExportReportError::InvalidFileReceipt,

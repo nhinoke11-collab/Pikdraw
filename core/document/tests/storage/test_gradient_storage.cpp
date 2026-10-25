@@ -93,7 +93,7 @@ void test_v5_roundtrip_gradient() {
 
     // Header check
     const auto* header = reinterpret_cast<const PikDrawHeader*>(bytes.data());
-    assert(header->version == kCurrentFormatVersion); // 5
+    assert(header->version == kArtboardsFormatVersion);
 
     // Deserialize
     std::string error;

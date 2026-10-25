@@ -21,7 +21,17 @@ std::wstring parameter_text(double value, bool percent = false) {
 }
 
 int effect_row_height(const document::EffectParameters &parameters) {
-    return std::holds_alternative<document::DropShadowEffect>(parameters) ? 246 : 118;
+    if (std::holds_alternative<document::DropShadowEffect>(parameters) ||
+        std::holds_alternative<document::InnerShadowEffect>(parameters))
+        return 246;
+    if (std::holds_alternative<document::OuterGlowEffect>(parameters) ||
+        std::holds_alternative<document::InnerGlowEffect>(parameters))
+        return 118;
+    if (std::holds_alternative<document::ColorOverlayEffect>(parameters))
+        return 150;
+    if (std::holds_alternative<document::FeatherEffect>(parameters))
+        return 88;
+    return 118; // GaussianBlurEffect
 }
 } // namespace
 
@@ -262,14 +272,12 @@ void paint_gradient_properties_panel(
            vi ? L"⧈ Khớp dải màu theo khung đối tượng" : L"⧈ Fit Gradient to Bounds", false,
            can_edit, 26);
 
-    const int buttons_y = Layout::actions_top;
-    button(content_left, buttons_y, half, vi ? L"Áp dụng" : L"Apply", false,
-           can_edit && presenter.is_dirty(), 28);
-    button(content_left + half + 6, buttons_y, half, vi ? L"Hủy" : L"Cancel", false,
-           can_edit && presenter.is_dirty(), 28);
-    if (visible_bottom < buttons_y + 32)
+    const int live_y = Layout::actions_top;
+    label(vi ? L"XEM TRƯỚC TRỰC TIẾP · Ctrl+Z hoàn tác"
+             : L"LIVE PREVIEW · Ctrl+Z to undo", live_y, accent, 28);
+    if (visible_bottom < live_y + 32)
         label(vi ? L"Cuộn xuống để xem đầy đủ nút bấm" : L"Scroll down to see all buttons",
-              buttons_y + 30, muted);
+              live_y + 30, muted);
     (void)inspector_x;
     RestoreDC(dc, saved);
 }
@@ -669,10 +677,22 @@ void NativeWindow::paint_style_inspector(HDC dc, int left, int top, int bottom) 
         int node_top = kAppearanceEffectListTop;
         for (size_t index = 0; index < appearance.effects.size(); ++index) {
             const auto &effect = appearance.effects[index];
-            const bool blur = std::holds_alternative<document::GaussianBlurEffect>(effect.parameters);
-            const auto title = std::to_wstring(index + 1) + L" · " +
-                (blur ? (vi ? L"Gaussian Blur" : L"Gaussian Blur")
-                      : (vi ? L"Drop Shadow" : L"Drop Shadow"));
+            const auto *blur = std::get_if<document::GaussianBlurEffect>(&effect.parameters);
+            const auto *feather = std::get_if<document::FeatherEffect>(&effect.parameters);
+            const auto *shadow = std::get_if<document::DropShadowEffect>(&effect.parameters);
+            const auto *inner_shadow = std::get_if<document::InnerShadowEffect>(&effect.parameters);
+            const auto *outer_glow = std::get_if<document::OuterGlowEffect>(&effect.parameters);
+            const auto *inner_glow = std::get_if<document::InnerGlowEffect>(&effect.parameters);
+            const auto *overlay = std::get_if<document::ColorOverlayEffect>(&effect.parameters);
+
+            const auto name = blur ? (vi ? L"Gaussian Blur" : L"Gaussian Blur")
+                : feather ? (vi ? L"Làm mềm viền (Feather)" : L"Feather")
+                : shadow ? (vi ? L"Drop Shadow" : L"Drop Shadow")
+                : inner_shadow ? (vi ? L"Bóng trong (Inner Shadow)" : L"Inner Shadow")
+                : outer_glow ? (vi ? L"Phát sáng ngoài (Outer Glow)" : L"Outer Glow")
+                : inner_glow ? (vi ? L"Phát sáng trong (Inner Glow)" : L"Inner Glow")
+                : (vi ? L"Phủ màu (Color Overlay)" : L"Color Overlay");
+            const auto title = std::to_wstring(index + 1) + L" · " + name;
             label(title, 12, node_top, 256, text);
             const int controls_y = node_top + 22;
             button({12, controls_y, 96, controls_y + 23},
@@ -689,33 +709,38 @@ void NativeWindow::paint_style_inspector(HDC dc, int left, int top, int bottom) 
                        workflow().can_move_selected_effect(index, 1));
             button({210, controls_y, 268, controls_y + 23}, vi ? L"Xóa" : L"Remove", false,
                    appearance.can_edit_effect(index));
-            // The presenter has already evaluated the whole selection's compatibility.
-            // Re-run the workflow guard when an action is invoked, not once per node while
-            // painting a potentially large effect stack.
             const bool can_edit_node = appearance.can_edit_effect(index);
             const int first_row = node_top + 48;
             if (blur) {
-                const auto &blur_value = std::get<document::GaussianBlurEffect>(effect.parameters);
                 draw_numeric(12, first_row, sigma_x_label.c_str(), NumericFieldId::BlurSigmaX, index,
-                             effect.mixed_sigma_x, blur_value.sigma_x_mm, false, can_edit_node);
+                             effect.mixed_sigma_x, blur->sigma_x_mm, false, can_edit_node);
                 draw_numeric(142, first_row, sigma_y_label.c_str(), NumericFieldId::BlurSigmaY, index,
-                             effect.mixed_sigma_y, blur_value.sigma_y_mm, false, can_edit_node);
-            } else {
-                const auto &shadow = std::get<document::DropShadowEffect>(effect.parameters);
+                             effect.mixed_sigma_y, blur->sigma_y_mm, false, can_edit_node);
+            } else if (feather) {
+                draw_numeric(12, first_row, vi ? L"Bán kính" : L"Radius", NumericFieldId::BlurSigmaX, index,
+                             effect.mixed_sigma_x, feather->radius_mm, false, can_edit_node);
+            } else if (shadow || inner_shadow) {
+                const auto &s_color = shadow ? shadow->color : inner_shadow->color;
+                const auto s_dx = shadow ? shadow->dx_mm : inner_shadow->dx_mm;
+                const auto s_dy = shadow ? shadow->dy_mm : inner_shadow->dy_mm;
+                const auto s_sx = shadow ? shadow->sigma_x_mm : inner_shadow->sigma_x_mm;
+                const auto s_sy = shadow ? shadow->sigma_y_mm : inner_shadow->sigma_y_mm;
+                const auto s_op = shadow ? shadow->opacity : inner_shadow->opacity;
+                const auto s_bm = shadow ? shadow->blend_mode : inner_shadow->blend_mode;
                 draw_numeric(12, first_row, offset_x_label.c_str(), NumericFieldId::ShadowOffsetX,
-                             index, effect.mixed_offset_x, shadow.dx_mm, false, can_edit_node);
+                             index, effect.mixed_offset_x, s_dx, false, can_edit_node);
                 draw_numeric(142, first_row, offset_y_label.c_str(), NumericFieldId::ShadowOffsetY,
-                             index, effect.mixed_offset_y, shadow.dy_mm, false, can_edit_node);
+                             index, effect.mixed_offset_y, s_dy, false, can_edit_node);
                 draw_numeric(12, first_row + 30, sigma_x_label.c_str(), NumericFieldId::ShadowFeatherX,
-                             index, effect.mixed_sigma_x, shadow.sigma_x_mm, false, can_edit_node);
+                             index, effect.mixed_sigma_x, s_sx, false, can_edit_node);
                 draw_numeric(142, first_row + 30, sigma_y_label.c_str(), NumericFieldId::ShadowFeatherY,
-                             index, effect.mixed_sigma_y, shadow.sigma_y_mm, false, can_edit_node);
+                             index, effect.mixed_sigma_y, s_sy, false, can_edit_node);
                 label(vi ? L"Màu bóng" : L"Shadow color", 12, first_row + 62, 82, muted);
                 button({96, first_row + 62, 268, first_row + 88},
                        effect.mixed_color ? (vi ? L"Nhiều màu" : L"Mixed colors")
-                           : utf8_to_wide(color_description(shadow.color)),
+                           : utf8_to_wide(color_description(s_color)),
                        false, can_edit_node && !effect.mixed_color);
-                const auto shadow_rgba = convert(shadow.color);
+                const auto shadow_rgba = convert(s_color);
                 RECT color_swatch{left + 101, top + first_row + 67,
                                   left + 119, top + first_row + 83};
                 const auto shadow_brush = CreateSolidBrush(RGB(shadow_rgba.r, shadow_rgba.g, shadow_rgba.b));
@@ -723,7 +748,7 @@ void NativeWindow::paint_style_inspector(HDC dc, int left, int top, int bottom) 
                 DeleteObject(shadow_brush);
                 FrameRect(dc, &color_swatch, static_cast<HBRUSH>(GetStockObject(GRAY_BRUSH)));
                 draw_numeric(12, first_row + 92, L"Opacity %", NumericFieldId::ShadowOpacity,
-                             index, effect.mixed_opacity, shadow.opacity * 100.0, true, can_edit_node);
+                             index, effect.mixed_opacity, s_op * 100.0, true, can_edit_node);
                 label(vi ? L"Hòa bóng lên nền" : L"Shadow blend with backdrop",
                       12, first_row + 122, 210, muted);
                 if (effect.mixed_shadow_blend_mode)
@@ -744,7 +769,66 @@ void NativeWindow::paint_style_inspector(HDC dc, int left, int top, int bottom) 
                     button({x, y, x + 80, y + 24},
                            vi ? shadow_labels_vi[mode_index] : shadow_labels_en[mode_index],
                            !effect.mixed_shadow_blend_mode &&
-                               shadow.blend_mode == mode,
+                               s_bm == mode,
+                           can_edit_node && workflow().can_set_selected_effect_blend_mode(
+                               index, mode));
+                }
+            } else if (outer_glow || inner_glow) {
+                const auto &g_color = outer_glow ? outer_glow->color : inner_glow->color;
+                const auto g_rad = outer_glow ? outer_glow->radius_mm : inner_glow->radius_mm;
+                const auto g_op = outer_glow ? outer_glow->opacity : inner_glow->opacity;
+                draw_numeric(12, first_row, vi ? L"Bán kính" : L"Radius", NumericFieldId::BlurSigmaX, index,
+                             effect.mixed_sigma_x, g_rad, false, can_edit_node);
+                label(vi ? L"Màu phát sáng" : L"Glow color", 12, first_row + 30, 82, muted);
+                button({96, first_row + 30, 268, first_row + 56},
+                       effect.mixed_color ? (vi ? L"Nhiều màu" : L"Mixed colors")
+                           : utf8_to_wide(color_description(g_color)),
+                       false, can_edit_node && !effect.mixed_color);
+                const auto glow_rgba = convert(g_color);
+                RECT color_swatch{left + 101, top + first_row + 35,
+                                  left + 119, top + first_row + 51};
+                const auto glow_brush = CreateSolidBrush(RGB(glow_rgba.r, glow_rgba.g, glow_rgba.b));
+                FillRect(dc, &color_swatch, glow_brush);
+                DeleteObject(glow_brush);
+                FrameRect(dc, &color_swatch, static_cast<HBRUSH>(GetStockObject(GRAY_BRUSH)));
+                draw_numeric(12, first_row + 60, L"Opacity %", NumericFieldId::ShadowOpacity,
+                             index, effect.mixed_opacity, g_op * 100.0, true, can_edit_node);
+            } else if (overlay) {
+                label(vi ? L"Màu phủ" : L"Overlay color", 12, first_row, 82, muted);
+                button({96, first_row, 268, first_row + 26},
+                       effect.mixed_color ? (vi ? L"Nhiều màu" : L"Mixed colors")
+                           : utf8_to_wide(color_description(overlay->color)),
+                       false, can_edit_node && !effect.mixed_color);
+                const auto overlay_rgba = convert(overlay->color);
+                RECT color_swatch{left + 101, top + first_row + 5,
+                                  left + 119, top + first_row + 21};
+                const auto overlay_brush = CreateSolidBrush(RGB(overlay_rgba.r, overlay_rgba.g, overlay_rgba.b));
+                FillRect(dc, &color_swatch, overlay_brush);
+                DeleteObject(overlay_brush);
+                FrameRect(dc, &color_swatch, static_cast<HBRUSH>(GetStockObject(GRAY_BRUSH)));
+                draw_numeric(12, first_row + 30, L"Opacity %", NumericFieldId::ShadowOpacity,
+                             index, effect.mixed_opacity, overlay->opacity * 100.0, true, can_edit_node);
+                label(vi ? L"Chế độ hòa trộn" : L"Blend mode",
+                      12, first_row + 60, 210, muted);
+                if (effect.mixed_shadow_blend_mode)
+                    label(vi ? L"Nhiều giá trị" : L"Mixed", 218,
+                          first_row + 60, 50, muted);
+                constexpr document::BlendMode blend_modes[] = {
+                    document::BlendMode::Normal, document::BlendMode::Multiply,
+                    document::BlendMode::Screen, document::BlendMode::Overlay,
+                    document::BlendMode::Darken, document::BlendMode::Lighten};
+                const wchar_t *blend_labels_en[] = {
+                    L"Normal", L"Multiply", L"Screen", L"Overlay", L"Darken", L"Lighten"};
+                const wchar_t *blend_labels_vi[] = {
+                    L"Bình thường", L"Nhân", L"Màn hình", L"Phủ", L"Tối", L"Sáng"};
+                for (int mode_index = 0; mode_index < 6; ++mode_index) {
+                    const auto mode = blend_modes[mode_index];
+                    const int x = 12 + (mode_index % 3) * 88;
+                    const int y = first_row + 82 + (mode_index / 3) * 28;
+                    button({x, y, x + 80, y + 24},
+                           vi ? blend_labels_vi[mode_index] : blend_labels_en[mode_index],
+                           !effect.mixed_shadow_blend_mode &&
+                               overlay->blend_mode == mode,
                            can_edit_node && workflow().can_set_selected_effect_blend_mode(
                                index, mode));
                 }

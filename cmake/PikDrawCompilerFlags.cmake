@@ -1,6 +1,16 @@
+if(CMAKE_GENERATOR MATCHES "^Ninja")
+    # Compile concurrently, but do not stack memory-heavy executable/archive links.
+    set_property(GLOBAL APPEND PROPERTY JOB_POOLS pikdraw_link=1)
+    set(CMAKE_JOB_POOL_LINK pikdraw_link)
+endif()
+
 if(MINGW)
     # Statically link runtime libraries so native executables run standalone
     add_link_options(-static)
+endif()
+
+if(WIN32)
+    add_compile_definitions(_WIN32_WINNT=0x0A00 WINVER=0x0A00)
 endif()
 
 function(pikdraw_apply_compiler_flags target_name)
@@ -10,6 +20,12 @@ function(pikdraw_apply_compiler_flags target_name)
     endif()
     set_property(TARGET ${target_name} PROPERTY PIKDRAW_FLAGS_APPLIED TRUE)
     target_compile_features(${target_name} PUBLIC cxx_std_20)
+
+    if(PIKDRAW_ENABLE_PCH AND NOT target_name STREQUAL "pikdraw_clipper2")
+        target_precompile_headers(${target_name} PRIVATE
+            "$<$<COMPILE_LANGUAGE:CXX>:${CMAKE_SOURCE_DIR}/cmake/pikdraw_pch.hpp>"
+        )
+    endif()
 
     get_target_property(target_sources ${target_name} SOURCES)
     set(test_target FALSE)

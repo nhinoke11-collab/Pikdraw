@@ -29,6 +29,9 @@ enum class OffsetStatus {
     Cancelled
 };
 
+inline constexpr double kContourMinimumArcToleranceMm = 0.02;
+inline constexpr double kContourDefaultArcToleranceMm = 0.02;
+
 struct OffsetOptions {
     double distance_mm{0.0};
     JoinType join_type{JoinType::Miter};
@@ -55,7 +58,7 @@ struct ContourRequest {
     int steps{1}; // 1..99
     JoinType join_type{JoinType::Miter};
     double miter_limit{4.0};
-    double arc_tolerance_mm{0.005};
+    double arc_tolerance_mm{kContourDefaultArcToleranceMm};
 };
 
 struct ContourStep {

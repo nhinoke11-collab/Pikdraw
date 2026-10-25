@@ -22,8 +22,7 @@
   "buildPresets": [
     {
       "name": "win-dev",
-      "configurePreset": "win-dev",
-      "jobs": 4
+      "configurePreset": "win-dev"
     }
   ],
   "testPresets": [

@@ -1,6 +1,8 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
 #include "pikdraw/desktop/shell/native_window_shortcuts_settings.hpp"
 #include "../automation/native_window_automation.hpp"
+#include "../tools/drawing_tool_controller.hpp"
+#include "native_window_snap_status.hpp"
 #include <sstream>
 #include <iomanip>
 
@@ -313,16 +315,54 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
             L"✓ ICC preview profiles are saved on this machine";
         DrawTextW(mem_dc, tags_text, -1, &rc_s3_b, DT_LEFT | DT_NOPREFIX);
 
+        const int workspace_y = cy + 306;
+        SelectObject(mem_dc, font_vn_bold);
+        SetTextColor(mem_dc, m_text_pri);
+        RECT workspace_title{cx, workspace_y, cx + 490, workspace_y + 20};
+        DrawTextW(mem_dc, is_vi ? L"Cách hiển thị trang và Artboard" : L"Page and Artboard workspace view",
+                  -1, &workspace_title, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+        const std::array<std::pair<const wchar_t*, bool>, 2> workspace_modes{{
+            {is_vi ? L"Trang · tập trung" : L"Page · focused", !artboard_overview_enabled()},
+            {is_vi ? L"Artboard · tổng quan" : L"Artboard · overview", artboard_overview_enabled()}
+        }};
+        for (size_t index = 0; index < workspace_modes.size(); ++index) {
+            const int left = cx + static_cast<int>(index) * 250;
+            RECT card{left, workspace_y + 24, left + 238, workspace_y + 60};
+            const bool selected = workspace_modes[index].second;
+            HBRUSH card_brush = CreateSolidBrush(selected
+                ? (is_dark ? RGB(18, 38, 48) : RGB(236, 253, 245))
+                : (is_dark ? RGB(10, 16, 24) : RGB(248, 250, 252)));
+            FillRect(mem_dc, &card, card_brush);
+            DeleteObject(card_brush);
+            HPEN card_pen = CreatePen(PS_SOLID, selected ? 2 : 1, selected ? m_teal : m_border);
+            const auto prior_pen = SelectObject(mem_dc, card_pen);
+            SelectObject(mem_dc, GetStockObject(NULL_BRUSH));
+            RoundRect(mem_dc, card.left, card.top, card.right, card.bottom, 6, 6);
+            SelectObject(mem_dc, prior_pen);
+            DeleteObject(card_pen);
+            SelectObject(mem_dc, selected ? font_sec_bold : font_sec);
+            SetTextColor(mem_dc, selected ? m_teal : m_text_pri);
+            DrawTextW(mem_dc, workspace_modes[index].first, -1, &card,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        }
+        SelectObject(mem_dc, font_sec);
+        SetTextColor(mem_dc, m_text_mut);
+        RECT workspace_hint{cx, workspace_y + 62, cx + 490, workspace_y + 84};
+        DrawTextW(mem_dc, is_vi
+            ? L"Artboard trong cùng trang dùng chung artwork; đổi chế độ xem không tạo Undo. Mặc định áp dụng cho tài liệu mới."
+            : L"Artboards on one page share artwork; changing view adds no Undo. The choice becomes the default for new documents.",
+            -1, &workspace_hint, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+
     } else if (settings_active_tab_ == 2) {
         // Tab 2: Đơn vị & Bắt điểm (Units & Snapping)
         SelectObject(mem_dc, font_vn_bold);
         SetTextColor(mem_dc, m_text_pri);
         RECT rc_t1_t = { cx, cy, cx + 490, cy + 20 };
-        DrawTextW(mem_dc, is_vi ? L"Đơn vị đo lường mặc định (Default Units)" : L"Measurement Units", -1, &rc_t1_t, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+        DrawTextW(mem_dc, is_vi ? L"Đơn vị trang và mặc định cho bản vẽ mới" : L"Page unit and default for new documents", -1, &rc_t1_t, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
 
-        const wchar_t* units[] = { L"mm (Milimét)", L"cm (Xentimét)", L"inch (Inches)", L"pt (Points)" };
-        for (int i = 0; i < 4; ++i) {
-            int ux = cx + i * 115, uy = cy + 28;
+        const wchar_t* units[] = { L"mm", L"cm", L"in", L"pt", L"m", L"ft", L"yd", L"pc" };
+        for (int i = 0; i < 8; ++i) {
+            int ux = cx + (i % 4) * 120, uy = cy + 28 + (i / 4) * 34;
             bool is_u_act = (settings_unit_choice_ == i);
             RECT rc_u = { ux, uy, ux + 105, uy + 28 };
             HBRUSH br_u = CreateSolidBrush(is_u_act ? (is_dark ? RGB(18, 38, 48) : RGB(236, 253, 245)) : (is_dark ? RGB(10, 16, 24) : RGB(248, 250, 252)));
@@ -339,14 +379,22 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
             DrawTextW(mem_dc, units[i], -1, &rc_u, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
 
+        SelectObject(mem_dc, font_sec);
+        SetTextColor(mem_dc, m_text_mut);
+        RECT rc_unit_hint = { cx, cy + 91, cx + 490, cy + 106 };
+        DrawTextW(mem_dc, is_vi
+            ? L"Đổi đơn vị trang hiện tại và mặc định cho bản vẽ mới; hậu tố mm, cm, m, in, ft, yd, pt, pc luôn được ưu tiên."
+            : L"Changes the current page unit and new-document default; explicit mm, cm, m, in, ft, yd, pt or pc suffixes override it.",
+            -1, &rc_unit_hint, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
         SelectObject(mem_dc, font_vn_bold);
         SetTextColor(mem_dc, m_text_pri);
-        RECT rc_t1_s2 = { cx, cy + 76, cx + 490, cy + 96 };
+        RECT rc_t1_s2 = { cx, cy + 108, cx + 490, cy + 128 };
         DrawTextW(mem_dc, is_vi ? L"Hệ tọa độ gốc (Origin Point)" : L"Coordinate Origin", -1, &rc_t1_s2, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
 
         SelectObject(mem_dc, font_sec);
         SetTextColor(mem_dc, m_text_mut);
-        RECT rc_t1_s2_b = { cx, cy + 102, cx + 490, cy + 150 };
+        RECT rc_t1_s2_b = { cx, cy + 134, cx + 490, cy + 182 };
         const wchar_t* orig_text = is_vi ?
             L"(●) Góc trên-trái (Top-Left 0,0) - Chuẩn Vector Editor / CAD Thi Công\n(○) Tâm bản vẽ (Center 0,0) - Chuẩn Motion Graphics" :
             L"(●) Top-Left (0,0) - Standard Vector Editor / CAD Production\n(○) Center (0,0) - Motion Graphics & 3D Standard";
@@ -354,67 +402,267 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
 
         SelectObject(mem_dc, font_vn_bold);
         SetTextColor(mem_dc, m_teal);
-        RECT rc_t1_s3 = { cx, cy + 160, cx + 490, cy + 180 };
+        RECT rc_t1_s3 = { cx, cy + 192, cx + 490, cy + 212 };
         DrawTextW(mem_dc, is_vi ? L"Lưới thiết kế & Bắt điểm (Snapping & Grid)" : L"Snapping & Guides", -1, &rc_t1_s3, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
 
         SelectObject(mem_dc, font_sec);
         SetTextColor(mem_dc, m_text_pri);
-        RECT rc_t1_s3_b = { cx, cy + 186, cx + 490, cy + 280 };
-        const wchar_t* snap_text = is_vi ?
-            L"☑ Bắt điểm Snap to Grid (Bước nhảy mặc định: 5.0 mm)\n"
-            L"☑ Bắt điểm đối tượng thông minh (Smart Magnetic Guides)\n"
-            L"☑ Khóa góc quay 45°/90° khi nhấn giữ phím Shift\n"
-            L"☑ Hiển thị thước đo mm (Rulers) dọc theo mép bản vẽ" :
-            L"☑ Snap to Grid enabled (Default grid step: 5.0 mm)\n"
-            L"☑ Smart Magnetic Guides (Auto-align to object bounds)\n"
-            L"☑ Constrain angle to 45°/90° when holding Shift\n"
-            L"☑ Show mm rulers along top and left canvas edges";
-        DrawTextW(mem_dc, snap_text, -1, &rc_t1_s3_b, DT_LEFT | DT_NOPREFIX);
+        const auto snap = drawing_tool_ ? drawing_tool_->grid_snap_status()
+                                        : tools::DrawingToolGridSnapStatus{};
+        const auto grid_status = format_snap_grid_status(
+            snap.enabled, snap.spacing_mm, display_length_unit_, is_vi);
+        RECT rc_grid_status = { cx, cy + 218, cx + 490, cy + 237 };
+        DrawTextW(mem_dc, grid_status.c_str(), -1, &rc_grid_status,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        RECT rc_grid_button = { cx, cy + 239, cx + 490, cy + 266 };
+        HBRUSH grid_button_brush = CreateSolidBrush(is_dark
+            ? RGB(10, 16, 24) : RGB(248, 250, 252));
+        FillRect(mem_dc, &rc_grid_button, grid_button_brush);
+        DeleteObject(grid_button_brush);
+        HPEN grid_button_pen = CreatePen(PS_SOLID, 1, m_border);
+        HGDIOBJ old_grid_button_pen = SelectObject(mem_dc, grid_button_pen);
+        SelectObject(mem_dc, GetStockObject(NULL_BRUSH));
+        RoundRect(mem_dc, rc_grid_button.left, rc_grid_button.top,
+                  rc_grid_button.right, rc_grid_button.bottom, 6, 6);
+        SelectObject(mem_dc, old_grid_button_pen);
+        DeleteObject(grid_button_pen);
+        const std::string spacing_value = active_num_field_ == NumericFieldId::GridSpacing
+            ? num_input_buffer_
+            : format_mm_display_utf8(snap.spacing_mm, display_length_unit_, 6);
+        const auto spacing_wide = NativeWindow::utf8_to_wide(spacing_value);
+        const std::wstring grid_button_label = (is_vi
+            ? L"Đổi khoảng lưới · " : L"Edit grid interval · ") + spacing_wide;
+        SelectObject(mem_dc, font_sec_bold);
+        SetTextColor(mem_dc, active_num_field_ == NumericFieldId::GridSpacing
+            ? m_teal : m_text_pri);
+        DrawTextW(mem_dc, grid_button_label.c_str(), -1, &rc_grid_button,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+        const auto snap_config = drawing_tool_ ? drawing_tool_->snap_config_snapshot()
+            : vector::precision::snap::SnapConfigSnapshot{};
+        const std::array<std::pair<const wchar_t*, bool>, 6> snap_rows{{
+            {is_vi ? L"Bật bắt điểm (Snap On/Off)" : L"Snap On/Off",
+             snap_config.master_enabled},
+            {is_vi ? L"Bắt điểm/biên đối tượng" : L"Snap to object points and bounds",
+             snap_config.groups[static_cast<size_t>(vector::precision::snap::SnapGroup::ObjectPoints)]},
+            {is_vi ? L"Smart Guides · căn mép và tâm khi kéo" : L"Smart Guides · align edges and centers while moving",
+             snap_config.smart_guides_enabled},
+            {is_vi ? L"Khoảng cách bằng nhau khi kéo" : L"Equal spacing while moving",
+             snap_config.smart_spacing_enabled},
+            {is_vi ? L"Bắt vào mép/tâm trang" : L"Snap to page/artboard edges and center",
+             snap_config.options[static_cast<size_t>(vector::precision::snap::SnapOption::PageEdge)]},
+            {is_vi ? L"Bắt vào đường gióng đang hiện" : L"Snap to visible guidelines",
+             snap_config.options[static_cast<size_t>(vector::precision::snap::SnapOption::Guide)]}
+        }};
+        SelectObject(mem_dc, font_sec);
+        for (size_t row = 0; row < snap_rows.size(); ++row) {
+            const int row_y = modal_y + 331 + static_cast<int>(row) * 21;
+            RECT check{cx + 1, row_y + 3, cx + 15, row_y + 17};
+            HBRUSH check_fill = CreateSolidBrush(snap_rows[row].second
+                ? (is_dark ? RGB(10, 73, 68) : RGB(220, 252, 231))
+                : (is_dark ? RGB(10, 16, 24) : RGB(248, 250, 252)));
+            FillRect(mem_dc, &check, check_fill);
+            DeleteObject(check_fill);
+            HPEN check_pen = CreatePen(PS_SOLID, 1, snap_rows[row].second ? m_teal : m_border);
+            HGDIOBJ old_check_pen = SelectObject(mem_dc, check_pen);
+            SelectObject(mem_dc, GetStockObject(NULL_BRUSH));
+            Rectangle(mem_dc, check.left, check.top, check.right, check.bottom);
+            SelectObject(mem_dc, old_check_pen);
+            DeleteObject(check_pen);
+            RECT label{cx + 23, row_y, cx + 490, row_y + 20};
+            SetTextColor(mem_dc, snap_rows[row].second ? m_text_pri : m_text_mut);
+            DrawTextW(mem_dc, snap_rows[row].first, -1, &label,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+            if (snap_rows[row].second) {
+                SetTextColor(mem_dc, m_teal);
+                DrawTextW(mem_dc, L"✓", -1, &check,
+                          DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            }
+        }
 
     } else if (settings_active_tab_ == 3) {
-        // Tab 3: Quản lý màu & ICC
+        // Tab 3: color preview and explicit, non-profile-bound TAC preflight.
         SelectObject(mem_dc, font_vn_bold);
         SetTextColor(mem_dc, m_text_pri);
-        RECT rc_c_t = { cx, cy, cx + 490, cy + 20 };
-        DrawTextW(mem_dc, is_vi ? L"Không gian màu làm việc (Working Color Spaces)" : L"Working Color Spaces & ICC", -1, &rc_c_t, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+        RECT rc_c_t = { cx, cy, cx + 315, cy + 22 };
+        DrawTextW(mem_dc, is_vi ? L"Màu xem trước & profile ICC" : L"Color preview & ICC profiles", -1, &rc_c_t, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        RECT manage{cx + 328, cy - 2, cx + 490, cy + 24};
+        HBRUSH manage_brush = CreateSolidBrush(m_header_bg);
+        FillRect(mem_dc, &manage, manage_brush);
+        DeleteObject(manage_brush);
+        HPEN manage_pen = CreatePen(PS_SOLID, 1, m_border);
+        HGDIOBJ old_manage_pen = SelectObject(mem_dc, manage_pen);
+        SelectObject(mem_dc, GetStockObject(NULL_BRUSH));
+        RoundRect(mem_dc, manage.left, manage.top, manage.right, manage.bottom, 6, 6);
+        SelectObject(mem_dc, old_manage_pen);
+        DeleteObject(manage_pen);
+        SelectObject(mem_dc, font_sec_bold);
+        SetTextColor(mem_dc, m_teal);
+        DrawTextW(mem_dc, is_vi ? L"Quản lý profile…" : L"Manage profiles…", -1,
+                  &manage, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
         SelectObject(mem_dc, font_sec);
         SetTextColor(mem_dc, m_text_mut);
-        RECT rc_c_b = { cx, cy + 26, cx + 490, cy + 140 };
+        RECT rc_c_b = { cx, cy + 28, cx + 490, cy + 98 };
         const wchar_t* icc_text = is_vi ?
-            L"• Profile nguồn RGB/CMYK: nạp file ICC/ICM thực tế\n"
-            L"• Preview chuyển về sRGB bằng Windows Color Management\n"
-            L"• Intent: Relative Colorimetric\n"
-            L"• Chưa nạp ICC CMYK: preview dùng công thức gần đúng" :
-            L"• Source RGB/CMYK profiles: load an actual ICC/ICM file\n"
-            L"• Preview converts to sRGB through Windows Color Management\n"
-            L"• Intent: Relative Colorimetric\n"
-            L"• Without a CMYK ICC, CMYK preview is approximate";
+            L"Preview dùng profile RGB/CMYK đã nạp và Windows Color Management.\n"
+            L"Không có profile CMYK thì preview là gần đúng.\n"
+            L"Đây là thiết lập xem trên máy, không gán profile vào tài liệu." :
+            L"Preview uses the loaded RGB/CMYK profile through Windows Color Management.\n"
+            L"Without a CMYK profile, preview is approximate.\n"
+            L"These are local view settings; they do not assign a document profile.";
         DrawTextW(mem_dc, icc_text, -1, &rc_c_b, DT_LEFT | DT_NOPREFIX);
 
         SelectObject(mem_dc, font_vn_bold);
         SetTextColor(mem_dc, m_teal);
-        RECT rc_c_s2 = { cx, cy + 150, cx + 490, cy + 170 };
-        DrawTextW(mem_dc, is_vi ? L"Chính sách quản lý màu sắc" : L"Color Management Policies", -1, &rc_c_s2, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+        RECT rc_c_s2 = { cx, cy + 102, cx + 490, cy + 122 };
+        DrawTextW(mem_dc, is_vi ? L"Giới hạn hiện có" : L"Current color limits", -1, &rc_c_s2, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
 
         SelectObject(mem_dc, font_sec);
         SetTextColor(mem_dc, m_text_pri);
-        RECT rc_c_s2_b = { cx, cy + 176, cx + 490, cy + 260 };
+        RECT rc_c_s2_b = { cx, cy + 128, cx + 490, cy + 182 };
         const wchar_t* pol_text = is_vi ?
-            L"✓ RGB/CMYK/spot và overprint nguồn được giữ khi sửa và lưu native.\n"
-            L"Thiết lập ICC ở đây chỉ đổi preview của máy.\n"
-            L"Chưa hỗ trợ gán/nhúng ICC tài liệu, gamut warning, soft proof hoặc PDF/X." :
-            L"✓ Source RGB/CMYK/spot and overprint survive edits and native saves.\n"
-            L"These ICC settings affect this machine's preview only.\n"
-            L"Document ICC embedding, gamut warning, soft proof and PDF/X are unavailable.";
+            L"Profile preview không đổi số màu nguồn.\n"
+            L"Gamut warning hiện là phép so sánh gần đúng, không phải Delta E.\n"
+            L"Overprint theo kênh mực và PDF/X chưa khả dụng." :
+            L"Profile preview does not change source color values.\n"
+            L"Gamut warning is approximate, not Delta E.\n"
+            L"Ink separation overprint and PDF/X are unavailable.";
         DrawTextW(mem_dc, pol_text, -1, &rc_c_s2_b, DT_LEFT | DT_NOPREFIX);
-        RECT manage{cx, cy + 280, cx + 490, cy + 312};
-        HBRUSH manage_brush = CreateSolidBrush(m_header_bg);
-        FillRect(mem_dc, &manage, manage_brush);
-        DeleteObject(manage_brush);
-        SetTextColor(mem_dc, m_teal);
-        DrawTextW(mem_dc, is_vi ? L"Nạp và quản lý profile ICC…" : L"Load and manage ICC profiles…", -1,
-                  &manage, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        SelectObject(mem_dc, font_vn_bold);
+        SetTextColor(mem_dc, m_text_pri);
+        RECT tac_heading{cx, cy + 188, cx + 490, cy + 208};
+        DrawTextW(mem_dc, is_vi ? L"Kiểm tra tổng lượng mực (TAC)" : L"Total area coverage (TAC)", -1,
+                  &tac_heading, DT_LEFT | DT_SINGLELINE | DT_NOPREFIX);
+
+        const auto& current_selection = root().vector_controller().selection().selected_ids();
+        const bool selection_available = !current_selection.empty();
+        const auto draw_button = [&](RECT rect, const wchar_t* label, bool active, bool enabled, bool focused) {
+            HBRUSH brush = CreateSolidBrush(!enabled
+                ? (is_dark ? RGB(24, 30, 39) : RGB(226, 232, 240))
+                : active ? (is_dark ? RGB(18, 38, 48) : RGB(236, 253, 245)) : m_header_bg);
+            FillRect(mem_dc, &rect, brush);
+            DeleteObject(brush);
+            HPEN pen = CreatePen(PS_SOLID, (active || focused) && enabled ? 2 : 1,
+                (active || focused) && enabled ? m_teal : m_border);
+            HGDIOBJ old_pen = SelectObject(mem_dc, pen);
+            SelectObject(mem_dc, GetStockObject(NULL_BRUSH));
+            RoundRect(mem_dc, rect.left, rect.top, rect.right, rect.bottom, 6, 6);
+            SelectObject(mem_dc, old_pen);
+            DeleteObject(pen);
+            SelectObject(mem_dc, font_sec_bold);
+            SetTextColor(mem_dc, enabled ? ((active || focused) ? m_teal : m_text_pri) : m_text_mut);
+            DrawTextW(mem_dc, label, -1, &rect,
+                      DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        };
+        const int row_y = cy + 216;
+        const wchar_t* scope_labels_vi[] = { L"Tài liệu", L"Trang", L"Vùng chọn" };
+        const wchar_t* scope_labels_en[] = { L"Document", L"Page", L"Selection" };
+        for (int index = 0; index < 3; ++index) {
+            RECT scope_rect{cx + index * 86, row_y, cx + index * 86 + 82, row_y + 28};
+            draw_button(scope_rect, is_vi ? scope_labels_vi[index] : scope_labels_en[index],
+                settings_tac_scope_choice_ == index,
+                index != 2 || selection_available,
+                settings_tac_focus_index_ == index);
+        }
+
+        RECT limit_rect{cx + 262, row_y, cx + 338, row_y + 28};
+        HBRUSH limit_brush = CreateSolidBrush(is_dark ? RGB(8, 14, 21) : RGB(255, 255, 255));
+        FillRect(mem_dc, &limit_rect, limit_brush);
+        DeleteObject(limit_brush);
+        const bool limit_focused = active_num_field_ == NumericFieldId::TacLimitPercent ||
+            settings_tac_focus_index_ == 3;
+        HPEN limit_pen = CreatePen(PS_SOLID, limit_focused ? 2 : 1,
+            limit_focused ? m_teal : m_border);
+        HGDIOBJ old_limit_pen = SelectObject(mem_dc, limit_pen);
+        SelectObject(mem_dc, GetStockObject(NULL_BRUSH));
+        RoundRect(mem_dc, limit_rect.left, limit_rect.top, limit_rect.right, limit_rect.bottom, 6, 6);
+        SelectObject(mem_dc, old_limit_pen);
+        DeleteObject(limit_pen);
+        SelectObject(mem_dc, font_sec_bold);
+        SetTextColor(mem_dc, m_text_pri);
+        std::wstring limit_text;
+        if (active_num_field_ == NumericFieldId::TacLimitPercent && !num_input_buffer_.empty()) {
+            limit_text.assign(num_input_buffer_.begin(), num_input_buffer_.end());
+        } else {
+            limit_text = std::to_wstring(static_cast<int>(settings_tac_limit_percent_));
+        }
+        DrawTextW(mem_dc, limit_text.c_str(), -1, &limit_rect,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        RECT percent_rect{cx + 338, row_y, cx + 354, row_y + 28};
+        DrawTextW(mem_dc, L"%", -1, &percent_rect,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        const auto checked_snapshot = root().document().current_snapshot();
+        const bool report_current = settings_tac_summary_ && checked_snapshot &&
+            checked_snapshot->epoch() == settings_tac_report_epoch_ &&
+            checked_snapshot->revision() == settings_tac_report_revision_ &&
+            checked_snapshot->document_id() == settings_tac_report_document_id_ &&
+            checked_snapshot->active_page_id() == settings_tac_report_active_page_ &&
+            settings_tac_scope_choice_ == settings_tac_report_scope_ &&
+            settings_tac_limit_percent_ == settings_tac_report_limit_percent_ &&
+            (settings_tac_scope_choice_ != 2 || current_selection == settings_tac_report_selection_);
+        RECT check_rect{cx + 358, row_y, cx + 424, row_y + 28};
+        draw_button(check_rect, is_vi ? L"Kiểm tra" : L"Check", false, true,
+            settings_tac_focus_index_ == 4);
+        RECT fix_rect{cx + 430, row_y, cx + 490, row_y + 28};
+        const bool can_fix = report_current &&
+            settings_tac_summary_->process_colors_over_limit > 0;
+        draw_button(fix_rect, is_vi ? L"Sửa" : L"Fix", false, can_fix,
+            settings_tac_focus_index_ == 5);
+
+        SelectObject(mem_dc, font_sec);
+        const auto draw_report_line = [&](int top, const std::wstring& text, COLORREF color) {
+            RECT line{cx, top, cx + 490, top + 18};
+            SetTextColor(mem_dc, color);
+            DrawTextW(mem_dc, text.c_str(), -1, &line,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+        };
+        draw_report_line(cy + 250,
+            is_vi ? L"Ngưỡng thủ công · chưa gắn profile/output condition ICC" :
+                    L"Manual limit · not bound to an ICC output condition",
+            m_text_mut);
+        if (!settings_tac_error_.empty()) {
+            draw_report_line(cy + 270,
+                NativeWindow::utf8_to_wide(settings_tac_error_),
+                is_dark ? RGB(251, 191, 36) : RGB(180, 83, 9));
+        } else if (settings_tac_summary_) {
+            const auto& report = *settings_tac_summary_;
+            std::wostringstream values;
+            values << (report_current ? L"" : (is_vi ? L"Kết quả cũ · " : L"Stale report · "))
+                   << (is_vi ? L"Đã quét " : L"Scanned ")
+                   << report.process_colors_examined
+                   << (is_vi ? L" màu CMYK · vượt " : L" CMYK paints · over ")
+                   << report.process_colors_over_limit
+                   << (is_vi ? L" · trước tối đa " : L" · max before ")
+                   << std::fixed << std::setprecision(1) << report.maximum_before_percent << L"%";
+            draw_report_line(cy + 270, values.str(), m_text_pri);
+            std::wostringstream after;
+            after << (is_vi ? L"Sau sửa tối đa " : L"After fix max ")
+                  << std::fixed << std::setprecision(1) << report.maximum_after_percent << L"%"
+                  << (is_vi ? L" · đã đổi " : L" · changed ") << report.process_colors_changed;
+            draw_report_line(cy + 290, after.str(), m_text_pri);
+            std::wostringstream unassessed;
+            unassessed << (is_vi ? L"Chưa đánh giá: spot " : L"Not assessed: spot ")
+                       << report.spot_colors_not_assessed
+                       << (is_vi ? L" · raster " : L" · raster ")
+                       << report.raster_objects_not_assessed;
+            draw_report_line(cy + 310, unassessed.str(), m_text_mut);
+            if (!report.fix_method.empty())
+                draw_report_line(cy + 330,
+                    NativeWindow::utf8_to_wide(report.fix_method), m_text_mut);
+        } else {
+            draw_report_line(cy + 270,
+                is_vi ? L"Check chỉ đọc · Fix là một bước Undo và có thể đổi ngoại hình" :
+                        L"Check is read-only · Fix is one undo step and may change appearance",
+                m_text_pri);
+            draw_report_line(cy + 290,
+                is_vi ? L"Chỉ kiểm tra màu process CMYK của vector; raster/spot báo riêng" :
+                        L"Scans vector process CMYK; raster and spot colors are reported separately",
+                m_text_mut);
+        }
 
     } else if (settings_active_tab_ == 4) {
         paint_shortcuts_settings_tab(*this, mem_dc, cx, cy, is_vi, is_dark,
@@ -453,12 +701,12 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
         RECT rc_sys_b = { cx, cy + 186, cx + 490, cy + 300 };
         const wchar_t* sys_text = is_vi ?
             L"• Renderer Backend: DirectX / Skia GPU Rasterizer (Probed: Windows D3D11)\n"
-            L"• Cache ảnh GPU không có hạn mức cố định; dừng tải ảnh mới trước ngưỡng 90% RAM hệ thống\n"
+            L"• Cache ảnh GPU dùng LRU; ở ngưỡng 95% RAM, canvas chuyển sang dựng CPU từ pixel nguồn\n"
             L"• Tần số làm tươi: 120 FPS / Tự động đồng bộ V-Sync màn hình\n"
             L"• Bản phục hồi tự động: Mỗi 60 giây vào %LOCALAPPDATA%/PikDraw/Recovery\n"
             L"• Giới hạn lịch sử thao tác: 50 bước Undo/Redo" :
             L"• Renderer Backend: DirectX / Skia GPU Rasterizer (Probed: Windows D3D11)\n"
-            L"• GPU image cache has no fixed quota; stops new uploads before 90% system RAM\n"
+            L"• GPU image cache uses LRU; at 95% RAM the canvas renders from source pixels on CPU\n"
             L"• Refresh Rate: 120 FPS / V-Sync hardware synchronized\n"
             L"• Auto-recovery: Every 60 seconds to %LOCALAPPDATA%/PikDraw/Recovery\n"
             L"• Undo/Redo Depth: 50 atomic command revisions";
@@ -515,8 +763,8 @@ void NativeWindow::paint_settings_modal(HDC mem_dc, int w, int h) {
                   : L"Allow agents to inspect documents, objects, fonts and text metrics.");
         draw_access_card(cy + 102, settings_mcp_edit_choice_, settings_mcp_enabled_choice_, 1,
             is_vi ? L"Cho phép sửa tài liệu và tệp native" : L"Allow document editing and native files",
-            is_vi ? L"Bao gồm tạo tài liệu, sửa batch, đọc và lưu tệp .pikdraw được cấp quyền."
-                  : L"Includes document creation, batch edits, and granted .pikdraw file access.");
+            is_vi ? L"Bao gồm tạo tài liệu, sửa batch, đọc và lưu tệp .pr được cấp quyền."
+                  : L"Includes document creation, batch edits, and granted .pr file access.");
 
         SelectObject(mem_dc, font_vn_bold);
         SetTextColor(mem_dc, m_text_pri);

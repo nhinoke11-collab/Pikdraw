@@ -1,4 +1,5 @@
 #include "pikdraw/document/annotations/dimension_style.hpp"
+#include "pikdraw/geometry/units/length_unit.hpp"
 
 #include <cmath>
 #include <iomanip>
@@ -8,7 +9,6 @@ namespace pikdraw::document {
 namespace {
 
 constexpr double kPi = 3.141592653589793238462643383279502884;
-constexpr double kInchToMm = 25.4;
 
 std::string format_number(double val, int decimals, DecimalSeparator sep, bool suppress_trailing_zeros) {
     if (std::abs(val) < 1e-12) val = 0.0; // avoid -0.0
@@ -37,13 +37,20 @@ std::string format_number(double val, int decimals, DecimalSeparator sep, bool s
 }
 
 double convert_linear_from_mm(double mm, UnitType unit) {
+    using geometry::units::LengthUnit;
+    LengthUnit length_unit = LengthUnit::Millimeter;
     switch (unit) {
-    case UnitType::Millimeter: return mm;
-    case UnitType::Centimeter: return mm / 10.0;
-    case UnitType::Meter: return mm / 1000.0;
-    case UnitType::Inch: return mm / kInchToMm;
+    case UnitType::Millimeter: length_unit = LengthUnit::Millimeter; break;
+    case UnitType::Centimeter: length_unit = LengthUnit::Centimeter; break;
+    case UnitType::Meter: length_unit = LengthUnit::Meter; break;
+    case UnitType::Inch: length_unit = LengthUnit::Inch; break;
+    case UnitType::Foot: length_unit = LengthUnit::Foot; break;
+    case UnitType::Yard: length_unit = LengthUnit::Yard; break;
+    case UnitType::Point: length_unit = LengthUnit::Point; break;
+    case UnitType::Pica: length_unit = LengthUnit::Pica; break;
     }
-    return mm;
+    const auto factor = geometry::units::millimeters_per_unit(length_unit);
+    return factor ? mm / *factor : mm;
 }
 
 const char* unit_symbol(UnitType unit) {
@@ -52,6 +59,10 @@ const char* unit_symbol(UnitType unit) {
     case UnitType::Centimeter: return " cm";
     case UnitType::Meter: return " m";
     case UnitType::Inch: return " in";
+    case UnitType::Foot: return " ft";
+    case UnitType::Yard: return " yd";
+    case UnitType::Point: return " pt";
+    case UnitType::Pica: return " pc";
     }
     return "";
 }

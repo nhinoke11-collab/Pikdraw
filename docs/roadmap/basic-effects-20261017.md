@@ -1,5 +1,7 @@
 # Kế hoạch chi tiết nhóm hiệu ứng cơ bản
 
+> Các trạng thái có ngày trong tài liệu này là lịch sử của feature. Runtime, định dạng và workflow hiện hành ở docs/START.md, docs/project-state.json và AGENTS.md; không dùng task/lease/handoff làm điều kiện triển khai.
+
 Ngày: 17/10/2026. Task: `basic-effects-detailed-plan-20261017`.
 Trạng thái: **đã có lát cắt native cho các hiệu ứng cơ bản; còn thiếu một số điều kiện nghiệm thu và chưa sẵn sàng phát hành**.
 Baseline khảo sát: HEAD `11512046d23fac08059ecd37382179283b4530a0` cùng local source tại thời điểm task claim. Handoff lưu snapshot của hai tài liệu được sửa; đây không phải chứng nhận toàn bộ source/build đang dirty.
@@ -234,7 +236,7 @@ Tất cả hàng dưới đây là **mục tiêu/gate**, không phải capabilit
 
 ## 8. Tasks triển khai đề xuất và dependency
 
-BF00/BF00b và BF01–BF08 đã có task records; trạng thái từng handoff xem `tooling/pikdraw.ps1 task list`. Các path giao nhau như compositor, workflow, Properties và test shell được làm tuần tự trong source gốc. Task `basic-effects-shadow-blend-20261017` bổ sung schema, render, storage, UI và nghiệm thu Shadow Blend; task culling tách riêng chỉ sở hữu `culling.hpp` cùng test culling.
+BF00/BF00b và BF01–BF08 đã có task records; các trạng thái này là lịch sử, đối chiếu source hiện tại; không dùng task board. Các path giao nhau như compositor, workflow, Properties và test shell được làm tuần tự trong source gốc. Task `basic-effects-shadow-blend-20261017` bổ sung schema, render, storage, UI và nghiệm thu Shadow Blend; task culling tách riêng chỉ sở hữu `culling.hpp` cùng test culling.
 
 | Task | Dependency và kết quả cần đạt | Owned paths đề xuất; gate |
 | --- | --- | --- |
@@ -301,4 +303,4 @@ The [performance report](../reviews/basic-effects-performance-20261017.md) recor
 
 BF00 phải ghi kết quả consumer review cho appearance schema/native-v4 byte layout, local transform semantics, working-space conversion, 4-sigma support/tolerance, quotas và vectors. Nếu nguồn/version chưa có fixture hoặc app nguồn để tạo oracle, hàng compatibility vẫn unknown/unsupported; không tự làm đầy bảng bằng giả định.
 
-Mỗi đợt bàn giao có task lease đúng paths, source baseline/snapshot, list ca nghiệm thu, command/kết quả thật và giới hạn. Cập nhật project-state chỉ khi tích hợp capability đã kiểm chứng; gỡ entry disable/roadmap ở UI chỉ cho handler đạt gate. Giữ hồi quy hữu ích, dọn test/output tạm theo AGENTS. Code model, storage, opacity/blend compositor, Blur/Shadow, Properties, toolbox, Clear Effects và keyboard-only handler đã tồn tại trong source. Add-effect draft có kiểm thử riêng; symmetric SSE2 convolution giảm đáng kể CPU time nhưng chưa đạt target 33.3 ms; AVX dispatch giữ parity nhưng chậm hơn SSE2 trên CPU đã đo. Thử nghiệm bounded parallel bị từ chối do không cho thấy lợi ích; tiếp tục tối ưu thuật toán và đo scratch. Vendor-format fidelity còn mở. BF07 không làm SVG import hay export tự động bảo toàn effects nếu representation/semantics chưa được kiểm chứng.
+Mỗi đợt báo kết quả trực tiếp với paths thay đổi, source baseline/snapshot, list ca nghiệm thu, command/kết quả thật và giới hạn. Cập nhật project-state chỉ khi tích hợp capability đã kiểm chứng; gỡ entry disable/roadmap ở UI chỉ cho handler đạt gate. Giữ hồi quy hữu ích, dọn test/output tạm theo AGENTS. Code model, storage, opacity/blend compositor, Blur/Shadow, Properties, toolbox, Clear Effects và keyboard-only handler đã tồn tại trong source. Add-effect draft có kiểm thử riêng; symmetric SSE2 convolution giảm đáng kể CPU time nhưng chưa đạt target 33.3 ms; AVX dispatch giữ parity nhưng chậm hơn SSE2 trên CPU đã đo. Thử nghiệm bounded parallel bị từ chối do không cho thấy lợi ích; tiếp tục tối ưu thuật toán và đo scratch. Vendor-format fidelity còn mở. BF07 không làm SVG import hay export tự động bảo toàn effects nếu representation/semantics chưa được kiểm chứng.

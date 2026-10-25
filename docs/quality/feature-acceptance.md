@@ -12,9 +12,9 @@ Agent triển khai chịu trách nhiệm biến yêu cầu thành một số ca 
 
 ## Dọn file test tạm
 
-Khi nghiệm thu xong, xóa test source tạo chỉ để chạy một lần, fixture thử nghiệm không còn dùng, file output và log tạm. Không xóa regression test tự động thuộc suite của module chỉ vì lần chạy đã hoàn tất: giữ test nếu nó bảo vệ hành vi đã nghiệm thu hoặc có thể bắt lỗi tái diễn. Khi test cũ thật sự dư thừa, chỉ bỏ nếu coverage tương đương còn lại và ghi rõ lý do trong handoff.
+Khi nghiệm thu xong, xóa test source tạo chỉ để chạy một lần, fixture thử nghiệm không còn dùng, file output và log tạm. Không xóa regression test tự động thuộc suite của module chỉ vì lần chạy đã hoàn tất: giữ test nếu nó bảo vệ hành vi đã nghiệm thu hoặc có thể bắt lỗi tái diễn. Khi test cũ thật sự dư thừa, chỉ bỏ nếu coverage tương đương còn lại và báo rõ lý do cho người dùng.
 
-Giữ lại report hoặc bằng chứng ngắn trong vị trí chuẩn khi reviewer cần để kiểm tra kết quả; không để lại bản dump, log lặp hoặc dữ liệu khách hàng trong repo. Fixture có thể tái sử dụng và an toàn thì đặt cạnh suite sở hữu; fixture tạm phải được dọn cùng task.
+Báo kết quả ngắn trực tiếp; không tạo handoff/snapshot/log trung gian. Output đặt trong PIKDRAW_TEST_OUTPUT_DIR do runner cấp hoặc temp directory riêng, tự dọn bằng RAII/finally. Sau lượt lỗi phải đọc chẩn đoán rồi dọn bằng tooling/native/clean-test-artifacts.ps1; không để dump, screenshot hay dữ liệu khách hàng trong repo. Fixture dùng lại thuộc suite được giữ. Xem [native build](../development/native-build.md).
 
 ## Cấu trúc ca dùng chung
 
@@ -42,4 +42,4 @@ Mỗi ca kiểm tra một hành vi có ý nghĩa. `Then` phải kiểm tra kết
 
 Đặt test cạnh module sở hữu hành vi theo cấu trúc hiện có (`core/.../tests`, `modules/.../tests`, hoặc `apps/desktop/tests` cho luồng ứng dụng). Dùng test harness/architecture ở cấp repo cho chính các gate đó; không tạo thư mục test mới nếu cấu trúc hiện tại đáp ứng được.
 
-Trong task handoff, ghi các ca đã thêm/cập nhật, lệnh test chính xác, kết quả, revision đã kiểm tra và giới hạn còn lại. Nếu một test không chạy được, nêu lý do và bước thay thế. Test xanh chỉ xác nhận điều được assertion kiểm tra; không thay bằng chứng UX, hiệu năng, fidelity, containment hoặc nghiệm thu máy thật.
+Trong báo cáo trực tiếp cho người dùng, ghi các ca đã thêm/cập nhật, lệnh test chính xác, kết quả, revision đã kiểm tra và giới hạn còn lại. Nếu một test không chạy được, nêu lý do và bước thay thế. Test xanh chỉ xác nhận điều được assertion kiểm tra; không thay bằng chứng UX, hiệu năng, fidelity, containment hoặc nghiệm thu máy thật.

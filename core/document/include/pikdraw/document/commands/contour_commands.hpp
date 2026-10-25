@@ -19,7 +19,7 @@ struct ContourFeature {
     int steps{1};
     geometry::JoinType join_type{geometry::JoinType::Miter};
     double miter_limit{4.0};
-    double arc_tolerance_mm{0.05};
+    double arc_tolerance_mm{geometry::kContourDefaultArcToleranceMm};
     color::ColorValue outline_color{color::RGBColor{0.0, 0.0, 0.0, 1.0}};
     color::ColorValue fill_color{color::RGBColor{0.0, 0.0, 0.0, 1.0}};
     bool has_outline{true};

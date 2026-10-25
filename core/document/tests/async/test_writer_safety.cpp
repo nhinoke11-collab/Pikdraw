@@ -1,8 +1,10 @@
 #include "pikdraw/document/document.hpp"
 #include <atomic>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <thread>
+#include <vector>
 
 using namespace pikdraw::document;
 
@@ -52,6 +54,88 @@ void job_lifecycle() {
     check(reopened.epoch() != first.epoch && reopened.id() == doc.id(), "open reuses epoch or loses ID");
     check(reopened.current_snapshot()->contains_object(1) && !reopened.is_dirty(), "open loses data/dirty state");
     check(reopened.execute_command(add(3)).success && reopened.undo(), "reopened document is not editable");
+}
+
+void object_proposals_require_current_page_context() {
+    PathObject existing;
+    existing.id = 41;
+    existing.path = pikdraw::geometry::Path2D::make_rect(0, 0, 5, 5);
+    PersistentObjectMap first_page_objects;
+    first_page_objects = first_page_objects.set(existing.id, existing);
+    auto first_page_layout = Page::make_default();
+    first_page_layout.layers.front().object_ids.push_back(existing.id);
+    auto first_page = make_document_page("Page 1", std::move(first_page_layout),
+                                         std::move(first_page_objects));
+    const auto first_page_id = first_page.id;
+    auto second_page = make_document_page("Page 2", Page::make_default());
+    const auto second_page_id = second_page.id;
+    DocumentSnapshot initial(0, 0,
+        std::vector<DocumentPage>{std::move(first_page), std::move(second_page)},
+        first_page_id, "page-context");
+    Document doc(initial);
+
+    auto switched = doc.begin_job(51);
+    switched.target_object_ids = {existing.id};
+    const auto base_revision = doc.revision();
+    check(doc.set_active_page(second_page_id), "page switch failed");
+    check(doc.revision() == base_revision,
+          "page navigation unexpectedly changed content revision");
+    check(doc.validate_and_commit_proposal(proposal(switched, 42)) ==
+              ProposalStatus::StalePageContext,
+          "object proposal committed after active page changed without a revision change");
+
+    auto switched_back = doc.begin_job(52);
+    switched_back.target_object_ids = {existing.id};
+    check(doc.set_active_page(first_page_id), "switch back failed");
+    check(doc.validate_and_commit_proposal(proposal(switched_back, 43)) ==
+              ProposalStatus::StalePageContext,
+          "object proposal survived page navigation away and back");
+    check(doc.current_snapshot()->find_page(first_page_id)->objects.contains(existing.id) &&
+              !doc.current_snapshot()->find_page(first_page_id)->objects.contains(42) &&
+              !doc.current_snapshot()->find_page(second_page_id)->objects.contains(42),
+          "stale page proposal mutated a document page");
+
+    auto current = doc.begin_job(53);
+    current.target_object_ids = {existing.id};
+    check(doc.validate_and_commit_proposal(proposal(current, 44)) ==
+              ProposalStatus::Accepted,
+          "object proposal for the current page and navigation generation was rejected");
+    check(doc.current_snapshot()->find_page(first_page_id)->objects.contains(44),
+          "current page proposal did not commit its object");
+}
+
+SnapshotPtr locked_pdf_snapshot() {
+    auto asset = std::make_shared<PdfSourceAsset>();
+    asset->sha256_hex = std::string(64, '0');
+    asset->page_count = 1;
+    asset->bytes = std::make_shared<const std::vector<uint8_t>>(
+        std::vector<uint8_t>{'%', 'P', 'D', 'F'});
+    auto page = make_document_page("PDF Page 1", Page::make_default(), {},
+        PdfSourcePageReference{std::move(asset), 0, 0});
+    const auto active_page = page.id;
+    return std::make_shared<const DocumentSnapshot>(0, 0,
+        std::vector<DocumentPage>{std::move(page)}, active_page, "opened-pdf",
+        DocumentContentMode::PdfPrintLocked);
+}
+
+void guarded_document_replacement() {
+    Document doc("replace");
+    const auto stale = doc.begin_job(41);
+    check(doc.execute_command(add(20)).success, "edit before replace");
+    check(doc.replace_from_proposal(stale, locked_pdf_snapshot()) ==
+              ProposalStatus::StaleRevision,
+          "stale Open job replaced a newer document revision");
+    check(!doc.is_content_locked() && doc.current_snapshot()->contains_object(20),
+          "rejected stale Open changed document state");
+
+    const auto current = doc.begin_job(42);
+    check(doc.replace_from_proposal(current, locked_pdf_snapshot()) == ProposalStatus::Accepted,
+          "current Open job could not replace the document");
+    check(doc.is_content_locked() && doc.current_snapshot()->page_count() == 1,
+          "PDF source did not enter locked document mode");
+    const auto reopen = doc.begin_job(43);
+    check(doc.replace_from_proposal(reopen, locked_pdf_snapshot()) == ProposalStatus::Accepted,
+          "Open could not replace an already locked PDF document");
 }
 
 void publication_and_owner() {
@@ -121,6 +205,8 @@ void observers_and_saves() {
 int main() {
     try {
         job_lifecycle();
+        object_proposals_require_current_page_context();
+        guarded_document_replacement();
         publication_and_owner();
         observers_and_saves();
         std::cout << "PASS job lifecycle, concurrent publication, owner guard, observers, saves, transaction\n";

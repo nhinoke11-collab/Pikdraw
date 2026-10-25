@@ -4,7 +4,7 @@ Chọn kiểm tra theo phần code bị đổi và rủi ro thực tế. Đây k
 
 Với tính năng hoặc bugfix đổi hành vi, agent sở hữu phần thay đổi tự thêm hoặc cập nhật test nghiệm thu cho luồng dùng thật. Mọi ca dùng chung cấu trúc Given/When/Then; số lượng và tầng test được chọn theo rủi ro. [Quy chuẩn nghiệm thu tính năng](feature-acceptance.md) định nghĩa mẫu và cách chọn phạm vi; không yêu cầu chạy full suite theo mặc định.
 
-Sau khi chạy test, dọn test source dùng một lần cùng fixture, output và log tạm. Giữ test hồi quy còn giá trị trong suite chuẩn; chỉ giữ artifact cần để reviewer xác nhận kết quả.
+Sau khi chạy test, dọn test source dùng một lần cùng fixture, output và log tạm. Giữ test hồi quy còn giá trị trong suite chuẩn; báo bằng chứng ngắn trực tiếp, sau đó dọn artifact tạm theo AGENTS.
 
 ## Luôn ghi rõ
 

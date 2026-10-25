@@ -4,6 +4,7 @@
 #include "pikdraw/interop/ipc_dto.hpp"
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -12,6 +13,10 @@
 #include <vector>
 
 namespace pikdraw::interop {
+
+inline constexpr size_t kRasterChunkRecordHeaderBytes = 4 * sizeof(uint32_t);
+inline constexpr size_t kMaxRasterChunkPayloadBytes =
+    IPC_V2_MAX_RECORD_BYTES - kRasterChunkRecordHeaderBytes;
 
 enum class ImportRecordType : uint16_t {
     Page = 1,
@@ -23,7 +28,9 @@ enum class ImportRecordType : uint16_t {
     Group = 7,
     RasterImage = 8,
     RasterImageChunk = 9,
-    RasterSourceChunk = 10
+    RasterSourceChunk = 10,
+    RasterSourceChunk64 = 11,
+    RasterImage64 = 12
 };
 
 enum class ImportColorModel : uint8_t { Rgb = 1, Cmyk = 2, Spot = 3, Gray = 4 };
@@ -95,6 +102,9 @@ struct ImportPathRecord {
     ImportColorRecord fill;
     ImportColorRecord stroke;
     std::vector<ImportPathElementRecord> elements;
+    double object_opacity{1.0};
+    double fill_opacity{1.0};
+    double stroke_opacity{1.0};
 };
 
 struct ImportTextRecord {
@@ -111,6 +121,9 @@ struct ImportTextRecord {
     double x_mm{0};
     double y_mm{0};
     ImportColorRecord fill;
+    double object_opacity{1.0};
+    double fill_opacity{1.0};
+    double stroke_opacity{1.0};
 };
 
 struct ImportRasterImageRecord {
@@ -121,6 +134,7 @@ struct ImportRasterImageRecord {
     uint32_t width_px{0};
     uint32_t height_px{0};
     uint32_t decoded_pixel_bytes{0};
+    uint8_t decoded_bits_per_channel{8};
     uint32_t source_bits_per_pixel{0};
     uint32_t frame_index{0};
     uint32_t frame_count{1};
@@ -130,6 +144,9 @@ struct ImportRasterImageRecord {
     double dpi_x{96.0};
     double dpi_y{96.0};
     std::vector<uint8_t> icc_profile;
+    // IPC values: 0 legacy/unknown, 1 assumed sRGB, 2 ICC converted to sRGB,
+    // 3 embedded ICC retained but not applied to these preview pixels.
+    uint8_t preview_pixel_color_basis{0};
     // Optional placement in page coordinates; all-zero keeps source-DPI sizing.
     double x_mm{0.0};
     double y_mm{0.0};
@@ -143,8 +160,12 @@ struct ImportRasterImageRecord {
     // Original encoded source bytes are separate from the editable RGBA preview.
     // Zero means the source bytes are not present in this proposal.
     uint32_t source_data_local_id{0};
-    uint32_t source_bytes_size{0};
+    uint64_t source_bytes_size{0};
 };
+
+// Shared bound for raster ICC metadata carried through worker IPC. Keep this
+// aligned with the decoder admission limit and native RasterSourceMetadata.
+inline constexpr uint32_t kMaxRasterIccProfileBytes = 256u * 1024u;
 
 struct ImportRasterImageChunkRecord {
     uint32_t local_id{0};
@@ -155,8 +176,8 @@ struct ImportRasterImageChunkRecord {
 
 struct ImportRasterSourceChunkRecord {
     uint32_t local_id{0};
-    uint32_t byte_offset{0};
-    uint32_t total_bytes{0};
+    uint64_t byte_offset{0};
+    uint64_t total_bytes{0};
     std::vector<uint8_t> bytes;
 };
 
@@ -195,6 +216,14 @@ struct CanonicalImportRecord {
 };
 
 [[nodiscard]] std::optional<CanonicalImportRecord> SerializeImportRecord(const ImportRecordValue& value);
+/// Encodes raster bytes directly into the canonical payload without first
+/// copying them into an ImportRaster*ChunkRecord temporary.
+[[nodiscard]] std::optional<CanonicalImportRecord> SerializeRasterImageChunk(
+    uint32_t local_id, uint32_t byte_offset, uint32_t total_bytes,
+    std::span<const uint8_t> bytes);
+[[nodiscard]] std::optional<CanonicalImportRecord> SerializeRasterSourceChunk(
+    uint32_t local_id, uint64_t byte_offset, uint64_t total_bytes,
+    std::span<const uint8_t> bytes);
 [[nodiscard]] std::optional<ImportRecordValue> DeserializeImportRecord(
     ImportRecordType type, std::span<const uint8_t> payload);
 

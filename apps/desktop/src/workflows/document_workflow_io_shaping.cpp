@@ -1,3 +1,4 @@
+#include "pikdraw/geometry/operations/path_cut.hpp"
 #include "pikdraw/desktop/workflows/document_workflow.hpp"
 #include "document_workflow_internal.hpp"
 #include "pikdraw/vector/tools/shape_tools.hpp"
@@ -10,6 +11,7 @@
 #include "pikdraw/color/values/color_value.hpp"
 #include "pikdraw/interop/adapters/svg_importer.hpp"
 #include "pikdraw/document/storage/native_format.hpp"
+#include "pikdraw/document/storage/native_file.hpp"
 #include "pikdraw/document/model/clone_utils.hpp"
 #include "../clipboard/native_clipboard.hpp"
 #include "../utf8_path.hpp"
@@ -35,6 +37,7 @@ namespace pikdraw::desktop {
 using namespace detail;
 
 bool DocumentWorkflow::save_native(const std::string& file_path) {
+    if (!document::is_native_document_path(detail::path_from_utf8(file_path))) return false;
     const auto snapshot = root_.document().current_snapshot();
     auto result = document::SaveRecoveryService::atomic_save(file_path, *snapshot);
     if (result.success) {
@@ -46,6 +49,7 @@ bool DocumentWorkflow::save_native(const std::string& file_path) {
 }
 
 bool DocumentWorkflow::open_native(const std::string& file_path) {
+    if (!document::is_native_document_path(detail::path_from_utf8(file_path))) return false;
     std::string err;
     auto loaded_snapshot = document::SaveRecoveryService::load(file_path, &err);
     if (!loaded_snapshot) {
@@ -123,7 +127,7 @@ bool DocumentWorkflow::import_svg(const std::string& svg_xml) {
     }
 
     for (auto& obj : res.objects) {
-        root_.document().execute_command(std::make_unique<document::AddObjectCommand>(std::move(obj)));
+        root_.document().execute_command(std::make_unique<document::AddObjectCommand>(std::move(obj), active_layer_index()));
     }
     sync_status_bar();
     return true;
@@ -135,9 +139,17 @@ std::string DocumentWorkflow::export_svg() {
 
 bool DocumentWorkflow::can_boolean_operation_selected(geometry::BooleanOp op) const {
     const auto& selected = root_.vector_controller().selection().selected_ids();
-    if (selected.size() != 2) return false;
+    if (selected.size() != 2 || selected[0] == selected[1] ||
+        !is_supported_boolean_operation(op)) return false;
     const auto snapshot = root_.document().current_snapshot();
-    return compute_selected_boolean(*snapshot, selected, op).has_value();
+    if (!snapshot || snapshot->is_content_locked()) return false;
+    for (const auto id : selected) {
+        const auto* object = snapshot->objects().lookup_ref(id);
+        const auto* path = object ? std::get_if<document::PathObject>(object) : nullptr;
+        if (!path || path->locked || !path->has_fill) return false;
+    }
+    const auto res = compute_selected_boolean(*snapshot, selected, op);
+    return res.has_value() && res->status != geometry::BooleanStatus::Empty && !res->path.empty();
 }
 
 bool DocumentWorkflow::boolean_operation_selected(
@@ -151,6 +163,8 @@ bool DocumentWorkflow::boolean_operation_selected(
     const auto snapshot = root_.document().current_snapshot();
     const auto target_id = sel[0];
     const auto source_id = sel[1];
+    const auto* target_entry = snapshot->hierarchy().find(target_id);
+    if (!target_entry) return false;
 
     const auto target_var = snapshot->objects().get(target_id);
     if (!target_var) return false;
@@ -158,7 +172,8 @@ bool DocumentWorkflow::boolean_operation_selected(
     if (!target) return false;
 
     auto result = compute_selected_boolean(*snapshot, sel, op);
-    if (!result) return false;
+    if (!result || result->status == geometry::BooleanStatus::Empty ||
+        result->path.empty()) return false;
 
     std::vector<std::unique_ptr<document::DocumentCommand>> cmds;
     if (!keep_target && op != geometry::BooleanOp::Boundary) {
@@ -188,7 +203,8 @@ bool DocumentWorkflow::boolean_operation_selected(
     new_obj.has_stroke = target->has_stroke;
 
     const auto new_id = new_obj.id;
-    cmds.push_back(std::make_unique<document::AddObjectCommand>(std::move(new_obj)));
+    cmds.push_back(std::make_unique<document::AddObjectCommand>(
+        std::move(new_obj), target_entry->layer));
 
     auto composite = std::make_unique<document::CompositeCommand>("Boolean Operation");
     for (auto& cmd : cmds) {
@@ -209,7 +225,7 @@ document::ObjectId DocumentWorkflow::add_bitmap_image(
 ) {
     auto id = document::generate_object_id();
     auto img = document::ImageObject::make_procedural_photo(id, x_mm, y_mm, width_mm, height_mm, name);
-    auto cmd = std::make_unique<document::AddObjectCommand>(std::move(img));
+    auto cmd = std::make_unique<document::AddObjectCommand>(std::move(img), active_layer_index());
     root_.document().execute_command(std::move(cmd));
     sync_status_bar();
     return id;
@@ -220,181 +236,10 @@ bool DocumentWorkflow::split_objects_by_line(
     const geometry::Point2D& p2,
     double separate_offset_mm
 ) {
-    const auto snapshot = root_.document().current_snapshot();
-    const auto& sel = root_.vector_controller().selection().selected_ids();
-
-    std::vector<document::ObjectId> candidate_ids;
-    if (!sel.empty()) {
-        candidate_ids = sel;
-    } else {
-        for (const auto& [id, obj] : snapshot->objects().all()) {
-            if (std::holds_alternative<document::PathObject>(obj) ||
-                std::holds_alternative<document::TextObject>(obj) ||
-                std::holds_alternative<document::ImageObject>(obj)) {
-                candidate_ids.push_back(id);
-            }
-        }
-    }
-
-    std::vector<std::unique_ptr<document::DocumentCommand>> cmds;
-    std::vector<document::ObjectId> new_ids;
-
-    for (const auto id : candidate_ids) {
-        const auto obj_var = snapshot->objects().get(id);
-        if (!obj_var) continue;
-        if (const auto* po = std::get_if<document::PathObject>(&*obj_var)) {
-            const auto bounds = po->bounds();
-            auto [split_ok, pieces] = geometry::split_rect_by_line(bounds, p1, p2);
-            if (split_ok && pieces.size() >= 2) {
-                auto b0 = pieces[0].bounds();
-                auto b1 = pieces[1].bounds();
-                if (b0.x > b1.x) {
-                    std::swap(pieces[0], pieces[1]);
-                }
-
-                cmds.push_back(std::make_unique<document::RemoveObjectCommand>(id));
-                int idx = 1;
-                for (auto& piece_path : pieces) {
-                    document::PathObject piece_obj;
-                    piece_obj.id = document::generate_object_id();
-                    piece_obj.name = po->name + " (Mảnh " + std::to_string(idx) + ")";
-                    piece_obj.path = std::move(piece_path);
-                    if (idx == 1) {
-                        piece_obj.fill = po->fill;
-                        piece_obj.stroke = po->stroke;
-                        if (separate_offset_mm > 0.0) {
-                            piece_obj.transform = geometry::Transform2D::translation(-separate_offset_mm * 0.5, 0.0);
-                        }
-                    } else {
-                        // Contrasting color for piece 2 to prove distinct objects
-                        piece_obj.fill = color::ColorValue{color::RGBColor{0.96, 0.62, 0.04, 1.0}};
-                        piece_obj.stroke = color::ColorValue{color::RGBColor{0.85, 0.47, 0.02, 1.0}};
-                        if (separate_offset_mm > 0.0) {
-                            piece_obj.transform = geometry::Transform2D::translation(separate_offset_mm * 0.5, 0.0);
-                        }
-                    }
-                    piece_obj.stroke_width_mm = po->stroke_width_mm;
-                    piece_obj.has_fill = po->has_fill;
-                    piece_obj.has_stroke = po->has_stroke;
-                    new_ids.push_back(piece_obj.id);
-                    cmds.push_back(std::make_unique<document::AddObjectCommand>(std::move(piece_obj)));
-                    idx++;
-                }
-            }
-        } else if (const auto* im = std::get_if<document::ImageObject>(&*obj_var)) {
-            const auto bounds = im->bounds();
-            auto [split_ok, pieces] = geometry::split_rect_by_line(bounds, p1, p2);
-            if (split_ok && pieces.size() >= 2) {
-                auto r1 = pieces[0].bounds();
-                auto r2 = pieces[1].bounds();
-                if (r1.x > r2.x) {
-                    std::swap(r1, r2);
-                }
-
-                cmds.push_back(std::make_unique<document::RemoveObjectCommand>(id));
-
-                int w_px = im->width_px;
-                int h_px = im->height_px;
-                int w_px1 = std::clamp<int>(static_cast<int>(std::round(w_px * (r1.width / bounds.width))), 2, w_px - 2);
-                int w_px2 = w_px - w_px1;
-
-                document::ImageObject im1;
-                im1.id = document::generate_object_id();
-                im1.name = im->name + " (Mảnh 1)";
-                im1.bounds_rect = r1;
-                im1.width_px = w_px1;
-                im1.height_px = h_px;
-                im1.pixels_rgba.resize(static_cast<size_t>(w_px1) * h_px);
-                const auto source_pixels = im->rgba_pixels();
-                for (int y = 0; y < h_px; ++y) {
-                    for (int x = 0; x < w_px1; ++x) {
-                        im1.pixels_rgba[static_cast<size_t>(y) * w_px1 + x] =
-                            source_pixels[static_cast<size_t>(y) * w_px + x];
-                    }
-                }
-
-                document::ImageObject im2;
-                im2.id = document::generate_object_id();
-                im2.name = im->name + " (Mảnh 2)";
-                im2.bounds_rect = r2;
-                im2.width_px = w_px2;
-                im2.height_px = h_px;
-                im2.pixels_rgba.resize(static_cast<size_t>(w_px2) * h_px);
-                for (int y = 0; y < h_px; ++y) {
-                    for (int x = 0; x < w_px2; ++x) {
-                        im2.pixels_rgba[static_cast<size_t>(y) * w_px2 + x] =
-                            source_pixels[static_cast<size_t>(y) * w_px + (w_px1 + x)];
-                    }
-                }
-
-                if (separate_offset_mm > 0.0) {
-                    im1.transform = geometry::Transform2D::translation(-separate_offset_mm * 0.5, 0.0);
-                    im2.transform = geometry::Transform2D::translation(separate_offset_mm * 0.5, 0.0);
-                }
-
-                new_ids.push_back(im1.id);
-                new_ids.push_back(im2.id);
-                cmds.push_back(std::make_unique<document::AddObjectCommand>(std::move(im1)));
-                cmds.push_back(std::make_unique<document::AddObjectCommand>(std::move(im2)));
-            }
-        } else if (const auto* to = std::get_if<document::TextObject>(&*obj_var)) {
-            const auto bounds = to->bounds();
-            auto [split_ok, pieces] = geometry::split_rect_by_line(bounds, p1, p2);
-            if (split_ok && pieces.size() >= 2) {
-                auto b0 = pieces[0].bounds();
-                auto b1 = pieces[1].bounds();
-                if (b0.x > b1.x) {
-                    std::swap(pieces[0], pieces[1]);
-                }
-
-                cmds.push_back(std::make_unique<document::RemoveObjectCommand>(id));
-                int idx = 1;
-                for (auto& piece_path : pieces) {
-                    document::PathObject piece_obj;
-                    piece_obj.id = document::generate_object_id();
-                    piece_obj.name = to->name + " (Mảnh " + std::to_string(idx) + ")";
-                    piece_obj.path = std::move(piece_path);
-                    piece_obj.fill = to->fill;
-                    piece_obj.stroke = color::ColorValue{color::RGBColor{0.0, 0.0, 0.0, 1.0}};
-                    piece_obj.stroke_width_mm = 0.5;
-                    piece_obj.has_fill = true;
-                    piece_obj.has_stroke = true;
-                    if (idx == 1) {
-                        if (separate_offset_mm > 0.0) {
-                            piece_obj.transform = geometry::Transform2D::translation(-separate_offset_mm * 0.5, 0.0);
-                        }
-                    } else {
-                        piece_obj.fill = color::ColorValue{color::RGBColor{0.96, 0.62, 0.04, 1.0}};
-                        if (separate_offset_mm > 0.0) {
-                            piece_obj.transform = geometry::Transform2D::translation(separate_offset_mm * 0.5, 0.0);
-                        }
-                    }
-                    const auto nid = piece_obj.id;
-                    cmds.push_back(std::make_unique<document::AddObjectCommand>(std::move(piece_obj)));
-                    new_ids.push_back(nid);
-                    idx++;
-                }
-            }
-        }
-    }
-
-    if (cmds.empty()) return false;
-
-    auto composite = std::make_unique<document::CompositeCommand>("Split Objects");
-    for (auto& cmd : cmds) {
-        composite->add_command(std::move(cmd));
-    }
-    root_.document().execute_command(std::move(composite));
-
-    root_.vector_controller().selection().clear();
-    for (const auto nid : new_ids) {
-        root_.vector_controller().selection().select(nid, vector::SelectionMode::Add);
-    }
-    sync_status_bar();
-    return true;
+    // Compatibility entry point for current pointer and demo callers.
+    return cut_objects_by_line(p1, p2, separate_offset_mm, 0.0);
 }
-
-bool DocumentWorkflow::trim_bitmap_with_vector(
+bool DocumentWorkflow::create_bitmap_crop_from_vector_bounds(
     document::ObjectId bitmap_id,
     document::ObjectId vector_cutter_id,
     double separate_offset_mm
@@ -428,7 +273,7 @@ bool DocumentWorkflow::trim_bitmap_with_vector(
 
     document::ImageObject patch;
     patch.id = document::generate_object_id();
-    patch.name = "Bitmap Patch (Trimmed)";
+    patch.name = "Bitmap Crop (Vector Bounds)";
     patch.bounds_rect = overlap;
     patch.width_px = sub_w;
     patch.height_px = sub_h;
@@ -446,7 +291,7 @@ bool DocumentWorkflow::trim_bitmap_with_vector(
         patch.transform = geometry::Transform2D::translation(separate_offset_mm, separate_offset_mm * 0.4);
     }
 
-    auto cmd = std::make_unique<document::AddObjectCommand>(std::move(patch));
+    auto cmd = std::make_unique<document::AddObjectCommand>(std::move(patch), active_layer_index());
     root_.document().execute_command(std::move(cmd));
     sync_status_bar();
     return true;
@@ -503,7 +348,8 @@ void DocumentWorkflow::render_snapshot(
     rendering::PixelBufferTarget target{out_buffer.data(), width_px, height_px, width_px * 4};
     const auto snapshot = snapshot_for_canvas();
     if (!snapshot) { out_buffer.clear(); return; }
-    root_.renderer().render_frame(*snapshot, target);
+    if (!root_.renderer().render_frame(*snapshot, target))
+        out_buffer.clear();
 }
 
 std::vector<uint8_t> DocumentWorkflow::render_snapshot(

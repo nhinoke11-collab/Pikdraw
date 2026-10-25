@@ -1,4 +1,5 @@
 #include "hit_geometry.hpp"
+#include "pikdraw/document/hierarchy/frame_geometry.hpp"
 #include "pikdraw/vector/gestures/edit_target.hpp"
 #include "pikdraw/vector/selection/selection_model.hpp"
 #include <cmath>
@@ -61,14 +62,6 @@ bool stroke_hit(geometry::Point2D world, geometry::Point2D local, geometry::Poin
 }
 PathHit path_hit(geometry::Point2D world, const document::PathObject &object, double tolerance) {
     PathHit result;
-    for (const auto &e : object.path.elements()) {
-        if (e.verb == geometry::PathVerb::ArcTo) {
-            result.unsupported = true;
-            return result; // no false arc/bounds hit
-        }
-        if (e.verb == geometry::PathVerb::QuadTo || e.verb == geometry::PathVerb::CubicTo)
-            result.curves = true;
-    }
     const auto inverse = object.transform.inverted();
     if (!inverse)
         return result;
@@ -80,6 +73,14 @@ PathHit path_hit(geometry::Point2D world, const document::PathObject &object, do
     if (world.x < b.x - margin || world.x > b.right() + margin || world.y < b.y - margin ||
         world.y > b.bottom() + margin)
         return result;
+    for (const auto &e : object.path.elements()) {
+        if (e.verb == geometry::PathVerb::ArcTo) {
+            result.unsupported = true;
+            return result; // no false arc/bounds hit
+        }
+        if (e.verb == geometry::PathVerb::QuadTo || e.verb == geometry::PathVerb::CubicTo)
+            result.curves = true;
+    }
     const double flatness =
         (tolerance > 0 ? std::min(.01, tolerance * .1) : .01) / std::max(frobenius, 1e-12);
     const auto paths = hit_polylines(object.path, flatness);
@@ -118,58 +119,139 @@ PathHit path_hit(geometry::Point2D world, const document::PathObject &object, do
     return result;
 }
 } // namespace
-std::optional<HitResult> SelectionModel::hit_test_detail(geometry::Point2D point,
-                                                         const document::DocumentSnapshot &snapshot,
-                                                         double tolerance, bool text_allowed,
-                                                         HitDiagnostics *diagnostics) {
-    if (diagnostics)
-        *diagnostics = {};
-    if (!finite_point(point) || !std::isfinite(tolerance) || tolerance < 0)
-        return std::nullopt;
-    for (auto layer = snapshot.page().layers.rbegin(); layer != snapshot.page().layers.rend(); ++layer) {
-        if (!layer->visible || layer->locked)
-            continue;
-        for (auto id = layer->object_ids.rbegin(); id != layer->object_ids.rend(); ++id) {
-            const auto *object = snapshot.objects().lookup_ref(*id);
-            if (!object)
-                continue;
-            if (std::visit([](const auto &o) { return !o.visible || o.locked; }, *object))
-                continue;
-            const auto hit = std::visit(
-                [&](const auto &o) -> std::optional<HitQuality> {
-                    using T = std::decay_t<decltype(o)>;
-                    if constexpr (std::is_same_v<T, document::PathObject>) {
-                        const auto r = path_hit(point, o, tolerance);
-                        if (diagnostics && r.unsupported)
-                            ++diagnostics->unsupported_objects;
-                        if (diagnostics && r.budget_exceeded)
-                            ++diagnostics->approximation_budget_exceeded;
-                        if (r.hit)
-                            return r.curves ? HitQuality::CurveApproximation : HitQuality::SourceLines;
-                    } else if constexpr (std::is_same_v<T, document::TextObject>) {
-                        if (!text_allowed)
-                            return std::nullopt;
-                        const auto inv = o.transform.inverted();
-                        if (!inv)
-                            return std::nullopt;
-                        auto identity = o;
-                        identity.transform = {};
-                        auto b = identity.bounds();
-                        b.x -= tolerance;
-                        b.y -= tolerance;
-                        b.width += 2 * tolerance;
-                        b.height += 2 * tolerance;
-                        if (b.contains(inv->map_point(point)))
-                            return HitQuality::TextApproximation;
-                    } else if (diagnostics)
-                        ++diagnostics->unsupported_objects;
+namespace {
+std::optional<HitQuality> scene_hit(geometry::Point2D point,
+    const document::DocumentSnapshot& snapshot, document::ObjectId id,
+    double tolerance, bool text_allowed, HitDiagnostics* diagnostics,
+    bool include_locked) {
+    const auto* entry = snapshot.hierarchy().find(id);
+    const auto* source = snapshot.objects().lookup_ref(id);
+    if (!entry || !source) return std::nullopt;
+    const bool eligible = include_locked
+        ? entry->visible && entry->world.is_finite() && entry->world.is_invertible()
+        : snapshot.hierarchy().editable(id);
+    if (!eligible) return std::nullopt;
+    if (entry->bounds) {
+        if (const auto* path = std::get_if<document::PathObject>(source)) {
+            const auto& transform = entry->world;
+            const double scale = std::hypot(std::hypot(transform.a, transform.b),
+                                            std::hypot(transform.c, transform.d));
+            const double margin = tolerance +
+                (path->has_stroke ? path->stroke_width_mm * scale * .5 : 0.0);
+            if (entry->bounds->is_finite() && std::isfinite(margin)) {
+                const auto& bounds = *entry->bounds;
+                if (point.x < bounds.x - margin || point.x > bounds.right() + margin ||
+                    point.y < bounds.y - margin || point.y > bounds.bottom() + margin)
                     return std::nullopt;
-                },
-                *object);
-            if (hit)
-                return HitResult{*id, *hit};
+            }
         }
     }
+    if (entry->bounds && !std::holds_alternative<document::PathObject>(*source)) {
+        auto bounds = *entry->bounds;
+        bounds.x -= tolerance; bounds.y -= tolerance;
+        bounds.width += 2*tolerance; bounds.height += 2*tolerance;
+        if (!bounds.contains(point)) return std::nullopt;
+    }
+    if (const auto* group = std::get_if<document::GroupObject>(source)) {
+        if (group->clip) {
+            const auto* mask = snapshot.objects().lookup_ref(group->clip->mask_object_id);
+            auto geometry = mask ? document::frame_geometry(*mask) : std::nullopt;
+            if (!geometry) return std::nullopt;
+            geometry->transform = entry->world * geometry->transform;
+            geometry->has_fill = true; geometry->has_stroke = false;
+            if (!path_hit(point, *geometry, 0).hit) return std::nullopt;
+        }
+        for (auto it=group->children_ids.rbegin(); it!=group->children_ids.rend(); ++it) {
+            if (group->clip && *it==group->clip->mask_object_id) continue;
+            if (auto hit=scene_hit(point,snapshot,*it,tolerance,text_allowed,diagnostics,
+                                   include_locked)) return hit;
+        }
+        if (group->clip) return HitQuality::SourceLines;
+        return std::nullopt;
+    }
+    return std::visit([&](const auto& object)->std::optional<HitQuality>{
+        using T=std::decay_t<decltype(object)>;
+        if constexpr(std::is_same_v<T,document::PathObject>) {
+            auto world=object; world.transform=entry->world;
+            auto result=path_hit(point,world,tolerance);
+            if(diagnostics && result.unsupported) ++diagnostics->unsupported_objects;
+            if(diagnostics && result.budget_exceeded) ++diagnostics->approximation_budget_exceeded;
+            if(result.hit) return result.curves?HitQuality::CurveApproximation:HitQuality::SourceLines;
+        } else if constexpr(std::is_same_v<T,document::TextObject> ||
+                            std::is_same_v<T,document::ImageObject>) {
+            if constexpr(std::is_same_v<T,document::TextObject>)
+                if(!text_allowed) return std::nullopt;
+            auto inverse=entry->world.inverted();
+            if(!inverse) return std::nullopt;
+            geometry::Rect2D bounds;
+            if constexpr(std::is_same_v<T,document::ImageObject>) bounds=object.bounds_rect;
+            else { auto local=object; local.transform={}; bounds=local.bounds(); }
+            bounds.x-=tolerance; bounds.y-=tolerance;
+            bounds.width+=2*tolerance; bounds.height+=2*tolerance;
+            if(!bounds.contains(inverse->map_point(point))) return std::nullopt;
+            if constexpr(std::is_same_v<T,document::ImageObject>) {
+                if(object.clip_path) {
+                    document::PathObject clip; clip.path=*object.clip_path;
+                    clip.transform=entry->world; clip.has_fill=true; clip.has_stroke=false;
+                    if(!path_hit(point,clip,0).hit) return std::nullopt;
+                }
+                return HitQuality::ImageBounds;
+            } else return HitQuality::TextApproximation;
+        }
+        return std::nullopt;
+    },*source);
+}
+}
+std::vector<document::ObjectId> SelectionModel::scope_roots(
+    const document::DocumentSnapshot& snapshot, document::ObjectId scope, bool frame_only) {
+    std::vector<document::ObjectId> ids;
+    if(scope) {
+        const auto* source=snapshot.objects().lookup_ref(scope);
+        if(const auto* group=source?std::get_if<document::GroupObject>(source):nullptr)
+            for(auto id:group->children_ids)
+                if(frame_only ? (group->clip && id==group->clip->mask_object_id)
+                              : (!group->clip || id!=group->clip->mask_object_id)) ids.push_back(id);
+    } else for(const auto& layer:snapshot.page().layers)
+        ids.insert(ids.end(),layer.object_ids.begin(),layer.object_ids.end());
+    return ids;
+}
+std::optional<HitResult> SelectionModel::hit_test_detail(geometry::Point2D point,
+    const document::DocumentSnapshot& snapshot,double tolerance,bool text_allowed,
+    HitDiagnostics* diagnostics) {
+    return hit_test_detail_candidates(point,snapshot,scope_roots(snapshot,0),
+                                     tolerance,text_allowed,diagnostics);
+}
+std::optional<HitResult> SelectionModel::hit_test_visible_detail(
+    geometry::Point2D point, const document::DocumentSnapshot& snapshot,
+    double tolerance, bool text_allowed, HitDiagnostics* diagnostics) {
+    if (diagnostics) *diagnostics = {};
+    if (!finite_point(point) || !std::isfinite(tolerance) || tolerance < 0)
+        return std::nullopt;
+    const auto candidates = scope_roots(snapshot, 0);
+    for (auto it = candidates.rbegin(); it != candidates.rend(); ++it) {
+        if (auto quality = scene_hit(point, snapshot, *it, tolerance,
+                                     text_allowed, diagnostics, true))
+            return HitResult{*it, *quality};
+    }
+    return std::nullopt;
+}
+std::optional<document::ObjectId> SelectionModel::hit_test_in_scope(
+    geometry::Point2D point,const document::DocumentSnapshot& snapshot,
+    document::ObjectId scope,double tolerance,bool frame_only) {
+    const auto result=hit_test_detail_candidates(point,snapshot,scope_roots(snapshot,scope,frame_only),
+                                                tolerance,true,nullptr);
+    return result?std::optional(result->id):std::nullopt;
+}
+std::optional<HitResult> SelectionModel::hit_test_detail_candidates(
+    geometry::Point2D point,const document::DocumentSnapshot& snapshot,
+    std::span<const document::ObjectId> candidates,double tolerance,bool text_allowed,
+    HitDiagnostics* diagnostics) {
+    if(diagnostics) *diagnostics={};
+    if(!finite_point(point)||!std::isfinite(tolerance)||tolerance<0) return std::nullopt;
+    for(auto it=candidates.rbegin();it!=candidates.rend();++it)
+        if(auto quality=scene_hit(point,snapshot,*it,tolerance,text_allowed,
+                                  diagnostics,false))
+            return HitResult{*it,*quality};
     return std::nullopt;
 }
 } // namespace pikdraw::vector

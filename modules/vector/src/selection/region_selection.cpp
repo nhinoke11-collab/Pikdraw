@@ -1,3 +1,4 @@
+#include "pikdraw/document/hierarchy/frame_geometry.hpp"
 #include "hit_geometry.hpp"
 #include "pikdraw/vector/gestures/edit_target.hpp"
 #include "pikdraw/vector/selection/selection_model.hpp"
@@ -42,15 +43,10 @@ std::array<Point2D, 4> corners(const Rect2D &r) {
 bool contains_rect(const Rect2D &outer, const Rect2D &inner) {
     return outer.contains(inner.min_point()) && outer.contains(inner.max_point());
 }
-Rect2D painted_bounds(const document::PathObject &object) {
-    auto bounds = object.bounds();
-    if (object.has_stroke) {
-        const double radius = object.stroke_width_mm * .5;
-        const double x = radius * std::hypot(object.transform.a, object.transform.c);
-        const double y = radius * std::hypot(object.transform.b, object.transform.d);
-        bounds = {bounds.x - x, bounds.y - y, bounds.width + 2 * x, bounds.height + 2 * y};
-    }
-    return bounds;
+bool path_has_segments(const geometry::Path2D& path) {
+    return std::any_of(path.elements().begin(), path.elements().end(), [](const auto& element) {
+        return element.verb != geometry::PathVerb::MoveTo;
+    });
 }
 bool path_crosses(const document::PathObject &object, const Rect2D &region) {
     const auto inverse = object.transform.inverted();
@@ -106,63 +102,113 @@ bool path_crosses(const document::PathObject &object, const Rect2D &region) {
 }
 } // namespace
 
-std::optional<Rect2D> SelectionModel::bounds(const document::DocumentSnapshot &snapshot) const {
-    std::optional<Rect2D> result;
-    for (const auto id : selected_ids_) {
-        if (!editable_target(snapshot, id))
-            continue;
-        const auto *object = snapshot.objects().lookup_ref(id);
-        std::visit(
-            [&](const auto &value) {
-                using T = std::decay_t<decltype(value)>;
-                if constexpr (!std::is_same_v<T, document::GroupObject>) {
-                    const auto b = value.bounds();
-                    result = result ? Rect2D::from_ltrb(std::min(result->x, b.x), std::min(result->y, b.y),
-                                                        std::max(result->right(), b.right()),
-                                                        std::max(result->bottom(), b.bottom()))
-                                    : b;
-                }
-            },
-            *object);
+std::optional<Rect2D> SelectionModel::bounds(const document::DocumentSnapshot& snapshot) const {
+    std::optional<Rect2D> bounds;
+    for(auto id:snapshot.hierarchy().roots(selected_ids_)) {
+        const auto* entry=snapshot.hierarchy().find(id);
+        if(!entry || !editable_target(snapshot,id) || !entry->bounds) continue;
+        bounds=bounds?bounds->united(*entry->bounds):entry->bounds;
     }
-    return result;
+    return bounds;
+}
+std::vector<document::ObjectId> SelectionModel::query_region(const Rect2D &region, RegionMode mode,
+    const document::DocumentSnapshot &snapshot) {
+    return query_region_in_scope(region, mode, snapshot, 0);
+}
+std::vector<document::ObjectId> SelectionModel::query_region_in_scope(const Rect2D &region,
+    RegionMode mode, const document::DocumentSnapshot &snapshot, document::ObjectId scope) {
+    return query_region_candidates(region, mode, snapshot, scope_roots(snapshot, scope));
 }
 
-std::vector<document::ObjectId> SelectionModel::query_region(const Rect2D &region, RegionMode mode,
-                                                             const document::DocumentSnapshot &snapshot) {
+std::vector<document::ObjectId> SelectionModel::query_region_candidates(
+    const Rect2D &region, RegionMode mode,
+    const document::DocumentSnapshot &snapshot,
+    std::span<const document::ObjectId> candidates) {
     std::vector<document::ObjectId> result;
     if (!region.is_finite() || region.is_empty())
         return result;
-    for (const auto &layer : snapshot.page().layers) {
-        if (!layer.visible || layer.locked)
+    result.reserve(candidates.size());
+    for (const auto id : candidates) {
+        const auto *object = snapshot.objects().lookup_ref(id);
+        if (!object || !editable_target(snapshot, id))
             continue;
-        for (const auto id : layer.object_ids) {
-            if (!editable_target(snapshot, id))
+        if (const auto* path = std::get_if<document::PathObject>(object)) {
+            const auto* entry = snapshot.hierarchy().find(id);
+            if (!entry || !entry->bounds)
                 continue;
-            const auto *object = snapshot.objects().lookup_ref(id);
-            const bool selected = std::visit(
-                [&](const auto &value) {
-                    using T = std::decay_t<decltype(value)>;
-                    if constexpr (std::is_same_v<T, document::PathObject>) {
-                        if (!value.has_fill && (!value.has_stroke || value.stroke_width_mm == 0))
-                            return false;
-                        const auto b = painted_bounds(value);
-                        if (!b.intersects(region))
-                            return false;
-                        if (mode == RegionMode::Window)
-                            return contains_rect(region, b);
-                        return path_crosses(value, region);
-                    } else if constexpr (std::is_same_v<T, document::TextObject>) {
-                        // Logical text bounds remain approximate, consistently with point picking.
-                        const auto b = value.bounds();
-                        return mode == RegionMode::Window ? contains_rect(region, b) : b.intersects(region);
-                    }
-                    return false;
-                },
-                *object);
-            if (selected)
-                result.push_back(id);
+            auto broad_bounds = *entry->bounds;
+            if (path->has_stroke) {
+                const double radius = path->stroke_width_mm * .5;
+                const double x_margin = radius * std::hypot(entry->world.a, entry->world.c);
+                const double y_margin = radius * std::hypot(entry->world.b, entry->world.d);
+                const double left = broad_bounds.x - x_margin;
+                const double top = broad_bounds.y - y_margin;
+                const double width = broad_bounds.width + 2.0 * x_margin;
+                const double height = broad_bounds.height + 2.0 * y_margin;
+                const Rect2D expanded{left, top, width, height};
+                if (!expanded.is_finite()) continue;
+                broad_bounds = expanded;
+            }
+            if (!broad_bounds.is_finite()) continue;
+            // SceneHierarchy already stores immutable world geometry bounds. Rejecting disjoint
+            // candidates here avoids recomputing path bounds and flattening off-screen paths.
+            if (!broad_bounds.intersects(region))
+                continue;
+
+            bool selected = false;
+            if ((path->has_fill || (path->has_stroke && path->stroke_width_mm > 0.0)) &&
+                path_has_segments(path->path)) {
+                if (mode == RegionMode::Window) {
+                    selected = contains_rect(region, broad_bounds);
+                } else if (contains_rect(region, *entry->bounds)) {
+                    // Every non-empty segment is inside the selection region, so exact edge
+                    // flattening cannot change the crossing result.
+                    selected = true;
+                } else {
+                    auto world = *path;
+                    world.transform = entry->world;
+                    selected = path_crosses(world, region);
+                }
+            }
+            if (selected) result.push_back(id);
+            continue;
         }
+        const bool selected = std::visit(
+            [&](const auto &value) {
+                using T = std::decay_t<decltype(value)>;
+                if constexpr (std::is_same_v<T, document::PathObject>) {
+                    return false;
+                } else if constexpr(std::is_same_v<T,document::GroupObject>) {
+                    const auto* entry=snapshot.hierarchy().find(id);
+                    if(!entry||!entry->bounds)return false;
+                    if(mode==RegionMode::Window)return contains_rect(region,*entry->bounds);
+                    if(value.clip) {
+                        const auto* mask=snapshot.objects().lookup_ref(value.clip->mask_object_id);
+                        auto geometry=mask?document::frame_geometry(*mask):std::nullopt;
+                        if(!geometry)return false;
+                        geometry->transform=entry->world*geometry->transform;
+                        geometry->has_fill=true;geometry->has_stroke=false;
+                        return path_crosses(*geometry,region);
+                    }
+                    return !query_region_candidates(region,mode,snapshot,value.children_ids).empty();
+                } else if constexpr(std::is_same_v<T,document::ImageObject>) {
+                    const auto* entry=snapshot.hierarchy().find(id);if(!entry)return false;
+                    document::PathObject shape;
+                    shape.path=value.clip_path?*value.clip_path:geometry::Path2D::make_rect(
+                        value.bounds_rect.x,value.bounds_rect.y,value.bounds_rect.width,value.bounds_rect.height);
+                    shape.transform=entry->world;shape.has_fill=true;shape.has_stroke=false;
+                    const auto bounds=shape.bounds();
+                    return mode==RegionMode::Window?contains_rect(region,bounds):path_crosses(shape,region);
+                } else if constexpr(std::is_same_v<T,document::TextObject>) {
+                    const auto* entry=snapshot.hierarchy().find(id);
+                    if(!entry||!entry->bounds)return false;
+                    return mode==RegionMode::Window?contains_rect(region,*entry->bounds):entry->bounds->intersects(region);
+                }
+                return false;
+            },
+            *object);
+        if (selected)
+            result.push_back(id);
     }
     return result;
 }

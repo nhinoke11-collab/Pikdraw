@@ -17,6 +17,9 @@ std::optional<StyleEditorResult> edit_source_color(HWND owner, const color::Colo
                                                    bool mixed_color = false,
                                                    bool mixed_overprint = false,
                                                    std::optional<color::DocumentColorMode> document_mode = {},
-                                                   bool dark_theme = false);
+                                                   bool dark_theme = false,
+                                                   const color::IccPreview* icc = nullptr,
+                                                   geometry::units::LengthUnit display_unit =
+                                                       geometry::units::LengthUnit::Millimeter);
 #endif
 } // namespace pikdraw::desktop

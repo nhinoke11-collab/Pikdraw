@@ -1,6 +1,9 @@
 #pragma once
 
 #include "pikdraw/document/commands/command.hpp"
+#include "pikdraw/document/commands/path_commands.hpp"
+#include "pikdraw/document/document.hpp"
+#include "pikdraw/document/model/path_adapter.hpp"
 #include "pikdraw/document/model/object.hpp"
 #include "pikdraw/geometry/primitives/bounds.hpp"
 #include <algorithm>
@@ -337,5 +340,78 @@ class ShapeFactory {
         return obj;
     }
 };
+
+/// Constructs an appropriate transformation command for an object.
+/// For parametric rectangles with rounded/scalloped/chamfered corners:
+/// if scaling is applied, absorbs the scale into rectangle bounds and regenerates
+/// the path directly, ensuring that the corner radius is NOT affected (unless scale_relative is ON)
+/// and corners remain 100% circular, undistorted, and isotropic (CorelDRAW standard).
+[[nodiscard]] inline std::unique_ptr<document::DocumentCommand> make_transformed_object_command(
+    document::ObjectId id,
+    const document::DocumentSnapshot& snapshot,
+    const geometry::Transform2D& delta) {
+    if (!delta.is_finite())
+        return nullptr;
+    const auto* placement = snapshot.hierarchy().find(id);
+    if (!placement) return nullptr;
+    const auto inverse_parent = placement->parent_world.inverted();
+    if (!inverse_parent) return nullptr;
+    const auto local_delta = *inverse_parent * delta * placement->parent_world;
+
+    const auto obj_opt = snapshot.objects().get(id);
+    if (!obj_opt)
+        return std::make_unique<document::TransformObjectCommand>(id, delta);
+
+    if (const auto* path_obj = std::get_if<document::PathObject>(&*obj_opt)) {
+        if (path_obj->contour_spec.starts_with("rect_corner:")) {
+            auto rcs = deserialize_rect_corner_spec(path_obj->contour_spec);
+            if (rcs) {
+                const auto T_cand = local_delta * path_obj->transform;
+                const double sx = std::hypot(T_cand.a, T_cand.b);
+                const double sy = std::hypot(T_cand.c, T_cand.d);
+
+                // Check for non-shearing transform where scale is present
+                const double dot = T_cand.a * T_cand.c + T_cand.b * T_cand.d;
+                if (sx > 1e-6 && sy > 1e-6 && std::abs(dot) < 1e-3 * sx * sy &&
+                    (std::abs(sx - 1.0) > 1e-4 || std::abs(sy - 1.0) > 1e-4)) {
+                    const auto local_bounds = path_obj->path.bounds();
+                    if (local_bounds.is_finite() && local_bounds.width > 0.0 && local_bounds.height > 0.0) {
+                        const geometry::Rect2D target_bounds{
+                            local_bounds.x * sx,
+                            local_bounds.y * sy,
+                            local_bounds.width * sx,
+                            local_bounds.height * sy
+                        };
+
+                        if (rcs->scale_relative) {
+                            const double scale_factor = std::min(sx, sy);
+                            rcs->tl *= scale_factor;
+                            rcs->tr *= scale_factor;
+                            rcs->br *= scale_factor;
+                            rcs->bl *= scale_factor;
+                        }
+                        // When scale_relative is false: rcs->tl, tr, br, bl remain UNCHANGED!
+                        // They are not affected by scale, exactly matching CorelDRAW / Illustrator behavior!
+
+                        const auto new_path = ShapeFactory::generate_rectangle_path(target_bounds, *rcs);
+                        auto ep = document::editable_path_from_path2d(new_path, nullptr);
+                        if (ep) {
+                            const std::string new_spec = serialize_rect_corner_spec(*rcs);
+                            const geometry::Transform2D new_transform{
+                                T_cand.a / sx, T_cand.b / sx,
+                                T_cand.c / sy, T_cand.d / sy,
+                                T_cand.tx, T_cand.ty
+                            };
+                            return std::make_unique<document::SetAuthoringSourceCommand>(
+                                id, std::move(*ep), std::move(new_spec), new_transform);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return std::make_unique<document::TransformObjectCommand>(id, local_delta);
+}
 
 } // namespace pikdraw::vector

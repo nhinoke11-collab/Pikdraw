@@ -16,6 +16,15 @@ enum class CanvasTraceKind : std::uint8_t {
     PaintEnd,
     RenderBegin,
     RenderEnd,
+    StartupBegin,
+    StartupReady,
+    FirstFrame,
+    RecoveryScanBegin,
+    RecoveryScanEnd,
+    NativeSaveBegin,
+    NativeSaveEnd,
+    NativeOpenBegin,
+    NativeOpenEnd,
 };
 
 struct CanvasTraceEvent {

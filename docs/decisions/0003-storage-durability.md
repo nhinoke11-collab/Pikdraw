@@ -21,7 +21,7 @@ Các lỗi phổ biến ở các phần mềm truyền thống:
 ## 2. Quyết định Kiến trúc
 
 1. **Giao thức lưu nguyên tử (Atomic Replace Protocol)**:
-   - Dữ liệu luôn được ghi vào một file tạm độc lập nằm cùng thư mục: `<file>.pikdraw.tmp.<PID>.<Epoch>`.
+   - Dữ liệu luôn được ghi vào một file tạm độc lập nằm cùng thư mục: `<file>.pr.tmp.<PID>.<Epoch>`.
    - Gọi hàm `FlushFileBuffers` trên Windows trước khi đóng handle để ép dữ liệu từ bộ nhớ đệm ổ cứng xuống bề mặt vật lý.
    - Hoán đổi nguyên tử vào đường dẫn đích bằng Win32 `ReplaceFileW`.
    - Nếu có bất kỳ lỗi nào xảy ra trong quá trình ghi, file tạm bị hủy ngay lập tức và file gốc giữ nguyên 100%.
