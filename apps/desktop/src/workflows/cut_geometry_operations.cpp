@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/workflows/cut_geometry_job.hpp"
+#include "smart_fill_line_face.hpp"
 
 #include "pikdraw/document/model/path_adapter.hpp"
 #include "pikdraw/geometry/flattening/flattening.hpp"
@@ -51,8 +52,7 @@ std::vector<document::ObjectId> all_visible_editable_paths(
             }
             return;
         }
-        if (const auto* path = std::get_if<document::PathObject>(&*value);
-            path && path->has_fill) {
+        if (std::holds_alternative<document::PathObject>(*value)) {
             result.push_back(id);
             exceeded_limit = result.size() > kMaximumBooleanTargets;
         }
@@ -214,7 +214,8 @@ FaceResolution resolve_smart_fill_face(
     const document::DocumentSnapshot& snapshot,
     const geometry::Point2D& point_world,
     const std::vector<document::ObjectId>& selected_ids,
-    std::stop_token stop, const CutGeometryProgress& progress) {
+    std::stop_token stop, const CutGeometryProgress& progress,
+    bool allow_open = false) {
     FaceResolution result;
     const auto fail = [&result](CutGeometryStatus status, std::string message) {
         result.status = status;
@@ -238,7 +239,7 @@ FaceResolution resolve_smart_fill_face(
             "Smart Fill candidate count exceeds the 64-path geometry budget");
     if (candidates.empty())
         return fail(CutGeometryStatus::NoChange,
-            "No editable closed filled paths are available");
+            "No editable closed paths are available");
     if (candidates.size() > kMaximumBooleanTargets)
         return fail(CutGeometryStatus::BudgetExceeded,
             "Smart Fill source count exceeds the 64-path budget");
@@ -247,6 +248,7 @@ FaceResolution resolve_smart_fill_face(
     world_paths.reserve(candidates.size());
     result.source_ids.reserve(candidates.size());
     std::size_t total_elements = 0;
+    bool has_open = false;
     if (progress) progress(0, candidates.size());
     std::size_t candidates_processed = 0;
     std::unordered_set<document::ObjectId> seen_candidates;
@@ -259,11 +261,10 @@ FaceResolution resolve_smart_fill_face(
         const auto value = snapshot.objects().get(id);
         const auto* path = value ? std::get_if<document::PathObject>(&*value) : nullptr;
         const auto* owner = snapshot.hierarchy().find(id);
-        if (!path || !owner || owner->mask || !snapshot.hierarchy().editable(id) ||
-            !path->has_fill) {
+        if (!path || !owner || owner->mask || !snapshot.hierarchy().editable(id)) {
             if (has_selection)
                 return fail(CutGeometryStatus::Unsupported,
-                    "Select only visible, unlocked filled paths for Smart Fill");
+                    "Select only visible, unlocked paths for Smart Fill");
             continue;
         }
         std::optional<document::EditablePath> converted;
@@ -281,14 +282,15 @@ FaceResolution resolve_smart_fill_face(
             }
             source = &*converted;
         }
-        if (source->subpaths.empty() ||
-            std::any_of(source->subpaths.begin(), source->subpaths.end(),
-                [](const auto& subpath) { return !subpath.closed; })) {
+        const bool source_has_open = std::any_of(source->subpaths.begin(), source->subpaths.end(),
+                [](const auto& subpath) { return !subpath.closed; });
+        if (source->subpaths.empty() || (source_has_open && !allow_open)) {
             if (has_selection)
                 return fail(CutGeometryStatus::Unsupported,
                     "Smart Fill requires closed source contours");
             continue;
         }
+        has_open = has_open || source_has_open;
         std::size_t source_segments = 0;
         for (const auto& subpath : source->subpaths) {
             if (subpath.segments.size() > kMaximumPathElements - source_segments)
@@ -319,8 +321,17 @@ FaceResolution resolve_smart_fill_face(
     }
     if (world_paths.empty() || result.style_source == document::kInvalidObjectId)
         return fail(CutGeometryStatus::NoChange,
-            "No visible, unlocked closed filled paths are available");
+            "No visible, unlocked closed paths are available");
 
+    if (has_open) {
+        auto line_face = detail::resolve_line_face(world_paths, point_world, stop);
+        if (line_face.status != CutGeometryStatus::Success)
+            return fail(line_face.status, line_face.message);
+        result.face = std::move(line_face.path);
+        result.status = CutGeometryStatus::Success;
+        result.message = line_face.message;
+        return result;
+    }
     const auto options = boolean_options();
     geometry::Path2D region = world_paths.front();
     for (std::size_t index = 1; index < world_paths.size(); ++index) {
@@ -421,10 +432,10 @@ CutGeometryProposal compute_trim_objects_geometry(
     const auto* target = target_value
         ? std::get_if<document::PathObject>(&*target_value) : nullptr;
     const auto* target_owner = request.snapshot->hierarchy().find(request.target_id);
-    if (!target || !target->has_fill || !target_owner || target_owner->mask ||
+    if (!target || !target_owner || target_owner->mask ||
         !request.snapshot->hierarchy().editable(request.target_id))
         return failure(request, CutGeometryStatus::Unsupported,
-            "Trim Target must be a visible, editable filled path");
+            "Trim Target must be a visible, editable closed path");
     if (target->path.size() > kMaximumPathElements)
         return failure(request, CutGeometryStatus::BudgetExceeded,
             "Trim Target exceeds the 200,000-element path budget");
@@ -446,10 +457,10 @@ CutGeometryProposal compute_trim_objects_geometry(
         const auto value = request.snapshot->objects().get(id);
         const auto* source = value ? std::get_if<document::PathObject>(&*value) : nullptr;
         const auto* owner = request.snapshot->hierarchy().find(id);
-        if (!source || !source->has_fill || !owner || owner->mask ||
+        if (!source || !owner || owner->mask ||
             !request.snapshot->hierarchy().editable(id))
             return failure(request, CutGeometryStatus::Unsupported,
-                "Every Trim Source must be a visible, editable filled path");
+                "Every Trim Source must be a visible, editable closed path");
         if (source->path.size() > kMaximumPathElements ||
             total_elements > kMaximumTotalElements - source->path.size())
             return failure(request, CutGeometryStatus::BudgetExceeded,
@@ -550,7 +561,7 @@ CutGeometryProposal compute_smart_fill_geometry(
         return failure(request, CutGeometryStatus::Invalid,
             "Maximum approximation error must be within 0..0.05 mm");
     auto face = resolve_smart_fill_face(*request.snapshot, request.points_world.front(),
-                                        request.selected_ids, stop, progress);
+                                        request.selected_ids, stop, progress, true);
     if (face.status != CutGeometryStatus::Success)
         return failure(request, face.status, std::move(face.message));
     if (face.approximation_bound_mm > request.max_approximation_error_mm)
@@ -569,6 +580,11 @@ CutGeometryProposal compute_smart_fill_geometry(
     auto addition = *style;
     addition.id = document::kInvalidObjectId;
     addition.name = "Smart Fill";
+    if (!addition.has_fill) {
+        addition.fill = document::PathObject{}.fill;
+        addition.fill_gradient.reset();
+        addition.has_fill = true;
+    }
     addition.path = std::move(face.face);
     addition.transform = geometry::Transform2D::identity();
     addition.contour_spec.clear();
@@ -593,38 +609,155 @@ CutGeometryProposal compute_smart_fill_geometry(
     return proposal;
 }
 
+namespace {
+struct GestureSeedResult {
+    CutGeometryStatus status{CutGeometryStatus::Success};
+    std::vector<geometry::Point2D> points;
+    std::string message;
+};
+GestureSeedResult shape_builder_gesture_seeds(const CutGeometryRequest& request, std::stop_token stop) {
+    GestureSeedResult out;
+    auto fail = [&](CutGeometryStatus status, const char* message) {
+        out.status = status; out.points.clear(); out.message = message; return out;
+    };
+    if (request.points_world.size() == 1) { out.points = request.points_world; return out; }
+    bool overflow = false;
+    const auto ids = request.selected_ids.empty()
+        ? all_visible_editable_paths(*request.snapshot, overflow) : request.selected_ids;
+    if (overflow || ids.size() > kMaximumBooleanTargets)
+        return fail(CutGeometryStatus::BudgetExceeded, "Shape Builder source budget exceeded");
+    struct Line { geometry::Point2D a, b; };
+    std::vector<Line> boundaries;
+    for (const auto id : ids) {
+        const auto value = request.snapshot->objects().get(id);
+        const auto* path = value ? std::get_if<document::PathObject>(&*value) : nullptr;
+        const auto* owner = request.snapshot->hierarchy().find(id);
+        if (!path || !owner || owner->mask || !request.snapshot->hierarchy().editable(id))
+            return fail(CutGeometryStatus::Unsupported, "Choose visible, unlocked path sources");
+        auto world = path->path.transformed(owner->world);
+        geometry::Point2D first{}, previous{};
+        bool active = false;
+        for (const auto& element : world.elements()) {
+            if (element.verb == geometry::PathVerb::MoveTo) {
+                if (active) return fail(CutGeometryStatus::Unsupported, "Gesture sources must be closed paths");
+                first = previous = element.pt; active = true;
+            } else if (element.verb == geometry::PathVerb::LineTo && active) {
+                if (previous.distance_to(element.pt) > 1e-9) boundaries.push_back({previous, element.pt});
+                previous = element.pt;
+            } else if (element.verb == geometry::PathVerb::Close && active) {
+                if (previous.distance_to(first) > 1e-9) boundaries.push_back({previous, first});
+                active = false;
+            } else return fail(CutGeometryStatus::Unsupported,
+                "Drag currently requires closed straight-segment sources; use preview for curves");
+            if (boundaries.size() > 1024)
+                return fail(CutGeometryStatus::BudgetExceeded, "Shape Builder boundary budget exceeded");
+        }
+        if (active) return fail(CutGeometryStatus::Unsupported, "Gesture sources must be closed paths");
+    }
+    if (boundaries.empty()) return fail(CutGeometryStatus::NoChange, "No closed boundaries available");
+    const auto cross = [](geometry::Point2D a, geometry::Point2D b) { return a.x*b.y-a.y*b.x; };
+    const auto dot = [](geometry::Point2D a, geometry::Point2D b) { return a.x*b.x+a.y*b.y; };
+    if ((request.points_world.size()-1) > 1000000 / boundaries.size())
+        return fail(CutGeometryStatus::BudgetExceeded, "Shape Builder intersection budget exceeded");
+    for (std::size_t i=1; i<request.points_world.size(); ++i) {
+        if (stop.stop_requested()) return fail(CutGeometryStatus::Cancelled, "Shape Builder cancelled");
+        const auto start=request.points_world[i-1], delta=request.points_world[i]-start;
+        const double length2=dot(delta,delta);
+        if (length2 <= 1e-18) continue;
+        std::vector<double> stations{0.0,1.0};
+        for (const auto& line : boundaries) {
+            const auto edge=line.b-line.a, offset=line.a-start;
+            const double determinant=cross(delta,edge);
+            const double scale=std::sqrt(length2*dot(edge,edge));
+            if (std::abs(determinant) <= 1e-10*scale) {
+                if (std::abs(cross(offset,delta)) <= 1e-8*std::sqrt(length2)) {
+                    const double a=dot(offset,delta)/length2, b=dot(line.b-start,delta)/length2;
+                    if (std::min(1.0,std::max(a,b))-std::max(0.0,std::min(a,b)) > 1e-9)
+                        return fail(CutGeometryStatus::Ambiguous, "Gesture follows a boundary; document unchanged");
+                }
+                continue;
+            }
+            const double t=cross(offset,edge)/determinant, u=cross(offset,delta)/determinant;
+            if (t>1e-9 && t<1.0-1e-9 && u>=-1e-9 && u<=1.0+1e-9) stations.push_back(t);
+        }
+        std::sort(stations.begin(),stations.end());
+        stations.erase(std::unique(stations.begin(),stations.end(),
+            [](double a,double b){return std::abs(a-b)<1e-9;}),stations.end());
+        for (std::size_t j=1;j<stations.size();++j) {
+            if (out.points.size() >= 8192)
+                return fail(CutGeometryStatus::BudgetExceeded, "Shape Builder gesture interval budget exceeded");
+            out.points.push_back(start+delta*((stations[j-1]+stations[j])*0.5));
+        }
+    }
+    if (out.points.empty()) out.points.push_back(request.points_world.front());
+    return out;
+}
+} // namespace
+
 CutGeometryProposal compute_shape_builder_geometry(
     const CutGeometryRequest& request, std::stop_token stop,
     const CutGeometryProgress& progress) {
     if (!request.snapshot || request.points_world.empty() ||
-        request.points_world.size() > kMaximumBooleanTargets ||
+        request.points_world.size() > (request.shape_builder_gesture ? 4096 : kMaximumBooleanTargets) ||
         std::any_of(request.points_world.begin(), request.points_world.end(),
             [](const auto& point) { return !point.is_finite(); }))
-        return failure(request, request.points_world.size() > kMaximumBooleanTargets
+        return failure(request, request.points_world.size() >
+                (request.shape_builder_gesture ? 4096 : kMaximumBooleanTargets)
                 ? CutGeometryStatus::BudgetExceeded : CutGeometryStatus::Invalid,
             "Shape Builder requires 1 to 64 finite face points");
     if (!valid_tolerance(request.max_approximation_error_mm))
         return failure(request, CutGeometryStatus::Invalid,
             "Maximum approximation error must be within 0..0.05 mm");
 
+    auto seeds = request.shape_builder_gesture ? shape_builder_gesture_seeds(request, stop)
+                                               : GestureSeedResult{CutGeometryStatus::Success, request.points_world, {}};
+    if (seeds.status != CutGeometryStatus::Success)
+        return failure(request, seeds.status, std::move(seeds.message));
     std::vector<geometry::Path2D> selected_faces;
-    selected_faces.reserve(request.points_world.size());
+    selected_faces.reserve(std::min(seeds.points.size(), kMaximumBooleanTargets));
     std::vector<document::ObjectId> source_ids;
     document::ObjectId style_source = document::kInvalidObjectId;
     std::size_t style_layer = 0;
     double face_bound = 0.0;
-    for (const auto point : request.points_world) {
+    for (const auto point : seeds.points) {
         if (stop.stop_requested())
             return failure(request, CutGeometryStatus::Cancelled,
                 "Shape Builder was cancelled");
+        if (request.shape_builder_gesture) {
+            bool already_selected = false;
+            for (const auto& selected : selected_faces) {
+                const auto relation = point_in_filled_path(selected, point, 0.001);
+                if (relation == PointRelation::Boundary || relation == PointRelation::Invalid)
+                    return failure(request, CutGeometryStatus::Ambiguous, "Gesture is ambiguous at a face boundary");
+                if (relation == PointRelation::Inside) { already_selected = true; break; }
+            }
+            if (already_selected) continue;
+        }
         auto face = resolve_smart_fill_face(*request.snapshot, point,
                                             request.selected_ids, stop, progress);
-        if (face.status != CutGeometryStatus::Success)
+        if (face.status != CutGeometryStatus::Success) {
+            if (request.shape_builder_gesture && face.status == CutGeometryStatus::NoChange) continue;
             return failure(request, face.status, std::move(face.message));
+        }
+        if (selected_faces.size() >= kMaximumBooleanTargets)
+            return failure(request, CutGeometryStatus::BudgetExceeded, "Shape Builder face budget exceeded");
         if (source_ids.empty()) {
             source_ids = std::move(face.source_ids);
             style_source = face.style_source;
             style_layer = face.style_layer;
+            // The first face supplies appearance. Prefer a contributing path
+            // containing the gesture's first point, starting from the top.
+            for (auto it = source_ids.rbegin(); it != source_ids.rend(); ++it) {
+                const auto value = request.snapshot->objects().get(*it);
+                const auto* path = value ? std::get_if<document::PathObject>(&*value) : nullptr;
+                const auto* owner = request.snapshot->hierarchy().find(*it);
+                if (path && owner && point_in_filled_path(
+                        path->path.transformed(owner->world), point, 0.001) == PointRelation::Inside) {
+                    style_source = *it;
+                    style_layer = owner->layer;
+                    break;
+                }
+            }
         } else if (source_ids != face.source_ids) {
             return failure(request, CutGeometryStatus::Stale,
                 "The source set changed while Shape Builder was active");
@@ -632,6 +765,8 @@ CutGeometryProposal compute_shape_builder_geometry(
         face_bound = std::max(face_bound, face.approximation_bound_mm);
         selected_faces.push_back(std::move(face.face));
     }
+    if (selected_faces.empty())
+        return failure(request, CutGeometryStatus::NoChange, "Gesture does not cross an enclosed face");
     const auto options = boolean_options();
     geometry::Path2D combined = selected_faces.front();
     std::vector<geometry::Path2D> merged_components{selected_faces.front()};
@@ -696,16 +831,11 @@ CutGeometryProposal compute_shape_builder_geometry(
                     "Shape Builder preview exceeds the 250,000-point display budget");
             proposal.additions.push_back({std::move(addition), style_layer});
         }
-        proposal.approximation_error_bound_mm = merge_bound;
-        proposal.candidates_processed = proposal.candidates_total;
-        proposal.status = CutGeometryStatus::Success;
-        proposal.message = "Shape Builder merge proposal is ready to commit";
-        return proposal;
     }
 
     double maximum_output_bound = merge_bound;
     std::size_t total_output_elements = 0;
-    if (!append_preview_contours(proposal, combined, true, preview_points))
+    if (request.erase_faces && !append_preview_contours(proposal, combined, true, preview_points))
         return failure(request, CutGeometryStatus::BudgetExceeded,
             "Shape Builder preview exceeds the 250,000-point display budget");
     for (const auto id : source_ids) {
@@ -715,7 +845,7 @@ CutGeometryProposal compute_shape_builder_geometry(
         const auto value = request.snapshot->objects().get(id);
         const auto* source = value ? std::get_if<document::PathObject>(&*value) : nullptr;
         const auto* owner = request.snapshot->hierarchy().find(id);
-        if (!source || !owner || owner->mask || !source->has_fill ||
+        if (!source || !owner || owner->mask ||
             !request.snapshot->hierarchy().editable(id))
             return failure(request, CutGeometryStatus::Stale,
                 "A Shape Builder source became unavailable before erase");
@@ -770,7 +900,8 @@ CutGeometryProposal compute_shape_builder_geometry(
             "Shape Builder approximation bound exceeds the requested tolerance");
     proposal.approximation_error_bound_mm = maximum_output_bound;
     proposal.status = CutGeometryStatus::Success;
-    proposal.message = "Shape Builder erase proposal is ready to commit";
+    proposal.message = request.erase_faces ? "Shape Builder erase proposal is ready to commit"
+                                           : "Shape Builder merge proposal is ready to commit";
     return proposal;
 }
 

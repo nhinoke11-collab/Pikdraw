@@ -602,12 +602,12 @@ void NativeWindow::set_active_tool(int tool_index) noexcept {
             : "Trim Objects · click a Target, then one or more Sources · set Keep Source · Apply to trim";
     } else if (tool_index == 21) {
         status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Smart Trim · di chuột để xem đỏ đoạn giữa hai giao điểm, nhấp để cắt · path có fill được giữ nguyên"
-            : "Smart Trim · hover to preview the interval between intersections, click to trim · filled paths are preserved";
+            ? "Smart Trim · di chuột để xem đỏ đoạn giữa hai giao điểm, nhấp để cắt · giữ thuộc tính tô"
+            : "Smart Trim · hover to preview the interval between intersections, click to trim · fill attributes are retained";
     } else if (tool_index == 22) {
         status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Shape Builder · nhấp các mặt kín để chọn · Apply hợp nhất hoặc xóa mặt · Esc hủy"
-            : "Shape Builder · click closed faces to select · Apply merges or erases faces · Esc cancels";
+            ? "Shape Builder · kéo qua các mặt kín để ghép · Alt+nhấp/kéo để xóa · Esc hủy"
+            : "Shape Builder · drag across closed faces to merge · Alt+click/drag to erase · Esc cancels";
     } else if (tool_index == 23) {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Smart Fill · nhấp vào một mặt kín để tạo path mới; nguồn được giữ nguyên"
@@ -619,8 +619,8 @@ void NativeWindow::set_active_tool(int tool_index) noexcept {
     } else if (tool_index == 5 || tool_index == 16 || tool_index == 19) {
         status_msg_ = tool_index == 5
             ? (language_ == UILanguage::Vietnamese
-                ? "Knife · Kéo qua path kín có fill · Esc hủy"
-                : "Knife · Drag across a closed filled path · Esc cancels")
+                ? "Knife · Kéo qua path kín · Esc hủy"
+                : "Knife · Drag across a closed path · Esc cancels")
             : tool_index == 16
                 ? (language_ == UILanguage::Vietnamese
                     ? "Tẩy vector · Kéo quét để xóa vùng trên path kín · Esc hủy"

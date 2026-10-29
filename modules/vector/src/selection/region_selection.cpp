@@ -95,7 +95,7 @@ bool path_crosses(const document::PathObject &object, const Rect2D &region) {
                     }
                 }
             }
-            if (object.has_stroke && object.stroke_width_mm > 0 &&
+            if (object.has_stroke &&
                 (i + 1 < path.points.size() || path.is_closed)) {
                 if (region.contains(a))
                     return true;
@@ -116,7 +116,15 @@ std::optional<Rect2D> SelectionModel::bounds(const document::DocumentSnapshot& s
     for(auto id:snapshot.hierarchy().roots(selected_ids_)) {
         const auto* entry=snapshot.hierarchy().find(id);
         if(!entry || !editable_target(snapshot,id) || !entry->bounds) continue;
-        bounds=bounds?bounds->united(*entry->bounds):entry->bounds;
+        if (!bounds) bounds = entry->bounds;
+        else {
+            const auto& next = *entry->bounds;
+            const double left = std::min(bounds->left(), next.left());
+            const double top = std::min(bounds->top(), next.top());
+            const double right = std::max(bounds->right(), next.right());
+            const double bottom = std::max(bounds->bottom(), next.bottom());
+            bounds = Rect2D::from_ltrb(left, top, right, bottom);
+        }
     }
     return bounds;
 }
@@ -166,7 +174,7 @@ std::vector<document::ObjectId> SelectionModel::query_region_candidates(
 
             bool selected = false;
             if ((path->has_fill || path_has_closed_subpath(path->path) ||
-                 (path->has_stroke && path->stroke_width_mm > 0.0)) &&
+                 path->has_stroke) &&
                 path_has_segments(path->path)) {
                 if (mode == RegionMode::Window) {
                     selected = contains_rect(region, broad_bounds);

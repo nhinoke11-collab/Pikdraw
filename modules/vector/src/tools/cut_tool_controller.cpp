@@ -17,7 +17,7 @@ namespace pikdraw::vector::tools {
 namespace {
 
 using PathComponents = std::vector<geometry::Path2D>;
-using CutOperation = std::function<geometry::PathCutResult(const geometry::Path2D&)>;
+using CutOperation = std::function<geometry::PathCutResult(const geometry::Path2D&, const document::PathObject&)>;
 
 size_t primary_component(const PathComponents& components) {
     size_t primary = 0;
@@ -82,11 +82,11 @@ BatchCommit commit_cut_batch(
         const auto object = snapshot->objects().get(id);
         const auto* path_object = object ? std::get_if<document::PathObject>(&*object) : nullptr;
         const auto* owner = snapshot->hierarchy().find(id);
-        if (!path_object || !path_object->has_fill || !owner || owner->mask ||
+        if (!path_object || !owner || owner->mask ||
             !snapshot->hierarchy().editable(id)) continue;
 
         const auto world_path = path_object->path.transformed(owner->world);
-        auto cut = operation(world_path);
+        auto cut = operation(world_path, *path_object);
         if (!cut.success || cut.status == geometry::PathCutStatus::NoCut ||
             cut.status == geometry::PathCutStatus::Unsupported ||
             cut.status == geometry::PathCutStatus::InvalidInput ||
@@ -140,14 +140,14 @@ BatchCommit commit_cut_batch(
     return result;
 }
 
-bool is_editable_filled_path(const document::DocumentSnapshot& snapshot,
+bool is_editable_path(const document::DocumentSnapshot& snapshot,
                              document::ObjectId id,
                              const document::PathObject*& path_object,
                              const document::SceneHierarchy::Entry*& owner) {
     const auto* object = snapshot.objects().lookup_ref(id);
     path_object = object ? std::get_if<document::PathObject>(object) : nullptr;
     owner = snapshot.hierarchy().find(id);
-    return path_object && path_object->has_fill && owner && !owner->mask &&
+    return path_object && owner && !owner->mask &&
            snapshot.hierarchy().editable(id);
 }
 
@@ -202,7 +202,7 @@ bool CutToolController::on_pointer_up(
             last_created_ids_.clear();
             const auto snapshot = document_.current_snapshot();
             auto result = commit_cut_batch(document_, snapshot, candidate_ids, "Knife Cut",
-                [this](const geometry::Path2D& path) {
+                [this](const geometry::Path2D& path, const document::PathObject&) {
                     return geometry::cut_path_by_polyline(path, gesture_points_, knife_gap_mm_);
                 });
             modified = result.changed;
@@ -229,7 +229,7 @@ bool CutToolController::execute_knife_cut(
         !std::isfinite(gap_mm) || gap_mm < 0.0) return false;
     const auto snapshot = document_.current_snapshot();
     auto result = commit_cut_batch(document_, snapshot, candidate_ids, "Knife Cut",
-        [p1, p2, gap_mm](const geometry::Path2D& path) {
+        [p1, p2, gap_mm](const geometry::Path2D& path, const document::PathObject&) {
             return geometry::cut_path_by_line(path, p1, p2, gap_mm);
         });
     last_created_ids_ = std::move(result.created_ids);
@@ -249,7 +249,12 @@ bool CutToolController::execute_eraser_cut(
         })) return false;
     const auto snapshot = document_.current_snapshot();
     auto result = commit_cut_batch(document_, snapshot, candidate_ids, "Vector Eraser",
-        [&stroke, diameter_mm, round_nib](const geometry::Path2D& path) {
+        [&stroke, diameter_mm, round_nib](const geometry::Path2D& path, const document::PathObject& source) {
+            if (!source.has_fill) {
+                if (!source.has_stroke) return geometry::PathCutResult{};
+                return geometry::erase_open_path_stroke(path, stroke, diameter_mm,
+                    source.stroke_width_mm, round_nib);
+            }
             return geometry::erase_path(path, stroke, diameter_mm, round_nib);
         });
     last_created_ids_ = std::move(result.created_ids);
@@ -267,7 +272,7 @@ bool CutToolController::execute_trim_objects(
 
     const document::PathObject* target = nullptr;
     const document::SceneHierarchy::Entry* target_owner = nullptr;
-    if (!is_editable_filled_path(*snapshot, target_id, target, target_owner)) return false;
+    if (!is_editable_path(*snapshot, target_id, target, target_owner)) return false;
 
     std::unordered_set<document::ObjectId> unique_sources;
     std::vector<geometry::Path2D> source_paths;
@@ -277,7 +282,7 @@ bool CutToolController::execute_trim_objects(
             return false;
         const document::PathObject* source = nullptr;
         const document::SceneHierarchy::Entry* source_owner = nullptr;
-        if (!is_editable_filled_path(*snapshot, source_id, source, source_owner)) return false;
+        if (!is_editable_path(*snapshot, source_id, source, source_owner)) return false;
         source_paths.push_back(source->path.transformed(source_owner->world));
     }
 

@@ -224,7 +224,32 @@ void test_trim_splits_target_into_components_and_undoes_atomically() {
     CHECK(doc.current_snapshot()->objects().get(source_id).has_value());
 }
 
+void test_unfilled_cut_and_trim() {
+    Document doc("unfilled_cut");
+    PathObject target;
+    target.id = generate_object_id();
+    target.path = geometry::Path2D::make_rect(0.0, 0.0, 100.0, 100.0);
+    target.has_fill = false;
+    target.has_stroke = true;
+    target.stroke_width_mm = 1.0;
+    PathObject source = target;
+    source.id = generate_object_id();
+    source.path = geometry::Path2D::make_rect(50.0, 0.0, 100.0, 100.0);
+    CHECK(doc.execute_command(std::make_unique<AddObjectCommand>(target, 0)).success);
+    CHECK(doc.execute_command(std::make_unique<AddObjectCommand>(source, 0)).success);
+    CutToolController controller(doc);
+    CHECK(controller.execute_knife_cut({target.id}, {25.0, -10.0}, {25.0, 110.0}, 0.0));
+    CHECK(!std::get<PathObject>(*doc.current_snapshot()->objects().get(target.id)).has_fill);
+    CHECK(doc.undo());
+    CHECK(controller.execute_eraser_cut({target.id}, {{25.0, -5.0}, {25.0, 5.0}}, 4.0, true));
+    CHECK(doc.undo());
+    CHECK(controller.execute_trim_objects(target.id, {source.id}, true));
+    CHECK(!std::get<PathObject>(*doc.current_snapshot()->objects().get(target.id)).has_fill);
+    CHECK(doc.undo());
+}
+
 int main() {
+    test_unfilled_cut_and_trim();
     test_knife_cut_controller();
     test_eraser_controller();
     test_trim_controller();

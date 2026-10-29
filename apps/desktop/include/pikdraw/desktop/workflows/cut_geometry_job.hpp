@@ -45,6 +45,7 @@ struct CutGeometryRequest {
     bool erase_faces{false};
     bool menu_action{false};
     bool preview_only{false};
+    bool shape_builder_gesture{false};
 };
 
 struct CutGeometryReplacement {
@@ -115,6 +116,7 @@ struct CutGeometryJobState {
     bool mode_flag{false};
     bool menu_action{false};
     bool preview_only{false};
+    bool shape_builder_gesture{false};
     int initiating_tool{0};
     std::atomic<std::size_t> completed{0};
     std::atomic<std::size_t> total{0};

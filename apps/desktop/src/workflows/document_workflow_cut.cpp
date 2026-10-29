@@ -247,7 +247,7 @@ bool selected_paths_support_cut(const document::DocumentSnapshot& snapshot,
         const auto* owner = snapshot.hierarchy().find(id);
         if (!path || !owner || owner->mask || !snapshot.hierarchy().editable(id))
             return false;
-        if (require_fill ? !path->has_fill : (!path->has_fill && !path->has_stroke))
+        if (!require_fill && !path->has_fill && !path->has_stroke)
             return false;
     }
     return true;
@@ -429,11 +429,10 @@ CutGeometryProposal compute_smart_trim_geometry(
     const auto* target = target_value
         ? std::get_if<document::PathObject>(&*target_value) : nullptr;
     const auto* target_owner = request.snapshot->hierarchy().find(hit->object_id);
-    if (!target || !target_owner || !target->authoring_source || !target->has_stroke ||
-        target->has_fill || target_owner->mask ||
+    if (!target || !target_owner || !target->authoring_source || target_owner->mask ||
         !request.snapshot->hierarchy().editable(hit->object_id))
         return fail(CutGeometryStatus::Unsupported,
-            "Smart Trim edits editable stroke-only paths; filled paths are left unchanged");
+            "Smart Trim requires an editable path");
     const auto target_subpath_it = std::find_if(target->authoring_source->subpaths.begin(),
         target->authoring_source->subpaths.end(), [&](const auto& subpath) {
             return subpath.id == hit->subpath_id;
@@ -835,8 +834,6 @@ CutGeometryProposal compute_cut_geometry(const CutGeometryRequest& request,
                 return fail(CutGeometryStatus::Unsupported, "A selected target is no longer editable");
             continue;
         }
-        if (request.operation == CutGeometryOperation::Knife && !source->has_fill)
-            continue;
         if (request.operation == CutGeometryOperation::VectorEraser &&
             !source->has_fill && !source->has_stroke)
             continue;
@@ -1027,9 +1024,8 @@ bool DocumentWorkflow::smart_trim_at_point(const geometry::Point2D& point_world,
     const auto target_value = snapshot->objects().get(hit->object_id);
     const auto* target = target_value ? std::get_if<document::PathObject>(&*target_value) : nullptr;
     const auto* target_owner = snapshot->hierarchy().find(hit->object_id);
-    if (!target || !target_owner || !target->authoring_source || !target->has_stroke ||
-        target->has_fill || target_owner->mask || !snapshot->hierarchy().editable(hit->object_id))
-        return fail("Smart Trim edits editable stroke-only paths; filled paths are left unchanged");
+    if (!target || !target_owner || !target->authoring_source || target_owner->mask || !snapshot->hierarchy().editable(hit->object_id))
+        return fail("Smart Trim requires an editable path");
     const auto target_subpath_it = std::find_if(target->authoring_source->subpaths.begin(),
         target->authoring_source->subpaths.end(), [&](const auto& subpath) {
             return subpath.id == hit->subpath_id;
@@ -1334,7 +1330,7 @@ bool DocumentWorkflow::shape_builder_apply_faces(
         const auto value = snapshot->objects().get(id);
         const auto* source = value ? std::get_if<document::PathObject>(&*value) : nullptr;
         const auto* owner = snapshot->hierarchy().find(id);
-        if (!source || !owner || owner->mask || !snapshot->hierarchy().editable(id) || !source->has_fill)
+        if (!source || !owner || owner->mask || !snapshot->hierarchy().editable(id))
             return fail("A Shape Builder source became unavailable before erase");
         auto difference = geometry::boolean_paths(source->path.transformed(owner->world),
             combined, geometry::BooleanOp::Difference, options);
@@ -1432,7 +1428,7 @@ bool DocumentWorkflow::cut_objects_by_polyline(
         if (!obj_var) continue;
         const auto* po = std::get_if<document::PathObject>(&*obj_var);
         const auto* owner = snapshot->hierarchy().find(id);
-        if (!po || !po->has_fill || !owner || owner->mask ||
+        if (!po || !owner || owner->mask ||
             !snapshot->hierarchy().editable(id)) {
             continue;
         }
@@ -1608,7 +1604,7 @@ bool DocumentWorkflow::trim_objects_source_target(
     if (!target_var) return false;
     const auto* target = std::get_if<document::PathObject>(&*target_var);
     const auto* target_owner = snapshot->hierarchy().find(target_id);
-    if (!target || !target->has_fill || !target_owner || target_owner->mask ||
+    if (!target || !target_owner || target_owner->mask ||
         !snapshot->hierarchy().editable(target_id)) return false;
 
     std::vector<geometry::Path2D> source_paths;
@@ -1619,7 +1615,7 @@ bool DocumentWorkflow::trim_objects_source_target(
         if (!src_var) return false;
         const auto* src_po = std::get_if<document::PathObject>(&*src_var);
         const auto* source_owner = snapshot->hierarchy().find(sid);
-        if (!src_po || !src_po->has_fill || !source_owner || source_owner->mask ||
+        if (!src_po || !source_owner || source_owner->mask ||
             !snapshot->hierarchy().editable(sid)) return false;
         source_paths.push_back(src_po->path.transformed(source_owner->world));
     }
@@ -1731,7 +1727,7 @@ bool DocumentWorkflow::apply_cut_geometry_proposal(CutGeometryProposal proposal,
         const auto target = current->objects().get(edit.object_id);
         const auto* path = target ? std::get_if<document::PathObject>(&*target) : nullptr;
         const auto* owner = current->hierarchy().find(edit.object_id);
-        if (!path || !path->authoring_source || !path->has_stroke || path->has_fill ||
+        if (!path || !path->authoring_source ||
             !owner || owner->mask || !current->hierarchy().editable(edit.object_id))
             return fail("Smart Trim proposal target is no longer editable");
         auto command = std::make_unique<document::SmartTrimPathCommand>(
@@ -1784,7 +1780,7 @@ bool DocumentWorkflow::apply_cut_geometry_proposal(CutGeometryProposal proposal,
             const auto* path = value ? std::get_if<document::PathObject>(&*value) : nullptr;
             const auto* owner = current->hierarchy().find(id);
             if (id == document::kInvalidObjectId || !source_ids.insert(id).second ||
-                !path || !path->has_fill || !owner || owner->mask ||
+                !path || !owner || owner->mask ||
                 !current->hierarchy().editable(id))
                 return fail("Smart Fill proposal contains a stale or invalid source");
         }
@@ -1792,7 +1788,7 @@ bool DocumentWorkflow::apply_cut_geometry_proposal(CutGeometryProposal proposal,
     if (shape_builder && ((proposal.erase_faces &&
             (proposal.replacements.empty() || !proposal.additions.empty())) ||
         (!proposal.erase_faces &&
-            (!proposal.replacements.empty() || proposal.additions.empty())) ||
+            (proposal.replacements.empty() || proposal.additions.empty())) ||
         !proposal.remove_ids.empty() || !proposal.source_ids.empty() ||
         proposal.style_source_id != document::kInvalidObjectId))
         return fail("Shape Builder proposal contains an invalid payload");
@@ -1819,13 +1815,10 @@ bool DocumentWorkflow::apply_cut_geometry_proposal(CutGeometryProposal proposal,
             !target || !std::holds_alternative<document::PathObject>(*target))
             return fail("Geometry proposal target is no longer editable");
         const auto& target_path = std::get<document::PathObject>(*target);
-        if ((proposal.operation == CutGeometryOperation::Knife && !target_path.has_fill) ||
-            (proposal.operation == CutGeometryOperation::VectorEraser &&
-                !target_path.has_fill && !target_path.has_stroke) ||
-            ((trim_objects || shape_builder) && !target_path.has_fill))
+        if (proposal.operation == CutGeometryOperation::VectorEraser &&
+            !target_path.has_fill && !target_path.has_stroke)
             return fail("Geometry proposal target no longer supports this operation");
-        if (replacement.pieces.empty() &&
-            !(shape_builder && proposal.erase_faces))
+        if (replacement.pieces.empty() && !shape_builder)
             return fail("Geometry proposal would remove a target without explicit erase semantics");
 
         std::vector<document::ObjectVariant> pieces;
@@ -1857,7 +1850,7 @@ bool DocumentWorkflow::apply_cut_geometry_proposal(CutGeometryProposal proposal,
     for (auto& addition : proposal.additions) {
         if (addition.layer >= current->page().layers.size() ||
             addition.object.path.empty() || !addition.object.transform.is_finite() ||
-            addition.object.path.size() > 200000 || !addition.object.has_fill ||
+            addition.object.path.size() > 200000 ||
             !addition.object.authoring_source)
             return fail("Geometry proposal contains an invalid new path");
         auto& object = addition.object;
@@ -1882,7 +1875,7 @@ bool DocumentWorkflow::apply_cut_geometry_proposal(CutGeometryProposal proposal,
         const auto value = current->objects().get(id);
         const auto* path = value ? std::get_if<document::PathObject>(&*value) : nullptr;
         const auto* owner = current->hierarchy().find(id);
-        if (!path || !path->has_fill || !owner || owner->mask ||
+        if (!path || !owner || owner->mask ||
             !current->hierarchy().editable(id))
             return fail("Geometry proposal removal target is no longer editable");
         commands.push_back(std::make_unique<document::RemoveObjectCommand>(id));

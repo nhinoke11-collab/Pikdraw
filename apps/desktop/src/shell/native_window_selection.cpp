@@ -246,6 +246,8 @@ void NativeWindow::cancel_canvas_interaction(bool cancel_cut_job) {
     is_trim_role_click_ = false;
     is_smart_trim_click_ = false;
     is_shape_builder_click_ = false;
+    shape_builder_gesture_.clear();
+    shape_builder_gesture_overflow_ = false;
     is_smart_fill_click_ = false;
     is_raster_eraser_stroke_ = false;
     raster_eraser_stroke_.clear();
@@ -338,6 +340,8 @@ void NativeWindow::handle_canvas_mouse_down(int x, int y, unsigned modifiers) {
     }
     if (active_tool_ == 22) {
         is_shape_builder_click_ = true;
+        shape_builder_gesture_ = {pointer_down_world_};
+        shape_builder_erase_gesture_ = (GetKeyState(VK_MENU) & 0x8000) != 0;
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
@@ -843,6 +847,14 @@ void NativeWindow::handle_canvas_mouse_move(int x, int y, unsigned modifiers) {
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
+    if (is_shape_builder_click_ && pointer_active_) {
+        if (shape_builder_gesture_.size() >= 4096) shape_builder_gesture_overflow_ = true;
+        else if (shape_builder_gesture_.empty() ||
+                 pointer_current_world_.distance_to(shape_builder_gesture_.back()) > 0.01)
+            shape_builder_gesture_.push_back(pointer_current_world_);
+        invalidate_canvas_overlay();
+        return;
+    }
     if (is_creating_shape_) {
         shape_drag_modifiers_ = modifiers & (MK_CONTROL | MK_SHIFT);
         update_layout_snap_preview(*root().document().current_snapshot(), {}, -1, false, true);
@@ -1301,11 +1313,11 @@ void NativeWindow::handle_canvas_mouse_up(int x, int y, unsigned modifiers) {
                 const auto* object = hit && snapshot ? snapshot->objects().lookup_ref(hit->id) : nullptr;
                 const auto* path = object ? std::get_if<document::PathObject>(object) : nullptr;
                 const auto* owner = hit && snapshot ? snapshot->hierarchy().find(hit->id) : nullptr;
-                if (!path || !path->has_fill || !owner || owner->mask ||
+                if (!path || !owner || owner->mask ||
                     !snapshot->hierarchy().editable(hit->id)) {
                     status_msg_ = language_ == UILanguage::Vietnamese
-                        ? "Trim Objects chỉ nhận path có fill, hiển thị và mở khóa"
-                        : "Trim Objects requires a visible, unlocked filled path";
+                        ? "Trim Objects chỉ nhận path kín, hiển thị và mở khóa"
+                        : "Trim Objects requires a visible, unlocked closed path";
                 } else if (!trim_objects_target_id_) {
                     discard_pending_cut_geometry_proposal();
                     trim_objects_target_id_ = hit->id;
@@ -1408,7 +1420,28 @@ void NativeWindow::handle_canvas_mouse_up(int x, int y, unsigned modifiers) {
                     : "Smart Trim is a click tool; click a stroke interval between intersections";
             }
         } else if (shape_builder_click) {
-            if (clicked_without_drag && is_canvas_point(x, y)) {
+            if ((!clicked_without_drag || shape_builder_erase_gesture_) && is_canvas_point(x, y)) {
+                if (shape_builder_gesture_overflow_) {
+                    status_msg_ = language_ == UILanguage::Vietnamese
+                        ? "Nét Shape Builder vượt giới hạn; tài liệu giữ nguyên"
+                        : "Shape Builder gesture exceeded its limit; document unchanged";
+                } else {
+                    if (shape_builder_gesture_.empty() ||
+                        pointer_current_world_.distance_to(shape_builder_gesture_.back()) > 1e-9)
+                        shape_builder_gesture_.push_back(pointer_current_world_);
+                    shape_builder_seed_points_ = shape_builder_gesture_;
+                    CutGeometryRequest request;
+                    request.operation = CutGeometryOperation::ShapeBuilder;
+                    request.snapshot = root().document().current_snapshot();
+                    request.selected_ids = root().vector_controller().selection().selected_ids();
+                    request.points_world = shape_builder_seed_points_;
+                    request.erase_faces = shape_builder_erase_gesture_;
+                    request.shape_builder_gesture = true;
+                    geometry_job_attempted = true;
+                    geometry_job_started = start_cut_geometry_job(std::move(request));
+                    if (!geometry_job_started) geometry_job_start_status = status_msg_;
+                }
+            } else if (clicked_without_drag && is_canvas_point(x, y)) {
                 if (shape_builder_seed_points_.size() >= 64) {
                     status_msg_ = language_ == UILanguage::Vietnamese
                         ? "Shape Builder giới hạn 64 mặt cho mỗi giao dịch"

@@ -142,6 +142,7 @@ function Get-PikDrawToolchain {
     if ($tools.Clang) { $pathsToAdd += (Split-Path $tools.Clang -Parent) }
     if ($tools.CMake) { $pathsToAdd += (Split-Path $tools.CMake -Parent) }
     if ($tools.Python) { $pathsToAdd += (Split-Path $tools.Python -Parent) }
+    if (Test-Path 'C:\Program Files\Git\cmd') { $pathsToAdd += 'C:\Program Files\Git\cmd' }
     foreach ($p in ($pathsToAdd | Select-Object -Unique)) {
         if ($env:PATH -notlike "*$p*") {
             $env:PATH = "$p;$env:PATH"

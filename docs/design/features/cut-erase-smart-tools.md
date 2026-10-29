@@ -130,6 +130,44 @@ Giữ số ToolboxSlotId::Knife = 6 và phím K. Slot này trở thành nhóm **
 
 Thay các nhánh lặp toolbox_open_group_, flyout_tools[], max_items, chiều cao/vùng bấm ở paint/click/focus bằng ToolboxGroupDescriptor dùng chung. Dùng ToolKind typed cho các tool mới; lớp chuyển đổi giữ active_tool_ == 5 của Knife trong lúc migration, sau đó gom dispatch pointer/cursor/status. Việc mở nhóm không kết thúc draft của tool khác; rời tool khi đang drag dùng chính sách commit/cancel hiện có và thông báo rõ.
 
+### Điều chỉnh Smart Fill: path không có màu tô
+
+- Menu/action `action.tool.smart_fill`, toolbox Cắt & Tạo vùng, icon SVG và nhãn/tooltip hiện có được giữ; không thêm toolbar hay phím tắt.
+- Property bar/Properties không thêm trường: phạm vi là các path kín đang hiện, mở khóa, có hoặc không có fill; selection giới hạn nguồn, nếu không chọn thì xét path hợp lệ đang hiện.
+- Nhấp bên trong vùng kín, tránh đường biên; tạo path mới có thể sửa và giữ nguồn. Nếu nguồn style không có fill, kết quả dùng màu tô mặc định; nếu có fill, tiếp tục kế thừa style. Undo một bước xóa kết quả.
+- Không hỗ trợ path hở, bitmap hay nối khe hở trong thay đổi này. Status hint và focus help hiện có tiếp tục hướng dẫn nhấp vào mặt kín; không bổ sung field hoặc trạng thái mixed.
+
+### Shape Builder: thao tác vùng theo Illustrator
+
+- Dùng action `action.tool.shape_builder` trong Tools > Cut & Shape và toolbox slot hiện hữu, icon SVG và tên Shape Builder; giữ Properties/toolbar và các lệnh preview hiện có. Không thêm thanh, field, shortcut hay focus state mới trong giai đoạn sửa logic.
+- Ghép mặt: trừ các mặt đã chọn khỏi nguồn, giữ các phần còn lại và tạo mặt hợp nhất trong một transaction/Undo; xóa mặt trừ khỏi nguồn. Phong cách đầu ra dự kiến lấy từ nguồn tại điểm bắt đầu, giữ profile và đường viền. Path ẩn/khóa và clip không được sửa.
+- Kéo qua các mặt của path kín thẳng để ghép; Alt+nhấp/kéo để xóa. Worker chia nét kéo tại giao điểm đường biên, không phụ thuộc mật độ sự kiện chuột. Nhấp từng mặt và xem trước vẫn dùng được, kể cả path cong kín. Chưa hỗ trợ kéo trên path cong, gap, nhánh cong hở hay shortcut Illustrator.
+- Hủy preview, thay tab/selection/revision hoặc Escape giữ tài liệu nguyên trạng. Kiểm tra ghép hai vùng, phần nguồn còn lại, style, erase, Undo/Redo và trường hợp toàn bộ nguồn bị hấp thụ.
+
+### Smart Fill: nhấp liên tiếp nhiều vùng
+
+- Giữ action `action.tool.smart_fill`, menu, toolbox, icon SVG, nhãn, property bar và Properties hiện có; không thêm field, trạng thái mixed hay shortcut. Status sau mỗi lần tô hướng dẫn nhấp vùng tiếp hoặc Undo.
+- Selection ban đầu giới hạn tập nguồn; khi không chọn, dùng các path hợp lệ đang hiện. Sau khi tạo mặt, Smart Fill giữ tập path nguồn làm selection cho các lần nhấp tiếp, không thay bằng mặt vừa tạo. Mỗi mặt là một Undo; chuyển Pick để chọn và chỉnh kết quả.
+- Worker tiếp tục kiểm snapshot, tab, tool và selection trước commit. Gap, đường cong hở và các giới hạn hình học đã nêu bên dưới không thay đổi.
+
+### Smart Fill: vùng từ đường hở thẳng
+
+- Corel Smart Fill tạo path mới từ các biên bao vùng; Illustrator Live Paint gắn màu với nhóm mặt nên là mô hình khác. Thay đổi này tiếp tục dùng action `action.tool.smart_fill`, toolbox, icon SVG, property bar/Properties và status hiện có; không thêm field, shortcut hay menu.
+- Chọn các đường hoặc bỏ chọn để xét các path hiện và mở khóa, nhấp trong mặt kín. Bốn đường thẳng hở nối chính xác có thể tạo mặt, nguồn được giữ và Undo xóa một kết quả. Fill kết quả theo quy tắc style hiện có.
+- Gap mặc định 0; chưa có điều khiển gap hoặc bridge preview. Nhánh đường hở chỉ hỗ trợ đoạn thẳng, tối đa 512 segment và từ chối giao trùng, mặt lồng nhau mơ hồ; đường cong hở, bitmap và nhóm clip chưa hỗ trợ. Giới hạn này chưa tương đương đầy đủ Corel/Illustrator.
+
+### Pick các đường line hairline
+
+- Giữ action Pick, toolbox, icon, nhãn, tooltip, property bar, Properties và phím tắt hiện có; không thêm field, menu hay toolbar. Focus/status help hiện hành tiếp tục hướng dẫn nhấp và Shift thêm vào selection.
+- Đường line có stroke hairline (độ rộng 0) được bắt theo tâm tuyến và dung sai nhấp hiện tại; Window/Crossing cũng nhận đường này. Bounds nhiều selection tính đủ cả đường ngang/dọc. Path khóa/ẩn vẫn bị loại.
+- Cách dùng: chọn Pick, nhấp đường hoặc quét khung; Shift thêm đường rồi chọn Smart Fill và nhấp vào mặt kín. Không thay đổi kiểu nét hoặc màu của artwork.
+
+### Điều chỉnh công cụ hình học cho path không tô
+
+- Menu và action, toolbox, toolbar, icon SVG, nhãn và phím tắt giữ nguyên; không thêm control. Property bar và Properties giữ chế độ hiện có, status/help nêu path kín thay vì yêu cầu fill. Không có field scope hoặc mixed mới.
+- Knife, Trim Objects, Shape Builder và Boolean xét hình học path kín, độc lập trạng thái fill; kết quả giữ style nguồn/target. Smart Trim sửa đoạn biên và giữ thuộc tính fill: khi path kín bị mở, vùng tô hiển thị có thể thay đổi. Tẩy vector tiếp tục xóa miền tô hoặc đoạn nét tương ứng.
+- Người dùng chọn công cụ trong Cắt & Tạo vùng, chọn đối tượng nếu cần, thao tác trên biên hoặc vùng rồi dùng Undo để hoàn tác. Path hở chỉ được nhận ở công cụ có thuật toán tương ứng; bitmap và path nằm trong clip không thuộc thay đổi này.
+
 ### 5.2. Property bar và Properties
 
 | Tool | Property bar, tối đa 3–5 control + nút Thuộc tính | Properties tương tác đầy đủ |

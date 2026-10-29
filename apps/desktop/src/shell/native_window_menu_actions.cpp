@@ -1632,7 +1632,7 @@ bool NativeWindow::handle_toolbox_key(WPARAM key, bool alt_pressed, bool shift_p
             const int item = std::clamp(toolbox_flyout_index_, 0, 4);
             status_msg_ = language_ == UILanguage::Vietnamese
                 ? (item == 0
-                    ? "Dao cắt Knife · Kéo qua path kín có fill · Enter chọn · Esc đóng"
+                    ? "Dao cắt Knife · Kéo qua path kín · Enter chọn · Esc đóng"
                     : item == 1
                     ? "Tẩy vector · Path kín có fill; path mở chưa được hỗ trợ · Enter chọn · Esc đóng"
                     : item == 2
@@ -1641,7 +1641,7 @@ bool NativeWindow::handle_toolbox_key(WPARAM key, bool alt_pressed, bool shift_p
                     ? "Trim Objects · Chọn Target rồi Sources · Enter chọn · Esc đóng"
                     : "Smart Trim · Nhấp đoạn nét giữa hai giao điểm · Enter chọn · Esc đóng")
                 : (item == 0
-                    ? "Knife · Drag across a closed filled path · Enter choose · Esc closes"
+                    ? "Knife · Drag across a closed path · Enter choose · Esc closes"
                     : item == 1
                     ? "Vector Eraser · Closed filled paths only; open paths are unsupported · Enter choose · Esc closes"
                     : item == 2

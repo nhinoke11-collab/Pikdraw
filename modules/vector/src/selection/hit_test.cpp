@@ -23,7 +23,8 @@ bool stroke_hit(geometry::Point2D world, geometry::Point2D local, geometry::Poin
                 bool &budget_exceeded) {
     const double radius = object.stroke_width_mm * .5;
     if (radius <= 0)
-        return false;
+        return distance(world, object.transform.map_point(a),
+                        object.transform.map_point(b)) <= tolerance;
     if (distance(local, a, b) <= radius)
         return true;
     if (tolerance <= 0 || distance(world, object.transform.map_point(a), object.transform.map_point(b)) >

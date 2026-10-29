@@ -208,8 +208,7 @@ inline std::optional<geometry::BooleanResult> compute_selected_boolean(
     if (!target_object || !source_object) return std::nullopt;
     const auto* target = std::get_if<document::PathObject>(target_object);
     const auto* source = std::get_if<document::PathObject>(source_object);
-    if (!target || !source || target->locked || source->locked ||
-        !target->has_fill || !source->has_fill) return std::nullopt;
+    if (!target || !source || target->locked || source->locked) return std::nullopt;
     try {
         auto target_path = target->path.transformed(target->transform);
         auto source_path = source->path.transformed(source->transform);

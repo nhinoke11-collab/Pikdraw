@@ -1015,6 +1015,25 @@ int main() {
               .authoring_source->subpaths.size() == 1,
           "AC-ST one Undo restores the original path topology");
 
+    smart_trim_window.root().vector_controller().set_selection(
+        {smart_trim_target}, *smart_trim_window.root().document().current_snapshot());
+    check(smart_trim_window.set_selection_fill_enabled(true), "Smart Trim fixture enables fill");
+    smart_trim_direct_request.snapshot = smart_trim_window.root().document().current_snapshot();
+    smart_trim_direct_request.selected_ids = {smart_trim_target};
+    smart_trim_direct_request.preview_only = false;
+    auto filled_trim = pikdraw::desktop::compute_cut_geometry(smart_trim_direct_request, {});
+    check(filled_trim.status == pikdraw::desktop::CutGeometryStatus::Success,
+          "Smart Trim resolves filled path intersections");
+    check(smart_trim_window.workflow().apply_cut_geometry_proposal(std::move(filled_trim)),
+          "Smart Trim applies to filled paths");
+    const auto filled_trim_object = smart_trim_window.root().document().current_snapshot()->objects().get(smart_trim_target);
+    check(filled_trim_object && std::get<pikdraw::document::PathObject>(*filled_trim_object).has_fill &&
+              std::get<pikdraw::document::PathObject>(*filled_trim_object).authoring_source->subpaths.size() == 2,
+          "Smart Trim preserves fill attribute and edits the path");
+    check(smart_trim_window.workflow().undo(), "Undo restores filled Smart Trim path");
+    check(smart_trim_window.workflow().undo(), "Undo restores original Smart Trim style");
+    smart_trim_window.root().vector_controller().selection().clear();
+
     // Tangency, coincident overlaps and self-intersections must never produce
     // a guessed interval when the clicked station is ambiguous.
     pikdraw::geometry::Path2D tangent_curve;
@@ -1125,12 +1144,13 @@ int main() {
     check(filled_snapshot->object_count() == 4,
           "AC-SF creates a new object without removing source paths");
     const auto filled_selection = smart_fill_window.root().vector_controller().selection().selected_ids();
-    check(filled_selection.size() == 1, "AC-SF selects its created editable path");
-    const auto filled_object = filled_snapshot->objects().get(filled_selection.front());
+    check(filled_selection.size() == 3, "AC-SF retains source scope for subsequent clicks");
+    const auto filled_id = filled_snapshot->page().layers[0].object_ids.back();
+    const auto filled_object = filled_snapshot->objects().get(filled_id);
     check(filled_object && std::holds_alternative<pikdraw::document::PathObject>(*filled_object) &&
               std::get<pikdraw::document::PathObject>(*filled_object).authoring_source,
           "AC-SF result remains an editable PathObject");
-    const auto filled_bounds = smart_fill_window.workflow().get_object_bounds(filled_selection.front());
+    const auto filled_bounds = smart_fill_window.workflow().get_object_bounds(filled_id);
     check(filled_bounds && std::abs(filled_bounds->x - 220.0) < 0.1 &&
               std::abs(filled_bounds->y - 50.0) < 0.1 &&
               std::abs(filled_bounds->width - 40.0) < 0.1 &&
@@ -1141,7 +1161,7 @@ int main() {
     const auto smart_fill_reopened = pikdraw::document::NativeFormat::deserialize(
         smart_fill_bytes.data(), smart_fill_bytes.size(), &smart_fill_reopen_error);
     const auto smart_fill_reopened_path = smart_fill_reopened
-        ? smart_fill_reopened->objects().get(filled_selection.front()) : std::nullopt;
+        ? smart_fill_reopened->objects().get(filled_id) : std::nullopt;
     check(smart_fill_reopened && smart_fill_reopen_error.empty() &&
               smart_fill_reopened->object_count() == 4 && smart_fill_reopened_path &&
               std::holds_alternative<pikdraw::document::PathObject>(*smart_fill_reopened_path) &&
@@ -1150,6 +1170,228 @@ int main() {
     check(smart_fill_window.workflow().undo(), "AC-SF one Undo removes only the generated face");
     check(smart_fill_window.root().document().current_snapshot()->object_count() == 3,
           "AC-SF Undo leaves all original source objects");
+
+    // Unfilled closed outlines must create a visible, editable overlap face.
+    smart_fill_window.workflow().new_document();
+    const auto add_unfilled_rectangle = [&smart_fill_window](double x) {
+        pikdraw::document::PathObject path;
+        path.id = pikdraw::document::generate_object_id();
+        path.has_fill = false;
+        path.has_stroke = true;
+        path.stroke_width_mm = 1.0;
+        path.path.move_to(x, 50.0);
+        path.path.line_to(x + 100.0, 50.0);
+        path.path.line_to(x + 100.0, 150.0);
+        path.path.line_to(x, 150.0);
+        path.path.close();
+        const auto id = path.id;
+        const auto added = smart_fill_window.root().document().execute_command(
+            std::make_unique<pikdraw::document::AddObjectCommand>(std::move(path), 0));
+        return added.success ? id : pikdraw::document::kInvalidObjectId;
+    };
+    const auto outline_a = add_unfilled_rectangle(50.0);
+    const auto outline_b = add_unfilled_rectangle(100.0);
+    check(outline_a && outline_b, "AC-SF unfilled closed outlines are created");
+    smart_fill_window.fit_page_to_canvas();
+    smart_fill_window.set_active_tool(23);
+    smart_fill_window.root().vector_controller().selection().clear();
+    const POINT outline_overlap_face = to_fill_client({125.0, 100.0});
+    send_fill_mouse(WM_LBUTTONDOWN, MK_LBUTTON, outline_overlap_face.x, outline_overlap_face.y);
+    send_fill_mouse(WM_LBUTTONUP, 0, outline_overlap_face.x, outline_overlap_face.y);
+    check(wait_for_cut_geometry(smart_fill_window), "AC-SF unfilled outlines resolve through worker");
+    const auto outline_snapshot = smart_fill_window.root().document().current_snapshot();
+    const auto outline_selection = smart_fill_window.root().vector_controller().selection().selected_ids();
+    if (outline_snapshot->object_count() != 3 || outline_selection.size() != 2)
+        std::cerr << "Smart Fill status: " << smart_fill_window.status_message() << " count="
+                  << outline_snapshot->object_count() << " selection=" << outline_selection.size() << "\n";
+    check(outline_snapshot->object_count() == 3 && outline_selection.size() == 2,
+          "AC-SF preserves unfilled sources as the fill scope");
+    const auto outline_result_id = outline_snapshot->page().layers[0].object_ids.back();
+    const auto outline_result = outline_snapshot->objects().get(outline_result_id);
+    check(outline_result && std::holds_alternative<pikdraw::document::PathObject>(*outline_result) &&
+              std::get<pikdraw::document::PathObject>(*outline_result).has_fill &&
+              std::get<pikdraw::document::PathObject>(*outline_result).authoring_source,
+          "AC-SF creates a filled editable face from unfilled sources");
+    const auto outline_bounds = smart_fill_window.workflow().get_object_bounds(outline_result_id);
+    check(outline_bounds && std::abs(outline_bounds->x - 100.0) < 0.1 &&
+              std::abs(outline_bounds->width - 50.0) < 0.1,
+          "AC-SF resolves the overlap of unfilled outlines");
+    const POINT second_outline_face = to_fill_client({75.0, 100.0});
+    send_fill_mouse(WM_LBUTTONDOWN, MK_LBUTTON, second_outline_face.x, second_outline_face.y);
+    send_fill_mouse(WM_LBUTTONUP, 0, second_outline_face.x, second_outline_face.y);
+    check(wait_for_cut_geometry(smart_fill_window), "AC-SF second click resolves using the original sources");
+    const auto second_face_snapshot = smart_fill_window.root().document().current_snapshot();
+    const auto second_face_id = second_face_snapshot->page().layers[0].object_ids.back();
+    const auto second_face_bounds = smart_fill_window.workflow().get_object_bounds(second_face_id);
+    check(second_face_snapshot->object_count() == 4 && second_face_id != outline_result_id &&
+              second_face_bounds && std::abs(second_face_bounds->x - 50.0) < 0.1 &&
+              std::abs(second_face_bounds->width - 50.0) < 0.1,
+          "AC-SF consecutive clicks create distinct neighbouring faces");
+    check(smart_fill_window.workflow().undo(), "AC-SF Undo removes the second face only");
+    check(smart_fill_window.root().document().current_snapshot()->object_count() == 3,
+          "AC-SF first face remains after Undo of second click");
+    check(smart_fill_window.workflow().undo(), "AC-SF unfilled outline result can be undone");
+    pikdraw::desktop::CutGeometryRequest selected_outline_request;
+    selected_outline_request.operation = pikdraw::desktop::CutGeometryOperation::SmartFill;
+    selected_outline_request.snapshot = smart_fill_window.root().document().current_snapshot();
+    selected_outline_request.selected_ids = {outline_a, outline_b};
+    selected_outline_request.points_world = {{125.0, 100.0}};
+    const auto selected_outline_result = pikdraw::desktop::compute_smart_fill_geometry(selected_outline_request, {});
+    check(selected_outline_result.status == pikdraw::desktop::CutGeometryStatus::Success &&
+              selected_outline_result.additions.size() == 1 &&
+              selected_outline_result.additions.front().object.has_fill,
+          "AC-SF accepts explicitly selected unfilled outlines");
+
+    pikdraw::desktop::CutGeometryRequest outline_request;
+    outline_request.snapshot = smart_fill_window.root().document().current_snapshot();
+    outline_request.selected_ids = {outline_a};
+    outline_request.operation = pikdraw::desktop::CutGeometryOperation::Knife;
+    outline_request.points_world = {{75.0, 40.0}, {75.0, 160.0}};
+    auto outline_proposal = pikdraw::desktop::compute_cut_geometry(outline_request, {});
+    check(outline_proposal.status == pikdraw::desktop::CutGeometryStatus::Success &&
+              outline_proposal.replacements.size() == 1 &&
+              outline_proposal.replacements.front().pieces.size() == 2 &&
+              !outline_proposal.replacements.front().pieces.front().has_fill,
+          "Knife splits an unfilled closed path while preserving its style");
+    check(smart_fill_window.workflow().apply_cut_geometry_proposal(std::move(outline_proposal)),
+          "Knife commits an unfilled closed path");
+    check(smart_fill_window.workflow().undo(), "Undo restores the unfilled Knife source");
+    outline_request.snapshot = smart_fill_window.root().document().current_snapshot();
+    outline_request.operation = pikdraw::desktop::CutGeometryOperation::VectorEraser;
+    outline_request.points_world = {{75.0, 45.0}, {75.0, 55.0}};
+    outline_request.diameter_mm = 4.0;
+    outline_proposal = pikdraw::desktop::compute_cut_geometry(outline_request, {});
+    check(outline_proposal.status == pikdraw::desktop::CutGeometryStatus::Success &&
+              !outline_proposal.replacements.empty(),
+          "Vector Eraser removes an interval from a closed unfilled outline");
+    check(smart_fill_window.workflow().apply_cut_geometry_proposal(std::move(outline_proposal)),
+          "Vector Eraser commits a closed unfilled outline");
+    check(smart_fill_window.workflow().undo(), "Undo restores unfilled erased outline");
+    outline_request.snapshot = smart_fill_window.root().document().current_snapshot();
+    outline_request.operation = pikdraw::desktop::CutGeometryOperation::TrimObjects;
+    outline_request.target_id = outline_a;
+    outline_request.source_ids = {outline_b};
+    outline_proposal = pikdraw::desktop::compute_trim_objects_geometry(outline_request, {});
+    check(outline_proposal.status == pikdraw::desktop::CutGeometryStatus::Success &&
+              !outline_proposal.replacements.empty() &&
+              !outline_proposal.replacements.front().pieces.front().has_fill,
+          "Trim resolves unfilled source and target without adding fill");
+    check(smart_fill_window.workflow().apply_cut_geometry_proposal(std::move(outline_proposal)),
+          "Trim commits unfilled paths");
+    check(smart_fill_window.workflow().undo(), "Undo restores unfilled Trim target");
+    outline_request.snapshot = smart_fill_window.root().document().current_snapshot();
+    outline_request.operation = pikdraw::desktop::CutGeometryOperation::ShapeBuilder;
+    outline_request.selected_ids = {outline_a, outline_b};
+    outline_request.points_world = {{125.0, 100.0}};
+    outline_request.erase_faces = false;
+    outline_proposal = pikdraw::desktop::compute_shape_builder_geometry(outline_request, {});
+    check(outline_proposal.status == pikdraw::desktop::CutGeometryStatus::Success &&
+              !outline_proposal.additions.empty() && !outline_proposal.additions.front().object.has_fill,
+          "Shape Builder merge preserves the unfilled style");
+    check(smart_fill_window.workflow().apply_cut_geometry_proposal(std::move(outline_proposal)),
+          "Shape Builder commits an unfilled merge");
+    check(smart_fill_window.workflow().undo(), "Undo removes unfilled Shape Builder merge");
+    outline_request.snapshot = smart_fill_window.root().document().current_snapshot();
+    outline_request.erase_faces = true;
+    outline_proposal = pikdraw::desktop::compute_shape_builder_geometry(outline_request, {});
+    check(outline_proposal.status == pikdraw::desktop::CutGeometryStatus::Success,
+          "Shape Builder computes erase on unfilled paths");
+    check(smart_fill_window.workflow().apply_cut_geometry_proposal(std::move(outline_proposal)),
+          "Shape Builder commits erase on unfilled paths");
+    check(smart_fill_window.workflow().undo(), "Undo restores unfilled Shape Builder sources");
+    const auto boolean_snapshot = smart_fill_window.root().document().current_snapshot();
+    smart_fill_window.root().vector_controller().set_selection({outline_a, outline_b}, *boolean_snapshot);
+    check(smart_fill_window.workflow().can_boolean_operation_selected(pikdraw::geometry::BooleanOp::Intersection) &&
+              smart_fill_window.workflow().boolean_operation_selected(pikdraw::geometry::BooleanOp::Intersection, true, true),
+          "Boolean intersection supports unfilled paths");
+    const auto boolean_selection = smart_fill_window.root().vector_controller().selection().selected_ids();
+    const auto boolean_result = smart_fill_window.root().document().current_snapshot()->objects().get(boolean_selection.front());
+    check(boolean_result && !std::get<pikdraw::document::PathObject>(*boolean_result).has_fill,
+          "Boolean intersection preserves target fill state");
+    check(smart_fill_window.workflow().undo(), "Undo removes Boolean intersection");
+
+    // Four independent open segments enclose one face, with no source fill.
+    smart_fill_window.workflow().new_document();
+    const auto add_fill_boundary = [&smart_fill_window](pikdraw::geometry::Point2D a,
+                                                       pikdraw::geometry::Point2D b) {
+        pikdraw::document::PathObject path;
+        path.id = pikdraw::document::generate_object_id();
+        path.has_fill = false;
+        path.has_stroke = true;
+        path.stroke_width_mm = 1.0;
+        path.path.move_to(a); path.path.line_to(b);
+        const auto id = path.id;
+        const auto result = smart_fill_window.root().document().execute_command(
+            std::make_unique<pikdraw::document::AddObjectCommand>(std::move(path), 0));
+        return result.success ? id : pikdraw::document::kInvalidObjectId;
+    };
+    const auto line_a = add_fill_boundary({50, 50}, {150, 50});
+    const auto line_b = add_fill_boundary({150, 50}, {150, 150});
+    const auto line_c = add_fill_boundary({150, 150}, {50, 150});
+    const auto line_d = add_fill_boundary({50, 150}, {50, 50});
+    pikdraw::desktop::CutGeometryRequest open_face_request;
+    open_face_request.operation = pikdraw::desktop::CutGeometryOperation::SmartFill;
+    open_face_request.snapshot = smart_fill_window.root().document().current_snapshot();
+    open_face_request.selected_ids = {line_a, line_b, line_c, line_d};
+    open_face_request.points_world = {{100, 100}};
+    auto open_face_proposal = pikdraw::desktop::compute_smart_fill_geometry(open_face_request, {});
+    check(open_face_proposal.status == pikdraw::desktop::CutGeometryStatus::Success &&
+              open_face_proposal.additions.size() == 1 && open_face_proposal.additions.front().object.has_fill,
+          "Smart Fill resolves an enclosed face formed by four open lines");
+    check(smart_fill_window.workflow().apply_cut_geometry_proposal(std::move(open_face_proposal)),
+          "Smart Fill commits a face formed by open lines");
+    check(smart_fill_window.root().document().current_snapshot()->object_count() == 5,
+          "Smart Fill preserves every open boundary");
+    check(smart_fill_window.workflow().undo(), "Undo removes only the open-line face");
+    open_face_request.snapshot = smart_fill_window.root().document().current_snapshot();
+    open_face_request.selected_ids.clear();
+    smart_fill_window.fit_page_to_canvas();
+    smart_fill_window.set_active_tool(23);
+    smart_fill_window.root().vector_controller().selection().clear();
+    const POINT open_face_click = to_fill_client({100, 100});
+    send_fill_mouse(WM_LBUTTONDOWN, MK_LBUTTON, open_face_click.x, open_face_click.y);
+    send_fill_mouse(WM_LBUTTONUP, 0, open_face_click.x, open_face_click.y);
+    check(wait_for_cut_geometry(smart_fill_window) &&
+              smart_fill_window.root().document().current_snapshot()->object_count() == 5,
+          "Smart Fill native click creates a face from open lines without selection");
+    check(smart_fill_window.workflow().undo(), "Undo restores open-line sources after native click");
+    open_face_request.snapshot = smart_fill_window.root().document().current_snapshot();
+    open_face_request.points_world = {{200, 200}};
+    check(pikdraw::desktop::compute_smart_fill_geometry(open_face_request, {}).status ==
+              pikdraw::desktop::CutGeometryStatus::NoChange,
+          "Smart Fill does not fill the unbounded outside face");
+    open_face_request.points_world = {{50, 100}};
+    check(pikdraw::desktop::compute_smart_fill_geometry(open_face_request, {}).status ==
+              pikdraw::desktop::CutGeometryStatus::Ambiguous,
+          "Smart Fill rejects a boundary click");
+    open_face_request.points_world = {{100, 100}};
+    open_face_request.selected_ids = {line_a, line_b, line_c};
+    check(pikdraw::desktop::compute_smart_fill_geometry(open_face_request, {}).status ==
+              pikdraw::desktop::CutGeometryStatus::NoChange,
+          "Smart Fill does not bridge a gap implicitly");
+
+    open_face_request.selected_ids.clear();
+    const auto open_unselected = pikdraw::desktop::compute_smart_fill_geometry(open_face_request, {});
+    check(open_unselected.status == pikdraw::desktop::CutGeometryStatus::Success,
+          "Smart Fill finds open boundary lines without a selection");
+    const auto divider = add_fill_boundary({100, 30}, {100, 170});
+    open_face_request.snapshot = smart_fill_window.root().document().current_snapshot();
+    open_face_request.points_world = {{75, 100}};
+    const auto split_open_face = pikdraw::desktop::compute_smart_fill_geometry(open_face_request, {});
+    check(divider && split_open_face.status == pikdraw::desktop::CutGeometryStatus::Success &&
+              std::abs(split_open_face.additions.front().object.path.bounds().width - 50.0) < 0.01,
+          "Smart Fill separates faces at crossing open lines");
+
+    const auto inner_a = add_fill_boundary({60, 60}, {90, 60});
+    const auto inner_b = add_fill_boundary({90, 60}, {90, 90});
+    const auto inner_c = add_fill_boundary({90, 90}, {60, 90});
+    const auto inner_d = add_fill_boundary({60, 90}, {60, 60});
+    open_face_request.snapshot = smart_fill_window.root().document().current_snapshot();
+    open_face_request.points_world = {{55, 55}};
+    check(inner_a && inner_b && inner_c && inner_d &&
+              pikdraw::desktop::compute_smart_fill_geometry(open_face_request, {}).status ==
+                  pikdraw::desktop::CutGeometryStatus::Ambiguous,
+          "Smart Fill rejects nested disconnected boundaries instead of filling across a hole");
 
     // AC-SB-UI-01 — Native face selection followed by Property Bar Merge/Erase
     // uses one command; erase preserves source IDs and Undo restores geometry.
@@ -1217,7 +1459,7 @@ int main() {
     check(shape_builder_window.root().document().revision() == selected_face_revision + 1,
           "AC-SB second Merge click commits the preview in one document revision");
     check(shape_builder_window.root().document().current_snapshot()->object_count() == 3,
-          "AC-SB Merge keeps sources and adds editable output");
+          "AC-SB Merge replaces selected source regions and adds editable output");
     const auto merged_selection =
         shape_builder_window.root().vector_controller().selection().selected_ids();
     const auto merged_bytes = pikdraw::document::NativeFormat::serialize(
@@ -1226,14 +1468,14 @@ int main() {
     const auto merged_reopened = pikdraw::document::NativeFormat::deserialize(
         merged_bytes.data(), merged_bytes.size(), &merged_reopen_error);
     check(merged_reopened && merged_reopen_error.empty() &&
-              merged_reopened->object_count() == 3 && merged_selection.size() == 1 &&
-              merged_reopened->objects().get(merged_selection.front()).has_value(),
-          "AC-SB merge save/reopen preserves its new editable object ID");
+              merged_reopened->object_count() == 3 && merged_selection.size() == 3 &&
+              merged_reopened->objects().get(merged_selection.back()).has_value(),
+          "AC-SB merge save/reopen preserves the source remainders and new object");
     check(shape_builder_window.workflow().undo(), "AC-SB Merge has one Undo");
     check(shape_builder_window.root().document().current_snapshot()->object_count() == 2,
           "AC-SB Merge Undo restores the source-only document");
-    check(shape_builder_window.root().vector_controller().selection().empty(),
-          "AC-SB Undo drops the removed merged-object selection");
+    check(shape_builder_window.root().vector_controller().selection().selected_ids().size() == 2,
+          "AC-SB Undo keeps the restored source selections");
 
     // Re-select the overlap and use Property Bar Erase; both source objects are
     // replaced atomically, and the same IDs/bounds return on Undo.

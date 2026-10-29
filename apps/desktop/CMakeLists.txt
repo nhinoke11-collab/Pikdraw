@@ -72,6 +72,7 @@ add_library(pikdraw_desktop STATIC
     src/workflows/document_workflow_io_shaping.cpp
     src/workflows/document_workflow_cut.cpp
     src/workflows/cut_geometry_operations.cpp
+    src/workflows/smart_fill_line_face.cpp
     src/shell/native_window_cut_geometry.cpp
     src/shell/native_window_cut_geometry_preview.cpp
     src/workflows/document_workflow_import.cpp
@@ -359,6 +360,18 @@ if(PIKDRAW_BUILD_TESTS)
         pikdraw_desktop
     )
     add_test(NAME test_pikdraw_vertical_slice_e2e COMMAND test_pikdraw_vertical_slice_e2e)
+
+    add_executable(test_pikdraw_shape_builder_behavior tests/test_shape_builder_behavior.cpp)
+    target_link_libraries(test_pikdraw_shape_builder_behavior PRIVATE pikdraw_desktop)
+    add_test(NAME test_pikdraw_shape_builder_behavior COMMAND test_pikdraw_shape_builder_behavior)
+
+    add_executable(test_pikdraw_smart_fill_repeated tests/test_smart_fill_repeated.cpp)
+    target_link_libraries(test_pikdraw_smart_fill_repeated PRIVATE pikdraw_desktop)
+    add_test(NAME test_pikdraw_smart_fill_repeated COMMAND test_pikdraw_smart_fill_repeated)
+
+    add_executable(test_pikdraw_smart_fill_line_face tests/test_smart_fill_line_face.cpp)
+    target_link_libraries(test_pikdraw_smart_fill_line_face PRIVATE pikdraw_desktop)
+    add_test(NAME test_pikdraw_smart_fill_line_face COMMAND test_pikdraw_smart_fill_line_face)
 
     add_executable(test_pikdraw_canvas_view
         tests/test_canvas_view.cpp

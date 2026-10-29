@@ -54,6 +54,7 @@ bool NativeWindow::start_cut_geometry_job(CutGeometryRequest request) {
         ? request.keep_sources : request.erase_faces;
     state->menu_action = request.menu_action;
     state->preview_only = request.preview_only;
+    state->shape_builder_gesture = request.shape_builder_gesture;
     state->initiating_tool = active_tool_;
     cut_geometry_job_ = state;
     const HWND notify_window = hwnd_;
@@ -297,7 +298,7 @@ void NativeWindow::handle_cut_geometry_worker_message(std::uint64_t generation) 
     const bool requires_preview = current_context &&
         proposal->status == CutGeometryStatus::Success &&
         ((proposal_operation == CutGeometryOperation::TrimObjects && !state->menu_action) ||
-         proposal_operation == CutGeometryOperation::ShapeBuilder ||
+         (proposal_operation == CutGeometryOperation::ShapeBuilder && !state->shape_builder_gesture) ||
          (proposal_operation == CutGeometryOperation::SmartTrim && state->preview_only));
     if (requires_preview) {
         cut_geometry_job_.reset();
@@ -324,8 +325,17 @@ void NativeWindow::handle_cut_geometry_worker_message(std::uint64_t generation) 
     }
     std::string error;
     bool applied = false;
-    if (current_context && proposal->status == CutGeometryStatus::Success)
+    // Keep the original boundaries as the Smart Fill scope across clicks.
+    // The workflow selects the generated path; using it as the next scope
+    // would exclude the boundaries and prevent filling neighbouring faces.
+    const auto smart_fill_sources = proposal_operation == CutGeometryOperation::SmartFill
+        ? proposal->source_ids : std::vector<document::ObjectId>{};
+    if (current_context && proposal->status == CutGeometryStatus::Success) {
         applied = workflow().apply_cut_geometry_proposal(std::move(*proposal), &error);
+        if (applied && proposal_operation == CutGeometryOperation::SmartFill)
+            root().vector_controller().set_selection(
+                smart_fill_sources, *root().document().current_snapshot());
+    }
     else if (current_context)
         error = proposal->message.empty() ? "No geometry was changed" : proposal->message;
     else if (generation == cut_geometry_generation_)
@@ -357,8 +367,8 @@ void NativeWindow::handle_cut_geometry_worker_message(std::uint64_t generation) 
                     : "Trim Objects applied · one Undo step";
             else if (proposal_operation == CutGeometryOperation::SmartFill)
                 completion = language_ == UILanguage::Vietnamese
-                    ? "Đã tạo path Smart Fill chỉnh sửa được · nguồn được giữ · một bước Undo"
-                    : "Created an editable Smart Fill path · sources preserved · one Undo step";
+                    ? "Đã tạo vùng · nhấp tiếp vùng khác · Ctrl+Z hoàn tác"
+                    : "Created a face · click another region · Ctrl+Z to undo";
             else
                 completion = language_ == UILanguage::Vietnamese
                     ? (proposal_erases_faces

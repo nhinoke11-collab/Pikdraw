@@ -146,7 +146,7 @@ bool DocumentWorkflow::can_boolean_operation_selected(geometry::BooleanOp op) co
     for (const auto id : selected) {
         const auto* object = snapshot->objects().lookup_ref(id);
         const auto* path = object ? std::get_if<document::PathObject>(object) : nullptr;
-        if (!path || path->locked || !path->has_fill) return false;
+        if (!path || path->locked) return false;
     }
     const auto res = compute_selected_boolean(*snapshot, selected, op);
     return res.has_value() && res->status != geometry::BooleanStatus::Empty && !res->path.empty();

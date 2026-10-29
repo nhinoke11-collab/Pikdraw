@@ -1167,6 +1167,9 @@ private:
     bool is_smart_fill_click_{false};
     bool is_raster_eraser_stroke_{false};
     std::vector<geometry::Point2D> shape_builder_seed_points_;
+    std::vector<geometry::Point2D> shape_builder_gesture_;
+    bool shape_builder_gesture_overflow_{false};
+    bool shape_builder_erase_gesture_{false};
     bool knife_freehand_mode_{false};
     double knife_gap_mm_{0.0};
     double vector_eraser_diameter_mm_{2.0};

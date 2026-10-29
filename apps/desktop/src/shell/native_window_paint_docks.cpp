@@ -745,8 +745,8 @@ void NativeWindow::paint_right_inspector_dock(HDC mem_dc, int w, int h) {
                 RECT hint{left, content_y + 182, right, content_y + 268};
                 SetTextColor(mem_dc, col_text_muted);
                 DrawTextW(mem_dc, is_vi
-                    ? L"Nhấp vào các mặt kín tạo bởi tối đa 64 path có fill đang hiển thị và mở khóa. Merge tạo geometry chỉnh sửa được. Erase thay đổi nguồn trong một Undo. Nếu hình học mơ hồ hoặc vượt ngân sách, tài liệu giữ nguyên."
-                    : L"Click closed faces formed by up to 64 visible, unlocked filled paths. Merge creates editable geometry. Erase changes sources in one Undo. Ambiguous or over-budget geometry leaves the document unchanged.",
+                    ? L"Kéo qua các mặt của path kín thẳng để ghép; Alt+nhấp/kéo để xóa. Có thể nhấp từng mặt rồi xem trước và áp dụng. Đường cong dùng chế độ xem trước; hình học mơ hồ giữ nguyên tài liệu."
+                    : L"Drag across faces of closed straight paths to merge; Alt+click/drag erases. Alternatively click faces, preview and apply. Use preview for curves; ambiguous geometry leaves the document unchanged.",
                     -1, &hint, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
             } else {
                 RECT hint{insp_x + 14, content_y + 68, w - 14, content_y + 188};
@@ -824,8 +824,8 @@ void NativeWindow::paint_right_inspector_dock(HDC mem_dc, int w, int h) {
                 SelectObject(mem_dc, font_secondary);
                 SetTextColor(mem_dc, col_text_white);
                 DrawTextW(mem_dc, is_vi
-                    ? L"Nhấp một đoạn nét chỉnh sửa được nằm giữa hai giao điểm. Tool chỉ sửa path nét không tô để giữ nguyên quy tắc fill. Đoạn trùng, giao điểm mơ hồ hoặc vượt ngân sách sẽ không thay đổi tài liệu."
-                    : L"Click an editable stroke segment between two intersections. The tool edits unfilled paths only to preserve fill semantics. Coincident, ambiguous, or over-budget intersections leave the document unchanged.",
+                    ? L"Nhấp một đoạn nét chỉnh sửa được nằm giữa hai giao điểm. Thuộc tính tô được giữ; mở path kín có thể thay đổi vùng tô hiển thị. Đoạn trùng, giao điểm mơ hồ hoặc vượt ngân sách sẽ không thay đổi tài liệu."
+                    : L"Click an editable stroke segment between two intersections. Fill attributes are retained; opening a closed path can change its visible fill. Coincident, ambiguous, or over-budget intersections leave the document unchanged.",
                     -1, &hint, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
                 return;
             }
@@ -877,8 +877,8 @@ void NativeWindow::paint_right_inspector_dock(HDC mem_dc, int w, int h) {
                 RECT hint{left, content_y + 184, right, content_y + 238};
                 SetTextColor(mem_dc, col_text_muted);
                 DrawTextW(mem_dc, is_vi
-                    ? L"Chọn path có fill, hiển thị và mở khóa. Apply trừ hợp các Source khỏi Target trong một Undo."
-                    : L"Choose visible, unlocked filled paths. Apply subtracts the Source union from Target in one Undo.",
+                    ? L"Chọn path kín, hiển thị và mở khóa. Apply trừ hợp các Source khỏi Target trong một Undo."
+                    : L"Choose visible, unlocked closed paths. Apply subtracts the Source union from Target in one Undo.",
                     -1, &hint, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
                 return;
             }

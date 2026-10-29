@@ -104,9 +104,47 @@ void stroke_and_locked_targets() {
                                                locked_snapshot)
               .empty());
 }
+void hairline_pick_and_marquee() {
+    document::Document doc("hairline-selection");
+    document::PathObject horizontal;
+    horizontal.id = document::generate_object_id();
+    horizontal.has_fill = false;
+    horizontal.has_stroke = true;
+    horizontal.stroke_width_mm = 0.0;
+    horizontal.path.move_to(10, 20);
+    horizontal.path.line_to(110, 20);
+    const auto first = add(doc, horizontal);
+    auto vertical = horizontal;
+    vertical.id = document::generate_object_id();
+    vertical.path.clear();
+    vertical.path.move_to(150, 10);
+    vertical.path.line_to(150, 100);
+    const auto second = add(doc, vertical);
+    const auto snapshot = doc.current_snapshot();
+    vector::VectorController controller;
+    const auto picked = controller.pick({50, 22}, *snapshot, 3.0);
+    CHECK(picked && picked->id == first);
+    CHECK(!controller.pick({50, 24}, *snapshot, 3.0));
+    const auto crossing = vector::SelectionModel::query_region(
+        {40, 15, 10, 10}, vector::RegionMode::Crossing, *snapshot);
+    CHECK(crossing.size() == 1 && crossing.front() == first);
+    const auto window = vector::SelectionModel::query_region(
+        {0, 0, 160, 110}, vector::RegionMode::Window, *snapshot);
+    CHECK(window.size() == 2);
+    controller.on_pointer_down({50, 22}, *snapshot, vector::SelectionMode::Replace, 3.0);
+    controller.on_pointer_down({149, 65}, *snapshot, vector::SelectionMode::Add, 3.0);
+    CHECK(controller.selection().is_selected(first) && controller.selection().is_selected(second));
+    const auto bounds = controller.selection().bounds(*snapshot);
+    CHECK(bounds && bounds->x == 10 && bounds->y == 10 &&
+          bounds->right() == 150 && bounds->bottom() == 100);
+}
 void nonuniform_stroke_pick() {
     document::Document doc("nonuniform-stroke-pick");
     auto outline = vector::ShapeFactory::create_rectangle({0, 0, 100, 100});
+    outline.path.clear();
+    outline.authoring_source.reset();
+    outline.path.move_to(0, 0);
+    outline.path.line_to(0, 100);
     outline.has_fill = false;
     outline.stroke_width_mm = 1;
     outline.transform = geometry::Transform2D::scale(100, 1);
@@ -273,6 +311,7 @@ int main() {
         crossing_uses_geometry();
         stroke_and_locked_targets();
         nonuniform_stroke_pick();
+        hairline_pick_and_marquee();
         indexed_queries_match_exhaustive_and_invalidate();
         resize_and_atomic_style();
     });
