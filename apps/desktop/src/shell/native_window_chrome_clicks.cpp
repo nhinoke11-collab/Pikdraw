@@ -57,14 +57,14 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
         return true;
     }
     if ((active_tool_ == 5 || active_tool_ == 16 || active_tool_ == 20) && active_dock_tab_ == 0 &&
-        x >= w - 280 && y >= 138 && handle_cut_tool_properties_click(x, y, true))
+        x >= w - inspector_width() && y >= 138 && handle_cut_tool_properties_click(x, y, true))
         return true;
-    if (active_tool_ == 21 && active_dock_tab_ == 0 && x >= w - 280 && y >= 138) {
+    if (active_tool_ == 21 && active_dock_tab_ == 0 && x >= w - inspector_width() && y >= 138) {
         (void)handle_cut_tool_properties_click(x, y, true);
         return true;
     }
     if ((active_tool_ == 22 || active_tool_ == 23 || active_tool_ == 24) && active_dock_tab_ == 0 &&
-        x >= w - 280 && y >= 138) {
+        x >= w - inspector_width() && y >= 138) {
         (void)handle_cut_tool_properties_click(x, y, true);
         return true;
     }
@@ -1820,12 +1820,13 @@ bool NativeWindow::handle_cut_tool_properties_click(int x, int y, bool in_proper
         InvalidateRect(hwnd_, nullptr, FALSE);
         return true;
     }
-    if (y >= content_y + 68 && y < content_y + 100 && x >= left && x < right) {
+    const int numeric_y = content_y + (active_tool_ == 5 ? 68 : 32);
+    if (y >= numeric_y && y < numeric_y + 30 && x >= left && x < right) {
         start_numeric_input(active_tool_ == 5
             ? NumericFieldId::KnifeGap : NumericFieldId::VectorEraserDiameter);
         return true;
     }
-    if (active_tool_ == 16 && y >= content_y + 106 && y < content_y + 138 &&
+    if (active_tool_ == 16 && y >= content_y + 70 && y < content_y + 98 &&
         x >= left && x < right) {
         if (active_num_field_ != NumericFieldId::None) {
             commit_numeric_field();

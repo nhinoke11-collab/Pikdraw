@@ -48,6 +48,11 @@ bool path_has_segments(const geometry::Path2D& path) {
         return element.verb != geometry::PathVerb::MoveTo;
     });
 }
+bool path_has_closed_subpath(const geometry::Path2D& path) {
+    return std::any_of(path.elements().begin(), path.elements().end(), [](const auto& element) {
+        return element.verb == geometry::PathVerb::Close;
+    });
+}
 bool path_crosses(const document::PathObject &object, const Rect2D &region) {
     const auto inverse = object.transform.inverted();
     if (!inverse)
@@ -57,6 +62,10 @@ bool path_crosses(const document::PathObject &object, const Rect2D &region) {
     const auto paths = hit_polylines(object.path, .01 / std::max(scale, 1e-12));
     if (!paths)
         return false;
+    // Match point picking: closed source geometry is pickable through its face
+    // even when the current fill paint is disabled or transparent.
+    const bool pick_interior = object.has_fill || std::any_of(
+        paths->begin(), paths->end(), [](const auto& path) { return path.is_closed; });
     const auto world_corners = corners(region);
     auto local_corners = world_corners;
     for (auto &point : local_corners)
@@ -72,7 +81,7 @@ bool path_crosses(const document::PathObject &object, const Rect2D &region) {
             const auto local_b = path.points[(i + 1) % path.points.size()];
             const auto a = object.transform.map_point(local_a);
             const auto b = object.transform.map_point(local_b);
-            if (object.has_fill) {
+            if (pick_interior) {
                 if (region.contains(a))
                     return true;
                 for (size_t edge = 0; edge < 4; ++edge)
@@ -97,7 +106,7 @@ bool path_crosses(const document::PathObject &object, const Rect2D &region) {
             }
         }
     }
-    return object.has_fill &&
+    return pick_interior &&
            (object.path.winding_rule() == geometry::WindingRule::EvenOdd ? odd : winding != 0);
 }
 } // namespace
@@ -156,7 +165,8 @@ std::vector<document::ObjectId> SelectionModel::query_region_candidates(
                 continue;
 
             bool selected = false;
-            if ((path->has_fill || (path->has_stroke && path->stroke_width_mm > 0.0)) &&
+            if ((path->has_fill || path_has_closed_subpath(path->path) ||
+                 (path->has_stroke && path->stroke_width_mm > 0.0)) &&
                 path_has_segments(path->path)) {
                 if (mode == RegionMode::Window) {
                     selected = contains_rect(region, broad_bounds);

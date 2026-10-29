@@ -733,8 +733,14 @@ void NativeWindow::paint_right_inspector_dock(HDC mem_dc, int w, int h) {
                               DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
                 };
                 const bool has_faces = !shape_builder_seed_points_.empty();
-                draw_builder_button(content_y + 76, is_vi ? L"Hợp nhất mặt" : L"Merge Faces", has_faces);
-                draw_builder_button(content_y + 110, is_vi ? L"Xóa mặt khỏi nguồn" : L"Erase Faces", has_faces);
+                const bool builder_ready = cut_geometry_preview_ready(CutGeometryOperation::ShapeBuilder);
+                const bool preview_erase = builder_ready && pending_cut_geometry_proposal_->proposal.erase_faces;
+                draw_builder_button(content_y + 76,
+                    builder_ready && !preview_erase ? (is_vi ? L"Áp dụng ghép" : L"Apply Merge")
+                                                   : (is_vi ? L"Xem ghép" : L"Preview Merge"), has_faces);
+                draw_builder_button(content_y + 110,
+                    preview_erase ? (is_vi ? L"Áp dụng xóa" : L"Apply Erase")
+                                  : (is_vi ? L"Xem xóa" : L"Preview Erase"), has_faces);
                 draw_builder_button(content_y + 144, is_vi ? L"Đặt lại lựa chọn" : L"Reset Selection", true);
                 RECT hint{left, content_y + 182, right, content_y + 268};
                 SetTextColor(mem_dc, col_text_muted);
@@ -862,7 +868,10 @@ void NativeWindow::paint_right_inspector_dock(HDC mem_dc, int w, int h) {
                     trim_objects_keep_sources_ ? (is_vi ? L"✓ Giữ Source" : L"✓ Keep Source")
                                                : (is_vi ? L"Giữ Source" : L"Keep Source"),
                     trim_objects_keep_sources_);
-                draw_button(content_y + 118, is_vi ? L"Áp dụng Trim" : L"Apply Trim",
+                draw_button(content_y + 118,
+                    cut_geometry_preview_ready(CutGeometryOperation::TrimObjects)
+                        ? (is_vi ? L"Áp dụng Trim" : L"Apply Trim")
+                        : (is_vi ? L"Xem trước Trim" : L"Preview Trim"),
                     trim_objects_target_id_ != document::kInvalidObjectId && !trim_objects_source_ids_.empty());
                 draw_button(content_y + 152, is_vi ? L"Đặt lại vai trò" : L"Reset Roles", false);
                 RECT hint{left, content_y + 184, right, content_y + 238};

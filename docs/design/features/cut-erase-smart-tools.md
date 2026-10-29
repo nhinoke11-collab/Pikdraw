@@ -4,6 +4,10 @@ Ngày lập: 25/10/2026. Cập nhật trạng thái: 29/10/2026. **Các luồng 
 
 ## 1. Mục tiêu và cách tham khảo
 
+Kế hoạch xử lý thao tác không phản hồi, lệch vùng bấm, preview và vai trò Trim nằm trong
+[cải tiến UX ngày 29/10/2026](cut-erase-ui-ux-remediation-20261029.md). Đây là kế hoạch triển khai,
+chưa phải bằng chứng UI runtime đã đạt.
+
 Người dùng cần cắt một hình theo đường thật, tẩy vùng bằng nét quét, mở đường tại một điểm, xóa đoạn nằm giữa các giao điểm, trim một đối tượng bằng đối tượng khác, và tạo/chỉnh vùng kín từ nhiều đường. Mỗi kết quả là hình học có thể chọn, sửa node, Undo/Redo, lưu/mở lại và xuất theo năng lực định dạng; preview phải diễn tả cùng phép tính sẽ được commit.
 
 | Tham chiếu chính thức | Hành vi lấy làm cơ sở | Quyết định cho PikDraw |

@@ -63,8 +63,26 @@ void geometry_and_painter_order() {
     triangle.has_stroke = true;
     triangle.stroke_width_mm = 2;
     snapshot = make_snapshot(page, {triangle});
-    CHECK(!SelectionModel::hit_test({20, 20}, snapshot, 0));
+    CHECK(SelectionModel::hit_test({20, 20}, snapshot, 0) == 1);
     CHECK(SelectionModel::hit_test({50, .5}, snapshot, 0) == 1);
+    // Closed source geometry remains pickable by its face when fill is off,
+    // even if no stroke is present to provide a visible edge.
+    triangle.has_stroke = false;
+    triangle.stroke_width_mm = 0;
+    snapshot = make_snapshot(page, {triangle});
+    CHECK(SelectionModel::hit_test({20, 20}, snapshot, 0) == 1);
+    CHECK(SelectionModel::query_region({15, 15, 5, 5}, RegionMode::Crossing, snapshot) ==
+          std::vector<ObjectId>{1});
+    CHECK(SelectionModel::query_region({-1, -1, 102, 102}, RegionMode::Window, snapshot) ==
+          std::vector<ObjectId>{1});
+    // An unfilled open path has no face and must still require a stroke hit.
+    triangle.path = {};
+    triangle.path.move_to(0, 0);
+    triangle.path.line_to(100, 0);
+    snapshot = make_snapshot(page, {triangle});
+    CHECK(!SelectionModel::hit_test({50, 20}, snapshot, 0));
+    triangle.has_stroke = true;
+    triangle.stroke_width_mm = 2;
     triangle.transform =
         geometry::Transform2D::translation(1000, 2000) * geometry::Transform2D::rotation_degrees(30);
     snapshot = make_snapshot(page, {triangle});

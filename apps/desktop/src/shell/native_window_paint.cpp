@@ -281,14 +281,16 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
                       DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
             const bool builder_preview_ready =
                 cut_geometry_preview_ready(CutGeometryOperation::ShapeBuilder);
+            const bool builder_preview_erase = builder_preview_ready &&
+                pending_cut_geometry_proposal_->proposal.erase_faces;
             draw_rib_btn(110, 222,
-                         builder_preview_ready
+                         builder_preview_ready && !builder_preview_erase
                              ? (is_vi ? L"Áp dụng ghép" : L"Apply Merge")
                              : (is_vi ? L"Xem ghép" : L"Preview Merge"),
                          !shape_builder_seed_points_.empty() || builder_preview_ready,
                          col_teal);
             draw_rib_btn(228, 336,
-                         builder_preview_ready
+                         builder_preview_erase
                              ? (is_vi ? L"Áp dụng xóa" : L"Apply Erase")
                              : (is_vi ? L"Xem xóa" : L"Preview Erase"),
                          !shape_builder_seed_points_.empty() || builder_preview_ready,

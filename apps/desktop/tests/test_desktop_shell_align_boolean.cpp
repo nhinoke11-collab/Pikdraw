@@ -1154,8 +1154,14 @@ void test_cut_erase_smart_tools_suite() {
     assert(cut_options_win.handle_chrome_click(270, 80));
     assert(!cut_options_win.vector_eraser_round_nib());
     assert(cut_options_win.handle_chrome_click(410, 80));
-    assert(cut_options_win.handle_chrome_click(1080, 244));
+    assert(cut_options_win.handle_chrome_click(1080, 218));
     assert(cut_options_win.vector_eraser_round_nib());
+    assert(cut_options_win.handle_chrome_click(1080, 180));
+    assert(cut_options_win.active_numeric_field() ==
+           pikdraw::desktop::NativeWindow::NumericFieldId::VectorEraserDiameter);
+    replace_numeric_text(L"6mm");
+    cut_options_win.commit_numeric_field();
+    assert(std::abs(cut_options_win.vector_eraser_diameter_mm() - 6.0) < 1e-9);
     assert(cut_options_win.root().document().revision() == cut_options_revision);
 
     std::cout << "[PASS] test_cut_erase_smart_tools_suite\n";

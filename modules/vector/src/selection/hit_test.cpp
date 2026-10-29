@@ -88,6 +88,11 @@ PathHit path_hit(geometry::Point2D world, const document::PathObject &object, do
         result.budget_exceeded = true;
         return result;
     }
+    // Pick the editable geometry rather than only its current paint. Closed
+    // paths remain selectable through their interior with fill disabled or
+    // transparent; open paths only gain an interior when they are actually filled.
+    const bool pick_interior = object.has_fill || std::any_of(
+        paths->begin(), paths->end(), [](const auto &path) { return path.is_closed; });
     int winding = 0;
     bool odd = false;
     for (const auto &path : *paths) {
@@ -100,7 +105,7 @@ PathHit path_hit(geometry::Point2D world, const document::PathObject &object, do
                 stroke_hit(world, local, a, b, object, tolerance, frobenius, result.budget_exceeded))
                 result.hit = true;
             // Filled paths implicitly close their final subpath.
-            if (!object.has_fill)
+            if (!pick_interior)
                 continue;
             if (distance(world, t.map_point(a), t.map_point(b)) <= tolerance)
                 result.hit = true;
@@ -113,7 +118,7 @@ PathHit path_hit(geometry::Point2D world, const document::PathObject &object, do
             }
         }
     }
-    if (object.has_fill &&
+    if (pick_interior &&
         (object.path.winding_rule() == geometry::WindingRule::EvenOdd ? odd : winding != 0))
         result.hit = true;
     return result;
