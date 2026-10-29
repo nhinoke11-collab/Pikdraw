@@ -5,6 +5,9 @@
 #include "pikdraw/rendering/software_rasterizer.hpp"
 #include "pikdraw/document/document.hpp"
 #include "pikdraw/document/commands/appearance_commands.hpp"
+#include "pikdraw/document/commands/annotation_commands.hpp"
+#include "pikdraw/document/annotations/annotation_layout.hpp"
+#include "pikdraw/document/annotations/annotation_object.hpp"
 #include <cassert>
 #include <cstdlib>
 #include <iostream>
@@ -198,6 +201,54 @@ void test_translated_shadow_bounds_keep_offscreen_source_visible() {
            "wrong shadow object was retained");
     expect(visible.front().bounds.approx_equal({-31, 29, 40, 22}),
            "shadow output bounds did not include its translated support");
+}
+
+void test_annotation_derived_text_is_inside_culling_bounds() {
+    AnnotationObject annotation;
+    annotation.kind = AnnotationKind::LeaderNote;
+    annotation.anchor.anchor_pt = {0.0, 0.0};
+    annotation.leader_points = {{10.0, 0.0}};
+    annotation.landing_point = {10.0, 0.0};
+    annotation.text_point = {20.0, 0.0};
+    annotation.text.assign(500, 'W');
+    const auto layout = evaluate_annotation_layout(annotation);
+    const auto path = annotation_to_path_object(annotation, layout);
+    const auto source_bounds = path.path.bounds();
+    ObjectVariant object{path};
+    geometry::Rect2D output_bounds;
+    expect(SpatialCuller::compute_object_bounds(object, output_bounds, 1.0),
+           "could not calculate annotation display bounds");
+    expect(output_bounds.right() > source_bounds.right() + 500.0,
+           "annotation text width was omitted from culling bounds");
+}
+
+void test_linear_culler_respects_annotation_group_visibility() {
+    Document doc("doc-annotation-group-culling-test");
+    AnnotationObject annotation;
+    annotation.anchor.anchor_pt = {20.0, 20.0};
+    annotation.leader_points = {{30.0, 30.0}};
+    annotation.text_point = {40.0, 30.0};
+    annotation.text = "hidden note";
+    expect(doc.execute_command(
+               std::make_unique<AddAnnotationCommand>(annotation)).success,
+           "could not add the culling fixture annotation");
+    expect(doc.execute_command(std::make_unique<ToggleAnnotationGroupCommand>(
+               ToggleAnnotationGroupCommand::ToggleKind::Visible)).success,
+           "could not hide the annotation group");
+    const auto snapshot = doc.current_snapshot();
+    const auto notes_layer_index = snapshot->page().find_layer_by_role(
+        LayerRole::AnnotationNotes);
+    expect(notes_layer_index.has_value(), "annotation notes layer was not created");
+    const auto& hidden_layer = snapshot->page().layers[*notes_layer_index];
+    expect(hidden_layer.visible && !hidden_layer.object_ids.empty(),
+           "annotation child layer fixture is incomplete");
+    const auto* hierarchy = snapshot->hierarchy().find(hidden_layer.object_ids.front());
+    expect(hierarchy && !hierarchy->visible,
+           "snapshot hierarchy ignored hidden annotation parent group");
+    const auto visible = SpatialCuller::query_visible_refs(
+        *snapshot, {0.0, 0.0, 100.0, 100.0}, 1.0);
+    expect(visible.empty(),
+           "linear culler rendered an annotation whose parent group is hidden");
 }
 
 void test_fractional_filter_support_near_viewport_edge_is_not_culled() {
@@ -430,6 +481,8 @@ int main() {
     test_spatial_culling();
     test_gaussian_blur_bounds_keep_offscreen_source_visible();
     test_translated_shadow_bounds_keep_offscreen_source_visible();
+    test_annotation_derived_text_is_inside_culling_bounds();
+    test_linear_culler_respects_annotation_group_visibility();
     test_fractional_filter_support_near_viewport_edge_is_not_culled();
     test_non_unit_zoom_rounding_keeps_edge_halo_visible();
     test_legacy_culler_keeps_effectful_objects_without_camera_zoom();

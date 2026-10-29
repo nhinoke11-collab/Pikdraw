@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pikdraw/color/profiles/profile_resource.hpp"
+#include "pikdraw/document/resources/memory_budget_policy.hpp"
 #include "pikdraw/document/snapshots/document_snapshot.hpp"
 
 #include <cstdint>
@@ -17,10 +18,14 @@ class RasterEditPreviewService final {
  public:
   using Completion = std::function<void()>;
 
+  /// Zero byte limits select the shared, live RAM/commit policy. Explicit
+  /// nonzero limits remain available for deterministic callers and tests.
   explicit RasterEditPreviewService(
-      uint64_t working_memory_bytes = 512ULL * 1024ULL * 1024ULL,
-      uint64_t cache_memory_bytes = 192ULL * 1024ULL * 1024ULL,
-      std::shared_ptr<const color::ProfileResource> preview_rgb_profile = {});
+      uint64_t working_memory_bytes = 0,
+      uint64_t cache_memory_bytes = 0,
+      std::shared_ptr<const color::ProfileResource> preview_rgb_profile = {},
+      std::shared_ptr<document::resources::MemoryBudgetPolicy> memory_policy =
+          document::resources::process_memory_budget_policy());
   ~RasterEditPreviewService();
 
   RasterEditPreviewService(const RasterEditPreviewService&) = delete;
@@ -34,6 +39,13 @@ class RasterEditPreviewService final {
   /// Returns a ready render image for the exact source/graph key, or null while
   /// evaluation is pending or unavailable.
   [[nodiscard]] std::shared_ptr<const document::ImageObject> find(
+      const document::DocumentSnapshot& snapshot,
+      const document::ImageObject& image) const;
+
+  /// Returns the newest cached frame for the same immutable source when the
+  /// current graph key is still pending. Geometry and presentation metadata
+  /// are taken from the current snapshot image.
+  [[nodiscard]] std::shared_ptr<const document::ImageObject> find_last_good(
       const document::DocumentSnapshot& snapshot,
       const document::ImageObject& image) const;
 

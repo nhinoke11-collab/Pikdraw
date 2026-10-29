@@ -477,7 +477,7 @@ void NativeWindow::apply_preferred_dimension_unit() noexcept {
 }
 
 void NativeWindow::set_active_tool(int tool_index) noexcept {
-    if (tool_index < 0 || (tool_index > 9 && tool_index != 10 && tool_index != 11 && tool_index != 12 && tool_index != 13 && tool_index != 14 && tool_index != 15))
+    if (tool_index < 0 || tool_index > 24)
         return;
     toolbox_keyboard_focus_ = false;
     toolbox_open_group_ = 0;
@@ -530,6 +530,12 @@ void NativeWindow::set_active_tool(int tool_index) noexcept {
             ? "Đã hủy bản nháp hiệu ứng sau khi xác nhận chuyển công cụ"
             : "Effect draft cancelled after the tool change was accepted";
     }
+    if (active_tool_ == 20 && tool_index != 20)
+        reset_trim_objects_roles();
+    if (active_tool_ == 22 && tool_index != 22)
+        shape_builder_seed_points_.clear();
+    if (tool_index != active_tool_)
+        discard_pending_cut_geometry_proposal();
     if (drawing_tool_) drawing_tool_->cancel();
     if (pen_tool_) pen_tool_->cancel();
     if (dimension_tool_ && tool_index != 10) dimension_tool_->deactivate();
@@ -547,6 +553,8 @@ void NativeWindow::set_active_tool(int tool_index) noexcept {
         num_input_buffer_.clear();
     }
 #ifdef _WIN32
+    if (tool_index != active_tool_)
+        update_smart_trim_hover_preview({}, false);
     cancel_canvas_interaction();
     if (hwnd_) KillTimer(hwnd_, 9);
 #endif
@@ -554,8 +562,12 @@ void NativeWindow::set_active_tool(int tool_index) noexcept {
         commit_inline_text_editing();
     }
     active_tool_ = tool_index;
-    if (tool_index == 1 || tool_index == 2 || tool_index == 9)
+    if (tool_index == 1 || tool_index == 2 || tool_index == 9 || tool_index == 18)
         quick_shapes_last_tool_ = tool_index;
+    if (tool_index == 18)
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đường tròn tâm–bán kính · Nhấp/kéo từ tâm đến bán kính · Có thể bật Snap"
+            : "Circle center–radius · Click/drag from center to radius · Snap is available";
     if (tool_index == 6 || tool_index == 7 || tool_index == 8 || tool_index == 11)
         path_drawing_last_tool_ = tool_index;
     if (dimension_tool) {
@@ -583,6 +595,39 @@ void NativeWindow::set_active_tool(int tool_index) noexcept {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Công cụ Hút màu (Eyedropper · I) · Di chuột để soi màu · Click hút màu · Shift+Click áp viền · Alt+Click đổ màu"
             : "Color Eyedropper (I) · Hover to inspect · Click to sample · Shift+Click for stroke · Alt+Click to pour";
+    }
+    if (tool_index == 20) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Cắt bằng đối tượng · nhấp Target, rồi một hoặc nhiều Source · bật/tắt Giữ Source · Áp dụng để cắt"
+            : "Trim Objects · click a Target, then one or more Sources · set Keep Source · Apply to trim";
+    } else if (tool_index == 21) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Smart Trim · di chuột để xem đỏ đoạn giữa hai giao điểm, nhấp để cắt · path có fill được giữ nguyên"
+            : "Smart Trim · hover to preview the interval between intersections, click to trim · filled paths are preserved";
+    } else if (tool_index == 22) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Shape Builder · nhấp các mặt kín để chọn · Apply hợp nhất hoặc xóa mặt · Esc hủy"
+            : "Shape Builder · click closed faces to select · Apply merges or erases faces · Esc cancels";
+    } else if (tool_index == 23) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Smart Fill · nhấp vào một mặt kín để tạo path mới; nguồn được giữ nguyên"
+            : "Smart Fill · click inside a closed face to create a new editable path; sources remain";
+    } else if (tool_index == 24) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Raster Eraser · kéo trên bitmap đã chọn để không phá hủy alpha · Esc hủy"
+            : "Raster Eraser · drag across the selected bitmap for non-destructive alpha erasing · Esc cancels";
+    } else if (tool_index == 5 || tool_index == 16 || tool_index == 19) {
+        status_msg_ = tool_index == 5
+            ? (language_ == UILanguage::Vietnamese
+                ? "Knife · Kéo qua path kín có fill · Esc hủy"
+                : "Knife · Drag across a closed filled path · Esc cancels")
+            : tool_index == 16
+                ? (language_ == UILanguage::Vietnamese
+                    ? "Tẩy vector · Kéo quét để xóa vùng trên path kín · Esc hủy"
+                    : "Vector Eraser · Sweep to erase filled path regions · Esc cancels")
+                : (language_ == UILanguage::Vietnamese
+                    ? "Scissors · Nhấp node/đoạn path để tách · X · Esc hủy"
+                    : "Scissors · Click a path node/segment to split · X · Esc cancels");
     }
     if (tool_index == 1) {
         status_msg_ = language_ == UILanguage::Vietnamese
@@ -688,13 +733,6 @@ void NativeWindow::set_active_tool(int tool_index) noexcept {
         }
         const auto& sel = root().vector_controller().selection().selected_ids();
         document::ObjectId target = sel.empty() ? document::kInvalidObjectId : sel.front();
-        if (target != document::kInvalidObjectId) {
-            const auto snap = root().document().current_snapshot();
-            const auto obj = snap ? snap->objects().get(target) : std::nullopt;
-            if (obj && std::holds_alternative<document::TextObject>(*obj)) {
-                (void)workflow().convert_text_to_curves(target);
-            }
-        }
         (void)contour_tool_->activate(target);
     }
     if (gradient_tool) {
@@ -777,7 +815,7 @@ void NativeWindow::set_active_tool(int tool_index) noexcept {
         status_msg_ = language_ == UILanguage::Vietnamese
             ? "Chú thích · Kéo tạo Ô chi tiết hoặc nhấp đặt mũi tên chỉ dẫn / ghi chú"
             : "Annotation · Drag to place Detail View or click to add Leader Note / Plain Note";
-    } else {
+    } else if (tool_index >= 0 && tool_index < 10) {
         const char* vi_tools[] = { "Chọn và di chuyển · V", "Kéo vẽ chữ nhật · Shift vuông · Ctrl từ tâm",
             "Kéo vẽ elip · Shift tròn · Ctrl từ tâm", "Di chuyển khung nhìn · Space/chuột giữa",
             "Văn bản tiếng Việt · A/T", "Dao cắt · K", "Vẽ đoạn thẳng · L",

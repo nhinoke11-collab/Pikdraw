@@ -1,6 +1,13 @@
 # Kế hoạch đại tu nhóm Hiệu ứng và hệ Appearance
 
-Ngày: 25/10/2026. Trạng thái: **kế hoạch dựa trên source hiện tại; chưa triển khai, build hoặc nghiệm thu runtime**. Phạm vi: `core/document`, `core/rendering`, `core/geometry`, `modules/vector`, `modules/raster`, `modules/interop` và `apps/desktop`. Giữ thiết kế Win32 Native Shell, dữ liệu `.pr`, các chức năng/shortcut hiện hữu và local edits của checkout gốc.
+Ngày: 25/10/2026. Trạng thái: **đã triển khai một phần, build và kiểm thử regression có mục tiêu; chưa nghiệm thu đầy đủ runtime/performance**. Phạm vi: `core/document`, `core/rendering`, `core/geometry`, `modules/vector`, `modules/raster`, `modules/interop` và `apps/desktop`. Giữ thiết kế Win32 Native Shell, dữ liệu `.pr`, các chức năng/shortcut hiện hữu và local edits của checkout gốc.
+
+## Tình trạng audit độc lập ngày 25/10/2026
+
+- Appearance model/render path hiện có bảy node effect. Sửa `SetAppearanceCommand` để so sánh đúng tham số của cả bảy variant; trước đó các node ngoài Gaussian Blur/Drop Shadow có thể làm update command truy cập sai variant.
+- Sửa bilinear sampling của effect compositor: tích lũy bằng double và kẹp alpha/RGB theo invariant premultiplied; điều này loại lỗi Feather preview bị từ chối do sai số alpha ở biên.
+- `test_pikdraw_effect_draft`, `test_pikdraw_effect_render_warning` và `test_pikdraw_rendering_effect_compositor` qua trong regression batch 12/12. Build target `pikdraw` Release cũng qua. Chưa chứng minh parity pixel CPU/D2D/WARP cho mọi effect, gamut/profile/spot fidelity, export mọi writer hoặc UI runtime nhìn thấy.
+- Còn thiếu gate kéo chuột input-to-present, coalescing/generation cho preview nặng, p50/p95 latency và peak memory; SVG từ chối fail-closed effect stack không biểu diễn được. Chưa tuyên bố hiệu năng tương tác hay sẵn sàng sản xuất.
 
 ## 1. Mục tiêu và tham khảo
 

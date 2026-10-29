@@ -559,6 +559,9 @@ void authoring_source_roundtrip_and_legacy_migration() {
   const auto migrated =
       NativeFormat::deserialize(legacy.data(), legacy.size(), &error);
   check(migrated && error.empty(), "valid v2 migration failed");
+  check(migrated->page().layers.size() == 1 &&
+            migrated->page().layers.front().id == 1,
+        "v2 migration duplicated the default artwork layer");
   const auto migrated_path =
       std::get<PathObject>(*migrated->get_object(legacy_path.id));
   check(migrated_path.authoring_source &&
@@ -597,6 +600,9 @@ void authoring_source_roundtrip_and_legacy_migration() {
   const auto from_v3 = NativeFormat::deserialize(
       v3_fixture.data(), v3_fixture.size(), &error);
   check(from_v3 && error.empty(), "valid v3 migration failed");
+  check(from_v3->page().layers.size() == 1 &&
+            from_v3->page().layers.front().id == 1,
+        "v3 migration duplicated the default artwork layer");
   const auto migrated_v3_path =
       std::get<PathObject>(*from_v3->get_object(v3_path.id));
   check(migrated_v3_path.appearance.object_opacity == 1.0 &&

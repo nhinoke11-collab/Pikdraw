@@ -44,6 +44,27 @@ void test_budget_reservations_follow_shared_data_lifetime() {
   assert(budget.reserved_bytes() == 0);
 }
 
+void test_adaptive_raster_budgets_share_live_headroom() {
+  using namespace pikdraw::document::resources;
+  constexpr uint64_t GiB = 1024ull * 1024 * 1024;
+  SystemMemoryStatus status{4 * GiB, 3 * GiB, 3 * GiB, 3 * GiB};
+  auto policy = std::make_shared<MemoryBudgetPolicy>([&] { return status; });
+  RasterMemoryBudget previews(0, {}, policy), histograms(0, {}, policy);
+  auto held = previews.try_reserve(768ull * 1024 * 1024);
+  auto analysis = histograms.try_reserve(GiB / 4);
+  assert(held && analysis && !histograms.try_reserve(1));
+  auto pinned = held;
+  held.reset();
+  assert(previews.reserved_bytes() == 768ull * 1024 * 1024);
+  status.available_physical_bytes = GiB / 8;
+  assert(!previews.try_reserve(1) && previews.available_bytes() == 0);
+  pinned.reset();
+  analysis.reset();
+  assert(policy->reserved_bytes() == 0);
+  status = {32 * GiB, 24 * GiB, 24 * GiB, 24 * GiB};
+  assert(previews.capacity_bytes() == 8 * GiB && histograms.try_reserve(2 * GiB));
+}
+
 void test_reservations_use_external_memory_admission_and_resume() {
   bool ram_available = false;
   uint64_t admitted_bytes = 0;
@@ -162,6 +183,7 @@ void test_cache_rejects_invalid_and_over_budget_tiles() {
 }  // namespace
 
 int main() {
+  test_adaptive_raster_budgets_share_live_headroom();
   test_budget_reservations_follow_shared_data_lifetime();
   test_reservations_use_external_memory_admission_and_resume();
   test_budget_refreshes_from_additional_system_headroom();

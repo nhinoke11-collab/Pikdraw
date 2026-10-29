@@ -24,6 +24,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -362,8 +363,14 @@ void run_live_mcp(pikdraw::desktop::NativeWindow& window, std::string_view endpo
     const auto list_envelope = parse_json(list_response.body);
     const auto* result = list_envelope.get("result");
     const auto* tools = result ? result->get("tools") : nullptr;
-    require(tools && tools->array() && tools->array()->size() == 20,
-        "desktop HTTP endpoint advertises the shared 20-tool catalog");
+    require(tools && tools->array() && tools->array()->size() >= 20,
+        "desktop HTTP endpoint advertises the shared semantic tool catalog");
+    std::unordered_set<std::string> advertised_tools;
+    for (const auto& definition : *tools->array()) {
+        const auto* name = definition.get("name");
+        require(name && name->string() && advertised_tools.insert(*name->string()).second,
+            "desktop HTTP endpoint advertises unique named tools");
+    }
 
     int id = 3;
     const auto instances = call_tool(window, endpoint, access_key, id++, "pikdraw.instances", {});

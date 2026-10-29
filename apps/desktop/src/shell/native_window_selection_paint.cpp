@@ -250,7 +250,7 @@ void NativeWindow::paint_selection_overlay(HDC dc) {
     document::ObjectId rect_id;
     if (active_tool_ == 0 && node_tool_ && is_selected_rectangle(&rect_id)) {
         if (node_tool_->target_object() != rect_id && !node_tool_->tool().is_rounding_corners()) {
-            node_tool_->activate(rect_id);
+            node_tool_->tool().set_target_object(rect_id);
         }
         node_tool_->set_corner_type(rect_corner_type_);
         paint_node_canvas_overlay(dc, width_, height_);

@@ -1,5 +1,7 @@
 #include "powerclip_view.hpp"
 #include "pikdraw/rendering/software_rasterizer.hpp"
+#include "pikdraw/document/annotations/annotation_layout.hpp"
+#include "pikdraw/document/annotations/annotation_object.hpp"
 #include "pikdraw/typography/layout/glyph_outline.hpp"
 #include "pikdraw/typography/layout/text_on_path.hpp"
 #include "effects/object_compositor.hpp"
@@ -11,6 +13,7 @@
 #include <cstddef>
 #include <exception>
 #include <limits>
+#include <new>
 #include <span>
 #include <string>
 #include <unordered_set>
@@ -212,7 +215,8 @@ bool render_object(const document::DocumentSnapshot &snapshot,
                    RenderMetric &metric, const color::IccPreview *preview,
                    size_t &rendered_objects, size_t depth = 0,
                    document::ObjectId excluded = 0, ClipScratch* scratch = nullptr,
-                   const IRenderBackend::RasterImageResolver* raster_resolver = nullptr) {
+                   const IRenderBackend::RasterImageResolver* raster_resolver = nullptr,
+                   bool exclude_derived_annotations = false) {
   if (depth > 256)
     return false;
   return std::visit(
@@ -221,6 +225,10 @@ bool render_object(const document::DocumentSnapshot &snapshot,
         if (!object.visible || (excluded && object.id == excluded))
           return true;
         if constexpr (std::is_same_v<T, document::PathObject>) {
+          if (exclude_derived_annotations &&
+              (object.contour_spec.starts_with("annotation:v1") ||
+               object.contour_spec.starts_with("detail_view:v1")))
+            return true;
           auto transformed = object;
           transformed.transform = parent_transform * object.transform;
           size_t gaussian_scratch_capacity_bytes = 0;
@@ -242,7 +250,212 @@ bool render_object(const document::DocumentSnapshot &snapshot,
             ++rendered_objects;
           else if (!effect_failure.empty())
             diagnostic(metric, object.id, true, std::move(effect_failure));
-          return rendered;
+          if (!rendered) return false;
+
+          if (object.contour_spec.starts_with("detail_view:v1")) {
+            const auto detail = document::deserialize_detail_view_spec(object.contour_spec);
+            if (!detail) {
+              diagnostic(metric, object.id, true, "Invalid detail view source metadata");
+              return false;
+            }
+            if (detail->source_page_id != snapshot.active_page_id()) {
+              diagnostic(metric, object.id, true, "Detail view source page is not active");
+              return false;
+            }
+            const auto layout = document::evaluate_detail_view_layout(*detail);
+            const auto inverse_object = transformed.transform.inverted();
+            const auto inverse_source = layout.source_to_frame_transform.inverted();
+            if (!inverse_object || !inverse_source) {
+              diagnostic(metric, object.id, true, "Detail view transform is not invertible");
+              return false;
+            }
+            const geometry::Point2D source_center{
+                detail->source_region.center().x, detail->source_region.center().y};
+            const auto origin = transformed.transform.map_point(source_center);
+            const auto x_axis = transformed.transform.map_point(
+                {source_center.x + 1.0, source_center.y});
+            const auto y_axis = transformed.transform.map_point(
+                {source_center.x, source_center.y + 1.0});
+            const double object_scale = std::sqrt(
+                std::hypot(x_axis.x - origin.x, x_axis.y - origin.y) *
+                std::hypot(y_axis.x - origin.x, y_axis.y - origin.y));
+            const double source_zoom = camera.zoom() * detail->scale_ratio * object_scale;
+            const double width_px = std::ceil(detail->source_region.width * source_zoom);
+            const double height_px = std::ceil(detail->source_region.height * source_zoom);
+            if (!std::isfinite(source_zoom) || source_zoom < Camera2D::kMinZoom ||
+                source_zoom > Camera2D::kMaxZoom || width_px < 1.0 || height_px < 1.0 ||
+                width_px > 16384.0 || height_px > 16384.0) {
+              diagnostic(metric, object.id, true, "Detail view scratch dimensions exceed renderer limits");
+              return false;
+            }
+            const int32_t sw = static_cast<int32_t>(width_px);
+            const int32_t sh = static_cast<int32_t>(height_px);
+            const uint64_t bytes64 = static_cast<uint64_t>(sw) * sh * 4u;
+            if (!scratch || bytes64 > ClipScratch::budget - scratch->live ||
+                bytes64 > std::numeric_limits<size_t>::max()) {
+              diagnostic(metric, object.id, true, "Detail view source scratch budget exceeded");
+              return false;
+            }
+            const auto bytes = static_cast<size_t>(bytes64);
+            scratch->live += bytes;
+            ClipScratchLease source_lease{scratch, bytes};
+            std::vector<uint8_t> source_pixels;
+            try { source_pixels.resize(bytes); }
+            catch (const std::bad_alloc&) {
+              diagnostic(metric, object.id, true, "Detail view source scratch allocation failed");
+              return false;
+            }
+            PixelBufferTarget source_target{source_pixels.data(), sw, sh, sw * 4};
+            source_target.clear(0, 0, 0, 0);
+            const Camera2D source_camera(source_center, source_zoom, sw, sh);
+            const auto source_refs = SpatialCuller::query_visible_refs(
+                snapshot, detail->source_region, source_zoom, 1.0 / source_zoom);
+            for (const auto& source_ref : source_refs) {
+              if (!source_ref.object || source_ref.id == object.id) continue;
+              if (!render_object(snapshot, *source_ref.object,
+                    geometry::Transform2D::identity(), source_camera, source_target,
+                    metric, preview, rendered_objects, depth + 1, object.id,
+                    scratch, raster_resolver, true)) {
+                diagnostic(metric, object.id, true, "Detail view source object failed to render");
+                return false;
+              }
+            }
+
+            const auto frame_bounds = transformed.transform.map_rect(detail->frame_rect);
+            const auto a = camera.world_to_screen({frame_bounds.x, frame_bounds.y});
+            const auto b = camera.world_to_screen({frame_bounds.right(), frame_bounds.bottom()});
+            const int32_t x0 = static_cast<int32_t>(std::clamp(
+                std::floor(static_cast<double>(std::min(a.x, b.x))), 0.0,
+                static_cast<double>(target.width)));
+            const int32_t y0 = static_cast<int32_t>(std::clamp(
+                std::floor(static_cast<double>(std::min(a.y, b.y))), 0.0,
+                static_cast<double>(target.height)));
+            const int32_t x1 = static_cast<int32_t>(std::clamp(
+                std::ceil(static_cast<double>(std::max(a.x, b.x))), 0.0,
+                static_cast<double>(target.width)));
+            const int32_t y1 = static_cast<int32_t>(std::clamp(
+                std::ceil(static_cast<double>(std::max(a.y, b.y))), 0.0,
+                static_cast<double>(target.height)));
+            const double radius = std::min(detail->frame_rect.width,
+                                           detail->frame_rect.height) * 0.5;
+            const auto frame_center = detail->frame_rect.center();
+            for (int32_t y = y0; y < y1; ++y) {
+              for (int32_t x = x0; x < x1; ++x) {
+                const auto local = inverse_object->map_point(
+                    camera.screen_to_world({x + 0.5f, y + 0.5f}));
+                bool inside = false;
+                if (detail->shape == document::DetailViewShape::Circle) {
+                  const double dx = local.x - frame_center.x;
+                  const double dy = local.y - frame_center.y;
+                  inside = dx * dx + dy * dy <= radius * radius;
+                } else {
+                  inside = detail->frame_rect.contains(local);
+                }
+                if (!inside) continue;
+                const auto source_point = inverse_source->map_point(local);
+                const auto sample = source_camera.world_to_screen(source_point);
+                const int32_t sx = static_cast<int32_t>(std::floor(sample.x));
+                const int32_t sy = static_cast<int32_t>(std::floor(sample.y));
+                if (sx < 0 || sx >= sw || sy < 0 || sy >= sh) continue;
+                const auto* pixel = source_target.byte_pixel(sx, sy);
+                if (pixel[3]) target.blend_pixel(x, y,
+                    pixel[source_target.channel_index(0)], pixel[1],
+                    pixel[source_target.channel_index(2)], pixel[3]);
+              }
+            }
+            document::PathObject frame_outline;
+            frame_outline.id = object.id;
+            frame_outline.path = layout.frame_path;
+            frame_outline.transform = transformed.transform;
+            frame_outline.stroke = object.stroke;
+            frame_outline.stroke_width_mm = object.stroke_width_mm;
+            frame_outline.has_stroke = true;
+            frame_outline.has_fill = false;
+            if (!raster::paint(frame_outline, camera, target)) {
+              diagnostic(metric, object.id, true, "Detail view frame outline could not be drawn");
+              return false;
+            }
+          }
+
+          const auto render_display_text = [&](std::string text_value,
+                                               std::string font_family,
+                                               double size_mm,
+                                               geometry::Point2D origin,
+                                               color::ColorValue fill) {
+            if (text_value.empty()) return true;
+#ifdef PIKDRAW_TYPOGRAPHY_REAL_OUTLINES
+            document::TextObject display_text;
+            display_text.id = object.id;
+            display_text.name = object.name + " display text";
+            display_text.text = std::move(text_value);
+            display_text.font = typography::FontIdentity::make_default();
+            display_text.font.family_name = std::move(font_family);
+            display_text.font.size_pt = size_mm * (72.0 / 25.4);
+            display_text.fill = std::move(fill);
+            display_text.position = origin;
+            display_text.transform = object.transform;
+            document::ObjectVariant text_variant{std::move(display_text)};
+            size_t text_object_count = 0;
+            return render_object(snapshot, text_variant, parent_transform, camera,
+                                 target, metric, preview, text_object_count,
+                                 depth + 1, excluded, scratch, raster_resolver,
+                                 exclude_derived_annotations);
+#else
+            diagnostic(metric, object.id, true,
+                       "Annotation text rendering requires the native font outline backend");
+            return false;
+#endif
+          };
+
+          if (object.contour_spec.starts_with("annotation:v1")) {
+            const auto annotation = document::deserialize_annotation_spec(
+                object.contour_spec);
+            if (!annotation) {
+              diagnostic(metric, object.id, true,
+                         "Invalid annotation metadata; annotation text omitted");
+              return false;
+            }
+            const auto layout = document::evaluate_annotation_layout(*annotation);
+            if (!layout.arrow_path.empty()) {
+              document::PathObject arrow;
+              arrow.id = object.id;
+              arrow.path = layout.arrow_path;
+              arrow.transform = parent_transform * object.transform;
+              arrow.stroke = object.stroke;
+              arrow.fill = object.stroke;
+              arrow.stroke_width_mm = object.stroke_width_mm;
+              const bool filled_arrow =
+                  annotation->style.arrow_type == geometry::ArrowType::ClosedFilled ||
+                  annotation->style.arrow_type == geometry::ArrowType::Dot;
+              arrow.has_stroke = !filled_arrow;
+              arrow.has_fill = filled_arrow;
+              if (!raster::paint(arrow, camera, target)) {
+                diagnostic(metric, object.id, true,
+                           "Annotation arrow could not be rasterized");
+                return false;
+              }
+            }
+            if (!render_display_text(layout.formatted_text,
+                                     annotation->style.font_family,
+                                     annotation->style.text_size_mm,
+                                     layout.text_origin,
+                                     object.stroke))
+              return false;
+          } else if (object.contour_spec.starts_with("detail_view:v1")) {
+            const auto detail_view = document::deserialize_detail_view_spec(
+                object.contour_spec);
+            if (!detail_view) {
+              diagnostic(metric, object.id, true,
+                         "Invalid detail view metadata; label omitted");
+              return false;
+            }
+            const auto layout = document::evaluate_detail_view_layout(*detail_view);
+            if (!render_display_text(layout.formatted_label, "Segoe UI",
+                                     detail_view->text_size_mm,
+                                     layout.label_origin, object.stroke))
+              return false;
+          }
+          return true;
         } else if constexpr (std::is_same_v<T, document::TextObject>) {
       // Enabled only when a genuine platform outline backend is compiled in.
 #ifdef PIKDRAW_TYPOGRAPHY_REAL_OUTLINES
@@ -372,7 +585,7 @@ bool render_object(const document::DocumentSnapshot &snapshot,
                   const auto* child=snapshot.objects().lookup_ref(child_id);
                   if(!child||!render_object(snapshot,*child,child_transform,local_camera,intermediate_target,
                       metric,preview,rendered_objects,depth+1,excluded,scratch,
-                      raster_resolver))return false;
+                      raster_resolver,exclude_derived_annotations))return false;
                 }
                 for(int32_t y=0;y<height;++y)for(int32_t x=0;x<width;++x) {
                   const uint32_t px=intermediate[size_t(y)*width+x];const auto alpha=uint8_t(px>>24);
@@ -410,7 +623,7 @@ bool render_object(const document::DocumentSnapshot &snapshot,
             if (!child || !render_object(snapshot, *child, child_transform,
                                          camera, target, metric, preview,
                                          rendered_objects, depth + 1, excluded, scratch,
-                                         raster_resolver))
+                                         raster_resolver, exclude_derived_annotations))
               return false;
           }
           ++rendered_objects;

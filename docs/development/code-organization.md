@@ -6,7 +6,7 @@ Tài liệu này quy định cấu trúc cây mã nguồn và **ngưỡng độ 
 
 - `apps/desktop`: C++20 / Win32 Native Shell kết hợp Direct2D 1.1 / D3D11 hardware hoặc WARP qua `ViewportRenderer`; staging/readback về BGRA rồi GDI trình bày. Phần chính nằm trong `src/actions`, `development`, `presenters`, `runtime`, `shell`, `tools` và `workflows`. Qt 6/Skia là định hướng tương lai.
 - `core`: `document`, `geometry`, `rendering`, `color` và `typography` có source; `localization` là đặc tả.
-- `modules/vector`, `modules/interop`, `modules/automation` có implementation. `raster` đang triển khai asset store/tile/edit graph; `production` và `scene3d` là module kế hoạch.
+- `modules/vector`, `modules/interop`, `modules/automation` có implementation. `raster` và `production` đang triển khai (`in_progress`); `scene3d` là module kế hoạch.
 - `platform/workers`: Launcher, IPC và kiểm tra proposal của worker.
 - Test C++ nằm trong thư mục `tests/` của từng module. `tests/architecture`, `tests/harness`, `tests/fixtures` và `tests/integration` chứa kiểm tra và dữ liệu mẫu cấp repo.
 

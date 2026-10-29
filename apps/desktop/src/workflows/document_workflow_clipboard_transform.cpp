@@ -254,6 +254,7 @@ bool DocumentWorkflow::copy_selected(void* hwnd) {
     clip_layer.visible = true;
     clip_layer.locked = false;
     clip_layer.object_ids = root_ids;
+    clip_layer.id = 1;
 
     document::PersistentObjectMap clip_objects;
     std::string text_accumulator;

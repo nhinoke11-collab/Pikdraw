@@ -26,6 +26,14 @@ from build_state import (BuildLock, ID, TERMINAL, alive, atomic_json, digest_fil
                          safe_path, source_digest)
 
 
+def configure_console_streams() -> None:
+    """Prevent unrepresentable native-tool output from breaking result reporting."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure:
+            reconfigure(errors="replace")
+
+
 def command(tool, *args) -> list[str]:
     prefix = list(tool) if isinstance(tool, list) else [str(tool)]
     return prefix + [str(a) for a in args]
@@ -38,6 +46,34 @@ def cache_configuration(build: Path) -> str:
         if match:
             return match[1]
     return ""
+
+
+def configured_tools(tools: dict, build: Path) -> dict:
+    """Use exactly the CMake/Ninja pair owning this tree, including patched Ninja builds."""
+    result = dict(tools)
+    cache = build / "CMakeCache.txt"
+    if cache.is_file():
+        text = cache.read_text(encoding="utf-8-sig")
+        for key, variable in (("CMake", "CMAKE_COMMAND"), ("Ninja", "CMAKE_MAKE_PROGRAM")):
+            match = re.search(r"^" + variable + r":[^=]*=(.+)$", text, re.M)
+            if match and Path(match[1]).is_file():
+                result[key] = match[1]
+    return result
+
+
+def missing_pch_cache(root: Path, build: Path) -> list[str]:
+    """Report lost *previously built* PCHs; never count targets not yet built as lost."""
+    path = build / ".ninja_log"
+    if not path.is_file():
+        return []
+    recorded = set()
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        fields = line.split("\t")
+        if len(fields) >= 5 and Path(fields[3]).suffix.lower() in {".pch", ".gch"}:
+            output = safe_path(root, build / fields[3])
+            if not output.is_file():
+                recorded.add(fields[3])
+    return sorted(recorded)
 
 
 def tool_digest(tools: dict, build: Path) -> str:
@@ -201,7 +237,8 @@ class Coordinator:
             summaries.append({k: e[k] for k in ("id", "state", "phase", "configuration", "submitted",
                               "started", "finished", "targets", "tests", "failed_tests", "shared_from",
                               "output", "error", "timings", "source", "source_after", "worker_pid") if k in e})
-            for key in ("jobs", "job_policy", "configured_before", "configuration_changed"):
+            for key in ("jobs", "job_policy", "configured_before", "configuration_changed",
+                        "missing_pch_count", "missing_pch_examples"):
                 if key in e:
                     summaries[-1][key] = e[key]
             progress = log_progress(self.root, e.get("output", ""))
@@ -254,7 +291,7 @@ class Coordinator:
                             text = stream.read()
                             offsets[str(log)] = stream.tell()
                             if text:
-                                print(text.decode("utf-8", errors="replace"), end="", flush=True)
+                                print(text.decode("utf-8", errors="replace").replace("\r\n", "\n"), end="", flush=True)
                 except (FileNotFoundError, PermissionError):
                     pass  # The owner can remove successful output while a waiter is polling.
             if e["state"] in TERMINAL:
@@ -340,6 +377,7 @@ class Coordinator:
                 self.save(entry)
                 return 0
             r = entry["request"]
+            entry["tools"] = configured_tools(entry["tools"], self.build)
             entry.update(state="running", phase="input-check", started=time.time(), timings={})
             self.save(entry)
             config = cache_configuration(self.build)
@@ -418,6 +456,13 @@ class Coordinator:
                 log.write("[plan] Configuration switch changes compiler flags; dependent objects may all rebuild. Keep Auto for regular iteration.\n")
         if not tools.get("CMake"):
             raise RuntimeError("CMake was not found")
+        if not r["tests_only"] and not r["clean"]:
+            missing = missing_pch_cache(self.root, self.build)
+            if missing:
+                entry.update(missing_pch_count=len(missing), missing_pch_examples=missing[:8])
+                with (run / "build.log").open("a", encoding="utf-8") as log:
+                    log.write(f"[cache] {len(missing)} previously built PCH files are missing. Their consumers must rebuild even when source/configuration is unchanged.\n")
+                    log.write("[cache] Preserve PCH, objects, libraries, test executables and .ninja_* during cleanup.\n")
         cache = self.build / "CMakeCache.txt"
         if not r["tests_only"]:
             setup = self.root / "tooling/native/setup-clipper2.ps1"
@@ -520,6 +565,10 @@ class Coordinator:
 
 
 def main() -> int:
+    # CTest/native tools can emit replacement characters when their output
+    # crosses a legacy Windows code page. Keep reporting the actual build
+    # result instead of turning a successful request into a console error.
+    configure_console_streams()
     parser = argparse.ArgumentParser()
     parser.add_argument("--payload")
     parser.add_argument("--worker-root")
@@ -541,6 +590,7 @@ def main() -> int:
     if payload.get("retry_failed"):
         request, tools = coordinator.retry(payload["retry_failed"])
         request.update(payload.get("retry_overrides", {}))
+    tools = configured_tools(tools, coordinator.build)
     entry = coordinator.enqueue(request, tools)
     print(f"Build request: {entry['id']}", flush=True)
     coordinator.start(entry)

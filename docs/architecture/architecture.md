@@ -29,14 +29,14 @@ Qt/Skia, GPU present trực tiếp, render tiles và plugin host chưa là runti
 | Nhóm | Hiện tại | Hướng mở rộng |
 | --- | --- | --- |
 | core/geometry, color, typography | Hình học, units, màu/profile, font/shaping | Không phụ thuộc desktop hoặc parser bên ngoài |
-| core/document | Commands, snapshots/history, schema v23/v24, chunked v24/v25, streamed atomic save/recovery | Lazy load, shared-asset lifecycle, history budget |
+| core/document | Commands, snapshots/history, schema v23-v25, chunked v24-v26, streamed atomic save/recovery | Lazy load, shared-asset lifecycle, history budget |
 | core/rendering | D2D hardware/WARP, CPU oracle, BVH, geometry/image cache | Frame scheduling, direct present, region/tile/LOD |
 | modules/vector | Tools/editable effects/precision | Dùng chung model/commands, giữ source curves |
 | modules/raster | Asset store trên đĩa, tile cache/edit graph, source providers cho import và .pr | Decode/render tile, proxy preview và lazy asset integration |
 | modules/interop + platform/workers | Adapter và proposal import theo scope | Parser riêng theo format, validate trước atomic commit |
 | modules/automation + apps/mcp-server/com-server | Semantic queries, batch, revision, quyền, receipts, projection/cursor và bounded object delta | Nested query, subscriptions, job handles có gate |
 | apps/desktop | Win32 input, UI, presenter/workflow và owner queue | Lazy workspace, startup nhỏ, không chứa thuật toán domain |
-| modules/production | Planned | Nesting, vật liệu, machine profile, toolpath/postprocessor |
+| modules/production | in_progress | Test sheet, TAC, CGATS ΔE00, .pdmr, WCS print; nesting/CNC planned |
 | modules/scene3d | Planned | Scene/mesh/camera riêng, nguồn 2D liên kết bằng IDs/revision |
 | packages/plugin-sdk | Planned | Schema/RPC có version; native extension cần ABI review |
 
@@ -64,7 +64,7 @@ khởi tạo khi workspace/job cần dùng.
 
 File thiết kế chỉ dùng .pr. Payload schema v23 dùng container v23 cho payload dưới 1 MiB,
 hoặc container v24 chia chunk 1 MiB với STORE/DEFLATE và checksum; schema v24 raster tables dùng
-container v25; reader nhận v2–v25. Atomic save stream payload vào file tạm; load vẫn giữ container
+container v25; schema v25 layer hierarchy dùng container v26; reader nhận v2–v26. Atomic save stream payload vào file tạm; load vẫn giữ container
 và payload giải nén trong memory. Không còn trần tổng 256 MiB
 hoặc quota cứng 100.000 object/1.000.000 path element. Wire widths và memory quota còn áp dụng.
 ImageObject vẫn ghi RGBA preview và original encoded bytes; descriptor nguồn trên đĩa

@@ -1,5 +1,7 @@
 #include "pikdraw/document/commands/path_cut_commands.hpp"
+#include "pikdraw/document/commands/node_commands.hpp"
 #include "pikdraw/document/document.hpp"
+#include "pikdraw/document/model/path_adapter.hpp"
 #include <iostream>
 #include <stdexcept>
 
@@ -116,10 +118,61 @@ void test_replacement_rejects_collision_with_unrelated_object() {
     require(doc.current_snapshot()->objects().get(unrelated_id).has_value(), "unrelated object is not overwritten");
 }
 
+void test_smart_trim_removes_intersection_interval_atomically() {
+    Document doc("doc-smart-trim-command");
+    PathObject outline;
+    outline.id = generate_object_id();
+    outline.name = "Outline";
+    outline.path.move_to(0.0, 0.0);
+    outline.path.line_to(100.0, 0.0);
+    outline.path.line_to(100.0, 100.0);
+    outline.path.line_to(0.0, 100.0);
+    outline.path.close();
+    outline.has_fill = false;
+    outline.has_stroke = true;
+    const auto editable = editable_path_from_path2d(outline.path, nullptr);
+    require(editable.has_value(), "build editable smart trim fixture");
+    outline.set_authoring_source(*editable);
+    const auto id = outline.id;
+    const auto subpath_id = editable->subpaths.front().id;
+    const auto segment_id = editable->subpaths.front().segments.front().id;
+    require(doc.execute_command(std::make_unique<AddObjectCommand>(outline, 0)).success,
+            "add smart trim fixture");
+
+    const auto before = doc.current_snapshot();
+    const auto result = doc.execute_command(std::make_unique<SmartTrimPathCommand>(
+        id, subpath_id, SmartTrimBoundary{segment_id, 0.25},
+        SmartTrimBoundary{segment_id, 0.75}, false));
+    require(result.success, "smart trim one interval in a closed outline");
+    const auto after = doc.current_snapshot();
+    const auto trimmed = after->objects().get(id);
+    require(trimmed && std::holds_alternative<PathObject>(*trimmed),
+            "smart trim keeps the original object identity");
+    const auto& trimmed_path = std::get<PathObject>(*trimmed);
+    require(trimmed_path.authoring_source &&
+                !trimmed_path.authoring_source->subpaths.front().closed &&
+                trimmed_path.authoring_source->subpaths.front().segments.size() == 5 &&
+                trimmed_path.authoring_source->subpaths.front().nodes.size() == 6,
+            "smart trim opens the loop and preserves the untrimmed curve segments");
+    require(after->revision() == before->revision() + 1,
+            "smart trim commits one document revision");
+    require(doc.undo(), "undo smart trim");
+    const auto undone = std::get<PathObject>(*doc.current_snapshot()->objects().get(id));
+    require(undone.authoring_source->subpaths.front().closed &&
+                undone.authoring_source->subpaths.front().segments.size() == 4,
+            "Undo restores the original closed outline");
+    require(doc.redo(), "redo smart trim");
+    const auto redone = std::get<PathObject>(*doc.current_snapshot()->objects().get(id));
+    require(!redone.authoring_source->subpaths.front().closed &&
+                redone.authoring_source->subpaths.front().segments.size() == 5,
+            "Redo restores the trimmed open outline");
+}
+
 int main() {
     try {
         test_replace_object_with_pieces_and_undo();
         test_replacement_rejects_collision_with_unrelated_object();
+        test_smart_trim_removes_intersection_interval_atomically();
         std::cout << "All path cut command tests passed.\n";
         return 0;
     } catch (const std::exception& error) {

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <type_traits>
+#include <unordered_set>
 #include <utility>
 
 namespace pikdraw::document {
@@ -142,6 +143,15 @@ bool valid_node(const RasterEditNode& node) noexcept {
           params.hardness_percent >= 0.0 && params.hardness_percent <= 100.0 &&
           std::isfinite(params.opacity_percent) &&
           params.opacity_percent >= 0.0 && params.opacity_percent <= 100.0;
+    } else if constexpr (std::is_same_v<T, RasterEraserParams>) {
+      return !params.points.empty() && params.points.size() <= RasterEraserParams::kMaxPoints &&
+          std::isfinite(params.diameter_px) && params.diameter_px > 0.0 &&
+          params.diameter_px <= 4096.0 &&
+          std::all_of(params.points.begin(), params.points.end(), [](const auto& point) {
+            return std::isfinite(point.x) && std::isfinite(point.y) &&
+                point.x >= 0.0 && point.x <= 1.0 &&
+                point.y >= 0.0 && point.y <= 1.0;
+          });
     } else {
       return true;
     }
@@ -206,6 +216,9 @@ bool same_node(const RasterEditNode& left,
           params.green_magenta_percent == other->green_magenta_percent &&
           params.blue_yellow_percent == other->blue_yellow_percent &&
           params.preserve_luminosity == other->preserve_luminosity;
+    else if constexpr (std::is_same_v<T, RasterEraserParams>)
+      return params.diameter_px == other->diameter_px &&
+          params.points == other->points;
     else if constexpr (std::is_same_v<T, RasterChannelMixerParams>)
       return params.coefficients == other->coefficients;
     else
@@ -265,6 +278,69 @@ CommandResult SetRasterEditNodeCommand::execute(Document& doc) {
 CommandResult SetRasterEditNodeCommand::undo(Document& doc) {
   if (!executed_ || !previous_graph_)
     return CommandResult::fail("Raster edit command has no state to restore");
+  const auto* value = doc.objects().lookup_ref(image_id_);
+  if (!value || !std::holds_alternative<ImageObject>(*value))
+    return CommandResult::fail("Raster image object was not found for Undo");
+  auto updated = std::get<ImageObject>(*value);
+  updated.edit_graph = *previous_graph_;
+  auto objects = doc.objects().set(image_id_, ObjectVariant{std::move(updated)});
+  doc.apply_mutation(doc.page(), std::move(objects));
+  executed_ = false;
+  return CommandResult::ok();
+}
+
+SetRasterEditGraphCommand::SetRasterEditGraphCommand(
+    ObjectId image_id, RasterEditGraph graph,
+    std::optional<uint64_t> expected_epoch,
+    std::optional<uint64_t> expected_revision)
+    : image_id_(image_id), graph_(std::move(graph)),
+      expected_epoch_(expected_epoch), expected_revision_(expected_revision) {}
+
+CommandResult SetRasterEditGraphCommand::execute(Document& doc) {
+  if ((expected_epoch_ && doc.epoch() != *expected_epoch_) ||
+      (expected_revision_ && doc.revision() != *expected_revision_))
+    return CommandResult::fail("Document changed before the raster graph update");
+  if (graph_.nodes.size() > RasterEditGraph::kMaxNodes)
+    return CommandResult::fail("Raster edit graph is too large");
+  std::unordered_set<uint64_t> ids;
+  for (const auto& node : graph_.nodes) {
+    if (!valid_node(node) || !ids.insert(node.id.value).second)
+      return CommandResult::fail("Raster edit graph contains an invalid or duplicate node");
+  }
+  const auto* value = doc.objects().lookup_ref(image_id_);
+  if (!value || !std::holds_alternative<ImageObject>(*value))
+    return CommandResult::fail("Raster image object was not found");
+  const auto& current = std::get<ImageObject>(*value);
+  if (current.locked)
+    return CommandResult::fail("Raster image is locked");
+  if (!current.asset_source && current.source.original_data().empty() &&
+      current.rgba16le_pixels().empty())
+    return CommandResult::fail(
+        "Non-destructive edits require a preserved encoded or high-precision raster source");
+  bool identical = graph_.nodes.size() == current.edit_graph.nodes.size();
+  if (identical) {
+    for (size_t index = 0; index < graph_.nodes.size(); ++index) {
+      if (!same_node(graph_.nodes[index], current.edit_graph.nodes[index])) {
+        identical = false;
+        break;
+      }
+    }
+  }
+  if (identical) return CommandResult::no_change();
+
+  graph_.schema_version = RasterEditGraph::kSchemaVersion;
+  auto updated = current;
+  previous_graph_ = current.edit_graph;
+  updated.edit_graph = graph_;
+  auto objects = doc.objects().set(image_id_, ObjectVariant{std::move(updated)});
+  doc.apply_mutation(doc.page(), std::move(objects));
+  executed_ = true;
+  return CommandResult::ok();
+}
+
+CommandResult SetRasterEditGraphCommand::undo(Document& doc) {
+  if (!executed_ || !previous_graph_)
+    return CommandResult::fail("Raster graph command has no state to restore");
   const auto* value = doc.objects().lookup_ref(image_id_);
   if (!value || !std::holds_alternative<ImageObject>(*value))
     return CommandResult::fail("Raster image object was not found for Undo");

@@ -30,7 +30,8 @@ Chunk COW, bounded history và cleanup trên background là hướng tối ưu c
 ## IO và storage hiện tại
 
 Payload schema v23 dùng container v23 khi dưới 1 MiB, hoặc chunked STORE/DEFLATE v24;
-schema v24 có raster source/sample tables trong container v25; reader nhận v2–v25. File thiết kế
+schema v24 có raster source/sample tables trong container v25; schema v25 có layer hierarchy
+trong container v26; reader nhận v2–v26. File thiết kế
 chỉ dùng suffix .pr. Atomic save stream payload theo chunk 1 MiB vào file tạm và patch metadata/CRC;
 `NativeFormat::serialize()` vẫn trả vector theo hợp đồng. Load vẫn đọc toàn container và dựng payload
 giải nén trong memory. Không còn trần file 256 MiB hay quota cứng 100.000 object/1.000.000 path

@@ -99,6 +99,16 @@ void draw_level_triangle(HDC dc, int cx, int top_y, COLORREF fill_col, COLORREF 
     DeleteObject(br);
     DeleteObject(pen);
 }
+
+double levels_gamma_position(double gamma) {
+    return std::clamp(0.5 - 0.4 * std::log10(std::clamp(gamma, 0.1, 10.0)),
+                      0.1, 0.9);
+}
+
+double levels_gamma_from_position(double position) {
+    return std::clamp(std::pow(10.0,
+        (0.5 - std::clamp(position, 0.1, 0.9)) * 2.5), 0.1, 10.0);
+}
 #endif
 
 } // namespace
@@ -192,22 +202,52 @@ bool NativeWindow::auto_levels_selected_bitmap() {
 #ifdef _WIN32
     const auto& selected = root().vector_controller().selection().selected_ids();
     const auto snapshot = root().document().current_snapshot();
-    if (selected.size() != 1 || !snapshot || !raster_histogram_service_) return false;
+    if (selected.size() != 1 || !snapshot ||
+        !raster_source_histogram_service_) return false;
     const auto* object = snapshot->objects().lookup_ref(selected.front());
     const auto* image = object ? std::get_if<document::ImageObject>(object) : nullptr;
     if (!image) return false;
 
-    const auto hist = raster_histogram_service_->find(*snapshot, selected.front());
-    double black_in = 0.04;
-    double white_in = 0.96;
-    if (hist && hist->channels[0].covered_pixels > 0) {
-        const uint64_t low_target = std::max<uint64_t>(1, hist->channels[0].covered_pixels / 100);
-        const uint64_t high_target = hist->channels[0].covered_pixels - low_target;
+    const auto hist = raster_source_histogram_service_->find(
+        *snapshot, selected.front(), raster::RasterHistogramMode::Source);
+    if (!hist || !hist->succeeded() ||
+        hist->channels[0].coverage_units == 0) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đang chờ histogram nguồn; chưa áp dụng Auto Levels"
+            : "Waiting for source histogram; Auto Levels was not applied";
+        return false;
+    }
+    std::array<uint64_t, 256> auto_bins{};
+    uint64_t coverage_units = 0;
+    if (raster_levels_active_channel_ ==
+        document::RasterToneChannel::Composite) {
+        // Composite auto range pools the three encoded RGB channel samples.
+        for (size_t channel = 0; channel < 3; ++channel) {
+            coverage_units += hist->channels[channel].coverage_units;
+            for (size_t bin = 0; bin < auto_bins.size(); ++bin)
+                auto_bins[bin] += hist->channels[channel].display_bins[bin];
+        }
+    } else {
+        const size_t index = raster_levels_active_channel_ ==
+                document::RasterToneChannel::Red ? 0u :
+            raster_levels_active_channel_ ==
+                document::RasterToneChannel::Green ? 1u : 2u;
+        const auto& channel = hist->channels[index];
+        coverage_units = channel.coverage_units;
+        auto_bins = channel.display_bins;
+    }
+    if (coverage_units == 0) return false;
+    const uint64_t low_target = std::max<uint64_t>(1, coverage_units / 100);
+    const uint64_t high_target = coverage_units - low_target;
+    if (high_target == 0) return false;
+    double black_in = 0.0;
+    double white_in = 1.0;
+    {
         uint64_t accum = 0;
         int low_bin = 0;
         int high_bin = 255;
         for (int b = 0; b < 256; ++b) {
-            accum += hist->channels[0].display_bins[static_cast<size_t>(b)];
+            accum += auto_bins[static_cast<size_t>(b)];
             if (accum >= low_target) {
                 low_bin = b;
                 break;
@@ -215,20 +255,46 @@ bool NativeWindow::auto_levels_selected_bitmap() {
         }
         accum = 0;
         for (int b = 0; b < 256; ++b) {
-            accum += hist->channels[0].display_bins[static_cast<size_t>(b)];
+            accum += auto_bins[static_cast<size_t>(b)];
             if (accum >= high_target) {
                 high_bin = b;
                 break;
             }
         }
-        if (high_bin > low_bin + 8) {
-            black_in = std::clamp(static_cast<double>(low_bin) / 255.0, 0.0, 0.85);
-            white_in = std::clamp(static_cast<double>(high_bin) / 255.0, black_in + 0.05, 1.0);
+        if (high_bin <= low_bin + 8) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Histogram không đủ dải; chưa áp dụng Auto Levels"
+                : "Histogram range is too narrow; Auto Levels was not applied";
+            return false;
         }
+        black_in = std::clamp(static_cast<double>(low_bin) / 255.0, 0.0, 0.85);
+        white_in = std::clamp(static_cast<double>(high_bin) / 255.0, black_in + 0.05, 1.0);
     }
-    (void)set_selected_bitmap_levels_value(NumericFieldId::RasterLevelsBlackIn, black_in * 100.0);
-    (void)set_selected_bitmap_levels_value(NumericFieldId::RasterLevelsWhiteIn, white_in * 100.0);
-    (void)set_selected_bitmap_levels_value(NumericFieldId::RasterLevelsGamma, 1.0);
+    auto parameters = selected_bitmap_levels();
+    parameters.black_in = black_in;
+    parameters.white_in = white_in;
+    parameters.gamma = 1.0;
+    const auto found = std::find_if(image->edit_graph.nodes.rbegin(),
+        image->edit_graph.nodes.rend(), [this](const auto& node) {
+            const auto* levels = std::get_if<document::RasterLevelsParams>(
+                &node.parameters);
+            return levels && levels->channel == raster_levels_active_channel_;
+        });
+    document::RasterEditNode updated;
+    if (found != image->edit_graph.nodes.rend()) {
+        updated = *found;
+        updated.parameters = parameters;
+    } else {
+        uint64_t maximum_id = 0;
+        for (const auto& node : image->edit_graph.nodes)
+            maximum_id = (std::max)(maximum_id, node.id.value);
+        if (maximum_id == std::numeric_limits<uint64_t>::max()) return false;
+        updated = document::RasterEditNode{{maximum_id + 1}, true, parameters};
+    }
+    if (!root().document().execute_command(
+            std::make_unique<document::SetRasterEditNodeCommand>(
+                selected.front(), std::move(updated))).success)
+        return false;
     status_msg_ = (language_ == UILanguage::Vietnamese)
         ? "Đã tự động tối ưu điểm Đen/Trắng (Auto Levels) · Ctrl+Z hoàn tác"
         : "Applied Auto Levels optimization · Ctrl+Z to undo";
@@ -241,59 +307,61 @@ bool NativeWindow::auto_levels_selected_bitmap() {
 
 bool NativeWindow::reset_selected_bitmap_tab_adjustments(int tab) {
     if (!can_edit_selected_bitmap(true)) return false;
-    bool ok = false;
-    switch (tab) {
-    case 1:
-        ok |= set_selected_bitmap_exposure_ev(0.0);
-        ok |= set_selected_bitmap_light_value(NumericFieldId::RasterLightContrast, 0.0);
-        ok |= set_selected_bitmap_light_value(NumericFieldId::RasterLightHighlights, 0.0);
-        ok |= set_selected_bitmap_light_value(NumericFieldId::RasterLightShadows, 0.0);
-        ok |= set_selected_bitmap_light_value(NumericFieldId::RasterLightWhites, 0.0);
-        ok |= set_selected_bitmap_light_value(NumericFieldId::RasterLightBlacks, 0.0);
-        break;
-    case 2:
-        if (raster_hsl_active_channel_ == 0) {
-            ok |= set_selected_bitmap_color_adjustment(NumericFieldId::RasterHslHue, 0.0);
-            ok |= set_selected_bitmap_color_adjustment(NumericFieldId::RasterHslSaturation, 0.0);
-            ok |= set_selected_bitmap_color_adjustment(NumericFieldId::RasterHslLightness, 0.0);
-            ok |= set_selected_bitmap_color_adjustment(NumericFieldId::RasterVibranceAmount, 0.0);
-        } else {
-            const auto range = static_cast<document::RasterHueRange>(raster_hsl_active_channel_ - 1);
-            ok |= set_selected_bitmap_selective_hsl_value(range, 0, 0.0);
-            ok |= set_selected_bitmap_selective_hsl_value(range, 1, 0.0);
-            ok |= set_selected_bitmap_selective_hsl_value(range, 2, 0.0);
+    const auto& selected = root().vector_controller().selection().selected_ids();
+    const auto snapshot = root().document().current_snapshot();
+    if (selected.size() != 1 || !snapshot) return false;
+    const auto* object = snapshot->objects().lookup_ref(selected.front());
+    const auto* image = object ? std::get_if<document::ImageObject>(object) : nullptr;
+    if (!image) return false;
+    auto graph = image->edit_graph;
+    const auto should_reset = [this, tab](const document::RasterEditNode& node) {
+        switch (tab) {
+        case 1:
+            return std::holds_alternative<document::RasterExposureParams>(node.parameters) ||
+                std::holds_alternative<document::RasterLightParams>(node.parameters);
+        case 2:
+            if (std::holds_alternative<document::RasterWhiteBalanceParams>(node.parameters))
+                return true;
+            if (raster_hsl_active_channel_ == 0)
+                return std::holds_alternative<document::RasterHslParams>(node.parameters) ||
+                    std::holds_alternative<document::RasterVibranceParams>(node.parameters);
+            if (const auto* selective = std::get_if<document::RasterSelectiveHslParams>(
+                    &node.parameters))
+                return static_cast<uint8_t>(selective->range) ==
+                    raster_hsl_active_channel_ - 1;
+            return false;
+        case 3:
+            if (const auto* levels = std::get_if<document::RasterLevelsParams>(
+                    &node.parameters))
+                return levels->channel == raster_levels_active_channel_;
+            return false;
+        case 4:
+            if (const auto* balance = std::get_if<document::RasterColorBalanceParams>(
+                    &node.parameters))
+                return balance->range == raster_color_balance_active_range_;
+            return false;
+        case 5:
+            if (const auto* curves = std::get_if<document::RasterCurvesParams>(
+                    &node.parameters))
+                return curves->channel == raster_curves_active_channel_;
+            return false;
+        default:
+            return false;
         }
-        ok |= set_selected_bitmap_white_balance_value(NumericFieldId::RasterWhiteBalanceTemperature, 0.0);
-        ok |= set_selected_bitmap_white_balance_value(NumericFieldId::RasterWhiteBalanceTint, 0.0);
-        break;
-    case 3:
-        ok |= set_selected_bitmap_levels_value(NumericFieldId::RasterLevelsBlackIn, 0.0);
-        ok |= set_selected_bitmap_levels_value(NumericFieldId::RasterLevelsWhiteIn, 100.0);
-        ok |= set_selected_bitmap_levels_value(NumericFieldId::RasterLevelsGamma, 1.0);
-        ok |= set_selected_bitmap_levels_value(NumericFieldId::RasterLevelsBlackOut, 0.0);
-        ok |= set_selected_bitmap_levels_value(NumericFieldId::RasterLevelsWhiteOut, 100.0);
-        break;
-    case 4:
-        ok |= set_selected_bitmap_color_balance_value(NumericFieldId::RasterColorBalanceRedCyan, 0.0);
-        ok |= set_selected_bitmap_color_balance_value(NumericFieldId::RasterColorBalanceGreenMagenta, 0.0);
-        ok |= set_selected_bitmap_color_balance_value(NumericFieldId::RasterColorBalanceBlueYellow, 0.0);
-        break;
-    case 5: {
-        auto curves = selected_bitmap_curves();
-        curves.output_points = {0.0, 0.25, 0.50, 0.75, 1.0};
-        ok |= set_selected_bitmap_curves(curves);
-        break;
-    }
-    default:
-        break;
-    }
+    };
+    std::erase_if(graph.nodes, should_reset);
+    const auto result = root().document().execute_command(
+        std::make_unique<document::SetRasterEditGraphCommand>(
+            selected.front(), std::move(graph), snapshot->epoch(),
+            snapshot->revision()));
+    if (!result.success) return false;
     status_msg_ = (language_ == UILanguage::Vietnamese)
-        ? "Đã đặt lại thông số bảng chỉnh ảnh về mặc định · Ctrl+Z hoàn tác"
-        : "Reset adjustment parameters to default · Ctrl+Z to undo";
+        ? "Đã đặt lại mục chỉnh ảnh đang chọn bằng một bước · Ctrl+Z hoàn tác"
+        : "Reset the selected adjustment scope in one step · Ctrl+Z undoes";
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 #endif
-    return ok;
+    return true;
 }
 
 #ifdef _WIN32
@@ -401,9 +469,11 @@ void NativeWindow::paint_raster_inspector_dock(
     DeleteObject(graph_pen);
 
     const auto histogram = raster_histogram_service_
-        ? raster_histogram_service_->find(*snapshot, selection.front())
+        ? raster_histogram_service_->find(
+              *snapshot, selection.front(), raster::RasterHistogramMode::Edited)
         : nullptr;
-    if (histogram && histogram->channels[0].covered_pixels > 0) {
+    if (histogram && histogram->succeeded() &&
+        histogram->channels[0].coverage_units > 0) {
         uint64_t peak = 1;
         const std::array<const std::array<uint64_t, 256>*, 4> bins = {
             &histogram->channels[0].display_bins, &histogram->channels[1].display_bins,
@@ -448,7 +518,7 @@ void NativeWindow::paint_raster_inspector_dock(
         const int plot_w = std::max(1L, (graph_rc.right - 4) - plot_l);
         const int bx = plot_l + static_cast<int>(std::lround(lv.black_in * plot_w));
         const int wx = plot_l + static_cast<int>(std::lround(lv.white_in * plot_w));
-        const double gamma_norm = std::clamp(1.0 - std::log10(std::clamp(lv.gamma, 0.1, 10.0)) * 0.5, 0.1, 0.9);
+        const double gamma_norm = levels_gamma_position(lv.gamma);
         const int gx = bx + static_cast<int>(std::lround((wx - bx) * gamma_norm));
         draw_level_triangle(mem_dc, bx, graph_rc.bottom - 6, RGB(15, 23, 42), col_teal);
         draw_level_triangle(mem_dc, gx, graph_rc.bottom - 6, RGB(148, 163, 184), col_border);
@@ -461,7 +531,8 @@ void NativeWindow::paint_raster_inspector_dock(
         ? histogram->channels[0].covered_pixels : 0ULL;
     if (luma_covered > 0) {
         const auto pct = [&](uint64_t count) {
-            return (100.0 * static_cast<double>(count)) / static_cast<double>(luma_covered);
+        return (100.0 * static_cast<double>(count)) /
+            static_cast<double>(histogram->channels[0].coverage_units);
         };
         std::wostringstream stream;
         stream << std::fixed << std::setprecision(1)
@@ -631,16 +702,25 @@ void NativeWindow::paint_raster_inspector_dock(
         }
     } else if (raster_adjustment_inspector_tab_ == 2) {
         const auto hsl = selected_bitmap_hsl();
+        auto field_hsl = hsl;
+        if (raster_hsl_active_channel_ > 0) {
+            const auto range = static_cast<document::RasterHueRange>(
+                raster_hsl_active_channel_ - 1);
+            const auto selective = selected_bitmap_selective_hsl(range);
+            field_hsl.hue_degrees = selective.hue_degrees;
+            field_hsl.saturation_percent = selective.saturation_percent;
+            field_hsl.lightness_percent = selective.lightness_percent;
+        }
         const auto wb = selected_bitmap_white_balance();
         const int color_top = histogram_top + raster_dock_metrics::kColorFieldsTopOffset;
         const int row_h = raster_dock_metrics::kColorFieldHeight;
         const int row_step = raster_dock_metrics::kColorFieldRowSpacing;
         draw_compact_metric(0, color_top, row_h, L"Hue",
-                            hsl.hue_degrees, NumericFieldId::RasterHslHue, "°");
+                            field_hsl.hue_degrees, NumericFieldId::RasterHslHue, "°");
         draw_compact_metric(1, color_top, row_h, L"Sat",
-                            hsl.saturation_percent, NumericFieldId::RasterHslSaturation);
+                            field_hsl.saturation_percent, NumericFieldId::RasterHslSaturation);
         draw_compact_metric(0, color_top + row_step, row_h, is_vi ? L"Sáng" : L"Light",
-                            hsl.lightness_percent, NumericFieldId::RasterHslLightness);
+                            field_hsl.lightness_percent, NumericFieldId::RasterHslLightness);
         draw_compact_metric(1, color_top + row_step, row_h, L"Vib",
                             selected_bitmap_vibrance_amount(), NumericFieldId::RasterVibranceAmount);
 
@@ -856,7 +936,7 @@ void NativeWindow::paint_raster_inspector_dock(
         const int bar_w = std::max(1L, in_bar.right - in_bar.left);
         const int in_bx = in_bar.left + static_cast<int>(std::lround(levels.black_in * bar_w));
         const int in_wx = in_bar.left + static_cast<int>(std::lround(levels.white_in * bar_w));
-        const double gamma_norm = std::clamp(1.0 - std::log10(std::clamp(levels.gamma, 0.1, 10.0)) * 0.5, 0.1, 0.9);
+        const double gamma_norm = levels_gamma_position(levels.gamma);
         const int in_gx = in_bx + static_cast<int>(std::lround((in_wx - in_bx) * gamma_norm));
         draw_level_triangle(mem_dc, in_bx, in_bar.bottom + 1, RGB(15, 23, 42), col_teal);
         draw_level_triangle(mem_dc, in_gx, in_bar.bottom + 1, RGB(148, 163, 184), col_text_white);
@@ -1173,7 +1253,7 @@ bool NativeWindow::handle_raster_dock_interactive_mouse_down(int x, int y) {
         const int plot_w = std::max(1, panel_width - 8);
         const int bx = plot_l + static_cast<int>(std::lround(lv.black_in * plot_w));
         const int wx = plot_l + static_cast<int>(std::lround(lv.white_in * plot_w));
-        const double gamma_norm = std::clamp(1.0 - std::log10(std::clamp(lv.gamma, 0.1, 10.0)) * 0.5, 0.1, 0.9);
+        const double gamma_norm = levels_gamma_position(lv.gamma);
         const int gx = bx + static_cast<int>(std::lround((wx - bx) * gamma_norm));
         const int db = std::abs(x - bx);
         const int dg = std::abs(x - gx);
@@ -1242,7 +1322,7 @@ bool NativeWindow::handle_raster_dock_interactive_mouse_down(int x, int y) {
             const int bar_w = std::max(1, panel_width - 20);
             const int bx = bar_l + static_cast<int>(std::lround(lv.black_in * bar_w));
             const int wx = bar_l + static_cast<int>(std::lround(lv.white_in * bar_w));
-            const double gamma_norm = std::clamp(1.0 - std::log10(std::clamp(lv.gamma, 0.1, 10.0)) * 0.5, 0.1, 0.9);
+            const double gamma_norm = levels_gamma_position(lv.gamma);
             const int gx = bx + static_cast<int>(std::lround((wx - bx) * gamma_norm));
             const int db = std::abs(x - bx);
             const int dg = std::abs(x - gx);
@@ -1369,7 +1449,7 @@ bool NativeWindow::handle_raster_dock_interactive_mouse_move(int x, int y) {
         } else if (raster_dock_drag_control_ == 31) {
             const double span = std::max(0.05, lv.white_in - lv.black_in);
             const double rel = std::clamp((t - lv.black_in) / span, 0.1, 0.9);
-            const double gamma = std::clamp(std::pow(10.0, (1.0 - rel) * 2.0 - 1.0), 0.1, 10.0);
+            const double gamma = levels_gamma_from_position(rel);
             updated = set_selected_bitmap_levels_value(
                 NumericFieldId::RasterLevelsGamma, std::round(gamma * 100.0) / 100.0);
         } else if (raster_dock_drag_control_ == 33) {

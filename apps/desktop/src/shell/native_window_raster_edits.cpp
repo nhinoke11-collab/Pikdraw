@@ -1011,6 +1011,9 @@ bool NativeWindow::can_edit_selected_bitmap(bool require_srgb_preview) const {
     const auto* image = object ? std::get_if<document::ImageObject>(object) : nullptr;
     if (!image || image->locked)
         return false;
+    const auto* owner = snapshot->hierarchy().find(*selected);
+    if (!owner || owner->mask || !snapshot->hierarchy().editable(*selected))
+        return false;
     const auto high_precision_pixels = image->rgba16le_pixels();
     if (!image->asset_source && image->source.original_data().empty() &&
         high_precision_pixels.empty())
@@ -1043,9 +1046,6 @@ std::optional<double> NativeWindow::selected_bitmap_exposure_ev() const {
     if (!image) return std::nullopt;
     for (auto node = image->edit_graph.nodes.rbegin();
          node != image->edit_graph.nodes.rend(); ++node) {
-        if (const auto* light = std::get_if<document::RasterLightParams>(
-                &node->parameters))
-            return light->exposure_ev;
         if (const auto* exposure = std::get_if<document::RasterExposureParams>(
                 &node->parameters))
             return exposure->exposure_ev;
@@ -1068,16 +1068,6 @@ bool NativeWindow::set_selected_bitmap_exposure_ev(double exposure_ev) {
     bool found = false;
     for (auto node = image->edit_graph.nodes.rbegin();
          node != image->edit_graph.nodes.rend(); ++node) {
-        if (auto* light = std::get_if<document::RasterLightParams>(
-                &node->parameters)) {
-            if (std::abs(exposure_ev) > 5.0) return false;
-            updated = *node;
-            auto parameters = *light;
-            parameters.exposure_ev = exposure_ev;
-            updated.parameters = parameters;
-            found = true;
-            break;
-        }
         if (std::holds_alternative<document::RasterExposureParams>(node->parameters)) {
             updated = *node;
             updated.parameters = document::RasterExposureParams{exposure_ev};

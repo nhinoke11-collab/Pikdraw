@@ -270,8 +270,12 @@ struct D2DRenderBackend::Impl {
                          D2D1_COMPOSITE_MODE_SOURCE_OVER);
     }
     context->SetTransform(old_transform);
-    if (!effects_ok)
-      return false;
+    if (!effects_ok) {
+      context->DrawImage(command_list.Get(), nullptr, nullptr,
+                         D2D1_INTERPOLATION_MODE_LINEAR,
+                         D2D1_COMPOSITE_MODE_SOURCE_OVER);
+      return true;
+    }
     if (appearance.blend_mode == document::BlendMode::Normal)
       return true;
     if (!scene) {
@@ -293,7 +297,8 @@ struct D2DRenderBackend::Impl {
       size_t &rendered_count,
       std::vector<RenderDiagnostic> &diagnostics,
       d2d::SceneDrawState *scene,
-      size_t depth = 0) {
+      size_t depth = 0,
+      bool exclude_derived_annotations = false) {
     document_raster_dpi = (snapshot.page().color_mode_explicit || snapshot.page().raster_dpi_explicit)
         ? snapshot.raster_dpi() : 0;
     if (depth > 256) {
@@ -317,6 +322,10 @@ struct D2DRenderBackend::Impl {
             return false;
           };
           if constexpr (std::is_same_v<T, document::PathObject>) {
+            if (exclude_derived_annotations &&
+                (obj.contour_spec.starts_with("annotation:v1") ||
+                 obj.contour_spec.starts_with("detail_view:v1")))
+              return true;
             const auto effective_transform = parent_transform * obj.transform;
             auto geo = geometry_cache.get_or_create_path(
                 factory, obj.id, snapshot.revision(), obj.path);
@@ -353,6 +362,72 @@ struct D2DRenderBackend::Impl {
                 const float stroke_width_px = std::max(
                     1.0f / zoom, static_cast<float>(obj.stroke_width_mm));
                 ctx->DrawGeometry(geo.Get(), stroke_brush.Get(), stroke_width_px);
+              }
+
+              if (obj.contour_spec.starts_with("detail_view:v1")) {
+                const auto detail = document::deserialize_detail_view_spec(
+                    obj.contour_spec);
+                if (!detail) return fail("Invalid detail view source metadata");
+                if (detail->source_page_id != snapshot.active_page_id())
+                  return fail("Detail view source page is not the active page");
+                const auto layout = document::evaluate_detail_view_layout(*detail);
+                auto frame_geo = geometry_cache.get_or_create_path(
+                    factory, obj.id, snapshot.revision(), layout.frame_path, 199);
+                if (!frame_geo)
+                  return fail("Direct2D could not create the detail view frame mask");
+                d2d::ComPtr<ID2D1TransformedGeometry> transformed_mask;
+                const auto mask_transform = project(effective_transform);
+                HRESULT mask_hr = factory->CreateTransformedGeometry(
+                    frame_geo.Get(), &mask_transform,
+                    transformed_mask.ReleaseAndGetAddressOf());
+                if (FAILED(mask_hr))
+                  return fail("Direct2D could not transform the detail view frame mask");
+                d2d::ComPtr<ID2D1Layer> detail_layer;
+                mask_hr = ctx->CreateLayer(nullptr, detail_layer.ReleaseAndGetAddressOf());
+                if (FAILED(mask_hr))
+                  return fail("Direct2D could not allocate the detail view clip layer");
+
+                D2D1_MATRIX_3X2_F previous_transform{};
+                ctx->GetTransform(&previous_transform);
+                ctx->SetTransform(D2D1::Matrix3x2F::Identity());
+                const auto layer_parameters = D2D1::LayerParameters(
+                    D2D1::InfiniteRect(), transformed_mask.Get(),
+                    D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+                    D2D1::Matrix3x2F::Identity(), 1.0f, nullptr,
+                    D2D1_LAYER_OPTIONS_NONE);
+                ctx->PushLayer(layer_parameters, detail_layer.Get());
+                bool source_ok = true;
+                const double source_zoom = camera.zoom() * detail->scale_ratio;
+                const auto source_refs = SpatialCuller::query_visible_refs(
+                    snapshot, detail->source_region, source_zoom,
+                    source_zoom > 0.0 ? 1.0 / source_zoom : 0.0);
+                const auto source_transform =
+                    effective_transform * layout.source_to_frame_transform;
+                for (const auto &source_ref : source_refs) {
+                  if (!source_ref.object || source_ref.id == obj.id) continue;
+                  if (!render_object(snapshot, *source_ref.object, source_transform,
+                                     camera, ctx, factory, rendered_count,
+                                     diagnostics, scene, depth + 1, true)) {
+                    source_ok = false;
+                    break;
+                  }
+                }
+                ctx->PopLayer();
+                ctx->SetTransform(previous_transform);
+                if (!source_ok) return false;
+
+                // Keep the frame edge visible above the clipped source scene.
+                {
+                  ScopedTransform frame_transform(ctx, project(effective_transform));
+                  const float zoom = static_cast<float>(camera.zoom());
+                  const float width = std::max(1.0f / zoom,
+                      static_cast<float>(obj.stroke_width_mm));
+                  auto frame_brush = effects_pipeline.create_brush(
+                      ctx, obj.stroke, 1.0f, color_preview.get());
+                  if (!frame_brush)
+                    return fail("Direct2D could not create the detail view frame brush");
+                  ctx->DrawGeometry(frame_geo.Get(), frame_brush.Get(), width);
+                }
               }
 
               if (obj.contour_spec.starts_with("contour:v1;")) {
@@ -453,88 +528,140 @@ struct D2DRenderBackend::Impl {
               }
 
               if (obj.contour_spec.starts_with("annotation:v1")) {
-                const auto ann = document::AnnotationRegistry::instance().get(obj.id);
-                auto ann_val = ann.has_value() ? *ann : document::deserialize_annotation_spec(obj.contour_spec).value_or(document::AnnotationObject{});
-                if (!ann_val.text.empty() || !ann_val.leader_points.empty()) {
-                  const auto ann_layout = document::evaluate_annotation_layout(ann_val);
-                  if (!ann_layout.arrow_path.empty()) {
-                    auto arr_brush = effects_pipeline.create_brush(
-                        ctx, ann_val.style.color, 1.0f, color_preview.get());
-                    if (arr_brush) {
+                const auto parsed_annotation =
+                    document::deserialize_annotation_spec(obj.contour_spec);
+                if (!parsed_annotation) {
+                  diagnostics.push_back({obj.id, true,
+                      "Invalid annotation metadata; annotation display is incomplete"});
+                  return false;
+                } else {
+                  auto ann_val = *parsed_annotation;
+                  ann_val.style.color = obj.stroke;
+                  if (!ann_val.text.empty() || !ann_val.leader_points.empty()) {
+                    const auto ann_layout = document::evaluate_annotation_layout(ann_val);
+                    if (!ann_layout.arrow_path.empty()) {
+                      auto arr_brush = effects_pipeline.create_brush(
+                          ctx, ann_val.style.color, 1.0f, color_preview.get());
+                      if (!arr_brush) {
+                        diagnostics.push_back({obj.id, true,
+                            "Failed to create Direct2D annotation arrow brush"});
+                        return false;
+                      }
                       auto arr_geo = geometry_cache.get_or_create_path(
                           factory, obj.id, snapshot.revision(), ann_layout.arrow_path, 220);
-                      if (arr_geo) {
-                        if (ann_val.style.arrow_type == geometry::ArrowType::ClosedFilled ||
-                            ann_val.style.arrow_type == geometry::ArrowType::Dot) {
-                          ctx->FillGeometry(arr_geo.Get(), arr_brush.Get());
-                        } else {
-                          ctx->DrawGeometry(arr_geo.Get(), arr_brush.Get(),
-                              static_cast<float>((std::max)(0.1, ann_val.style.line_width_mm)));
-                        }
+                      if (!arr_geo) {
+                        diagnostics.push_back({obj.id, true,
+                            "Failed to create Direct2D annotation arrow geometry"});
+                        return false;
+                      }
+                      if (ann_val.style.arrow_type == geometry::ArrowType::ClosedFilled ||
+                          ann_val.style.arrow_type == geometry::ArrowType::Dot) {
+                        ctx->FillGeometry(arr_geo.Get(), arr_brush.Get());
+                      } else {
+                        ctx->DrawGeometry(arr_geo.Get(), arr_brush.Get(),
+                            static_cast<float>((std::max)(0.1, ann_val.style.line_width_mm)));
                       }
                     }
-                  }
-                  if (!ann_layout.formatted_text.empty()) {
+                    if (!ann_layout.formatted_text.empty()) {
 #ifdef PIKDRAW_TYPOGRAPHY_REAL_OUTLINES
-                    try {
-                      typography::FontIdentity font{typography::FontIdentity::make_default()};
-                      font.size_pt = (ann_val.style.text_size_mm > 0.5 ? ann_val.style.text_size_mm : 2.5) * (72.0 / 25.4);
-                      typography::LayoutOptions opts;
-                      opts.alignment = typography::TextAlignment::Left;
-                      const auto t_layout = typography::TextLayout::layout_text(ann_layout.formatted_text, font, opts);
-                      const auto t_path = typography::text_to_path_outlines(t_layout, false);
+                      try {
+                        typography::FontIdentity font{typography::FontIdentity::make_default()};
+                        font.family_name = ann_val.style.font_family;
+                        font.size_pt = (ann_val.style.text_size_mm > 0.5 ? ann_val.style.text_size_mm : 2.5) * (72.0 / 25.4);
+                        typography::LayoutOptions opts;
+                        opts.alignment = typography::TextAlignment::Left;
+                        const auto t_layout = typography::TextLayout::layout_text(ann_layout.formatted_text, font, opts);
+                        const auto t_path = typography::text_to_path_outlines(t_layout, false);
 
-                      geometry::Transform2D t_xform =
-                          geometry::Transform2D::translation(ann_layout.text_origin.x, ann_layout.text_origin.y) *
-                          geometry::Transform2D::scale(1.0, -1.0);
+                        geometry::Transform2D t_xform =
+                            geometry::Transform2D::translation(ann_layout.text_origin.x, ann_layout.text_origin.y) *
+                            geometry::Transform2D::scale(1.0, -1.0);
 
-                      const auto final_t_path = t_path.transformed(t_xform);
-                      auto text_geo = geometry_cache.get_or_create_path(
-                          factory, obj.id, snapshot.revision(), final_t_path, 253);
-                      if (text_geo) {
+                        const auto final_t_path = t_path.transformed(t_xform);
+                        auto text_geo = geometry_cache.get_or_create_path(
+                            factory, obj.id, snapshot.revision(), final_t_path, 253);
+                        if (!text_geo) {
+                          diagnostics.push_back({obj.id, true,
+                              "Failed to create Direct2D annotation text geometry"});
+                          return false;
+                        }
                         auto text_b = effects_pipeline.create_brush(
                             ctx, ann_val.style.color, 1.0f, color_preview.get());
-                        if (text_b) {
-                          ctx->FillGeometry(text_geo.Get(), text_b.Get());
+                        if (!text_b) {
+                          diagnostics.push_back({obj.id, true,
+                              "Failed to create Direct2D annotation text brush"});
+                          return false;
                         }
+                        ctx->FillGeometry(text_geo.Get(), text_b.Get());
+                      } catch (...) {
+                        diagnostics.push_back({obj.id, true,
+                            "Failed to generate Direct2D annotation text outlines"});
+                        return false;
                       }
-                    } catch (...) {}
+#else
+                      diagnostics.push_back({obj.id, true,
+                          "Annotation text rendering requires native font outlines"});
+                      return false;
 #endif
+                    }
                   }
                 }
               }
 
               if (obj.contour_spec.starts_with("detail_view:v1")) {
-                const auto dv_opt = document::DetailViewRegistry::instance().get(obj.id);
-                auto dv = dv_opt.has_value() ? *dv_opt : document::deserialize_detail_view_spec(obj.contour_spec).value_or(document::DetailViewObject{});
-                const auto dv_layout = document::evaluate_detail_view_layout(dv);
-                if (!dv_layout.formatted_label.empty()) {
+                const auto parsed_detail_view =
+                    document::deserialize_detail_view_spec(obj.contour_spec);
+                if (!parsed_detail_view) {
+                  diagnostics.push_back({obj.id, true,
+                      "Invalid detail view metadata; detail view display is incomplete"});
+                  return false;
+                } else {
+                  auto dv = *parsed_detail_view;
+                  dv.color = obj.stroke;
+                  const auto dv_layout = document::evaluate_detail_view_layout(dv);
+                  if (!dv_layout.formatted_label.empty()) {
 #ifdef PIKDRAW_TYPOGRAPHY_REAL_OUTLINES
-                  try {
-                    typography::FontIdentity font{typography::FontIdentity::make_default()};
-                    font.size_pt = (dv.text_size_mm > 0.5 ? dv.text_size_mm : 2.5) * (72.0 / 25.4);
-                    typography::LayoutOptions opts;
-                    opts.alignment = typography::TextAlignment::Center;
-                    const auto t_layout = typography::TextLayout::layout_text(dv_layout.formatted_label, font, opts);
-                    const auto t_path = typography::text_to_path_outlines(t_layout, false);
-                    const auto tb = t_path.bounds();
+                    try {
+                      typography::FontIdentity font{typography::FontIdentity::make_default()};
+                      font.family_name = "Segoe UI";
+                      font.size_pt = (dv.text_size_mm > 0.5 ? dv.text_size_mm : 2.5) * (72.0 / 25.4);
+                      typography::LayoutOptions opts;
+                      opts.alignment = typography::TextAlignment::Center;
+                      const auto t_layout = typography::TextLayout::layout_text(dv_layout.formatted_label, font, opts);
+                      const auto t_path = typography::text_to_path_outlines(t_layout, false);
+                      const auto tb = t_path.bounds();
 
-                    geometry::Transform2D t_xform =
-                        geometry::Transform2D::translation(dv_layout.label_origin.x, dv_layout.label_origin.y + tb.height) *
-                        geometry::Transform2D::scale(1.0, -1.0);
+                      geometry::Transform2D t_xform =
+                          geometry::Transform2D::translation(dv_layout.label_origin.x, dv_layout.label_origin.y + tb.height) *
+                          geometry::Transform2D::scale(1.0, -1.0);
 
-                    const auto final_t_path = t_path.transformed(t_xform);
-                    auto text_geo = geometry_cache.get_or_create_path(
-                        factory, obj.id, snapshot.revision(), final_t_path, 252);
-                    if (text_geo) {
+                      const auto final_t_path = t_path.transformed(t_xform);
+                      auto text_geo = geometry_cache.get_or_create_path(
+                          factory, obj.id, snapshot.revision(), final_t_path, 252);
+                      if (!text_geo) {
+                        diagnostics.push_back({obj.id, true,
+                            "Failed to create Direct2D detail view label geometry"});
+                        return false;
+                      }
                       auto text_b = effects_pipeline.create_brush(
                           ctx, dv.color, 1.0f, color_preview.get());
-                      if (text_b) {
-                        ctx->FillGeometry(text_geo.Get(), text_b.Get());
+                      if (!text_b) {
+                        diagnostics.push_back({obj.id, true,
+                            "Failed to create Direct2D detail view label brush"});
+                        return false;
                       }
+                      ctx->FillGeometry(text_geo.Get(), text_b.Get());
+                    } catch (...) {
+                      diagnostics.push_back({obj.id, true,
+                          "Failed to generate Direct2D detail view label outlines"});
+                      return false;
                     }
-                  } catch (...) {}
+#else
+                    diagnostics.push_back({obj.id, true,
+                        "Detail view label rendering requires native font outlines"});
+                    return false;
 #endif
+                  }
                 }
               }
               return true;
@@ -576,9 +703,8 @@ struct D2DRenderBackend::Impl {
                                                      obj.position.x, obj.position.y) *
                                                  geometry::Transform2D::scale(1, -1);
               }
-              d2d::D2DGeometryCache text_geometry;
-              auto geo = text_geometry.get_or_create_path(
-                  factory, obj.id, snapshot.revision(), path);
+              auto geo = geometry_cache.get_or_create_path(
+                  factory, obj.id, snapshot.revision(), path, 3);
               if (!geo)
                 return fail("Direct2D could not create text glyph-outline geometry");
               const auto draw_text = [&](ID2D1DeviceContext *ctx) {
@@ -722,7 +848,8 @@ struct D2DRenderBackend::Impl {
                   }
                   if (!render_object(snapshot, *child, child_transform, camera,
                                      context, factory, rendered_count, diagnostics,
-                                     scene, depth + 1)) {
+                                     scene, depth + 1,
+                                     exclude_derived_annotations)) {
                     if (pushed_layer) {
                       context->PopLayer();
                       context->SetTransform(prev_layer_xform);
@@ -765,7 +892,8 @@ struct D2DRenderBackend::Impl {
               }
               if (!render_object(snapshot, *child, child_transform, camera,
                                  context, factory, rendered_count, diagnostics,
-                                 scene, depth + 1))
+                                 scene, depth + 1,
+                                 exclude_derived_annotations))
                 return false;
             }
             ++rendered_count;
@@ -888,7 +1016,7 @@ struct D2DRenderBackend::Impl {
         snapshot, visible_bounds, camera.zoom(), 0.0);
 
     bool resource_failure = !paper_ok;
-    image_cache.begin_frame();
+    image_cache.begin_frame(device_mgr.d3d_device());
 
     if (auto source_preview = detail::make_pdf_source_preview(snapshot.active_page())) {
       document::ObjectVariant preview_object{std::move(*source_preview)};
@@ -1347,6 +1475,7 @@ bool D2DRenderBackend::render_gpu(const document::DocumentSnapshot &snapshot,
   size_t rendered_count = 0;
   bool resource_failure = !paper_ok;
   std::vector<RenderDiagnostic> diagnostics;
+  impl_->image_cache.begin_frame(impl_->device_mgr.d3d_device());
 
   if (auto source_preview = detail::make_pdf_source_preview(snapshot.active_page())) {
     document::ObjectVariant preview_object{std::move(*source_preview)};

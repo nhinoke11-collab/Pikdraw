@@ -148,6 +148,12 @@ Receipt JSON nhỏ không thay log chẩn đoán; giữ tối đa 128 kết qu�
 Cleaner không chạy Apply khi có build lock. Nó chỉ xóa output được xác minh, không xóa source/fixture,
 toolchain, object/cache, binary canonical, backup/recovery hay tài liệu khách hàng.
 Không lưu dump/screenshot/file thiết kế test trong source hoặc docs.
+Giữ cả PCH (*.pch/*.gch), object (*.obj/*.o), thư viện (*.a/*.lib), test executable, CMakeCache,
+.ninja_log và .ninja_deps. Chúng là cache biên dịch, kể cả executable có tên bắt đầu bằng test_.
+Giữ CTestCostData.txt để CTest dùng lịch sử thời gian khi sắp lịch test song song.
+Không dọn bằng cách quét extension trên toàn build tree. Mất PCH làm nhiều consumer phải compile lại
+dù source và cấu hình không đổi; runner báo số PCH từng được build nhưng nay bị thiếu trong log/Status.
+Runner dùng CMake/Ninja đã ghi trong CMakeCache nếu chúng còn tồn tại, tránh đổi công cụ giữa các task.
 
 ## Wrapper và package
 

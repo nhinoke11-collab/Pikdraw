@@ -281,10 +281,10 @@ void NativeWindow::handle_mouse_move(int x, int y, unsigned modifiers) {
                             : toolbox_open_group_ == 5 ? get_visible_row_for_slot(ToolboxSlotId::Eyedropper)
                             : get_visible_row_for_slot(ToolboxSlotId::Knife);
         const int flyout_top = 112 + (group_row >= 0 ? group_row : 1) * 42;
-        const int flyout_height = toolbox_open_group_ == 6 ? 90
+        const int flyout_height = toolbox_open_group_ == 6 ? 265
             : toolbox_open_group_ == 3 ? 174
             : toolbox_open_group_ == 2 ? 145 : 116;
-        const int max_items = toolbox_open_group_ == 6 ? 2
+        const int max_items = toolbox_open_group_ == 6 ? 8
             : toolbox_open_group_ == 3 ? 5
             : toolbox_open_group_ == 2 ? 4 : 3;
         if (x >= 54 && x <= 242 && y >= flyout_top + 26 && y < flyout_top + flyout_height) {

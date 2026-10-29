@@ -1,6 +1,6 @@
 # Kế hoạch nhóm công cụ Cắt, tẩy và tạo vùng thông minh
 
-Ngày: 25/10/2026. Trạng thái: **kế hoạch đang triển khai một phần; chưa có công cụ nào đạt nghiệm thu runtime đầy đủ**. Phạm vi chính: core/geometry, core/document, modules/vector và apps/desktop. Tài liệu này mô tả cả việc sửa luồng hiện có trước khi thêm công cụ mới; không coi tên menu, icon hay test cũ là bằng chứng tính năng đã đúng.
+Ngày lập: 25/10/2026. Cập nhật trạng thái: 29/10/2026. **Các luồng source Knife, Vector Eraser, Scissors, Smart Trim, Trim Objects, Smart Fill, Shape Builder và Raster Eraser hiện có; chưa đồng nghĩa toàn bộ plan đã nghiệm thu runtime.** Theo dõi triển khai, regression receipts và các gate còn mở trong [plan hoàn thiện và crash recovery](cut-shape-completion-crash-recovery-20261029.md). Các bảng đối chiếu source ở mục 2 và 2.1 là baseline lịch sử ngày 25/10/2026, không mô tả source hiện hành. Phạm vi chính: core/geometry, core/document, modules/vector và apps/desktop. Không coi tên menu, icon hay test cũ là bằng chứng tính năng đã đúng.
 
 ## 1. Mục tiêu và cách tham khảo
 
@@ -42,11 +42,11 @@ Người dùng cần cắt một hình theo đường thật, tẩy vùng bằng
 
 Kiểm thử source đã chạy bằng `tooling/native/build.ps1`:
 
-- `test_pikdraw_geometry`, `test_pikdraw_document_path_cut` và `test_pikdraw_vector_cut_tool`: 3/3 qua sau khi thêm ca hole, disconnected regions, group transform, multi-target một Undo và các no-op.
-- `test_pikdraw_desktop_shell`: 1/1 qua cho lần build desktop-shell gần nhất. Chưa chạy lại sau thay đổi boolean/controller mới.
-- Build ứng dụng đầy đủ `tooling/native/build.ps1 -Target @('pikdraw')` hiện dừng trong `core/rendering` do các visitor hiệu ứng truy cập member không có trong kiểu hiện tại, gồm `FeatherEffect::dx_mm` ở `culling.hpp` và member của `ColorOverlayEffect` ở `object_compositor.cpp`. Vì vậy chưa có bản executable mới để nghiệm thu UI; không dùng executable cũ làm bằng chứng.
+- `test_pikdraw_geometry`, `test_pikdraw_document_path_cut`, `test_pikdraw_vector_cut_tool`, `test_pikdraw_desktop_shell`, `test_pikdraw_document_annotation_model`, `test_pikdraw_annotation_tool_controller`, `test_pikdraw_rendering_culling`, `test_pikdraw_rendering_rasterizer`, `test_pikdraw_rendering_effect_compositor`, `test_pikdraw_effect_draft`, `test_pikdraw_effect_render_warning` và `test_pikdraw_interop_svg_exporter`: **12/12 CTest qua**. Geometry report 58/58; rasterizer có pixel parity và benchmark offscreen riêng, không phải FPS màn hình.
+- Build app Release `.\tooling\native\build.ps1 -Test -TestTarget @('pikdraw') -BuildOnly`: **thành công**, liên kết `build/win-dev/apps/desktop/pikdraw.exe` (11,801,600 bytes, 25/10/2026). Đây chỉ xác nhận build/link, chưa phải nghiệm thu chuột/UI runtime.
+- Lần chạy regression đầu ghi receipt CTest `succeeded`, nhưng wrapper in lỗi code page khi log có ký tự thay thế Unicode. Đã sửa build broker để thay ký tự console không mã hóa được; `tests/harness/test_build_broker.py`: **20/20 qua**. Chạy lại cùng batch sau sửa runner: **12/12 CTest qua, wrapper trả thành công**.
 
-Các trạng thái trên là một phần tiến độ, không phải chấp nhận hoàn thành AC. Chỉ chuyển từng hàng sang “đạt” sau khi chạy gate đầy đủ của mục 7 bằng đúng bản executable mới.
+Các trạng thái trên là một phần tiến độ, không phải chấp nhận hoàn thành AC. Chỉ chuyển từng hàng sang “đạt” sau khi chạy gate đầy đủ của mục 7 bằng đúng bản executable mới. Các constant/action ID cũ nếu còn trong source chỉ là khai báo; không xem đó là đăng ký action hay tool đã dùng được.
 
 Audit UI còn phát hiện Eraser dùng nhầm glyph Dimension (cùng số icon 16 với tool ID); nguồn hiện tách glyph Eraser riêng. Hình vẽ glyph chưa được xác nhận bằng screenshot native.
 

@@ -17,27 +17,10 @@ document::RasterLightParams NativeWindow::selected_bitmap_light() const {
     const auto* object = snapshot->objects().lookup_ref(selected.front());
     const auto* image = object ? std::get_if<document::ImageObject>(object) : nullptr;
     if (!image) return parameters;
-    bool found_light = false;
-    bool found_exposure = false;
     for (auto node = image->edit_graph.nodes.rbegin();
          node != image->edit_graph.nodes.rend(); ++node) {
-        if (!found_light) {
-            if (const auto* light = std::get_if<document::RasterLightParams>(
-                    &node->parameters)) {
-                const double exposure_before_light = parameters.exposure_ev;
-                parameters = *light;
-                if (found_exposure)
-                    parameters.exposure_ev = exposure_before_light;
-                found_light = true;
-                found_exposure = true;
-            }
-        }
-        if (const auto* exposure = std::get_if<document::RasterExposureParams>(
-                &node->parameters); exposure && !found_exposure) {
-            parameters.exposure_ev = exposure->exposure_ev;
-            found_exposure = true;
-        }
-        if (found_light && found_exposure) break;
+        if (const auto* light = std::get_if<document::RasterLightParams>(
+                &node->parameters)) return *light;
     }
     return parameters;
 }
@@ -129,19 +112,22 @@ document::RasterHslParams NativeWindow::selected_bitmap_hsl() const {
 }
 
 document::RasterLevelsParams NativeWindow::selected_bitmap_levels() const {
+    document::RasterLevelsParams defaults{};
+    defaults.channel = raster_levels_active_channel_;
     const auto& selected = root().vector_controller().selection().selected_ids();
     const auto snapshot = root().document().current_snapshot();
-    if (selected.size() != 1 || !snapshot) return {};
+    if (selected.size() != 1 || !snapshot) return defaults;
     const auto* object = snapshot->objects().lookup_ref(selected.front());
     const auto* image = object ? std::get_if<document::ImageObject>(object) : nullptr;
-    if (!image) return {};
+    if (!image) return defaults;
     for (auto node = image->edit_graph.nodes.rbegin();
          node != image->edit_graph.nodes.rend(); ++node) {
         if (const auto* levels = std::get_if<document::RasterLevelsParams>(
-                &node->parameters))
+                &node->parameters);
+            levels && levels->channel == raster_levels_active_channel_)
             return *levels;
     }
-    return {};
+    return defaults;
 }
 
 bool NativeWindow::set_selected_bitmap_levels_value(NumericFieldId field,
@@ -186,8 +172,9 @@ bool NativeWindow::set_selected_bitmap_levels_value(NumericFieldId field,
     bool found = false;
     for (auto node = image->edit_graph.nodes.rbegin();
          node != image->edit_graph.nodes.rend(); ++node) {
-        if (!std::holds_alternative<document::RasterLevelsParams>(
-                node->parameters))
+        const auto* levels = std::get_if<document::RasterLevelsParams>(
+            &node->parameters);
+        if (!levels || levels->channel != raster_levels_active_channel_)
             continue;
         updated = *node;
         updated.parameters = parameters;
@@ -213,37 +200,8 @@ bool NativeWindow::set_selected_bitmap_levels_channel(
             static_cast<uint8_t>(document::RasterToneChannel::Blue) ||
         !can_edit_selected_bitmap(true))
         return false;
-    auto parameters = selected_bitmap_levels();
-    parameters.channel = channel;
-    const auto& selected = root().vector_controller().selection().selected_ids();
-    const auto snapshot = root().document().current_snapshot();
-    if (selected.size() != 1 || !snapshot) return false;
-    const auto* object = snapshot->objects().lookup_ref(selected.front());
-    const auto* image = object ? std::get_if<document::ImageObject>(object) : nullptr;
-    if (!image) return false;
-    document::RasterEditNode updated;
-    bool found = false;
-    for (auto node = image->edit_graph.nodes.rbegin();
-         node != image->edit_graph.nodes.rend(); ++node) {
-        if (!std::holds_alternative<document::RasterLevelsParams>(
-                node->parameters))
-            continue;
-        updated = *node;
-        updated.parameters = parameters;
-        found = true;
-        break;
-    }
-    if (!found) {
-        uint64_t maximum_id = 0;
-        for (const auto& node : image->edit_graph.nodes)
-            maximum_id = (std::max)(maximum_id, node.id.value);
-        if (maximum_id == std::numeric_limits<uint64_t>::max()) return false;
-        updated = document::RasterEditNode{
-            {maximum_id + 1}, true, parameters};
-    }
-    return root().document().execute_command(
-        std::make_unique<document::SetRasterEditNodeCommand>(
-            selected.front(), std::move(updated))).success;
+    raster_levels_active_channel_ = channel;
+    return true;
 }
 
 document::RasterWhiteBalanceParams NativeWindow::selected_bitmap_white_balance() const {
@@ -308,19 +266,22 @@ bool NativeWindow::set_selected_bitmap_white_balance_value(
 }
 
 document::RasterCurvesParams NativeWindow::selected_bitmap_curves() const {
+    document::RasterCurvesParams defaults{};
+    defaults.channel = raster_curves_active_channel_;
     const auto& selected = root().vector_controller().selection().selected_ids();
     const auto snapshot = root().document().current_snapshot();
-    if (selected.size() != 1 || !snapshot) return {};
+    if (selected.size() != 1 || !snapshot) return defaults;
     const auto* object = snapshot->objects().lookup_ref(selected.front());
     const auto* image = object ? std::get_if<document::ImageObject>(object) : nullptr;
-    if (!image) return {};
+    if (!image) return defaults;
     for (auto node = image->edit_graph.nodes.rbegin();
          node != image->edit_graph.nodes.rend(); ++node) {
         if (const auto* curves = std::get_if<document::RasterCurvesParams>(
-                &node->parameters))
+                &node->parameters);
+            curves && curves->channel == raster_curves_active_channel_)
             return *curves;
     }
-    return {};
+    return defaults;
 }
 
 bool NativeWindow::set_selected_bitmap_curves(
@@ -343,8 +304,9 @@ bool NativeWindow::set_selected_bitmap_curves(
     bool found = false;
     for (auto node = image->edit_graph.nodes.rbegin();
          node != image->edit_graph.nodes.rend(); ++node) {
-        if (!std::holds_alternative<document::RasterCurvesParams>(
-                node->parameters))
+        const auto* curves = std::get_if<document::RasterCurvesParams>(
+            &node->parameters);
+        if (!curves || curves->channel != parameters.channel)
             continue;
         updated = *node;
         updated.parameters = parameters;
@@ -383,9 +345,12 @@ bool NativeWindow::set_selected_bitmap_curve_point(NumericFieldId field,
 
 bool NativeWindow::set_selected_bitmap_curves_channel(
     document::RasterToneChannel channel) {
-    auto parameters = selected_bitmap_curves();
-    parameters.channel = channel;
-    return set_selected_bitmap_curves(parameters);
+    if (static_cast<uint8_t>(channel) >
+            static_cast<uint8_t>(document::RasterToneChannel::Blue) ||
+        !can_edit_selected_bitmap(true))
+        return false;
+    raster_curves_active_channel_ = channel;
+    return true;
 }
 
 double NativeWindow::selected_bitmap_vibrance_amount() const {

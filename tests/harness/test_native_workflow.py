@@ -36,6 +36,28 @@ class CMakePolicyTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name == "nt" and shutil.which("powershell"), "Windows runner tests")
 class NativeWorkflowTests(NativeBuildFixture, unittest.TestCase):
+    def test_cleanup_preserves_native_build_cache_and_test_executables(self):
+        build = self.repo / "build/win-dev"
+        cache_names = ["core/keep.pch", "core/keep.obj", "core/keep.a", "core/keep.lib",
+                       "apps/desktop/test_keep.exe", "CMakeCache.txt", ".ninja_log", ".ninja_deps",
+                       "Testing/Temporary/CTestCostData.txt"]
+        for name in cache_names:
+            path = build / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"must preserve incremental cache")
+        run = build / "test-output" / ("1-" + "0" * 32)
+        run.mkdir(parents=True)
+        (run / ".pikdraw-test-run").write_text("owned fixture run")
+        (run / "diagnostic.log").write_text("temporary output")
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+             str(self.native / "clean-test-artifacts.ps1"), "-Apply"],
+            cwd=self.repo, capture_output=True, text=True, timeout=90)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(run.exists())
+        for name in cache_names:
+            self.assertEqual((build / name).read_bytes(), b"must preserve incremental cache", name)
+
     def run_build(self, *args, fail=False):
         env = dict(os.environ)
         if fail:

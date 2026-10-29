@@ -1,5 +1,6 @@
 #include "desktop_shell_test_helpers.hpp"
 #include "pikdraw/document/commands/contour_commands.hpp"
+#include "../src/tools/annotation/annotation_tool_controller.hpp"
 #include "../src/tools/contour_tool_controller.hpp"
 #include "../src/shell/native_window_text_properties.hpp"
 void test_object_opacity_property_bar_and_appearance_panel() {
@@ -880,5 +881,55 @@ void test_effects_toolbox_flyout() {
     assert(win.status_message().find("Chọn Path/Text") != std::string::npos);
 
     std::cout << "[PASS] test_effects_toolbox_flyout\n";
+}
+
+void test_annotation_flyout_keyboard_navigation() {
+#ifdef _WIN32
+    NativeWindow window(1440, 900);
+    int tab_count = 0;
+    while (window.status_message().find("Annotation") == std::string::npos &&
+           tab_count < 24) {
+        assert(window.handle_toolbox_key(VK_TAB));
+        ++tab_count;
+    }
+    assert(tab_count < 24);
+    assert(window.handle_toolbox_key(VK_DOWN, true, false));
+    assert(window.status_message().find("Detail View") != std::string::npos);
+    assert(window.handle_toolbox_key(VK_DOWN));
+    assert(window.status_message().find("Leader Note") != std::string::npos);
+    assert(window.handle_toolbox_key(VK_DOWN));
+    assert(window.status_message().find("Plain Note") != std::string::npos);
+    assert(window.handle_toolbox_key(VK_RETURN));
+    assert(window.active_tool() == 17);
+    assert(window.annotation_tool() && window.annotation_tool()->active());
+    assert(window.annotation_tool()->mode() ==
+           pikdraw::desktop::tools::AnnotationToolMode::PlainNote);
+
+    NativeWindow cut_window(1440, 900);
+    cut_window.set_language(UILanguage::English);
+    int cut_tab_count = 0;
+    while (cut_window.status_message().find("Cut & Shape") == std::string::npos &&
+           cut_tab_count < 24) {
+        assert(cut_window.handle_toolbox_key(VK_TAB));
+        ++cut_tab_count;
+    }
+    assert(cut_tab_count < 24);
+    assert(cut_window.handle_toolbox_key(VK_DOWN, true, false));
+    assert(cut_window.status_message().find("Knife") != std::string::npos);
+    assert(cut_window.handle_toolbox_key(VK_DOWN));
+    assert(cut_window.handle_toolbox_key(VK_DOWN));
+    assert(cut_window.status_message().find("Scissors") != std::string::npos);
+    assert(cut_window.handle_toolbox_key(VK_RETURN));
+    assert(cut_window.active_tool() == 19);
+    assert(cut_window.status_message().find("Scissors") != std::string::npos);
+    cut_window.set_active_tool(16);
+    assert(cut_window.status_message().find("Vector Eraser") != std::string::npos);
+    cut_window.set_active_tool(15);
+    assert(cut_window.status_message().find("Eyedropper") != std::string::npos);
+    cut_window.set_active_tool(18);
+    assert(cut_window.status_message().find("Circle center") != std::string::npos);
+    cut_window.set_active_tool(19);
+    assert(cut_window.status_message().find("Scissors") != std::string::npos);
+#endif
 }
 

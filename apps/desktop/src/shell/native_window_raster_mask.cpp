@@ -276,7 +276,8 @@ bool is_maskable_adjustment(const document::RasterEditNode& node) noexcept {
         return !std::is_same_v<T, document::RasterCropParams> &&
                !std::is_same_v<T, document::RasterFlipParams> &&
                !std::is_same_v<T, document::RasterRotateParams> &&
-               !std::is_same_v<T, document::RasterCloneStampParams>;
+               !std::is_same_v<T, document::RasterCloneStampParams> &&
+               !std::is_same_v<T, document::RasterEraserParams>;
     }, node.parameters);
 }
 

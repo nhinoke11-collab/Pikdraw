@@ -244,7 +244,29 @@ StepResult flip(const RasterPixelBuffer& source,
   return {std::move(output), RasterEvaluationStatus::Success, {}};
 }
 
+struct SrgbTables {
+  std::array<double, 256> u8_to_linear{};
+  SrgbTables() {
+    for (size_t i = 0; i < 256; ++i) {
+      const double c = static_cast<double>(i) / 255.0;
+      u8_to_linear[i] = c <= 0.04045 ? c / 12.92 : std::pow((c + 0.055) / 1.055, 2.4);
+    }
+  }
+};
+
+const SrgbTables& srgb_tables() noexcept {
+  static const SrgbTables tables;
+  return tables;
+}
+
 double srgb_to_linear(double encoded) noexcept {
+  if (encoded >= 0.0 && encoded <= 1.0) {
+    const double scaled = encoded * 255.0;
+    const auto index = static_cast<size_t>(scaled + 0.5);
+    if (index < 256 && std::abs(scaled - static_cast<double>(index)) < 1e-5) {
+      return srgb_tables().u8_to_linear[index];
+    }
+  }
   return encoded <= 0.04045 ? encoded / 12.92
                             : std::pow((encoded + 0.055) / 1.055, 2.4);
 }
@@ -676,6 +698,89 @@ StepResult clone_stamp(RasterPixelBuffer source,
     }
     report_row(options, node_index, node_count, y - target_top,
                target_bottom - target_top + 1);
+  }
+  return {std::move(source), RasterEvaluationStatus::Success, {}};
+}
+
+StepResult raster_erase(RasterPixelBuffer source,
+                        const document::RasterEraserParams& parameters,
+                        const RasterEvaluationOptions& options,
+                        size_t node_index, size_t node_count) {
+  constexpr uint64_t kMaximumPixelVisits = 16u * 1024u * 1024u;
+  constexpr double kAntialiasHalfWidthPx = 0.5;
+  const size_t bytes_per_sample = static_cast<size_t>(sample_bytes(source.encoding));
+  const size_t bytes_per_pixel = kRgbaChannels * bytes_per_sample;
+  const double radius = parameters.diameter_px * 0.5;
+  const auto image_x = [width = source.width](double normalized) {
+    return normalized * static_cast<double>(width - 1);
+  };
+  const auto image_y = [height = source.height](double normalized) {
+    return normalized * static_cast<double>(height - 1);
+  };
+  uint64_t pixel_visits = 0;
+  const size_t segment_count = parameters.points.size() == 1
+      ? 1 : parameters.points.size() - 1;
+  for (size_t segment_index = 0; segment_index < segment_count; ++segment_index) {
+    if (cancelled(options)) return cancelled_step();
+    const auto& first = parameters.points[segment_index];
+    const auto& last = parameters.points[parameters.points.size() == 1
+        ? segment_index : segment_index + 1];
+    const double x0 = image_x(first.x);
+    const double y0 = image_y(first.y);
+    const double x1 = image_x(last.x);
+    const double y1 = image_y(last.y);
+    const double min_x = std::max(0.0, std::floor(std::min(x0, x1) - radius -
+                                                  kAntialiasHalfWidthPx));
+    const double max_x = std::min(static_cast<double>(source.width - 1),
+        std::ceil(std::max(x0, x1) + radius + kAntialiasHalfWidthPx));
+    const double min_y = std::max(0.0, std::floor(std::min(y0, y1) - radius -
+                                                  kAntialiasHalfWidthPx));
+    const double max_y = std::min(static_cast<double>(source.height - 1),
+        std::ceil(std::max(y0, y1) + radius + kAntialiasHalfWidthPx));
+    if (max_x < min_x || max_y < min_y) continue;
+    const auto left = static_cast<uint32_t>(min_x);
+    const auto right = static_cast<uint32_t>(max_x);
+    const auto top = static_cast<uint32_t>(min_y);
+    const auto bottom = static_cast<uint32_t>(max_y);
+    const uint64_t columns = static_cast<uint64_t>(right) - left + 1;
+    const uint64_t rows = static_cast<uint64_t>(bottom) - top + 1;
+    if (rows == 0 || columns > kMaximumPixelVisits / rows ||
+        columns * rows > kMaximumPixelVisits - pixel_visits)
+      return {{}, RasterEvaluationStatus::WorkBudgetExceeded,
+              "Raster Eraser exceeded the 16-million pixel-visit budget."};
+    const uint64_t area = columns * rows;
+    pixel_visits += area;
+    const double dx = x1 - x0;
+    const double dy = y1 - y0;
+    const double length_squared = dx * dx + dy * dy;
+    for (uint64_t y = top; y <= bottom; ++y) {
+      if (cancelled(options)) return cancelled_step();
+      for (uint64_t x = left; x <= right; ++x) {
+        if (cancellation_checkpoint(options, x)) return cancelled_step();
+        const double t = length_squared <= 1e-24 ? 0.0 : std::clamp(
+            ((x - x0) * dx + (y - y0) * dy) / length_squared, 0.0, 1.0);
+        const double nearest_x = x0 + t * dx;
+        const double nearest_y = y0 + t * dy;
+        const double distance = std::hypot(x - nearest_x, y - nearest_y);
+        const double coverage = std::clamp(
+            radius + kAntialiasHalfWidthPx - distance, 0.0, 1.0);
+        if (coverage <= 0.0) continue;
+        auto* pixel = source.bytes.data() +
+            static_cast<size_t>(y) * source.row_stride +
+            static_cast<size_t>(x) * bytes_per_pixel;
+        const double alpha = read_normalized(
+            pixel + 3 * bytes_per_sample, source.encoding) * (1.0 - coverage);
+        if (alpha <= 1e-8) {
+          std::fill_n(pixel, bytes_per_pixel, uint8_t{0});
+        } else {
+          write_normalized(pixel + 3 * bytes_per_sample,
+                           source.encoding, alpha);
+        }
+      }
+    }
+    report_row(options, node_index, node_count,
+               static_cast<uint32_t>(segment_index),
+               static_cast<uint32_t>(segment_count));
   }
   return {std::move(source), RasterEvaluationStatus::Success, {}};
 }
@@ -1229,6 +1334,16 @@ bool valid_graph(const document::RasterEditGraph& graph,
       } else if constexpr (std::is_same_v<T, document::RasterChannelMixerParams>) {
         return std::all_of(parameters.coefficients.begin(), parameters.coefficients.end(),
             [](double value) { return std::isfinite(value) && value >= -2.0 && value <= 2.0; });
+      } else if constexpr (std::is_same_v<T, document::RasterEraserParams>) {
+        return !parameters.points.empty() &&
+            parameters.points.size() <= document::RasterEraserParams::kMaxPoints &&
+            std::isfinite(parameters.diameter_px) && parameters.diameter_px > 0.0 &&
+            parameters.diameter_px <= 4096.0 &&
+            std::all_of(parameters.points.begin(), parameters.points.end(), [](const auto& point) {
+              return std::isfinite(point.x) && std::isfinite(point.y) &&
+                  point.x >= 0.0 && point.x <= 1.0 &&
+                  point.y >= 0.0 && point.y <= 1.0;
+            });
       } else {
         return std::isfinite(parameters.source_x) &&
             std::isfinite(parameters.source_y) &&
@@ -1389,6 +1504,9 @@ RasterEvaluationResult apply_graph(
       else if constexpr (std::is_same_v<T, document::RasterCloneStampParams>)
         return clone_stamp(std::move(current), parameters, memory_budget,
                            options, index + 1, graph.nodes.size());
+      else if constexpr (std::is_same_v<T, document::RasterEraserParams>)
+        return raster_erase(std::move(current), parameters, options,
+                            index + 1, graph.nodes.size());
       else if constexpr (std::is_same_v<T, document::RasterLevelsParams>)
         return levels(std::move(current), parameters,
                       node.mask ? &*node.mask : nullptr, options, index + 1,

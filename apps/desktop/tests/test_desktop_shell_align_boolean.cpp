@@ -5,6 +5,7 @@
 #include "pikdraw/document/annotations/dimension_object.hpp"
 #include "pikdraw/document/annotations/dimension_style.hpp"
 #include "pikdraw/geometry/operations/path_cut.hpp"
+#include <string_view>
 
 void test_group_ungroup_and_isolation_mode() {
     pikdraw::desktop::NativeWindow win(1440, 900);
@@ -1027,6 +1028,21 @@ void test_cut_erase_smart_tools_suite() {
     assert(workflow.undo());
     assert(win.root().document().current_snapshot()->objects().get(rid).has_value());
 
+    // A valid erase that covers the whole target must remove it atomically,
+    // and Undo/Redo must restore/reapply that removal.
+    const auto fully_erased_id = workflow.add_rectangle(10.0, 10.0, 10.0, 10.0);
+    sel.clear();
+    sel.select(fully_erased_id);
+    const auto revision_before_full_erase = win.root().document().revision();
+    assert(workflow.erase_objects_by_stroke({{15.0, 15.0}}, 20.0, true));
+    assert(win.root().document().revision() == revision_before_full_erase + 1);
+    assert(!win.root().document().current_snapshot()->objects().get(fully_erased_id));
+    assert(sel.selected_ids().empty());
+    assert(workflow.undo());
+    assert(win.root().document().current_snapshot()->objects().get(fully_erased_id));
+    assert(workflow.redo());
+    assert(!win.root().document().current_snapshot()->objects().get(fully_erased_id));
+
     // 3. AC-TRIM-01: Trim Objects Target minus Source
     const auto target_id = workflow.add_rectangle(0.0, 0.0, 100.0, 100.0);
     const auto source_id = workflow.add_rectangle(40.0, 40.0, 80.0, 80.0);
@@ -1067,6 +1083,26 @@ void test_cut_erase_smart_tools_suite() {
     assert(topmost_workflow.undo());
     assert(topmost_win.root().document().current_snapshot()->object_count() == before_topmost_count);
 
+    // An unsupported stroke-only object above the artwork must not block the
+    // first eligible filled path under the gesture.
+    pikdraw::document::PathObject stroke_only;
+    stroke_only.id = pikdraw::document::generate_object_id();
+    stroke_only.path = pikdraw::geometry::Path2D::make_rect(0.0, 0.0, 100.0, 80.0);
+    stroke_only.has_fill = false;
+    assert(topmost_win.root().document().execute_command(
+        std::make_unique<pikdraw::document::AddObjectCommand>(stroke_only, 0)).success);
+    topmost_selection.clear();
+    assert(topmost_workflow.split_objects_by_line({50.0, -10.0}, {50.0, 90.0}));
+    assert(topmost_win.root().document().current_snapshot()->objects().get(stroke_only.id).has_value());
+    assert(topmost_workflow.undo());
+    topmost_selection.clear();
+    const auto count_before_open_erase = topmost_win.root().document().current_snapshot()->object_count();
+    assert(topmost_workflow.erase_objects_by_stroke({{50.0, -10.0}, {50.0, 90.0}}, 4.0, true));
+    assert(topmost_win.root().document().current_snapshot()->object_count() == count_before_open_erase + 1);
+    assert(topmost_selection.count() == 2);
+    assert(topmost_workflow.undo());
+    assert(topmost_win.root().document().current_snapshot()->objects().get(stroke_only.id).has_value());
+
     NativeWindow noop_trim_win(1000, 700);
     const auto noop_target = noop_trim_win.workflow().add_rectangle(0.0, 0.0, 40.0, 40.0);
     const auto noop_source = noop_trim_win.workflow().add_rectangle(200.0, 200.0, 30.0, 30.0);
@@ -1078,6 +1114,49 @@ void test_cut_erase_smart_tools_suite() {
     const auto info = pikdraw::desktop::get_toolbox_slot_info(pikdraw::desktop::ToolboxSlotId::Knife);
     assert(info.group_id == 6);
     assert(std::wstring(info.shortcut) == L"K");
+
+    // Cut tool options are shared between the property bar and Properties, and
+    // editing them changes preferences without dirtying the document.
+    pikdraw::desktop::NativeWindow cut_options_win(1200, 800);
+    cut_options_win.set_language(pikdraw::desktop::UILanguage::English);
+    const auto cut_options_revision = cut_options_win.root().document().revision();
+    cut_options_win.set_active_tool(5);
+    assert(cut_options_win.handle_chrome_click(180, 80));
+    assert(cut_options_win.knife_freehand_mode());
+    assert(cut_options_win.handle_chrome_click(300, 80));
+    assert(cut_options_win.active_numeric_field() ==
+           pikdraw::desktop::NativeWindow::NumericFieldId::KnifeGap);
+    auto replace_numeric_text = [&](std::wstring_view text) {
+        while (!cut_options_win.numeric_input_buffer().empty())
+            cut_options_win.handle_numeric_char_input(8);
+        for (const auto ch : text) cut_options_win.handle_numeric_char_input(ch);
+    };
+    replace_numeric_text(L"0.75mm");
+    cut_options_win.commit_numeric_field();
+    assert(std::abs(cut_options_win.knife_gap_mm() - 0.75) < 1e-9);
+    assert(cut_options_win.root().document().revision() == cut_options_revision);
+    assert(cut_options_win.handle_chrome_click(300, 80));
+    replace_numeric_text(L"2mm");
+    cut_options_win.commit_numeric_field();
+    assert(cut_options_win.active_numeric_field() ==
+           pikdraw::desktop::NativeWindow::NumericFieldId::KnifeGap);
+    assert(std::abs(cut_options_win.knife_gap_mm() - 0.75) < 1e-9);
+    cut_options_win.handle_numeric_char_input(27);
+    assert(cut_options_win.handle_chrome_click(420, 80));
+    assert(cut_options_win.handle_chrome_click(950, 170));
+    assert(!cut_options_win.knife_freehand_mode());
+
+    cut_options_win.set_active_tool(16);
+    assert(cut_options_win.handle_chrome_click(170, 80));
+    replace_numeric_text(L"8mm");
+    cut_options_win.commit_numeric_field();
+    assert(std::abs(cut_options_win.vector_eraser_diameter_mm() - 8.0) < 1e-9);
+    assert(cut_options_win.handle_chrome_click(270, 80));
+    assert(!cut_options_win.vector_eraser_round_nib());
+    assert(cut_options_win.handle_chrome_click(410, 80));
+    assert(cut_options_win.handle_chrome_click(1080, 244));
+    assert(cut_options_win.vector_eraser_round_nib());
+    assert(cut_options_win.root().document().revision() == cut_options_revision);
 
     std::cout << "[PASS] test_cut_erase_smart_tools_suite\n";
 }

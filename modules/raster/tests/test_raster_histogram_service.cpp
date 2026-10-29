@@ -3,6 +3,7 @@
 #include "pikdraw/raster/analysis/histogram_service.hpp"
 
 #include <chrono>
+#include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
@@ -50,6 +51,32 @@ int main() {
   std::condition_variable condition;
   bool completed = false;
   const auto snapshot = document.current_snapshot();
+  {
+    using namespace pikdraw::document::resources;
+    constexpr uint64_t GiB = 1024ull * 1024 * 1024;
+    std::atomic<uint64_t> available{GiB / 8};
+    auto policy = std::make_shared<MemoryBudgetPolicy>([&] {
+      return SystemMemoryStatus{4 * GiB, available.load(), 4 * GiB, 4 * GiB};
+    });
+    raster::RasterHistogramService adaptive(policy);
+    for (const bool pressure : {true, false}) {
+      available = pressure ? GiB / 8 : 3 * GiB;
+      bool ready = false;
+      adaptive.request(snapshot, image.id, [&] {
+        { std::lock_guard lock(mutex); ready = true; }
+        condition.notify_one();
+      }, raster::RasterHistogramMode::Edited);
+      {
+        std::unique_lock lock(mutex);
+        CHECK(condition.wait_for(lock, std::chrono::seconds(3), [&] { return ready; }));
+      }
+      const auto result = adaptive.find(*snapshot, image.id, raster::RasterHistogramMode::Edited);
+      CHECK(result);
+      if (pressure) CHECK(result->status == raster::RasterHistogramStatus::InsufficientMemory);
+      else CHECK(result->succeeded() && result->channels[0].bins[176] == 255);
+    }
+    CHECK(policy->reserved_bytes() == 0);
+  }
   service.request(snapshot, image.id, [&] {
     {
       std::lock_guard lock(mutex);
@@ -86,6 +113,7 @@ int main() {
   const auto edited_histogram = service.find(
       *snapshot, image.id, raster::RasterHistogramMode::Edited);
   CHECK(edited_histogram && edited_histogram->succeeded());
+  CHECK(!service.find(*snapshot, image.id, raster::RasterHistogramMode::Source));
   CHECK(edited_histogram->channels[0].bins[176] == 255);
   CHECK(edited_histogram->channels[0].bins[0] == 255);
   CHECK(edited_histogram->channels[1].bins[90] == 255);

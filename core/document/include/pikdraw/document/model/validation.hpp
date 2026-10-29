@@ -383,6 +383,17 @@ inline void validate_image_source(const ImageObject& object) {
                     !std::isfinite(params.opacity_percent) ||
                     params.opacity_percent < 0.0 || params.opacity_percent > 100.0)
                     throw std::invalid_argument("Raster Clone Stamp parameters are invalid");
+            } else if constexpr (std::is_same_v<T, RasterEraserParams>) {
+                if (params.points.empty() ||
+                    params.points.size() > RasterEraserParams::kMaxPoints ||
+                    !std::isfinite(params.diameter_px) || params.diameter_px <= 0.0 ||
+                    params.diameter_px > 4096.0 ||
+                    std::any_of(params.points.begin(), params.points.end(), [](const auto& point) {
+                        return !std::isfinite(point.x) || !std::isfinite(point.y) ||
+                            point.x < 0.0 || point.x > 1.0 ||
+                            point.y < 0.0 || point.y > 1.0;
+                    }))
+                    throw std::invalid_argument("Raster Eraser stroke is invalid or exceeds its budget");
             }
         }, node.parameters);
         if (node.mask) {

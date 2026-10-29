@@ -55,6 +55,20 @@ struct PathCutResult {
     const BooleanOptions& options = {}
 );
 
+/// Removes the swept nib footprint from an open or stroked centerline path.
+/// Curves are flattened within options.flatten_tolerance_mm; the returned
+/// approximation bound includes that flattening tolerance. Stroke width is
+/// included in the swept radius so the visible stroke, rather than only its
+/// centerline, is removed.
+[[nodiscard]] PathCutResult erase_open_path_stroke(
+    const Path2D& subject,
+    const std::vector<Point2D>& stroke,
+    double diameter_mm,
+    double subject_stroke_width_mm,
+    bool round_nib = true,
+    const BooleanOptions& options = {}
+);
+
 /// Trims a target path using one or more source paths (Target minus Sources).
 [[nodiscard]] BooleanResult trim_target_with_sources(
     const Path2D& target,

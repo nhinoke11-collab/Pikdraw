@@ -239,6 +239,15 @@ bool DocumentWorkflow::split_objects_by_line(
     // Compatibility entry point for current pointer and demo callers.
     return cut_objects_by_line(p1, p2, separate_offset_mm, 0.0);
 }
+
+bool DocumentWorkflow::split_objects_by_polyline(
+    const std::vector<geometry::Point2D>& points,
+    double gap_mm,
+    double separate_offset_mm
+) {
+    return cut_objects_by_polyline(points, separate_offset_mm, gap_mm);
+}
+
 bool DocumentWorkflow::create_bitmap_crop_from_vector_bounds(
     document::ObjectId bitmap_id,
     document::ObjectId vector_cutter_id,

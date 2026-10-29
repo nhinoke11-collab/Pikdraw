@@ -16,6 +16,9 @@ CommandResult AddLayerCommand::execute(Document& doc) {
         actual_index_ = page.layers.size();
     }
     Layer new_layer{name_.empty() ? "Layer " + std::to_string(page.layers.size() + 1) : name_, true, false, true, default_layer_color(actual_index_), {}};
+    new_layer.id = page.generate_next_layer_id();
+    if (new_layer.id == kInvalidLayerId)
+        return CommandResult::fail("Layer identity space is exhausted");
     page.layers.insert(page.layers.begin() + static_cast<std::ptrdiff_t>(actual_index_), std::move(new_layer));
     doc.apply_mutation(std::move(page), doc.objects());
     executed_ = true;
@@ -602,6 +605,9 @@ CommandResult DuplicateLayerCommand::execute(Document& doc) {
         default_layer_color(actual_index_),
         new_object_ids
     };
+    created_layer_.id = page.generate_next_layer_id();
+    if (created_layer_.id == kInvalidLayerId)
+        return CommandResult::fail("Layer identity space is exhausted");
 
     page.layers.insert(page.layers.begin() + static_cast<std::ptrdiff_t>(actual_index_), created_layer_);
     doc.apply_mutation(std::move(page), std::move(map));

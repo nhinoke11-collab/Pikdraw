@@ -102,9 +102,11 @@ void NativeWindow::register_drawing_actions(CompositionRoot& document_root) {
     document_root.renderer().backend().set_raster_image_resolver(
         [this](const document::DocumentSnapshot& snapshot,
                const document::ImageObject& image) {
-            return raster_preview_service_
-                ? raster_preview_service_->find(snapshot, image)
-                : std::shared_ptr<const document::ImageObject>{};
+            if (!raster_preview_service_) return
+                std::shared_ptr<const document::ImageObject>{};
+            if (auto ready = raster_preview_service_->find(snapshot, image))
+                return ready;
+            return raster_preview_service_->find_last_good(snapshot, image);
         });
     auto& dispatcher = document_root.window().action_dispatcher();
     register_powerclip_actions(document_root);
@@ -358,13 +360,54 @@ void NativeWindow::register_drawing_actions(CompositionRoot& document_root) {
         "Dao cắt vector", "Knife Tool", "K", [this] { set_active_tool(5); }, nullptr});
     dispatcher.register_action({std::string(actions::ActionId::kToolVectorEraser),
         "Tẩy vector", "Vector Eraser", "Shift+E", [this] { set_active_tool(16); }, nullptr});
+    dispatcher.register_action({std::string(actions::ActionId::kToolScissors),
+        "Kéo Scissors", "Scissors Tool", "X", [this] { set_active_tool(19); }, nullptr});
     dispatcher.register_action({std::string(actions::ActionId::kObjectTrimSourceTarget),
         "Cắt Target (đối tượng chọn đầu) bằng các Source còn lại…",
         "Trim Objects (first selected is Target)", "", [this] {
             const auto& sel = root().vector_controller().selection().selected_ids();
             if (sel.size() >= 2) {
-                workflow().trim_objects_source_target(sel[0], {sel.begin() + 1, sel.end()}, true);
+                CutGeometryRequest request;
+                request.operation = CutGeometryOperation::TrimObjects;
+                request.snapshot = root().document().current_snapshot();
+                request.selected_ids = sel;
+                request.target_id = sel.front();
+                request.source_ids.assign(sel.begin() + 1, sel.end());
+                request.keep_sources = true;
+                request.menu_action = true;
+                (void)start_cut_geometry_job(std::move(request));
+            } else {
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Chọn Target trước rồi chọn ít nhất một Source"
+                    : "Select a Target and at least one Source";
+                if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
             }
+        }, nullptr});
+    dispatcher.register_action({std::string(actions::ActionId::kToolTrimObjects),
+        "Cắt bằng đối tượng", "Trim Objects Tool", "", [this] {
+            reset_trim_objects_roles();
+            trim_objects_keep_sources_ = true;
+            set_active_tool(20);
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Cắt bằng đối tượng · nhấp Target trước, rồi nhấp một hoặc nhiều Source"
+                : "Trim Objects · click the Target first, then one or more Sources";
+        }, nullptr});
+    dispatcher.register_action({std::string(actions::ActionId::kToolSmartTrim),
+        "Smart Trim · cắt đoạn giữa hai giao điểm", "Smart Trim Tool", "", [this] {
+            set_active_tool(21);
+        }, nullptr});
+    dispatcher.register_action({std::string(actions::ActionId::kToolShapeBuilder),
+        "Shape Builder · chọn vùng rồi hợp nhất hoặc xóa", "Shape Builder Tool", "", [this] {
+            shape_builder_seed_points_.clear();
+            set_active_tool(22);
+        }, nullptr});
+    dispatcher.register_action({std::string(actions::ActionId::kToolSmartFill),
+        "Smart Fill · nhấp vào một mặt kín để tạo path chỉnh sửa được", "Smart Fill Tool", "", [this] {
+            set_active_tool(23);
+        }, nullptr});
+    dispatcher.register_action({std::string(actions::ActionId::kToolRasterEraser),
+        "Raster Eraser · erase alpha non-destructively", "Raster Eraser Tool", "", [this] {
+            set_active_tool(24);
         }, nullptr});
     dispatcher.register_action({std::string(actions::ActionId::kToolSnapPanel),
         "Bắt điểm và hướng", "Snap and Direction", "F3", [this] {
@@ -504,12 +547,15 @@ size_t NativeWindow::drawing_path_point_count() const noexcept {
 }
 
 void NativeWindow::switch_to_tab(size_t index) noexcept {
-    if(index!=active_tab_index_) exit_all_isolation();
     if (index < tabs_.size() && index != active_tab_index_) {
+        exit_all_isolation();
+        cancel_canvas_interaction();
         if (active_num_field_ != NumericFieldId::None) cancel_numeric_field();
         if (is_inline_text_editing_) commit_inline_text_editing();
+        if (annotation_tool_) (void)annotation_tool_->handle_escape();
         if (drawing_tool_) drawing_tool_->cancel();
         active_tab_index_ = index;
+        if (annotation_tool_) annotation_tool_->bind_document(root().document());
         ++view_generation_;
         document_path_ = active_tab().file_path;
         sync_display_unit_from_active_page();
@@ -526,8 +572,11 @@ void NativeWindow::close_tab(size_t index) noexcept {
 #ifdef _WIN32
     request_cancel_native_open_for_tab(tabs_[index].id);
 #endif
+    if (index == active_tab_index_) cancel_canvas_interaction();
     if (index == active_tab_index_ && active_num_field_ != NumericFieldId::None)
         cancel_numeric_field();
+    if (index == active_tab_index_ && annotation_tool_)
+        (void)annotation_tool_->handle_escape();
     if (is_inline_text_editing_) commit_inline_text_editing();
     if (tabs_.size() > 1) {
         const bool closing_active = index == active_tab_index_;
@@ -545,6 +594,7 @@ void NativeWindow::close_tab(size_t index) noexcept {
         if (closing_active) ++view_generation_;
         document_path_ = active_tab().file_path;
         if (closing_active) {
+            if (annotation_tool_) annotation_tool_->bind_document(root().document());
             sync_display_unit_from_active_page();
             bind_drawing_tool_to_active_document();
         }
@@ -553,6 +603,7 @@ void NativeWindow::close_tab(size_t index) noexcept {
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 #endif
     } else {
+        if (annotation_tool_) (void)annotation_tool_->handle_escape();
         if (drawing_tool_) drawing_tool_->cancel();
         const auto defaults = tools::load_drawing_preferences(tools::drawing_preferences_path());
         workflow().new_document(297.0, 210.0, color::DocumentColorMode::Cmyk, 300,
@@ -573,6 +624,7 @@ void NativeWindow::close_tab(size_t index) noexcept {
 
 void NativeWindow::create_new_tab(const std::string& title, double w_mm, double h_mm,
                                   const std::string& color_mode, int dpi) {
+    cancel_canvas_interaction();
     if (is_inline_text_editing_) commit_inline_text_editing();
     DocumentTab tab;
     tab.id = "doc-" + std::to_string(next_doc_counter_++);
@@ -594,8 +646,10 @@ void NativeWindow::create_new_tab(const std::string& title, double w_mm, double 
         tab.active_artboard_id = snapshot->active_page().artboards.front().id;
     register_drawing_actions(*tab.root);
     if (drawing_tool_) drawing_tool_->cancel();
+    if (annotation_tool_) (void)annotation_tool_->handle_escape();
     tabs_.push_back(std::move(tab));
     active_tab_index_ = tabs_.size() - 1;
+    if (annotation_tool_) annotation_tool_->bind_document(root().document());
     ++view_generation_;
     document_path_ = active_tab().file_path;
     sync_display_unit_from_active_page();
@@ -853,9 +907,11 @@ NativeWindow::NativeWindow(int width, int height)
     const auto raster_preview_rgb = color::ProfileResource::load_file(
         color::IccPreview::system_srgb_profile(), color::ColorSpace::Rgb);
     raster_preview_service_ = std::make_unique<raster::RasterEditPreviewService>(
-        512ULL * 1024ULL * 1024ULL, 192ULL * 1024ULL * 1024ULL,
+        0, 0,
         raster_preview_rgb.resource);
     raster_histogram_service_ =
+        std::make_unique<raster::RasterHistogramService>();
+    raster_source_histogram_service_ =
         std::make_unique<raster::RasterHistogramService>();
     initialize_performance_trace();
     record_performance_event(CanvasTraceKind::StartupBegin);
@@ -864,11 +920,18 @@ NativeWindow::NativeWindow(int width, int height)
 }
 
 NativeWindow::~NativeWindow() {
+    if (cut_geometry_job_)
+        cut_geometry_job_->disable_notifications();
+    cancel_cut_geometry_job();
+    if (cut_geometry_worker_.joinable())
+        cut_geometry_worker_.detach();
+    cut_geometry_job_.reset();
     for (auto& tab : tabs_)
         if (tab.root)
             tab.root->renderer().backend().set_raster_image_resolver({});
     raster_preview_service_.reset();
     raster_histogram_service_.reset();
+    raster_source_histogram_service_.reset();
 #ifdef _WIN32
     join_recovery_scan_worker();
     join_native_file_job();
@@ -886,6 +949,10 @@ NativeWindow::~NativeWindow() {
 #ifdef _WIN32
     cleanup_direct_present_target();
     cleanup_canvas_cache();
+    if (annotation_placement_cursor_) {
+        DestroyCursor(annotation_placement_cursor_);
+        annotation_placement_cursor_ = nullptr;
+    }
     cleanup_backbuffer();
     cleanup_ui_fonts();
     if (hwnd_) {
@@ -941,6 +1008,7 @@ void NativeWindow::ensure_ui_fonts() noexcept {
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
             DEFAULT_PITCH | FF_DONTCARE, name);
     };
+    font_title_ = make_font(16, FW_BOLD, L"Segoe UI");
     font_be_vietnam_ = make_font(13, FW_NORMAL, L"Segoe UI");
     font_be_vietnam_bold_ = make_font(13, FW_BOLD, L"Segoe UI");
     font_secondary_ = make_font(12, FW_NORMAL, L"Segoe UI");
@@ -951,7 +1019,7 @@ void NativeWindow::ensure_ui_fonts() noexcept {
 }
 
 void NativeWindow::cleanup_ui_fonts() noexcept {
-    for (HFONT* f : {&font_be_vietnam_, &font_be_vietnam_bold_, &font_secondary_,
+    for (HFONT* f : {&font_title_, &font_be_vietnam_, &font_be_vietnam_bold_, &font_secondary_,
                      &font_mono_, &font_tab_, &font_tab_bold_, &font_ruler_}) {
         if (*f) {
             DeleteObject(*f);

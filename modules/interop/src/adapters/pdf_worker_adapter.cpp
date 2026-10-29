@@ -162,9 +162,6 @@ struct PdfiumApi {
                                 LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR |
                                     LOAD_LIBRARY_SEARCH_SYSTEM32);
         if (!module) {
-            module = LoadLibraryW(library_path.c_str());
-        }
-        if (!module) {
             failure_reason = "LoadLibrary error " + std::to_string(GetLastError()) + " for " + library_path.string();
             return;
         }
@@ -598,8 +595,10 @@ std::vector<std::string> ExtractPdfOptionalContentNames(std::span<const uint8_t>
     std::vector<std::string> names;
     const std::string_view bytes(reinterpret_cast<const char*>(source.data()), source.size());
     std::unordered_set<std::string> seen;
+    constexpr size_t kMaxOcgScanBytes = 32u * 1024u * 1024u;
+    const size_t scan_limit = (std::min)(bytes.size(), kMaxOcgScanBytes);
     size_t cursor = 0;
-    while (cursor < bytes.size() && names.size() < IPC_MAX_OBJECTS) {
+    while (cursor < scan_limit && names.size() < IPC_MAX_OBJECTS) {
         const size_t type = bytes.find("/Type", cursor);
         if (type == std::string_view::npos) break;
         cursor = type + 5;

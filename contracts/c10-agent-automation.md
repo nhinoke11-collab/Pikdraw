@@ -1,4 +1,4 @@
-# C10 — Agent automation service
+# Contract C10: Agent automation service
 
 Version: `0.2.0 Implementation in progress`, 17/10/2026. The source now includes the
 typed automation service, authenticated desktop pipe, MCP stdio sidecar, opt-in Settings

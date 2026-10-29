@@ -15,6 +15,7 @@
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/gradient_tool_controller.hpp"
+#include "../tools/annotation/annotation_tool_controller.hpp"
 #include "pikdraw/vector/tools/shape_tools.hpp"
 #include <iostream>
 #include <fstream>
@@ -110,6 +111,24 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
         commit_numeric_field();
         if (active_num_field_ != NumericFieldId::None)
             return;
+    }
+    if (field == NumericFieldId::KnifeGap ||
+        field == NumericFieldId::VectorEraserDiameter) {
+        const bool knife_field = field == NumericFieldId::KnifeGap;
+        if ((knife_field && active_tool_ != 5) || (!knife_field && active_tool_ != 16))
+            return;
+        active_num_field_ = field;
+        num_input_buffer_ = format_mm_input(
+            knife_field ? knife_gap_mm_ : vector_eraser_diameter_mm_, display_length_unit_);
+        status_msg_ = knife_field
+            ? (language_ == UILanguage::Vietnamese
+                ? "Khoảng hở Knife: 0–1 mm · Enter áp dụng · Esc hủy"
+                : "Knife gap: 0–1 mm · Enter applies · Esc cancels")
+            : (language_ == UILanguage::Vietnamese
+                ? "Đường kính Tẩy: 0,01–1000 mm · Enter áp dụng · Esc hủy"
+                : "Eraser diameter: 0.01–1000 mm · Enter applies · Esc cancels");
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
     }
     if ((field == text_numeric_field(TextPropertyField::FontSize) ||
          field == text_numeric_field(TextPropertyField::FrameWidth) ||
@@ -497,6 +516,16 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
     } else if (raster_color_adjustment_field) {
         if (field == NumericFieldId::RasterVibranceAmount) {
             ss << selected_bitmap_vibrance_amount();
+        } else if (raster_hsl_active_channel_ > 0) {
+            const auto selective = selected_bitmap_selective_hsl(
+                static_cast<document::RasterHueRange>(
+                    raster_hsl_active_channel_ - 1));
+            if (field == NumericFieldId::RasterHslHue)
+                ss << selective.hue_degrees;
+            else if (field == NumericFieldId::RasterHslSaturation)
+                ss << selective.saturation_percent;
+            else
+                ss << selective.lightness_percent;
         } else {
             const auto parameters = selected_bitmap_hsl();
             if (field == NumericFieldId::RasterHslHue)
@@ -554,6 +583,56 @@ void NativeWindow::start_numeric_input(NumericFieldId field) {
         num_input_buffer_ = ss.str();
     } else if (field == NumericFieldId::DistributeSpacing) {
         ss << distribute_spacing_mm_;
+        num_input_buffer_ = ss.str();
+    } else if (field == NumericFieldId::AnnotationSourceX ||
+               field == NumericFieldId::AnnotationSourceY ||
+               field == NumericFieldId::AnnotationSourceWidth ||
+               field == NumericFieldId::AnnotationSourceHeight ||
+               field == NumericFieldId::AnnotationFrameX ||
+               field == NumericFieldId::AnnotationFrameY) {
+        std::optional<document::DetailViewObject> detail;
+        if (annotation_tool_ && annotation_tool_->active() && active_tool_ == 17 &&
+            annotation_tool_->mode() == tools::AnnotationToolMode::DetailView)
+            detail = annotation_tool_->draft_detail_view();
+        else {
+            const auto& ids = root().vector_controller().selection().selected_ids();
+            if (ids.size() == 1) detail = document::get_detail_view(root().document(), ids.front());
+        }
+        if (!detail) { active_num_field_ = NumericFieldId::None; return; }
+        const auto& source = detail->source_region;
+        double value = 0.0;
+        if (field == NumericFieldId::AnnotationSourceX)
+            value = detail->shape == document::DetailViewShape::Circle ? source.center().x : source.x;
+        else if (field == NumericFieldId::AnnotationSourceY)
+            value = detail->shape == document::DetailViewShape::Circle ? source.center().y : source.y;
+        else if (field == NumericFieldId::AnnotationSourceWidth)
+            value = detail->shape == document::DetailViewShape::Circle ? source.width * 0.5 : source.width;
+        else if (field == NumericFieldId::AnnotationSourceHeight)
+            value = source.height;
+        else if (field == NumericFieldId::AnnotationFrameX)
+            value = detail->frame_rect.x;
+        else value = detail->frame_rect.y + detail->frame_rect.height;
+        num_input_buffer_ = format_mm_input(value, display_length_unit_);
+    } else if (field == NumericFieldId::AnnotationScale) {
+        if (annotation_tool_ && annotation_tool_->active() && active_tool_ == 17)
+            ss << annotation_tool_->scale_ratio();
+        else {
+            const auto& ids = root().vector_controller().selection().selected_ids();
+            const auto value = ids.size() == 1 ? document::get_detail_view(root().document(), ids.front()) : std::nullopt;
+            if (!value) { active_num_field_ = NumericFieldId::None; return; }
+            ss << value->scale_ratio;
+        }
+        num_input_buffer_ = ss.str();
+    } else if (field == NumericFieldId::AnnotationTextSize) {
+        if (annotation_tool_ && annotation_tool_->active() && active_tool_ == 17 &&
+            annotation_tool_->mode() != tools::AnnotationToolMode::DetailView)
+            ss << annotation_tool_->note_text_size_mm();
+        else {
+            const auto& ids = root().vector_controller().selection().selected_ids();
+            const auto value = ids.size() == 1 ? document::get_annotation(root().document(), ids.front()) : std::nullopt;
+            if (!value) { active_num_field_ = NumericFieldId::None; return; }
+            ss << value->style.text_size_mm;
+        }
         num_input_buffer_ = ss.str();
     } else if (field == NumericFieldId::GridSpacing) {
         const auto snap = drawing_tool_ ? drawing_tool_->grid_snap_status()

@@ -18,6 +18,8 @@ struct ImportReportIssue {
     std::string source_locator;
     std::string feature_code;
     std::string diagnostic_code;
+
+    bool operator==(const ImportReportIssue& other) const = default;
 };
 
 /// Host-reviewed source fidelity facts retained with the page that received an import.
@@ -34,6 +36,8 @@ struct ImportFidelityReport {
     ImportReportEditability editability{ImportReportEditability::Unknown};
     ImportReportProduction production{ImportReportProduction::Unknown};
     std::vector<ImportReportIssue> issues;
+
+    bool operator==(const ImportFidelityReport& other) const = default;
 
     [[nodiscard]] bool is_valid() const noexcept {
         if (format_name.empty() || format_name.size() > 64 || profile_id.size() > 128 ||

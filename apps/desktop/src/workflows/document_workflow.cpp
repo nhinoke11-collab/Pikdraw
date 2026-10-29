@@ -413,12 +413,25 @@ bool DocumentWorkflow::distribute_selected(
 
 bool DocumentWorkflow::undo() {
     bool res = root_.document().undo();
+    if (res) {
+        // Undo can remove the object currently selected by a creation/merge
+        // command. Revalidate selection IDs against the new immutable snapshot
+        // before a tool consumes them as scoped input.
+        const auto selected = root_.vector_controller().selection().selected_ids();
+        if (const auto snapshot = root_.document().current_snapshot())
+            root_.vector_controller().set_selection(selected, *snapshot);
+    }
     sync_status_bar();
     return res;
 }
 
 bool DocumentWorkflow::redo() {
     bool res = root_.document().redo();
+    if (res) {
+        const auto selected = root_.vector_controller().selection().selected_ids();
+        if (const auto snapshot = root_.document().current_snapshot())
+            root_.vector_controller().set_selection(selected, *snapshot);
+    }
     sync_status_bar();
     return res;
 }

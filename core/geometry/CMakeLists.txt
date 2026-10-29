@@ -10,11 +10,13 @@ add_library(pikdraw_geometry STATIC
     src/primitives/transform.cpp
     src/curves/curve.cpp
     src/curves/curve_ops.cpp
+    src/curves/construction.cpp
     src/curves/path.cpp
     src/flattening/flattening.cpp
     src/operations/boolean.cpp
     src/operations/boolean_polygon.cpp
     src/operations/path_cut.cpp
+    src/operations/path_cut_stroke.cpp
     src/operations/offset.cpp
     src/queries/aabb_index.cpp
     src/queries/curve_intersections.cpp

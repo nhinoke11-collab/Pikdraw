@@ -90,8 +90,10 @@ CommandResult ReplaceObjectWithPiecesCommand::execute(Document& doc) {
     if (entry->parent) {
         const auto insert_idx = std::distance(parent_group.children_ids.begin(), target_slot);
         parent_group.children_ids.erase(parent_group.children_ids.begin() + insert_idx);
-        parent_group.children_ids.insert(parent_group.children_ids.begin() + insert_idx,
-                                         new_object_ids_.begin(), new_object_ids_.end());
+        if (!new_object_ids_.empty()) {
+            parent_group.children_ids.insert(parent_group.children_ids.begin() + insert_idx,
+                                             new_object_ids_.begin(), new_object_ids_.end());
+        }
         if (parent_group.clip) {
             parent_group.clip->is_empty_frame = (parent_group.children_ids.size() <= 1);
         }
@@ -100,7 +102,8 @@ CommandResult ReplaceObjectWithPiecesCommand::execute(Document& doc) {
         auto& ids = page.layers[entry->layer].object_ids;
         const auto insert_idx = std::distance(ids.begin(), target_slot);
         ids.erase(ids.begin() + insert_idx);
-        ids.insert(ids.begin() + insert_idx, new_object_ids_.begin(), new_object_ids_.end());
+        if (!new_object_ids_.empty())
+            ids.insert(ids.begin() + insert_idx, new_object_ids_.begin(), new_object_ids_.end());
     }
 
     // Add all pieces into map

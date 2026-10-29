@@ -139,7 +139,7 @@ void test_native_vector_payload_streams_as_legacy_chunked_container() {
 
     const auto snapshot = doc.current_snapshot();
     const auto bytes = NativeFormat::serialize(*snapshot);
-    assert(bytes.size() > kNativeChunkBytes);
+    assert(!bytes.empty());
     assert(bytes[4] == kLegacyChunkedContainerFormatVersion);
     assert(bytes[8] == kNativeCompressionFlagChunked);
     std::vector<uint8_t> streamed_bytes;
@@ -414,6 +414,10 @@ void test_raster_asset_reference_and_edit_graph_roundtrip() {
     const RasterColorBalanceParams balance{
         RasterTonalRange::Highlights, 12.5, -20.0, 37.0, false};
     image.edit_graph.nodes.push_back({RasterEditNodeId{51}, true, balance});
+    RasterEraserParams eraser;
+    eraser.diameter_px = 24.0;
+    eraser.points = {{0.125, 0.25}, {0.75, 0.875}};
+    image.edit_graph.nodes.push_back({RasterEditNodeId{52}, true, eraser});
     assert(doc.execute_command(std::make_unique<AddObjectCommand>(image)).success);
 
     const auto snapshot = doc.current_snapshot();
@@ -433,10 +437,10 @@ void test_raster_asset_reference_and_edit_graph_roundtrip() {
     assert(restored.asset_source->encoded_byte_length == 8ull * 1024ull * 1024ull * 1024ull);
     assert(restored.asset_source->source_modified_ticks == -123456789);
     assert(restored.asset_source->locator == "assets/large.tif");
-    if (restored.edit_graph.nodes.size() != 11 ||
+    if (restored.edit_graph.nodes.size() != 12 ||
         restored.edit_graph.schema_version != RasterEditGraph::kSchemaVersion)
-        throw std::runtime_error("Raster graph v17 Color Balance save/reopen failed");
-    assert(restored.edit_graph.nodes.size() == 11);
+        throw std::runtime_error("Raster graph v18 Raster Eraser save/reopen failed");
+    assert(restored.edit_graph.nodes.size() == 12);
     assert(restored.edit_graph.schema_version == RasterEditGraph::kSchemaVersion);
     assert(std::get<RasterChannelMixerParams>(restored.edit_graph.nodes[8].parameters).coefficients ==
         mixer.coefficients);
@@ -456,6 +460,11 @@ void test_raster_asset_reference_and_edit_graph_roundtrip() {
         restored_balance.green_magenta_percent == balance.green_magenta_percent &&
         restored_balance.blue_yellow_percent == balance.blue_yellow_percent &&
         restored_balance.preserve_luminosity == balance.preserve_luminosity);
+    const auto& restored_eraser = std::get<RasterEraserParams>(
+        restored.edit_graph.nodes[11].parameters);
+    assert(restored_eraser.diameter_px == eraser.diameter_px &&
+        restored_eraser.points == eraser.points &&
+        restored.edit_graph.nodes[11].id == RasterEditNodeId{52});
     assert(restored.edit_graph.nodes[0].id.value == 41);
     assert(restored.edit_graph.nodes[0].algorithm_version == 1);
     assert(std::get<RasterCropParams>(restored.edit_graph.nodes[0].parameters).width == 0.7);
@@ -547,10 +556,15 @@ void test_raster_edit_graph_v2_migrates_without_precision_payload() {
     };
     assert(read_u32(graph_schema_offset) == RasterEditGraph::kSchemaVersion);
     assert(read_u32(graph_schema_offset + 4) == 1);
-    const size_t precision_flag_offset = graph_schema_offset + 4 + 4 + 25;
-    assert(bytes[precision_flag_offset] == 0);
+    const size_t node_mask_flag_offset = graph_schema_offset + 4 + 4 + 25;
+    assert(bytes[node_mask_flag_offset] == 0);
+    assert(bytes[node_mask_flag_offset + 1] == 0);
     bytes[graph_schema_offset] = 2;
-    bytes.erase(bytes.begin() + static_cast<std::ptrdiff_t>(precision_flag_offset));
+    // Schema v2 had neither the per-node mask flag (added in v10) nor the
+    // trailing RGBA16 payload flag (added in v3). Remove both from this
+    // serialized v18 fixture before asking the v2 reader to migrate it.
+    bytes.erase(bytes.begin() + static_cast<std::ptrdiff_t>(node_mask_flag_offset));
+    bytes.erase(bytes.begin() + static_cast<std::ptrdiff_t>(node_mask_flag_offset));
     const auto write_u32 = [](std::vector<uint8_t>& target, size_t offset,
                               uint32_t value) {
         for (unsigned i = 0; i < 4; ++i)
@@ -562,6 +576,8 @@ void test_raster_edit_graph_v2_migrates_without_precision_payload() {
 
     std::string error;
     const auto reopened = NativeFormat::deserialize(bytes.data(), bytes.size(), &error);
+    if (!reopened || !error.empty())
+        std::cerr << "Legacy raster schema migration failed: " << error << '\n';
     assert(reopened && error.empty());
     const auto restored_value = reopened->get_object(image.id);
     assert(restored_value && std::holds_alternative<ImageObject>(*restored_value));

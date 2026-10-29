@@ -31,7 +31,7 @@ try {
     foreach ($rule in @(
         @{ Directory = 'artifacts\evidence'; Filters = @('*.bmp', '*.png', '*.log') },
         @{ Directory = 'build\win-dev'; Filters = @('*.obj.tmp') },
-        @{ Directory = 'build\win-dev\Testing\Temporary'; Filters = @('LastTest*.log', 'LastTestsFailed.log', 'CTestCostData.txt') }
+        @{ Directory = 'build\win-dev\Testing\Temporary'; Filters = @('LastTest*.log', 'LastTestsFailed.log') }
     )) {
         $path = Assert-PikDrawOutputPath (Join-Path $repoRoot $rule.Directory) $repoRoot
         if (-not (Test-Path -LiteralPath $path -PathType Container)) { continue }

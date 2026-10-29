@@ -37,5 +37,5 @@
 ## Build and Test
 
 ```powershell
-.\tooling\native\build.ps1 -Test -TestTarget test_pikdraw_geometry -TestRegex '^pikdraw_geometry_tests$'
+.\tooling\native\build.ps1 -Test -TestTarget test_pikdraw_geometry
 ```

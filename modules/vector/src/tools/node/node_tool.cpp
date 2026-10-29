@@ -1,5 +1,6 @@
 #include "pikdraw/vector/tools/node/node_tool.hpp"
 #include "pikdraw/document/commands/path_commands.hpp"
+#include "pikdraw/document/commands/transaction_writer.hpp"
 #include "pikdraw/document/model/path_adapter.hpp"
 #include <algorithm>
 #include <cmath>
@@ -9,6 +10,7 @@ namespace pikdraw::vector::tools::node {
 void NodeTool::set_target_object(document::ObjectId object_id) {
     if (target_object_id_ != object_id) {
         target_object_id_ = object_id;
+        fallback_ep_ = std::nullopt;
         clear_selection();
         if (target_object_id_ != document::kInvalidObjectId) {
             auto snap = document_.current_snapshot();
@@ -35,8 +37,26 @@ const document::EditablePath* NodeTool::get_editable_path() const {
     auto obj = snap->get_object(target_object_id_);
     if (!obj || !std::holds_alternative<document::PathObject>(*obj)) return nullptr;
     const auto& path_obj = std::get<document::PathObject>(*obj);
-    if (!path_obj.authoring_source) return nullptr;
-    return &*path_obj.authoring_source;
+    if (path_obj.authoring_source) return &*path_obj.authoring_source;
+    if (!fallback_ep_) {
+        fallback_ep_ = document::editable_path_from_path2d(path_obj.path, nullptr);
+    }
+    return fallback_ep_ ? &*fallback_ep_ : nullptr;
+}
+
+bool NodeTool::ensure_authoring_source() {
+    if (target_object_id_ == document::kInvalidObjectId) return false;
+    auto snap = document_.current_snapshot();
+    if (!snap) return false;
+    auto obj = snap->get_object(target_object_id_);
+    if (!obj || !std::holds_alternative<document::PathObject>(*obj)) return false;
+    const auto& po = std::get<document::PathObject>(*obj);
+    if (po.authoring_source) return true;
+    auto ep = document::editable_path_from_path2d(po.path, nullptr);
+    if (!ep) return false;
+    fallback_ep_ = std::nullopt;
+    auto cmd = std::make_unique<document::SetAuthoringSourceCommand>(target_object_id_, std::move(*ep));
+    return document_.execute_command(std::move(cmd)).success;
 }
 
 geometry::Transform2D NodeTool::target_transform() const {
@@ -626,6 +646,7 @@ bool NodeTool::pointer_up(geometry::Point2D world_pos) {
     if (mode == NodeDragMode::MoveHandle && dragged && active_handle_) {
         const auto delta_w = world_pos - drag_start_world_;
         if (delta_w.distance_to({0.0, 0.0}) > 1e-4) {
+            ensure_authoring_source();
             const auto inv_tr = target_inverse_transform();
             const auto delta_local = inv_tr.map_vector(delta_w);
             const auto new_pos = initial_handle_local_pos_ + delta_local;
@@ -637,6 +658,7 @@ bool NodeTool::pointer_up(geometry::Point2D world_pos) {
     } else if (mode == NodeDragMode::MoveNode && dragged) {
         const auto delta_w = world_pos - drag_start_world_;
         if (delta_w.distance_to({0.0, 0.0}) > 1e-4) {
+            ensure_authoring_source();
             const auto inv_tr = target_inverse_transform();
             const auto delta_local = inv_tr.map_vector(delta_w);
             if (selected_nodes_.size() == 1 && !initial_node_anchors_.empty()) {
@@ -741,6 +763,7 @@ bool NodeTool::pointer_up(geometry::Point2D world_pos) {
     } else if (mode == NodeDragMode::BendSegment && active_segment_drag_) {
         const auto delta_w = world_pos - drag_start_world_;
         if (dragged && delta_w.distance_to({0.0, 0.0}) > 1e-4) {
+            ensure_authoring_source();
             const auto [c1_w, c2_w] = current_segment_bend_handles();
             const auto inv_tr = target_inverse_transform();
             const auto c1_local = inv_tr.map_point(c1_w);
@@ -796,20 +819,25 @@ void NodeTool::cancel() {
 
 bool NodeTool::delete_selected() {
     if (selected_nodes_.empty() || target_object_id_ == document::kInvalidObjectId) return false;
-    bool any_success = false;
-    for (const auto& [sub_id, node_id] : selected_nodes_) {
+    ensure_authoring_source();
+    if (selected_nodes_.size() == 1) {
         auto cmd = std::make_unique<document::DeletePathNodeCommand>(
-            target_object_id_, sub_id, node_id);
-        if (document_.execute_command(std::move(cmd)).success) {
-            any_success = true;
-        }
+            target_object_id_, selected_nodes_[0].first, selected_nodes_[0].second);
+        clear_selection();
+        return document_.execute_command(std::move(cmd)).success;
+    }
+    auto composite = std::make_unique<document::CompositeCommand>("Delete Path Nodes");
+    for (const auto& [sub_id, node_id] : selected_nodes_) {
+        composite->add_command(std::make_unique<document::DeletePathNodeCommand>(
+            target_object_id_, sub_id, node_id));
     }
     clear_selection();
-    return any_success;
+    return document_.execute_command(std::move(composite)).success;
 }
 
 bool NodeTool::add_node_at_midpoint() {
     if (target_object_id_ == document::kInvalidObjectId) return false;
+    ensure_authoring_source();
     if (selected_segment_) {
         auto cmd = std::make_unique<document::SplitPathSegmentCommand>(
             target_object_id_, selected_segment_->first, selected_segment_->second, 0.5);
@@ -834,19 +862,23 @@ bool NodeTool::add_node_at_midpoint() {
 
 bool NodeTool::break_selected() {
     if (selected_nodes_.empty() || target_object_id_ == document::kInvalidObjectId) return false;
-    bool any = false;
-    for (const auto& [sub_id, node_id] : selected_nodes_) {
+    ensure_authoring_source();
+    if (selected_nodes_.size() == 1) {
         auto cmd = std::make_unique<document::BreakPathAtNodeCommand>(
-            target_object_id_, sub_id, node_id);
-        if (document_.execute_command(std::move(cmd)).success) {
-            any = true;
-        }
+            target_object_id_, selected_nodes_[0].first, selected_nodes_[0].second);
+        return document_.execute_command(std::move(cmd)).success;
     }
-    return any;
+    auto composite = std::make_unique<document::CompositeCommand>("Break Path Nodes");
+    for (const auto& [sub_id, node_id] : selected_nodes_) {
+        composite->add_command(std::make_unique<document::BreakPathAtNodeCommand>(
+            target_object_id_, sub_id, node_id));
+    }
+    return document_.execute_command(std::move(composite)).success;
 }
 
 bool NodeTool::reverse_selected() {
     if (selected_nodes_.empty() || target_object_id_ == document::kInvalidObjectId) return false;
+    ensure_authoring_source();
     const auto sub_id = selected_nodes_[0].first;
     auto cmd = std::make_unique<document::ReverseSubpathCommand>(target_object_id_, sub_id);
     return document_.execute_command(std::move(cmd)).success;
@@ -854,19 +886,23 @@ bool NodeTool::reverse_selected() {
 
 bool NodeTool::set_selected_mode(document::PathNodeMode mode) {
     if (selected_nodes_.empty() || target_object_id_ == document::kInvalidObjectId) return false;
-    bool any = false;
-    for (const auto& [sub_id, node_id] : selected_nodes_) {
+    ensure_authoring_source();
+    if (selected_nodes_.size() == 1) {
         auto cmd = std::make_unique<document::SetNodeModeCommand>(
-            target_object_id_, sub_id, node_id, mode);
-        if (document_.execute_command(std::move(cmd)).success) {
-            any = true;
-        }
+            target_object_id_, selected_nodes_[0].first, selected_nodes_[0].second, mode);
+        return document_.execute_command(std::move(cmd)).success;
     }
-    return any;
+    auto composite = std::make_unique<document::CompositeCommand>("Set Node Mode");
+    for (const auto& [sub_id, node_id] : selected_nodes_) {
+        composite->add_command(std::make_unique<document::SetNodeModeCommand>(
+            target_object_id_, sub_id, node_id, mode));
+    }
+    return document_.execute_command(std::move(composite)).success;
 }
 
 bool NodeTool::convert_selected_segment(document::PathSegmentKind kind) {
     if (target_object_id_ == document::kInvalidObjectId) return false;
+    ensure_authoring_source();
     if (!selected_nodes_.empty()) {
         const auto* path = get_editable_path();
         if (!path) return false;
@@ -899,14 +935,17 @@ bool NodeTool::convert_selected_segment(document::PathSegmentKind kind) {
         };
         std::sort(segments_to_convert.begin(), segments_to_convert.end(), cmp);
         segments_to_convert.erase(std::unique(segments_to_convert.begin(), segments_to_convert.end(), eq), segments_to_convert.end());
-        for (const auto& [s_id, seg_id] : segments_to_convert) {
+        if (segments_to_convert.size() == 1) {
             auto cmd = std::make_unique<document::ConvertSegmentKindCommand>(
-                target_object_id_, s_id, seg_id, kind);
-            if (document_.execute_command(std::move(cmd)).success) {
-                any = true;
-            }
+                target_object_id_, segments_to_convert[0].first, segments_to_convert[0].second, kind);
+            return document_.execute_command(std::move(cmd)).success;
         }
-        return any;
+        auto composite = std::make_unique<document::CompositeCommand>("Convert Segments");
+        for (const auto& [s_id, seg_id] : segments_to_convert) {
+            composite->add_command(std::make_unique<document::ConvertSegmentKindCommand>(
+                target_object_id_, s_id, seg_id, kind));
+        }
+        return document_.execute_command(std::move(composite)).success;
     }
     if (selected_segment_) {
         auto cmd = std::make_unique<document::ConvertSegmentKindCommand>(
@@ -918,6 +957,7 @@ bool NodeTool::convert_selected_segment(document::PathSegmentKind kind) {
 
 bool NodeTool::join_selected(bool bridge) {
     if (selected_nodes_.size() != 2 || target_object_id_ == document::kInvalidObjectId) return false;
+    ensure_authoring_source();
     auto cmd = std::make_unique<document::JoinPathSubpathsCommand>(
         target_object_id_, selected_nodes_[0].first, selected_nodes_[0].second,
         selected_nodes_[1].first, selected_nodes_[1].second, bridge);
@@ -926,13 +966,28 @@ bool NodeTool::join_selected(bool bridge) {
 
 bool NodeTool::close_selected() {
     if (selected_nodes_.empty() || target_object_id_ == document::kInvalidObjectId) return false;
+    ensure_authoring_source();
     const auto sub_id = selected_nodes_[0].first;
-    auto cmd = std::make_unique<document::ClosePathSubpathCommand>(target_object_id_, sub_id);
+    std::optional<document::NodeId> merge_to_start;
+    const auto snapshot = document_.current_snapshot();
+    const auto object = snapshot ? snapshot->get_object(target_object_id_) : std::nullopt;
+    const auto* path = object ? std::get_if<document::PathObject>(&*object) : nullptr;
+    if (!path || !path->authoring_source) return false;
+    const auto subpath = std::find_if(path->authoring_source->subpaths.begin(),
+        path->authoring_source->subpaths.end(),
+        [sub_id](const auto& candidate) { return candidate.id == sub_id; });
+    if (subpath == path->authoring_source->subpaths.end() || subpath->nodes.size() < 2)
+        return false;
+    if (subpath->nodes.front().anchor == subpath->nodes.back().anchor)
+        merge_to_start = subpath->nodes.front().id;
+    auto cmd = std::make_unique<document::ClosePathSubpathCommand>(
+        target_object_id_, sub_id, merge_to_start);
     return document_.execute_command(std::move(cmd)).success;
 }
 
 bool NodeTool::move_selected_delta(geometry::Point2D delta) {
     if (selected_nodes_.empty() || target_object_id_ == document::kInvalidObjectId) return false;
+    ensure_authoring_source();
     const auto delta_local = target_inverse_transform().map_vector(delta);
     auto cmd = std::make_unique<document::BatchMovePathNodesCommand>(
         target_object_id_, selected_nodes_, delta_local);
@@ -941,6 +996,7 @@ bool NodeTool::move_selected_delta(geometry::Point2D delta) {
 
 bool NodeTool::set_selected_node_position(geometry::Point2D new_pos) {
     if (selected_nodes_.size() != 1 || target_object_id_ == document::kInvalidObjectId) return false;
+    ensure_authoring_source();
     const auto new_pos_local = target_inverse_transform().map_point(new_pos);
     auto cmd = std::make_unique<document::MovePathNodeCommand>(
         target_object_id_, selected_nodes_[0].first, selected_nodes_[0].second, new_pos_local);

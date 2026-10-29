@@ -21,12 +21,13 @@
 
 namespace {
 
-constexpr size_t kMaxZipEntries = UINT16_MAX;
-constexpr size_t kMaxRawSvgBytes = UINT32_MAX;
-constexpr size_t kMaxCompactSvgBytes = UINT32_MAX;
-constexpr size_t kMaxUniqueImageBytes = UINT32_MAX;
-constexpr size_t kMaxCdrPacketBytes = UINT32_MAX;
-constexpr size_t kMaxImageInstances = UINT32_MAX;
+constexpr size_t kMaxZipEntries = 65535u;
+constexpr uint64_t kMaxZipExpandedBytes = 512u * 1024u * 1024u;
+constexpr size_t kMaxRawSvgBytes = 320u * 1024u * 1024u;
+constexpr size_t kMaxCompactSvgBytes = 64u * 1024u * 1024u;
+constexpr size_t kMaxUniqueImageBytes = 64u * 1024u * 1024u;
+constexpr size_t kMaxCdrPacketBytes = 128u * 1024u * 1024u;
+constexpr size_t kMaxImageInstances = 65536u;
 uint16_t ReadU16(const uint8_t* bytes) noexcept {
   return static_cast<uint16_t>(bytes[0] | (static_cast<uint16_t>(bytes[1]) << 8));
 }
@@ -202,8 +203,9 @@ class ZipInput final : public MemoryInput {
     return nullptr;
   }
   bool Extract(const ZipEntry& entry, std::vector<uint8_t>& output) {
-    if (entry.expanded_size > UINT64_MAX - expanded_bytes_)
-      return Fail("CDR ZIP expanded byte count overflowed");
+    if (entry.expanded_size > kMaxZipExpandedBytes ||
+        expanded_bytes_ + entry.expanded_size > kMaxZipExpandedBytes)
+      return Fail("CDR ZIP expanded byte count exceeds safety quota");
     const size_t local = entry.local_header_offset;
     if (local + 30 > size_ || ReadU32(data_ + local) != 0x04034b50u)
       return Fail("CDR ZIP local header is invalid");

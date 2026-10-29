@@ -85,7 +85,8 @@ enum class RasterEditKind : uint32_t {
     Light = 11,
     ChannelMixer = 12,
     CloneStamp = 13,
-    ColorBalance = 14
+    ColorBalance = 14,
+    RasterEraser = 15
 };
 
 struct RasterCropParams {
@@ -139,6 +140,21 @@ struct RasterCloneStampParams {
     double radius_percent{1.0};
     double hardness_percent{75.0};
     double opacity_percent{100.0};
+};
+struct RasterEraserPoint {
+    double x{0.0};
+    double y{0.0};
+    friend bool operator==(const RasterEraserPoint&,
+                           const RasterEraserPoint&) = default;
+};
+/// Non-destructive round-nib alpha eraser in the output coordinate space at
+/// this graph position. Centers are normalized; diameter remains in pixels.
+struct RasterEraserParams {
+    static constexpr size_t kMaxPoints = 4096;
+    std::vector<RasterEraserPoint> points;
+    double diameter_px{12.0};
+    friend bool operator==(const RasterEraserParams&,
+                           const RasterEraserParams&) = default;
 };
 enum class RasterToneChannel : uint8_t { Composite = 0, Red = 1, Green = 2, Blue = 3 };
 /// Encoded-sRGB Levels. Each node targets composite RGB or one RGB channel;
@@ -198,7 +214,8 @@ using RasterEditParameters = std::variant<RasterCropParams, RasterFlipParams,
                                           RasterLightParams,
                                           RasterChannelMixerParams,
                                           RasterCloneStampParams,
-                                          RasterColorBalanceParams>;
+                                          RasterColorBalanceParams,
+                                          RasterEraserParams>;
 
 struct RasterEditNode {
     RasterEditNodeId id;
@@ -210,7 +227,7 @@ struct RasterEditNode {
 
 /// Ordered, non-destructive edit history attached to an image placement.
 struct RasterEditGraph {
-    static constexpr uint16_t kSchemaVersion = 17;
+    static constexpr uint16_t kSchemaVersion = 18;
     static constexpr uint32_t kMaxNodes = 1024;
     uint16_t schema_version{kSchemaVersion};
     std::vector<RasterEditNode> nodes;

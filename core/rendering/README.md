@@ -27,3 +27,12 @@ Giới hạn CPU để tránh treo/overflow: tối đa 8.388.608 pixel/frame, m�
 Build/test tại root qua runner chuẩn `.\tooling\native\build.ps1 -Configuration Release -Test -TestTarget test_pikdraw_rendering_rasterizer -TestRegex '^(test_pikdraw_rendering_rasterizer|test_pikdraw_swap_chain|test_pikdraw_swap_chain_warp|test_pikdraw_swap_chain_benchmark)$' -VerboseTests` (dùng chung `build/win-dev`). Pixel regression, swap-chain correctness và backend benchmark chạy ở Release.
 
 Dependencies: document, geometry, color, typography. Không có Qt/UI/graphics handles trong source model. C3 camera rotation/DPR, Qt/Skia, GPU partial-render, tile cache, full overlay parity, reference-hardware input-to-present latency và performance ngoài máy benchmark hiện tại chưa được thực hiện/đo; không suy ra từ các pixel/test harness pass.
+
+D2D image cache không còn trần mặc định 256 MiB: dùng chung admission RAM/commit với raster,
+giới hạn giữ cache theo 1/16 RAM và headroom hiện thời. Hardware/UMA còn xét ngân sách local
+của DXGI (`QueryVideoMemoryInfo`); driver cũ dùng 1/4 dedicated VRAM nếu có. WARP dùng chính
+sách RAM, không coi shared system memory là VRAM riêng. Cache thu hồi LRU khi frame/get tiếp
+theo thấy ngân sách giảm; buffer upload và bitmap/copy được hạch toán chung với các worker.
+Đây không là trần tổng bộ nhớ tiến trình: document, surface viewport và bitmap transient còn
+được caller giữ ngoài cache vẫn tiêu thụ RAM/VRAM thực. Việc đổi ngân sách không loại bỏ
+staging/readback và GDI của đường mặc định, không chứng minh cải thiện FPS hay peak RAM.

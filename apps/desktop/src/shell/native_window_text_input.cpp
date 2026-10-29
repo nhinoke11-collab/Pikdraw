@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "../tools/annotation/annotation_tool_controller.hpp"
 #ifdef _WIN32
 #include "../clipboard/native_clipboard.hpp"
 #include <imm.h>
@@ -220,6 +221,32 @@ bool NativeWindow::handle_inline_text_ime(LPARAM flags) {
     ImmReleaseContext(hwnd_, context);
     refresh_inline_text_preview();
     return true;
+}
+
+bool NativeWindow::handle_annotation_note_ime(LPARAM flags) {
+#ifdef _WIN32
+    if (!annotation_tool_ || !annotation_tool_->note_text_editing() ||
+        !(flags & GCS_RESULTSTR)) return false;
+    auto context = ImmGetContext(hwnd_);
+    if (!context) return false;
+    const LONG bytes = ImmGetCompositionStringW(context, GCS_RESULTSTR, nullptr, 0);
+    if (bytes > 0 && bytes <= 128 * 1024 && bytes % sizeof(wchar_t) == 0) {
+        std::wstring result(static_cast<size_t>(bytes) / sizeof(wchar_t), L'\0');
+        const LONG copied = ImmGetCompositionStringW(
+            context, GCS_RESULTSTR, result.data(), static_cast<DWORD>(bytes));
+        if (copied == bytes) {
+            for (const wchar_t unit : result)
+                annotation_tool_->append_note_character(
+                    static_cast<uint32_t>(unit));
+        }
+    }
+    ImmReleaseContext(hwnd_, context);
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    return true;
+#else
+    (void)flags;
+    return false;
+#endif
 }
 #endif
 } // namespace pikdraw::desktop

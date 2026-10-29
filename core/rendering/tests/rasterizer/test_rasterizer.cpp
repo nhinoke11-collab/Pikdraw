@@ -1,4 +1,5 @@
 #include "pikdraw/document/commands/clip_commands.hpp"
+#include "pikdraw/document/commands/annotation_commands.hpp"
 #include "pikdraw/document/document.hpp"
 #include "pikdraw/color/preview/icc_preview.hpp"
 #include "pikdraw/color/profiles/profile_resource.hpp"
@@ -68,6 +69,43 @@ void test_software_rasterizer_frame() {
   assert(buffer[0] == 18);
   assert(buffer[1] == 20);
   assert(buffer[2] == 26);
+}
+
+void test_detail_view_renders_clipped_source_content() {
+  Document doc("detail-view-source-render");
+  PathObject source;
+  source.id = generate_object_id();
+  source.name = "Detail source";
+  source.path = geometry::Path2D::make_rect(0, 0, 20, 20);
+  source.fill = color::RGBColor{0, 1, 0, 1};
+  source.has_fill = true;
+  source.has_stroke = false;
+  assert(doc.execute_command(std::make_unique<AddObjectCommand>(source)).success);
+
+  DetailViewObject detail;
+  detail.source_page_id = doc.active_page_id();
+  detail.source_region = {0, 0, 20, 20};
+  detail.frame_rect = {60, 0, 40, 40};
+  detail.scale_ratio = 2.0;
+  detail.shape = DetailViewShape::Rectangle;
+  assert(doc.execute_command(
+      std::make_unique<AddDetailViewCommand>(detail)).success);
+
+  ViewportRenderer renderer(std::make_shared<SoftwareRasterizer>());
+  renderer.camera().set_center({50.0, 20.0});
+  renderer.camera().set_zoom(2.0);
+  constexpr int32_t width = 200;
+  constexpr int32_t height = 120;
+  std::vector<uint8_t> pixels(width * height * 4, 0);
+  PixelBufferTarget target{pixels.data(), width, height, width * 4};
+  RenderMetric metric;
+  assert(renderer.render_frame(*doc.current_snapshot(), target, &metric));
+
+  // The destination frame center maps to the center of the green source path.
+  const auto index = static_cast<size_t>(60 * width + 160) * 4;
+  assert(pixels[index] < 8);
+  assert(pixels[index + 1] > 245);
+  assert(pixels[index + 2] < 8);
 }
 
 void test_backend_status_state_machine() {
@@ -884,7 +922,13 @@ void test_d2d_page_and_local_geometry_cache() {
   const auto even_odd = cache.get_or_create_path(device.factory(), id, 1, path);
   assert(even_odd && even_odd.Get() != first.Get());
   const auto revised = cache.get_or_create_path(device.factory(), id, 2, path);
-  assert(revised && revised.Get() != even_odd.Get());
+  assert(revised && revised.Get() == even_odd.Get());
+  cache.evict_stale(3);
+  assert(cache.get_or_create_path(device.factory(), id, 3, path).Get() == revised.Get());
+  auto changed_path = geometry::Path2D::make_rect(0, 0, 30, 20);
+  changed_path.set_winding_rule(geometry::WindingRule::EvenOdd);
+  const auto changed = cache.get_or_create_path(device.factory(), id, 3, changed_path);
+  assert(changed && changed.Get() != revised.Get());
 
   // When panning/zooming a transformed path at a large world origin, it stays
   // in the same object-local geometry and projects like a fresh GPU render.
@@ -1065,6 +1109,31 @@ void test_bgra_targets_and_image_upload_cache() {
     target.pixels = rgba.data(); assert(!target.is_valid());
   }
   d2d::D2DDeviceManager device; assert(device.initialize());
+  {
+    using namespace pikdraw::document::resources;
+    constexpr uint64_t GiB = 1024ull * 1024 * 1024;
+    SystemMemoryStatus status{8 * GiB, 6 * GiB, 8 * GiB, 8 * GiB};
+    auto policy = std::make_shared<MemoryBudgetPolicy>([&] { return status; });
+    d2d::D2DImageCache adaptive(0, 1024, policy);
+    ImageObject sample; sample.width_px = sample.height_px = 1;
+    sample.pixels_rgba = {0x102030ff};
+    assert(adaptive.get(device.context(), sample, 1));
+    assert(adaptive.capacity_bytes() == GiB / 2 && adaptive.cached_image_count() == 1);
+    assert(policy->reserved_bytes() == 8); // bitmap + legacy pixel copy
+    status.available_physical_bytes = GiB / 8;
+    adaptive.begin_frame();
+    assert(adaptive.capacity_bytes() == 0 && adaptive.cached_image_count() == 0);
+    assert(policy->reserved_bytes() == 0);
+    assert(!adaptive.get(device.context(), sample, 2));
+    assert(adaptive.memory_pressure_encountered());
+    status = {32 * GiB, 24 * GiB, 32 * GiB, 32 * GiB};
+    adaptive.begin_frame();
+    assert(!adaptive.memory_pressure_encountered());
+    assert(adaptive.get(device.context(), sample, 3));
+    assert(adaptive.capacity_bytes() == 2 * GiB && adaptive.cached_image_count() == 1);
+    adaptive.begin_frame(device.d3d_device()); // live hardware/WARP adapter budget
+    assert(adaptive.capacity_bytes() <= 2 * GiB);
+  }
   d2d::D2DImageCache cache;
   ImageObject image; image.id = generate_object_id();
   image.width_px = image.height_px = 1; image.pixels_rgba = {0xFF0000FF};
@@ -1179,6 +1248,7 @@ int main(int argc,char** argv) {
   std::cout << "[test_rasterizer] Running software rasterizer tests...\n";
   test_bgra_targets_and_image_upload_cache();
   test_software_rasterizer_frame();
+  test_detail_view_renders_clipped_source_content();
   test_analytic_ellipse_renders_from_authoring_source();
   test_backend_status_state_machine();
   test_d2d_render_backend();

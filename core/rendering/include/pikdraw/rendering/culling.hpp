@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pikdraw/document/snapshots/document_snapshot.hpp"
+#include "pikdraw/document/annotations/annotation_layout.hpp"
 #include "pikdraw/geometry/primitives/validation.hpp"
 #include <algorithm>
 #include <cmath>
@@ -328,6 +329,31 @@ class SpatialCuller {
     if (!finite_rect(world_bounds))
       return false;
 
+    geometry::Rect2D derived_display_bounds{};
+    bool has_derived_display_bounds = false;
+    if (object.contour_spec.starts_with("annotation:v1")) {
+      const auto annotation =
+          document::deserialize_annotation_spec(object.contour_spec);
+      if (!annotation) return false;
+      derived_display_bounds = object.transform.map_rect(
+          document::evaluate_annotation_layout(*annotation).bounds);
+      has_derived_display_bounds = true;
+    } else if (object.contour_spec.starts_with("detail_view:v1")) {
+      const auto detail_view =
+          document::deserialize_detail_view_spec(object.contour_spec);
+      if (!detail_view) return false;
+      derived_display_bounds = object.transform.map_rect(
+          document::evaluate_detail_view_layout(*detail_view).bounds);
+      has_derived_display_bounds = true;
+    }
+    if (has_derived_display_bounds) {
+      geometry::Rect2D combined_bounds;
+      if (!finite_rect(derived_display_bounds) ||
+          !union_rects(world_bounds, derived_display_bounds, combined_bounds))
+        return false;
+      world_bounds = combined_bounds;
+    }
+
     // Retain a conservative world-space stroke margin after mapping. The
     // local margin above also keeps filter input bounds conservative.
     const auto &transform = object.transform;
@@ -357,7 +383,10 @@ public:
             return path_output_bounds(obj, world_bounds, camera_zoom,
                                       conservative_world_margin_mm);
           } else if constexpr (std::is_same_v<T, document::ImageObject>) {
-            world_bounds = obj.transform.map_rect(obj.bounds_rect);
+            world_bounds = obj.bounds();
+            return finite_rect(world_bounds);
+          } else if constexpr (std::is_same_v<T, document::TextObject>) {
+            world_bounds = obj.bounds();
             return finite_rect(world_bounds);
           } else {
             world_bounds = geometry::Rect2D{-10000.0, -10000.0, 20000.0, 20000.0};
@@ -378,8 +407,10 @@ public:
     std::vector<CulledObjectRef> result;
     std::unordered_set<document::ObjectId> visited;
     const auto &objects = snapshot.objects();
-    for (const auto &layer : snapshot.page().layers) {
-      if (!layer.visible)
+    for (size_t layer_index = 0;
+         layer_index < snapshot.page().layers.size(); ++layer_index) {
+      const auto& layer = snapshot.page().layers[layer_index];
+      if (!snapshot.page().effective_layer_visible(layer_index))
         continue;
       for (auto id : layer.object_ids) {
         const auto *object = lookup(objects, id);
@@ -400,9 +431,15 @@ public:
                 // rather than disappear during a visibility query.
                 include = !bounds_valid || !finite_rect(visible_bounds_mm) ||
                           visible_bounds_mm.intersects(bounds);
+              } else if constexpr (std::is_same_v<T, document::ImageObject>) {
+                bounds = obj.bounds();
+                include = !finite_rect(bounds) || !finite_rect(visible_bounds_mm) ||
+                          visible_bounds_mm.intersects(bounds);
+              } else if constexpr (std::is_same_v<T, document::TextObject>) {
+                bounds = obj.bounds();
+                include = !finite_rect(bounds) || !finite_rect(visible_bounds_mm) ||
+                          visible_bounds_mm.intersects(bounds);
               } else {
-                // Text bounds are only estimates; groups need hierarchical
-                // handling.
                 include = true;
               }
             },

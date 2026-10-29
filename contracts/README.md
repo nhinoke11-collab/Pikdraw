@@ -10,11 +10,13 @@ Agent chỉ cần đọc hợp đồng liên quan đến phần đang sửa rồ
 | [C2 Document](c2-document.md) | Writer, snapshot, IDs, revision, transaction, async | Undo giới hạn số bước; byte budget và một số guard chuyển trang còn thiếu. |
 | [C3 Rendering](c3-rendering.md) | Camera, projection, culling, damage, effects | NativeWindow đọc full frame về GDI; backend có swap-chain prototype opt-in, chưa tích hợp overlay/visible-present. |
 | [C4 Color/typography](c4-color-typography.md) | Màu nguồn, ICC, overprint metadata, Unicode/font | Preview không chứng nhận PDF/X/separations; fallback phụ thuộc font/OS. |
-| [C5 Storage](c5-storage.md) | `.pr`, PKDR, save/recovery/migration | Payload v23/v24; container v23–v25, reader v2–v25; atomic save streams chunks, load full-buffer; index/lazy assets còn mở. V4/v5 là phụ lục lịch sử. |
+| [C5 Storage](c5-storage.md) | .pr, PKDR, save/recovery/migration | Payload v23–v25; container v23–v26, reader v2–v26; atomic save streams chunks, load full-buffer; index/lazy assets còn mở. V4/v5 là phụ lục lịch sử. |
 | [C6 Workers](c6-workers.md) | Cô lập process, source handle, IPC, cancel/RAM | V2 đã tích hợp nhiều adapter; pressure waiter chưa là memory budget toàn app. |
 | [C7 Actions/UI](c7-actions-ui.md) | Action routing, Properties, shortcuts, ngôn ngữ | Win32 Native Shell; Qt/QSS reload helper không chứng minh Qt UI runtime. |
 | [C8 Import fidelity](c8-import-fidelity.md) | Adapters, staging/review/apply, report/provenance | Đã có import và report lưu theo page; full per-element/source round-trip còn giới hạn. |
 | [C9 Appearance](c9-appearance-effects.md) | Opacity, blend, blur/shadow, gradient authority | Native Path/Text và SVG opacity subset; capability theo effect/representation cụ thể. |
+| [C10 Automation](c10-agent-automation.md) | Agent automation, MCP/COM sidecar, typed document services | Service dùng chung cho stdio MCP và Windows COM IDispatch; guards busy interaction. |
+| [C11 Production](c11-file-export-production.md) | File export and production geometry, CNC/CAM preflight | 10 gates nghiệm thu C11-G1..G10, ngân sách sai lệch Fine profile 0,01 mm. |
 
 ## Cách đọc trạng thái
 

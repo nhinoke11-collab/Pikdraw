@@ -4,6 +4,7 @@
 #include "pikdraw/desktop/performance/pointer_move_coalescer.hpp"
 #include "pikdraw/desktop/runtime/composition_root.hpp"
 #include "pikdraw/desktop/workflows/document_workflow.hpp"
+#include "pikdraw/desktop/workflows/cut_geometry_job.hpp"
 #include "pikdraw/desktop/presenters/object_style.hpp"
 #include "pikdraw/color/preview/color_transform.hpp"
 #include "pikdraw/color/profiles/profile_resource.hpp"
@@ -82,6 +83,8 @@ inline constexpr UINT kRasterPreviewWorkerMessage = WM_APP + 0x3D;
 inline constexpr UINT kRasterHistogramWorkerMessage = WM_APP + 0x3E;
 inline constexpr UINT kRasterProfileWorkerMessage = WM_APP + 0x3F;
 inline constexpr UINT kTestSheetWorkerMessage = WM_APP + 0x40;
+inline constexpr UINT kCutGeometryWorkerMessage = WM_APP + 0x41;
+inline constexpr UINT kCutGeometryProgressMessage = WM_APP + 0x42;
 #endif
 struct ImportJobSession;
 struct RecoveryScanJobSession;
@@ -138,6 +141,8 @@ public:
 
     void capture_screenshot_bmp(const std::string& path);
     static constexpr std::uintptr_t kAutoSaveTimerId = 0x504B;
+    static constexpr std::uintptr_t kCutGeometryPollTimerId = 0x504C;
+    static constexpr std::uintptr_t kSmartTrimHoverTimerId = 0x504D;
     // Shell coordinates are DIP; only Win32 device boundaries use physical pixels.
     [[nodiscard]] int dip(int value) const noexcept {
         return static_cast<int>(std::lround(value * dpi_scale_));
@@ -164,6 +169,40 @@ public:
 #endif
 
     [[nodiscard]] int active_tool() const noexcept { return active_tool_; }
+    [[nodiscard]] bool knife_freehand_mode() const noexcept { return knife_freehand_mode_; }
+    [[nodiscard]] double knife_gap_mm() const noexcept { return knife_gap_mm_; }
+    [[nodiscard]] double vector_eraser_diameter_mm() const noexcept { return vector_eraser_diameter_mm_; }
+    [[nodiscard]] bool vector_eraser_round_nib() const noexcept { return vector_eraser_round_nib_; }
+    [[nodiscard]] size_t shape_builder_selected_face_count() const noexcept {
+        return shape_builder_seed_points_.size();
+    }
+    [[nodiscard]] document::ObjectId trim_objects_target_id() const noexcept { return trim_objects_target_id_; }
+    [[nodiscard]] const std::vector<document::ObjectId>& trim_objects_source_ids() const noexcept {
+        return trim_objects_source_ids_;
+    }
+    [[nodiscard]] bool trim_objects_keep_sources() const noexcept { return trim_objects_keep_sources_; }
+    [[nodiscard]] bool cut_geometry_preview_ready(CutGeometryOperation operation) const noexcept {
+        return pending_cut_geometry_proposal_ &&
+            pending_cut_geometry_proposal_->proposal.operation == operation;
+    }
+    [[nodiscard]] std::optional<geometry::Point2D> smart_trim_hover_point_for_testing() const noexcept {
+        return smart_trim_hover_world_;
+    }
+    [[nodiscard]] std::size_t cut_geometry_preview_contour_count(
+        CutGeometryOperation operation) const noexcept {
+        return cut_geometry_preview_ready(operation)
+            ? pending_cut_geometry_proposal_->proposal.preview_contours.size() : 0;
+    }
+    [[nodiscard]] bool cut_geometry_preview_contour_removed(
+        CutGeometryOperation operation, std::size_t index) const noexcept {
+        return cut_geometry_preview_ready(operation) &&
+            index < pending_cut_geometry_proposal_->proposal.preview_contours.size() &&
+            pending_cut_geometry_proposal_->proposal.preview_contours[index].removed;
+    }
+    void commit_trim_objects();
+    void reset_trim_objects_roles();
+    void commit_shape_builder(bool erase_faces);
+    void reset_shape_builder();
     void set_active_tool(int tool_index) noexcept;
     [[nodiscard]] bool drawing_snap_panel_open() const noexcept;
     [[nodiscard]] bool drawing_snap_index_ready() const noexcept;
@@ -184,9 +223,13 @@ public:
         return artboard_name_editing_ || (active_dock_tab_ == 1 && (layers_state_.search_active || layers_state_.rename_layer_idx.has_value() || layers_state_.rename_object_id.has_value()));
     }
     [[nodiscard]] bool align_distribute_panel_visible() const noexcept { return show_align_panel_; }
+    [[nodiscard]] bool is_text_input_context() const noexcept;
+    [[nodiscard]] bool has_active_document_interaction() const noexcept;
+    void on_external_document_change() noexcept;
 
     void zoom_in() noexcept;
     void zoom_out() noexcept;
+    void zoom_to_actual_size() noexcept;
     void fit_page_to_canvas() noexcept;
     void fit_artboards_to_canvas() noexcept;
     [[nodiscard]] bool artboard_overview_enabled() const noexcept;
@@ -288,6 +331,9 @@ public:
 
     [[nodiscard]] size_t tab_count() const noexcept { return tabs_.size(); }
     [[nodiscard]] size_t active_tab_index() const noexcept { return active_tab_index_; }
+    [[nodiscard]] bool cut_geometry_job_active() const noexcept {
+        return static_cast<bool>(cut_geometry_job_);
+    }
     [[nodiscard]] uint64_t view_generation() const noexcept { return view_generation_; }
     [[nodiscard]] const std::vector<DocumentTab>& tabs() const noexcept { return tabs_; }
     [[nodiscard]] bool is_recovery_modal_open() const noexcept { return show_recovery_modal_; }
@@ -408,8 +454,14 @@ public:
 #ifdef _WIN32
     void paint_inline_text_overlay(HDC dc);
     bool handle_inline_text_ime(LPARAM flags);
+    bool handle_annotation_note_ime(LPARAM flags);
     void paint_text_property_bar(HDC mem_dc, int w, int content_top, int topbar_h, int tabbar_h);
     void paint_dimension_property_bar(HDC mem_dc, int w, int content_top, int topbar_h, int tabbar_h);
+    void paint_annotation_property_bar(HDC mem_dc, int w, int content_top, int topbar_h, int tabbar_h);
+    bool handle_annotation_property_bar_click(int x, int y);
+    void paint_annotation_properties_panel(HDC mem_dc, int w, int inspector_x, int content_y);
+    bool handle_annotation_properties_panel_click(int x, int y);
+    bool has_annotation_properties_target() const;
     bool handle_dimension_property_bar_click(int x, int y);
     void paint_dimension_properties_panel(HDC mem_dc, int insp_x, int inspect_w, int content_y, int max_h);
     bool handle_dimension_dock_click(int x, int y);
@@ -532,8 +584,14 @@ public:
     // Numeric Keyboard Input System (Direct typing on Property Bar)
     enum class NumericFieldId {
         None,
+        KnifeGap,
+        VectorEraserDiameter,
         PageWidth,
         PageHeight,
+        AnnotationScale,
+        AnnotationTextSize,
+        AnnotationSourceX, AnnotationSourceY, AnnotationSourceWidth, AnnotationSourceHeight,
+        AnnotationFrameX, AnnotationFrameY,
         PolygonSides,
         PolygonRotation,
         ObjectX,
@@ -741,6 +799,19 @@ private:
     void handle_import_worker_message(WPARAM kind);
     [[nodiscard]] bool import_placement_active() const noexcept;
     void cancel_import_placement();
+    bool start_cut_geometry_job(CutGeometryRequest request);
+    void cancel_cut_geometry_job() noexcept;
+    void handle_cut_geometry_worker_message(std::uint64_t generation);
+    void handle_cut_geometry_progress_message(std::uint64_t generation,
+                                               std::size_t completed);
+    void poll_cut_geometry_job();
+    void update_smart_trim_hover_preview(const geometry::Point2D& point,
+                                         bool inside_canvas);
+    void process_smart_trim_hover_timer();
+    bool apply_pending_cut_geometry_proposal(CutGeometryOperation operation,
+                                             bool erase_faces = false);
+    void discard_pending_cut_geometry_proposal() noexcept;
+    void paint_cut_geometry_preview_overlay(HDC dc, const RECT& area);
     [[nodiscard]] bool handle_import_placement_escape(WPARAM key);
     [[nodiscard]] bool place_pending_import_at(int x, int y);
     void paint_import_placement_overlay(HDC dc);
@@ -786,6 +857,9 @@ private:
     void handle_raster_profile_worker_message(WPARAM kind);
     [[nodiscard]] bool raster_profile_conversion_active() const noexcept;
     void edit_selected_bitmap_crop();
+    bool start_raster_eraser_stroke(const geometry::Point2D& point_world);
+    bool commit_raster_eraser_stroke(
+        const std::vector<geometry::Point2D>& points_world);
     void edit_selected_bitmap_exposure();
     [[nodiscard]] std::optional<double> selected_bitmap_exposure_ev() const;
     bool set_selected_bitmap_exposure_ev(double exposure_ev);
@@ -896,10 +970,11 @@ private:
     void paint_document_canvas(HDC dc, int width, int height);
     bool handle_modal_and_home_mouse_down(int x, int y);
     bool handle_workspace_chrome_mouse_down(int x, int y, unsigned modifiers);
+    bool handle_cut_tool_properties_click(int x, int y, bool in_properties_dock);
     void handle_canvas_mouse_down(int x, int y, unsigned modifiers);
     void handle_canvas_mouse_move(int x, int y, unsigned modifiers);
     void handle_canvas_mouse_up(int x, int y, unsigned modifiers);
-    void cancel_canvas_interaction();
+    void cancel_canvas_interaction(bool cancel_cut_job = true);
     bool commit_created_shape();
     [[nodiscard]] geometry::Rect2D shape_drag_bounds(unsigned modifiers) const;
     [[nodiscard]] double shape_drag_polygon_rotation(unsigned modifiers) const noexcept;
@@ -925,6 +1000,8 @@ private:
     void export_svg_dialog();
     void paint_canvas_rulers(HDC dc, int width, int height);
     void paint_canvas_overlay_layer(HDC dc, int width, int height);
+    bool paint_cached_canvas_overlay(HDC dc, int width, int height, const RECT& dirty);
+    void invalidate_canvas_overlay();
     void paint_canvas_interaction_handles(HDC dc, int width, int height);
     bool paint_direct_present_frame(int width, int height);
     void cleanup_direct_present_target() noexcept;
@@ -1083,8 +1160,29 @@ private:
 
     // Knife tool cutting state
     bool is_knife_cutting_{false};
+    bool is_scissors_click_{false};
+    bool is_trim_role_click_{false};
+    bool is_smart_trim_click_{false};
+    bool is_shape_builder_click_{false};
+    bool is_smart_fill_click_{false};
+    bool is_raster_eraser_stroke_{false};
+    std::vector<geometry::Point2D> shape_builder_seed_points_;
+    bool knife_freehand_mode_{false};
+    double knife_gap_mm_{0.0};
+    double vector_eraser_diameter_mm_{2.0};
+    bool vector_eraser_round_nib_{true};
     geometry::Point2D knife_start_world_{};
     geometry::Point2D knife_current_world_{};
+    std::vector<geometry::Point2D> knife_stroke_;
+    bool knife_stroke_overflow_{false};
+    std::vector<geometry::Point2D> eraser_stroke_;
+    bool eraser_stroke_overflow_{false};
+    std::vector<geometry::Point2D> raster_eraser_stroke_;
+    bool raster_eraser_stroke_overflow_{false};
+    double raster_eraser_diameter_px_{12.0};
+    document::ObjectId trim_objects_target_id_{document::kInvalidObjectId};
+    std::vector<document::ObjectId> trim_objects_source_ids_;
+    bool trim_objects_keep_sources_{true};
 
     // Interactive Contour Dragging State (CorelDRAW / Adobe Reference)
     bool is_contour_dragging_{false};
@@ -1245,6 +1343,7 @@ private:
     std::unique_ptr<tools::GradientToolController> gradient_tool_;
     std::unique_ptr<tools::DimensionToolController> dimension_tool_;
     std::unique_ptr<tools::AnnotationToolController> annotation_tool_;
+    HCURSOR annotation_placement_cursor_{nullptr};
 #ifdef _WIN32
     std::shared_ptr<ImportJobSession> import_job_;
     std::unique_ptr<ImportPlacementSession> import_placement_;
@@ -1259,12 +1358,17 @@ private:
         raster_bitmap_master_file_picker_;
     std::unique_ptr<raster::RasterEditPreviewService> raster_preview_service_;
     std::unique_ptr<raster::RasterHistogramService> raster_histogram_service_;
+    std::unique_ptr<raster::RasterHistogramService> raster_source_histogram_service_;
     std::array<bool, 4> raster_histogram_channels_visible_{{true, true, true, true}};
     document::RasterTonalRange raster_color_balance_active_range_{
         document::RasterTonalRange::Midtones};
     uint8_t raster_adjustment_inspector_tab_{1};
 #endif
     uint8_t raster_hsl_active_channel_{0}; // 0: Master, 1..6: R, Y, G, C, B, M
+    document::RasterToneChannel raster_levels_active_channel_{
+        document::RasterToneChannel::Composite};
+    document::RasterToneChannel raster_curves_active_channel_{
+        document::RasterToneChannel::Composite};
     int raster_dock_drag_control_{0};
     int properties_dock_scroll_{0};
     int eyedropper_mode_{0}; // 0: Solid Color, 1: Copy Gradient, 2: Copy Object Style
@@ -1344,6 +1448,17 @@ private:
     bool direct_present_frame_{false};
     bool direct_present_active_{false};
     bool canvas_overlay_only_{false};
+    bool canvas_overlay_paint_pending_{false};
+    std::jthread cut_geometry_worker_;
+    std::shared_ptr<CutGeometryJobState> cut_geometry_job_;
+    struct PendingCutGeometryProposal {
+        CutGeometryProposal proposal;
+        std::shared_ptr<CutGeometryJobState> state;
+    };
+    std::optional<PendingCutGeometryProposal> pending_cut_geometry_proposal_;
+    std::uint64_t cut_geometry_generation_{0};
+    std::optional<geometry::Point2D> smart_trim_hover_world_;
+    std::optional<CutGeometryRequest> smart_trim_click_pending_request_;
     uint64_t cached_revision_{0};
     document::SnapshotPtr cached_canvas_snapshot_;
     std::shared_ptr<const color::IccPreview> cached_canvas_profile_;
@@ -1374,6 +1489,7 @@ private:
     void cleanup_backbuffer() noexcept;
 
     // Cached UI fonts
+    HFONT font_title_{nullptr};
     HFONT font_be_vietnam_{nullptr};
     HFONT font_be_vietnam_bold_{nullptr};
     HFONT font_secondary_{nullptr};
@@ -1383,7 +1499,6 @@ private:
     HFONT font_ruler_{nullptr};
     void ensure_ui_fonts() noexcept;
     void cleanup_ui_fonts() noexcept;
-    friend struct DropShadowRibbon;
 #endif
 
     std::unique_ptr<CanvasTrace> canvas_trace_;

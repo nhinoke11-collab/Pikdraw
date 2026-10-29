@@ -18,6 +18,7 @@
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/gradient_tool_controller.hpp"
+#include "../tools/annotation/annotation_tool_controller.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -565,6 +566,7 @@ void NativeWindow::execute_menu_action(int action_id) {
     case MenuActionId::FileClearGuidelines: clear_guidelines(); return;
     case MenuActionId::FileExit: DestroyWindow(hwnd_); return;
     case MenuActionId::EditUndo:
+        cancel_canvas_interaction();
         workflow().undo();
         root().vector_controller().selection().clear();
         status_msg_ = language_ == UILanguage::Vietnamese ? "Đã hoàn tác" : "Undo complete";
@@ -578,6 +580,7 @@ void NativeWindow::execute_menu_action(int action_id) {
         open_object_properties_panel();
         return;
     case MenuActionId::EditRedo:
+        cancel_canvas_interaction();
         workflow().redo();
         root().vector_controller().selection().clear();
         status_msg_ = language_ == UILanguage::Vietnamese ? "Đã làm lại" : "Redo complete";
@@ -883,15 +886,7 @@ void NativeWindow::execute_menu_action(int action_id) {
         return;
     case MenuActionId::ViewZoomIn: zoom_in(); return;
     case MenuActionId::ViewZoomOut: zoom_out(); return;
-    case MenuActionId::ViewZoom100: {
-        auto& camera = root().renderer().camera();
-        const auto area = canvas_rect(width_, height_);
-        camera.set_viewport_size(area.right - area.left, area.bottom - area.top);
-        camera.set_zoom(1.0);
-        zoom_level_ = 100;
-        InvalidateRect(hwnd_, nullptr, FALSE);
-        return;
-    }
+    case MenuActionId::ViewZoom100: zoom_to_actual_size(); return;
     case MenuActionId::ViewFitPage: fit_page_to_canvas(); return;
     case MenuActionId::ViewPageFocus:
         set_artboard_overview_enabled(false);
@@ -971,9 +966,11 @@ void NativeWindow::execute_menu_action(int action_id) {
         const auto index = static_cast<size_t>(std::distance(pages.begin(), found));
         if (action == MenuActionId::LayoutPagePrevious && index > 0) {
             if (active_num_field_ != NumericFieldId::None) cancel_numeric_field();
+            cancel_canvas_interaction();
             (void)root().document().set_active_page(pages[index - 1].id);
         } else if (action == MenuActionId::LayoutPageNext && index + 1 < pages.size()) {
             if (active_num_field_ != NumericFieldId::None) cancel_numeric_field();
+            cancel_canvas_interaction();
             (void)root().document().set_active_page(pages[index + 1].id);
         } else return;
         finish_page_action(language_ == UILanguage::Vietnamese ? "Đã chuyển trang" : "Page changed");
@@ -981,6 +978,7 @@ void NativeWindow::execute_menu_action(int action_id) {
     }
     case MenuActionId::LayoutPageAdd: {
         if (active_num_field_ != NumericFieldId::None) cancel_numeric_field();
+        cancel_canvas_interaction();
         auto& doc = root().document();
         const auto name = "Page " + std::to_string(doc.pages().size() + 1);
         auto page_layout = document::Page::make_default();
@@ -1003,6 +1001,7 @@ void NativeWindow::execute_menu_action(int action_id) {
     }
     case MenuActionId::LayoutPageDuplicate: {
         if (active_num_field_ != NumericFieldId::None) cancel_numeric_field();
+        cancel_canvas_interaction();
         auto& doc = root().document();
         const auto result = doc.execute_command(std::make_unique<document::DuplicatePageCommand>(
             doc.active_page_id()));
@@ -1012,6 +1011,7 @@ void NativeWindow::execute_menu_action(int action_id) {
     }
     case MenuActionId::LayoutPageDelete: {
         if (active_num_field_ != NumericFieldId::None) cancel_numeric_field();
+        cancel_canvas_interaction();
         auto& doc = root().document();
         const auto result = doc.execute_command(std::make_unique<document::RemovePageCommand>(
             doc.active_page_id()));
@@ -1202,6 +1202,15 @@ void NativeWindow::execute_menu_action(int action_id) {
     case MenuActionId::ObjectBooleanExclude: (void)trigger_boolean_operation(geometry::BooleanOp::Xor); return;
     case MenuActionId::ObjectBooleanReverseDifference:
         (void)trigger_boolean_operation(geometry::BooleanOp::BackMinusFront); return;
+    case MenuActionId::ObjectTrimObjects:
+        reset_trim_objects_roles();
+        trim_objects_keep_sources_ = true;
+        set_active_tool(20);
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Cắt bằng đối tượng · nhấp Target trước, rồi nhấp một hoặc nhiều Source"
+            : "Trim Objects · click the Target first, then one or more Sources";
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
     case MenuActionId::ObjectToggleKeepSource:
         toggle_keep_source(); InvalidateRect(hwnd_, nullptr, FALSE); return;
     case MenuActionId::ObjectToggleKeepTarget:
@@ -1453,8 +1462,23 @@ void NativeWindow::execute_menu_action(int action_id) {
     case MenuActionId::ToolRectangle: set_active_tool(1); return;
     case MenuActionId::ToolEllipse: set_active_tool(2); return;
     case MenuActionId::ToolPolygon: set_active_tool(9); return;
+    case MenuActionId::ToolCircle: set_active_tool(18); return;
     case MenuActionId::ToolText: set_active_tool(4); return;
     case MenuActionId::ToolKnife: set_active_tool(5); return;
+    case MenuActionId::ToolVectorEraser: set_active_tool(16); return;
+    case MenuActionId::ToolScissors: set_active_tool(19); return;
+    case MenuActionId::ToolTrimObjects:
+        reset_trim_objects_roles();
+        trim_objects_keep_sources_ = true;
+        set_active_tool(20);
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Cắt bằng đối tượng · nhấp Target trước, rồi nhấp một hoặc nhiều Source"
+            : "Trim Objects · click the Target first, then one or more Sources";
+        return;
+    case MenuActionId::ToolSmartTrim: set_active_tool(21); return;
+    case MenuActionId::ToolShapeBuilder: shape_builder_seed_points_.clear(); set_active_tool(22); return;
+    case MenuActionId::ToolSmartFill: set_active_tool(23); return;
+    case MenuActionId::ToolRasterEraser: set_active_tool(24); return;
     case MenuActionId::ToolLine: set_active_tool(6); return;
     case MenuActionId::ToolPolyline: set_active_tool(7); return;
     case MenuActionId::ToolPen: set_active_tool(8); return;
@@ -1573,7 +1597,8 @@ bool NativeWindow::handle_toolbox_key(WPARAM key, bool alt_pressed, bool shift_p
     const auto set_slot_hint = [&]() {
         const auto slot = focused_slot();
         const auto info = get_toolbox_slot_info(slot);
-        if ((info.group_id >= 1 && info.group_id <= 3) || info.group_id == 6)
+        if ((info.group_id >= 1 && info.group_id <= 3) ||
+            info.group_id == 6 || info.group_id == 7)
             toolbox_focus_group_ = info.group_id;
         const char* name_en = "Tool";
         const char* name_vi = "Công cụ";
@@ -1584,7 +1609,7 @@ bool NativeWindow::handle_toolbox_key(WPARAM key, bool alt_pressed, bool shift_p
         case ToolboxSlotId::PathDrawing: name_en = "Path Drawing"; name_vi = "Đường vẽ"; break;
         case ToolboxSlotId::Pan: name_en = "Pan Tool"; name_vi = "Công cụ kéo trượt"; break;
         case ToolboxSlotId::Text: name_en = "Text Tool"; name_vi = "Công cụ văn bản"; break;
-        case ToolboxSlotId::Knife: name_en = "Knife Tool"; name_vi = "Công cụ dao cắt"; break;
+        case ToolboxSlotId::Knife: name_en = "Cut & Shape Tools"; name_vi = "Cắt, tẩy & tạo vùng"; break;
         case ToolboxSlotId::Blur: name_en = "Appearance"; name_vi = "Diện mạo"; break;
         case ToolboxSlotId::DropShadow: name_en = "Drop Shadow"; name_vi = "Đổ bóng"; break;
         case ToolboxSlotId::Contour: name_en = "Contour Tool"; name_vi = "Công cụ Contour"; break;
@@ -1592,6 +1617,7 @@ bool NativeWindow::handle_toolbox_key(WPARAM key, bool alt_pressed, bool shift_p
         case ToolboxSlotId::Eyedropper: name_en = "Color Eyedropper"; name_vi = "Hút màu & Sao chép kiểu"; break;
         case ToolboxSlotId::Dimension: name_en = "Dimension Tool"; name_vi = "Công cụ kích thước"; break;
         case ToolboxSlotId::Artboard: name_en = "Artboard Tool"; name_vi = "Công cụ Artboard"; break;
+        case ToolboxSlotId::Annotation: name_en = "Annotation"; name_vi = "Chú thích"; break;
         case ToolboxSlotId::Count: break;
         }
         const bool group = info.group_id != 0;
@@ -1603,27 +1629,50 @@ bool NativeWindow::handle_toolbox_key(WPARAM key, bool alt_pressed, bool shift_p
     };
     const auto set_item_hint = [&]() {
         if (toolbox_focus_group_ == 6) {
-            const int item = std::clamp(toolbox_flyout_index_, 0, 1);
+            const int item = std::clamp(toolbox_flyout_index_, 0, 4);
             status_msg_ = language_ == UILanguage::Vietnamese
                 ? (item == 0
                     ? "Dao cắt Knife · Kéo qua path kín có fill · Enter chọn · Esc đóng"
-                    : "Tẩy vector · Path kín có fill; path mở chưa được hỗ trợ · Enter chọn · Esc đóng")
+                    : item == 1
+                    ? "Tẩy vector · Path kín có fill; path mở chưa được hỗ trợ · Enter chọn · Esc đóng"
+                    : item == 2
+                    ? "Scissors · Nhấp node hoặc đoạn path chỉnh sửa được · Enter chọn · Esc đóng"
+                    : item == 3
+                    ? "Trim Objects · Chọn Target rồi Sources · Enter chọn · Esc đóng"
+                    : "Smart Trim · Nhấp đoạn nét giữa hai giao điểm · Enter chọn · Esc đóng")
                 : (item == 0
                     ? "Knife · Drag across a closed filled path · Enter choose · Esc closes"
-                    : "Vector Eraser · Closed filled paths only; open paths are unsupported · Enter choose · Esc closes");
+                    : item == 1
+                    ? "Vector Eraser · Closed filled paths only; open paths are unsupported · Enter choose · Esc closes"
+                    : item == 2
+                    ? "Scissors · Click an editable node or path segment · Enter choose · Esc closes"
+                    : item == 3
+                    ? "Trim Objects · Choose Target, then Sources · Enter choose · Esc closes"
+                    : "Smart Trim · Click a stroke interval between intersections · Enter choose · Esc closes");
+            return;
+        }
+        if (toolbox_focus_group_ == 7) {
+            const int item = std::clamp(toolbox_flyout_index_, 0, 2);
+            static constexpr const char* labels_en[] = {
+                "Detail View", "Leader Note", "Plain Note"};
+            static constexpr const char* labels_vi[] = {
+                "Ô chi tiết", "Ghi chú dẫn", "Ghi chú thường"};
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? std::string(labels_vi[item]) + " · Enter chọn · Esc đóng"
+                : std::string(labels_en[item]) + " · Enter choose · Esc closes";
             return;
         }
         const char *labels_en[3][5] = {
-            {"Rectangle", "Ellipse", "Polygon", "", ""},
+            {"Rectangle", "Ellipse", "Polygon", "Circle (center + radius)", ""},
             {"Line", "Polyline", "Pen", "Node", ""},
             {"Appearance Properties", "Gaussian Blur", "Drop Shadow", "Contour", "Gradient"}};
         const char *labels_vi[3][5] = {
-            {"Hình chữ nhật", "Hình elip", "Đa giác", "", ""},
+            {"Hình chữ nhật", "Hình elip", "Đa giác", "Đường tròn (tâm + bán kính)", ""},
             {"Đoạn thẳng", "Đường gấp khúc", "Pen", "Node", ""},
             {"Thuộc tính diện mạo", "Gaussian Blur", "Drop Shadow", "Viền Contour", "Chuyển sắc"}};
         const int group_index = std::clamp(toolbox_focus_group_ - 1, 0, 2);
         const int max_items = toolbox_focus_group_ == 3 ? 5
-            : toolbox_focus_group_ == 2 ? 4 : 3;
+            : toolbox_focus_group_ == 2 ? 4 : toolbox_focus_group_ == 1 ? 4 : 3;
         const int item_index = std::clamp(toolbox_flyout_index_, 0, max_items - 1);
         if (toolbox_focus_group_ == 3 && item_index == 4) {
             status_msg_ = language_ == UILanguage::Vietnamese
@@ -1664,16 +1713,18 @@ bool NativeWindow::handle_toolbox_key(WPARAM key, bool alt_pressed, bool shift_p
     };
     const auto open_focused_group = [&]() {
         const auto info = get_toolbox_slot_info(focused_slot());
-        if ((info.group_id < 1 || info.group_id > 3) && info.group_id != 6) return false;
+        if ((info.group_id < 1 || info.group_id > 3) &&
+            info.group_id != 6 && info.group_id != 7) return false;
         toolbox_focus_group_ = info.group_id;
         toolbox_keyboard_focus_ = true;
         toolbox_open_group_ = info.group_id;
-        if (toolbox_open_group_ == 3 || toolbox_open_group_ == 6) {
+        if (toolbox_open_group_ == 3 || toolbox_open_group_ == 6 ||
+            toolbox_open_group_ == 7) {
             toolbox_flyout_index_ = 0;
         } else {
             const int last = toolbox_open_group_ == 1 ? quick_shapes_last_tool_ : path_drawing_last_tool_;
             toolbox_flyout_index_ = toolbox_open_group_ == 1
-                ? (last == 1 ? 0 : last == 2 ? 1 : 2)
+                ? (last == 1 ? 0 : last == 2 ? 1 : last == 9 ? 2 : 3)
                 : (last == 6 ? 0 : last == 7 ? 1 : last == 8 ? 2 : 3);
         }
         set_item_hint();
@@ -1698,6 +1749,9 @@ bool NativeWindow::handle_toolbox_key(WPARAM key, bool alt_pressed, bool shift_p
         case ToolboxSlotId::Eyedropper: set_active_tool(15); break;
         case ToolboxSlotId::Dimension: set_active_tool(10); break;
         case ToolboxSlotId::Artboard: set_active_tool(14); break;
+        case ToolboxSlotId::Annotation:
+            activate_annotation_tool(tools::AnnotationToolMode::DetailView);
+            break;
         case ToolboxSlotId::QuickShapes:
         case ToolboxSlotId::PathDrawing:
         case ToolboxSlotId::Count: break;
@@ -1728,9 +1782,10 @@ bool NativeWindow::handle_toolbox_key(WPARAM key, bool alt_pressed, bool shift_p
             return true;
         }
         if (key == VK_UP || key == VK_DOWN) {
-            const int max_items = toolbox_open_group_ == 6 ? 2
+        const int max_items = (toolbox_open_group_ == 6 || toolbox_open_group_ == 7) ?
+                (toolbox_open_group_ == 6 ? 8 : 3)
                 : toolbox_open_group_ == 3 ? 5
-                : toolbox_open_group_ == 2 ? 4 : 3;
+                : toolbox_open_group_ == 2 ? 4 : toolbox_open_group_ == 1 ? 4 : 3;
             toolbox_flyout_index_ = (toolbox_flyout_index_ + (key == VK_UP ? max_items - 1 : 1)) % max_items;
             set_item_hint();
             return true;
@@ -1743,11 +1798,21 @@ bool NativeWindow::handle_toolbox_key(WPARAM key, bool alt_pressed, bool shift_p
             }
             if (toolbox_open_group_ == 6) {
                 toolbox_open_group_ = 0;
-                set_active_tool(index == 0 ? 5 : 16);
+                const int tools_grp6[] = {5, 16, 19, 20, 21, 22, 23, 24};
+                set_active_tool(tools_grp6[index]);
+                return true;
+            }
+            if (toolbox_open_group_ == 7) {
+                toolbox_open_group_ = 0;
+                activate_annotation_tool(index == 0
+                    ? tools::AnnotationToolMode::DetailView
+                    : index == 1 ? tools::AnnotationToolMode::LeaderNote
+                                 : tools::AnnotationToolMode::PlainNote);
+                InvalidateRect(hwnd_, nullptr, FALSE);
                 return true;
             }
             const int tool = toolbox_open_group_ == 1
-                ? (index == 0 ? 1 : index == 1 ? 2 : 9)
+                ? (index == 0 ? 1 : index == 1 ? 2 : index == 2 ? 9 : 18)
                 : (index == 0 ? 6 : index == 1 ? 7 : index == 2 ? 8 : 11);
             toolbox_open_group_ = 0;
             set_active_tool(tool);

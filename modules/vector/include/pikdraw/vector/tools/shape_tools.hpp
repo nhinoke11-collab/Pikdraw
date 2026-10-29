@@ -5,6 +5,7 @@
 #include "pikdraw/document/document.hpp"
 #include "pikdraw/document/model/path_adapter.hpp"
 #include "pikdraw/document/model/object.hpp"
+#include "pikdraw/geometry/curves/construction.hpp"
 #include "pikdraw/geometry/primitives/bounds.hpp"
 #include <algorithm>
 #include <cmath>
@@ -290,6 +291,51 @@ class ShapeFactory {
         obj.stroke = std::move(stroke);
         obj.stroke_width_mm = stroke_width_mm;
         obj.has_fill = true;
+        obj.has_stroke = true;
+        return obj;
+    }
+
+    [[nodiscard]] static document::PathObject create_circle(
+        const geometry::CircleSolution& circle,
+        color::ColorValue fill = color::RGBColor{0.82, 0.24, 0.14, 1.0},
+        color::ColorValue stroke = color::RGBColor{0.0, 0.0, 0.0, 1.0},
+        double stroke_width_mm = 0.0) {
+        if (!geometry::circle_from_center_radius(circle.center, circle.radius) ||
+            !fill.is_valid() || !stroke.is_valid() || !std::isfinite(stroke_width_mm) ||
+            stroke_width_mm < 0.0)
+            throw std::invalid_argument("Invalid circle source parameters");
+        document::PathObject obj;
+        obj.id = document::generate_object_id();
+        obj.name = "Circle " + std::to_string(obj.id);
+        obj.path = geometry::make_analytic_circle_path(circle);
+        auto source = document::editable_path_from_path2d(obj.path, nullptr);
+        if (!source) throw std::invalid_argument("Could not create editable analytic circle");
+        obj.set_authoring_source(std::move(*source));
+        obj.fill = std::move(fill);
+        obj.stroke = std::move(stroke);
+        obj.stroke_width_mm = stroke_width_mm;
+        obj.has_fill = false;
+        obj.has_stroke = true;
+        return obj;
+    }
+
+    [[nodiscard]] static document::PathObject create_arc(
+        const geometry::ArcSolution& arc,
+        color::ColorValue stroke = color::RGBColor{0.0, 0.0, 0.0, 1.0},
+        double stroke_width_mm = 0.0) {
+        if (!std::isfinite(arc.radius) || arc.radius <= 0.0 || !stroke.is_valid() ||
+            !std::isfinite(stroke_width_mm) || stroke_width_mm < 0.0)
+            throw std::invalid_argument("Invalid arc source parameters");
+        document::PathObject obj;
+        obj.id = document::generate_object_id();
+        obj.name = "Arc " + std::to_string(obj.id);
+        obj.path = geometry::make_analytic_arc_path(arc);
+        auto source = document::editable_path_from_path2d(obj.path, nullptr);
+        if (!source) throw std::invalid_argument("Could not create editable analytic arc");
+        obj.set_authoring_source(std::move(*source));
+        obj.stroke = std::move(stroke);
+        obj.stroke_width_mm = stroke_width_mm;
+        obj.has_fill = false;
         obj.has_stroke = true;
         return obj;
     }

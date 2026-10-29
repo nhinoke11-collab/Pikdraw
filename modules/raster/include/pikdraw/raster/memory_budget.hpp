@@ -1,5 +1,7 @@
 #pragma once
 
+#include "pikdraw/document/resources/memory_budget_policy.hpp"
+
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -16,6 +18,7 @@ class RasterMemoryBudget final {
     uint64_t capacity_bytes{0};
     uint64_t reserved_bytes{0};
     std::function<bool(uint64_t)> admission_callback;
+    std::shared_ptr<document::resources::MemoryBudgetPolicy> adaptive_policy;
   };
 
  public:
@@ -33,11 +36,14 @@ class RasterMemoryBudget final {
         : state_(std::move(state)), bytes_(bytes) {}
     std::shared_ptr<State> state_;
     uint64_t bytes_{0};
+    std::shared_ptr<document::resources::MemoryBudgetPolicy::Reservation>
+        system_reservation_;
   };
 
   explicit RasterMemoryBudget(
       uint64_t capacity_bytes,
-      std::function<bool(uint64_t)> admission_callback = {});
+      std::function<bool(uint64_t)> admission_callback = {},
+      std::shared_ptr<document::resources::MemoryBudgetPolicy> adaptive_policy = {});
 
   [[nodiscard]] std::shared_ptr<Reservation> try_reserve(uint64_t bytes);
   /// Admit against freshly measured external headroom while preserving bytes

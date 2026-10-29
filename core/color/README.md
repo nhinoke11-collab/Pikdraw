@@ -59,11 +59,12 @@ checks header/color-space/tag-table bounds, and computes the identity digest fro
 Windows CNG. The resource API does not accept document-provided filesystem paths. Other platforms
 currently report hash support unavailable; profile-byte loading is therefore Windows-only until
 a reviewed portable digest provider is added. The registry can resolve a loaded resource by its
-digest; document/page/paint bindings and native storage migration are still pending.
+digest; document/page/paint bindings and native storage migration are supported in schema v15+.
 
 ## Build and Test
+
+Xem [Native Build](../../docs/development/native-build.md):
+
 ```powershell
-cmake --preset win-dev
-cmake --build --preset win-dev --target test_pikdraw_color
-ctest --preset win-dev -R pikdraw_color_tests --output-on-failure
+.\tooling\native\build.ps1 -Test -TestTarget test_pikdraw_color
 ```

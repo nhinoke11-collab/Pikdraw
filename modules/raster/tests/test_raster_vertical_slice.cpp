@@ -61,6 +61,7 @@ void hsl_command_roundtrip_and_undo() {
   assert(document.redo());
   const auto* redone = document.objects().lookup_ref(image.id);
   assert(redone && std::get<ImageObject>(*redone).edit_graph.nodes.size() == 1);
+
 }
 
 void vibrance_command_roundtrip_pixels_and_undo() {
@@ -310,7 +311,7 @@ void clone_stamp_ui_command_roundtrip_pixels_and_undo() {
   image.bounds_rect = {0.0, 0.0, 8.0, 8.0};
   image.pixels_rgba.reserve(64);
   image.source.original_bytes.reserve(8u * 8u * 4u);
-  image.source.media_type = "image/rgba8";
+  image.source.media_type = "application/x-pikdraw-rgba8";
   image.source.preview_pixel_color_basis = RasterPixelColorBasis::AssumedSRgb;
   for (uint32_t y = 0; y < 8; ++y) {
     for (uint32_t x = 0; x < 8; ++x) {
@@ -370,6 +371,68 @@ void clone_stamp_ui_command_roundtrip_pixels_and_undo() {
       .edit_graph.nodes.size() == 1);
 }
 
+void raster_eraser_command_roundtrip_pixel_evaluation_and_undo() {
+  Document document("raster-eraser-vertical-slice");
+  ImageObject image;
+  image.id = generate_object_id();
+  image.name = "Raster Eraser source invariant";
+  image.width_px = 5;
+  image.height_px = 5;
+  image.bounds_rect = {0.0, 0.0, 5.0, 5.0};
+  image.pixels_rgba.assign(25, 0x643219ffu);
+  image.source.media_type = "application/x-pikdraw-rgba8";
+  image.source.original_bytes.reserve(100);
+  for (size_t index = 0; index < 25; ++index)
+    image.source.original_bytes.insert(image.source.original_bytes.end(),
+        {100, 50, 25, 255});
+  image.source.preview_pixel_color_basis = RasterPixelColorBasis::AssumedSRgb;
+  assert(document.execute_command(
+      std::make_unique<AddObjectCommand>(image)).success);
+
+  RasterEraserParams parameters;
+  parameters.diameter_px = 2.0;
+  parameters.points = {{0.5, 0.0}, {0.5, 1.0}};
+  const RasterEditNode node{RasterEditNodeId{601}, true, parameters};
+  assert(document.execute_command(std::make_unique<SetRasterEditNodeCommand>(
+      image.id, node)).success);
+  const auto* current_value = document.objects().lookup_ref(image.id);
+  assert(current_value && std::holds_alternative<ImageObject>(*current_value));
+  const auto& current = std::get<ImageObject>(*current_value);
+  assert(current.source.original_data() == image.source.original_bytes);
+  assert(current.edit_graph.nodes.size() == 1);
+
+  const auto bytes = NativeFormat::serialize(*document.current_snapshot());
+  std::string error;
+  const auto reopened = NativeFormat::deserialize(bytes.data(), bytes.size(), &error);
+  assert(reopened && error.empty());
+  const auto* reopened_value = reopened->objects().lookup_ref(image.id);
+  assert(reopened_value && std::holds_alternative<ImageObject>(*reopened_value));
+  const auto& restored = std::get<ImageObject>(*reopened_value);
+  assert(restored.source.original_data() == image.source.original_bytes);
+  assert(restored.edit_graph.schema_version == RasterEditGraph::kSchemaVersion);
+  assert(restored.edit_graph.nodes.size() == 1 &&
+      std::get<RasterEraserParams>(restored.edit_graph.nodes.front().parameters) == parameters);
+
+  const std::vector<uint8_t> source_rgba(restored.source.original_data().begin(),
+                                          restored.source.original_data().end());
+  raster::RasterMemoryBudget budget(4096);
+  const auto evaluated = raster::RasterEditEvaluator::evaluate(
+      {source_rgba, 5, 5, 20,
+       raster::RasterPixelEncoding::SRgbRgba8StraightAlpha},
+      restored.edit_graph, budget);
+  assert(evaluated.succeeded());
+  const size_t erased_pixel = (2u * 5u + 2u) * 4u;
+  assert(evaluated.image.bytes[erased_pixel] == 0 &&
+      evaluated.image.bytes[erased_pixel + 3] == 0);
+
+  assert(document.undo());
+  const auto* undone_value = document.objects().lookup_ref(image.id);
+  assert(undone_value && std::get<ImageObject>(*undone_value).edit_graph.nodes.empty());
+  assert(document.redo());
+  const auto* redone_value = document.objects().lookup_ref(image.id);
+  assert(redone_value && std::get<ImageObject>(*redone_value).edit_graph.nodes.size() == 1);
+}
+
 int main() {
   hsl_command_roundtrip_and_undo();
   vibrance_command_roundtrip_pixels_and_undo();
@@ -377,6 +440,7 @@ int main() {
   curves_command_roundtrip_and_undo();
   white_balance_command_roundtrip_evaluation_and_undo();
   clone_stamp_ui_command_roundtrip_pixels_and_undo();
+  raster_eraser_command_roundtrip_pixel_evaluation_and_undo();
   Document document("raster-edit-vertical-slice");
   ImageObject image;
   image.id = generate_object_id();

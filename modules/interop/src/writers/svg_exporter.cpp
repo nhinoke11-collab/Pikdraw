@@ -198,8 +198,19 @@ void preflight_appearance_export(
       continue;
     }
     if (const auto *path = std::get_if<document::PathObject>(&*object)) {
-      if (path->visible)
+      if (path->visible) {
+        if (path->contour_spec.starts_with("annotation:"))
+          result.report.add_issue(
+              FidelitySeverity::Unsupported, "object " + std::to_string(id),
+              "Annotation object",
+              "This SVG export subset cannot preserve editable annotation text, leader geometry, or anchor semantics");
+        else if (path->contour_spec.starts_with("detail_view:"))
+          result.report.add_issue(
+              FidelitySeverity::Unsupported, "object " + std::to_string(id),
+              "Detail view object",
+              "This SVG export subset cannot preserve the linked source rendering, label, or detail-view scale semantics");
         report_unsupported_appearance(result, id, path->appearance);
+      }
     } else if(const auto* group=std::get_if<document::GroupObject>(&*object);group&&group->clip) {
       const auto* mask=snapshot.objects().lookup_ref(group->clip->mask_object_id);
       if(!mask||!document::frame_geometry(*mask))result.report.add_issue(FidelitySeverity::Unsupported,

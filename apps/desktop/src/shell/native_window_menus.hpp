@@ -147,6 +147,7 @@ enum class MenuActionId {
     ObjectBooleanIntersection,
     ObjectBooleanExclude,
     ObjectBooleanReverseDifference,
+    ObjectTrimObjects,
     ObjectToggleKeepSource,
     ObjectToggleKeepTarget,
     ObjectFlipHorizontal,
@@ -244,13 +245,21 @@ enum class MenuActionId {
     ToolEllipse,
     ToolText,
     ToolKnife,
+    ToolVectorEraser,
+    ToolScissors,
+    ToolTrimObjects,
+    ToolSmartTrim,
     ToolLine,
     ToolPolyline,
     ToolPen,
     ToolPolygon,
+    ToolCircle,
     ToolGradient,
     ToolEyedropper,
     ToolArtboard,
+    ToolSmartFill,
+    ToolShapeBuilder,
+    ToolRasterEraser,
     ToolCustomizeToolbox,
     // Window
     WindowProperties,
@@ -601,7 +610,7 @@ inline constexpr std::array<MenuItem, 29> kLayoutMenuItems{{
 }};
 
 // 5. Object Menu
-inline constexpr std::array<MenuItem, 58> kObjectMenuItems{{
+inline constexpr std::array<MenuItem, 59> kObjectMenuItems{{
     {MenuActionId::ObjectGroup, L"Group Objects", L"Nhóm đối tượng", L"Ctrl+G"},
     {MenuActionId::ObjectUngroup, L"Ungroup", L"Rã nhóm", L"Ctrl+Shift+G"},
     {MenuActionId::Separator, L"", L"", L"", true},
@@ -657,6 +666,7 @@ inline constexpr std::array<MenuItem, 58> kObjectMenuItems{{
     {MenuActionId::ObjectBooleanIntersection, L"Intersect", L"Lấy phần giao", L""},
     {MenuActionId::ObjectBooleanExclude, L"Exclude (XOR)", L"Loại trừ (XOR)", L""},
     {MenuActionId::ObjectBooleanReverseDifference, L"Reverse Difference (Source − Target)", L"Hiệu ngược (Nguồn − Đích)", L""},
+    {MenuActionId::ObjectTrimObjects, L"Trim Objects…", L"Cắt bằng đối tượng…", L""},
     {MenuActionId::Separator, L"", L"", L"", true},
     {MenuActionId::ObjectToggleKeepSource, L"Keep Source", L"Giữ đối tượng nguồn", L"", false, false, false, true},
     {MenuActionId::ObjectToggleKeepTarget, L"Keep Target", L"Giữ đối tượng đích", L"", false, false, false, true}
@@ -747,20 +757,28 @@ inline std::span<const MenuItem> get_menu_submenu_items(MenuActionId parent) noe
 }
 
 // 9. Tools Menu
-inline constexpr std::array<MenuItem, 13> kToolsMenuItems{{
+inline constexpr std::array<MenuItem, 21> kToolsMenuItems{{
     {MenuActionId::ToolPick, L"Pick Tool (Selection)", L"Công cụ chọn (Pick)", L"V"},
     {MenuActionId::ToolNode, L"Node Edit Tool", L"Chỉnh sửa điểm (Node)", L""},
     {MenuActionId::ToolRectangle, L"Rectangle Tool", L"Vẽ hình chữ nhật", L"R"},
     {MenuActionId::ToolEllipse, L"Ellipse Tool", L"Vẽ hình elip / tròn", L"E"},
     {MenuActionId::ToolPolygon, L"Polygon Tool", L"Vẽ đa giác đều", L""},
+    {MenuActionId::ToolCircle, L"Circle (Center + Radius)", L"Đường tròn (tâm + bán kính)", L""},
     {MenuActionId::ToolText, L"Text Tool", L"Nhập văn bản", L"A / T"},
     {MenuActionId::ToolKnife, L"Knife Cutting Tool", L"Dao cắt hình", L"K"},
+    {MenuActionId::ToolVectorEraser, L"Vector Eraser", L"Tẩy vector", L"Shift+E"},
+    {MenuActionId::ToolScissors, L"Scissors", L"Kéo Scissors", L"X"},
+    {MenuActionId::ToolTrimObjects, L"Trim Objects", L"Cắt bằng đối tượng", L""},
+    {MenuActionId::ToolSmartTrim, L"Smart Trim", L"Cắt đoạn giữa giao điểm", L""},
     {MenuActionId::ToolLine, L"Line Tool", L"Đoạn thẳng", L"L"},
     {MenuActionId::ToolPolyline, L"Polyline Tool", L"Đường gấp khúc", L"Shift+L"},
     {MenuActionId::ToolPen, L"Pen Tool", L"Công cụ Pen", L""},
     {MenuActionId::ToolGradient, L"Interactive Gradient Tool", L"Công cụ chuyển sắc tương tác", L"G"},
     {MenuActionId::ToolEyedropper, L"Color Eyedropper", L"Ống hút màu", L"I"},
-    {MenuActionId::ToolArtboard, L"Artboard Tool", L"Công cụ Artboard", L"Shift+O"}
+    {MenuActionId::ToolArtboard, L"Artboard Tool", L"Công cụ Artboard", L"Shift+O"},
+    {MenuActionId::ToolSmartFill, L"Smart Fill", L"Tô thông minh", L""},
+    {MenuActionId::ToolShapeBuilder, L"Shape Builder", L"Tạo hình từ vùng", L""},
+    {MenuActionId::ToolRasterEraser, L"Raster Eraser", L"Tẩy ảnh bitmap", L""}
 }};
 
 // 10. Window Menu

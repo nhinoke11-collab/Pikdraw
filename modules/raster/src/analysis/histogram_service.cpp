@@ -15,8 +15,6 @@
 namespace pikdraw::raster {
 namespace {
 
-constexpr uint64_t kEditedHistogramWorkingBytes = 256ULL * 1024ULL * 1024ULL;
-
 struct HistogramKey {
   std::string document_id;
   uint64_t epoch{0};
@@ -68,7 +66,9 @@ struct RasterHistogramService::Impl {
     std::vector<Completion> completions;
   };
 
-  Impl() = default;
+  explicit Impl(std::shared_ptr<document::resources::MemoryBudgetPolicy> policy)
+      : memory_policy(policy ? std::move(policy) :
+            document::resources::process_memory_budget_policy()) {}
 
   ~Impl() {
     worker.request_stop();
@@ -123,7 +123,7 @@ struct RasterHistogramService::Impl {
 
     RasterEvaluationOptions evaluation_options;
     evaluation_options.cancelled = options.cancelled;
-    RasterMemoryBudget working_memory(kEditedHistogramWorkingBytes);
+    RasterMemoryBudget working_memory(0, {}, memory_policy);
     RasterEvaluationResult evaluated;
     if (job.key.encoding == RasterPixelEncoding::SRgbRgba16LEStraightAlpha) {
       const auto bytes = image->rgba16le_pixels();
@@ -209,6 +209,7 @@ struct RasterHistogramService::Impl {
   }
 
   mutable std::mutex mutex;
+  const std::shared_ptr<document::resources::MemoryBudgetPolicy> memory_policy;
   std::condition_variable_any condition;
   std::optional<Job> queued;
   std::optional<HistogramKey> active;
@@ -219,8 +220,9 @@ struct RasterHistogramService::Impl {
   std::jthread worker;
 };
 
-RasterHistogramService::RasterHistogramService()
-    : impl_(std::make_unique<Impl>()) {}
+RasterHistogramService::RasterHistogramService(
+    std::shared_ptr<document::resources::MemoryBudgetPolicy> memory_policy)
+    : impl_(std::make_unique<Impl>(std::move(memory_policy))) {}
 
 RasterHistogramService::~RasterHistogramService() = default;
 
@@ -242,7 +244,9 @@ void RasterHistogramService::request(
   {
     std::lock_guard lock(impl_->mutex);
     impl_->desired = *key;
-    if (impl_->cached_key && *impl_->cached_key == *key) return;
+    if (impl_->cached_key && *impl_->cached_key == *key && impl_->cached &&
+        impl_->cached->status != RasterHistogramStatus::InsufficientMemory &&
+        impl_->cached->status != RasterHistogramStatus::AllocationFailure) return;
     if (impl_->active && *impl_->active == *key) {
       impl_->queued.reset();
       if (completion) impl_->active_completions.push_back(std::move(completion));

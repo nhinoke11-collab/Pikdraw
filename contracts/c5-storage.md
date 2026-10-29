@@ -15,10 +15,11 @@ byte_codec.hpp,file_io.cpp,object_codec.cpp}.
 Payloads without encoded raster source bytes use schema v23: under 1 MiB they use the legacy
 v23 container, and larger payloads use chunked container v24. When embedded raster source bytes
 exist, schema v24 writes encoded sources and equal RGBA8/RGBA16 samples once in shared tables;
-image records reference them by 1-based indices (0 means no optional source/U16 sample). Container
-v25 carries that schema. Reader accepts v2–v25 and checks magic/version/checksums,
+image records reference them by 1-based indices (0 means no optional source/U16 sample); container
+v25 carries that schema. When layer hierarchy (LayerId/group_id/LayerRole) is authored, schema v25
+in container v26 is emitted. Reader accepts v2–v26 and checks magic/version/checksums,
 schema and semantics before publication. V2–v23 headers are 36 bytes: PKDR magic, u32 version,
-u32 flags=0, u64 epoch, u64 revision, u32 payload length, u32 CRC32. V24/v25 retain that prefix,
+u32 flags=0, u64 epoch, u64 revision, u32 payload length, u32 CRC32. V24–v26 retain that prefix,
 use flags=1 and the u32 payload-length sentinel 0xffffffff, then add uncompressed-payload-size:u64
 and chunk-count:u64.
 Each 1 MiB chunk has a 16-byte record (raw size:u32, stored size:u32, codec:u8, reserved[3],
@@ -84,7 +85,7 @@ The table below records the historical v4 implementation for migration fixtures.
 | Item | Historical v4 behavior |
 | --- | --- |
 | Container header | 36 bytes: four-byte PKDR magic, uint32 format version, uint32 feature flags (currently zero), uint64 document epoch, uint64 revision, uint32 payload length, and uint32 CRC32. The checksum covers header plus payload with its own four bytes treated as zero. |
-| Accepted/written versions | At that milestone the writer emitted v4 and reader accepted v2/v3/v4. Current writes use schema v23 or v24, containers v23–v25, and reader accepts v2–v25. |
+| Accepted/written versions | At that milestone the writer emitted v4 and reader accepted v2/v3/v4. Current writes use schema v23, v24 or v25, containers v23–v26, and reader accepts v2–v26. |
 | Compatibility/schema values | In v4, minimum-compatible version 4, authoring-path schema 1.0, and appearance schema 1.0 are payload fields after the length-prefixed UTF-8 document ID; they are not header fields. |
 | Bounds observed in source | 256 MiB file size, 100,000 objects, 1,000,000 path elements, and 10,000 layers, with additional field-specific string/image limits. |
 | v2 path migration | The reader converts legacy path geometry to editable source, assigns stable element IDs, and rejects a path it cannot convert. The v3 writer also assigns stable source IDs when a path lacks authoring source. |

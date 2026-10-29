@@ -431,7 +431,7 @@ bool render_effect_stack(const document::PathObject &path,
 
   const auto inverse = path.transform.inverted();
   if (!inverse || !inverse->is_finite())
-    return false;
+    return fail("Effect output cannot invert the object transform");
   const auto sample_surface_at = [&](const std::vector<FilterPixel> &pixels,
                                      int32_t x, int32_t y,
                                      BlendPixel &pixel) -> bool {
@@ -439,13 +439,26 @@ bool render_effect_stack(const document::PathObject &path,
         {static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f});
     const auto local = inverse->map_point(world);
     if (!local.is_finite())
-      return false;
+      return fail("Effect output contains a non-finite sample coordinate");
     const double sample_x =
         (local.x - surface.bounds.x) * surface.density - 0.5;
     const double sample_y =
         (surface.bounds.bottom() - local.y) * surface.density - 0.5;
-    return linear_to_encoded(sample_linear_surface(
-        pixels, surface.width, surface.height, sample_x, sample_y), pixel);
+    const auto sampled = sample_linear_surface(
+        pixels, surface.width, surface.height, sample_x, sample_y);
+    if (!linear_to_encoded(sampled, pixel)) {
+      if (out_failure) {
+        *out_failure = "Invalid effect sample at (" + std::to_string(sample_x) +
+            ", " + std::to_string(sample_y) + ") in " +
+            std::to_string(surface.width) + "x" +
+            std::to_string(surface.height) + " surface: rgba=" +
+            std::to_string(sampled.r) + "," + std::to_string(sampled.g) +
+            "," + std::to_string(sampled.b) + "," +
+            std::to_string(sampled.a);
+      }
+      return false;
+    }
+    return true;
   };
   const auto sample_output = [&](int32_t x, int32_t y,
                                  BlendPixel &pixel) -> bool {
@@ -456,7 +469,9 @@ bool render_effect_stack(const document::PathObject &path,
     pixel.g *= opacity;
     pixel.b *= opacity;
     pixel.a *= opacity;
-    return is_valid_premultiplied_srgb(pixel);
+    if (!is_valid_premultiplied_srgb(pixel))
+      return fail("Object opacity produced an invalid effect sample");
+    return true;
   };
   const auto resolve_output_pixel = [&](int32_t x, int32_t y,
                                         BlendPixel &output) -> bool {
@@ -476,21 +491,26 @@ bool render_effect_stack(const document::PathObject &path,
       return true;
     }
     const auto backdrop = read_target_pixel(target, x, y);
-    if (!is_valid_premultiplied_srgb(backdrop)) return false;
+    if (!is_valid_premultiplied_srgb(backdrop))
+      return fail("Effect backdrop contains invalid premultiplied sRGB data");
     if (has_deferred_shadow) {
       const auto shadowed = blend_source_over(
           deferred_shadow_blend, backdrop, shadow_pixel);
-      if (!shadowed) return false;
+      if (!shadowed)
+        return fail("Deferred shadow could not composite against the backdrop");
       const auto grouped = blend_source_over(
           appearance.blend_mode, *shadowed, source_pixel);
-      if (!grouped) return false;
+      if (!grouped)
+        return fail("Effect group blend could not composite against the backdrop");
       const float opacity = static_cast<float>(appearance.object_opacity);
       const float remaining = 1.0f - opacity;
       output = {backdrop.r * remaining + grouped->r * opacity,
                 backdrop.g * remaining + grouped->g * opacity,
                 backdrop.b * remaining + grouped->b * opacity,
                 backdrop.a * remaining + grouped->a * opacity};
-      return is_valid_premultiplied_srgb(output);
+      if (!is_valid_premultiplied_srgb(output))
+        return fail("Deferred shadow composition produced invalid sRGB output");
+      return true;
     }
     if (appearance.blend_mode == document::BlendMode::Normal) {
       output = source_pixel;
@@ -498,7 +518,8 @@ bool render_effect_stack(const document::PathObject &path,
     }
     const auto composed = blend_source_over(
         appearance.blend_mode, backdrop, source_pixel);
-    if (!composed) return false;
+    if (!composed)
+      return fail("Effect blend could not composite against the backdrop");
     output = *composed;
     return true;
   };
@@ -519,7 +540,11 @@ bool render_effect_stack(const document::PathObject &path,
   for (int32_t y = target_top; y < target_top + target_height; ++y) {
     for (int32_t x = target_left; x < target_left + target_width; ++x) {
       BlendPixel output_pixel;
-      if (!resolve_output_pixel(x, y, output_pixel)) return false;
+      if (!resolve_output_pixel(x, y, output_pixel)) {
+        if (!out_failure || out_failure->empty())
+          return fail("Effect output failed pixel validation before commit");
+        return false;
+      }
       if (output_pixel.a <= 0.0f) continue;
       if (cache_output) {
         const size_t output_index =

@@ -34,6 +34,7 @@ template <class T> class ComPtr {
 };
 void check(HRESULT result, const char *operation);
 IDWriteFactory *factory();
+IDWriteFontCollection *system_font_collection();
 std::wstring wide(std::string_view value);
 std::string utf8(std::wstring_view value);
 std::string family_name(IDWriteFont *font);

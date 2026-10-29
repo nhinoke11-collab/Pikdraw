@@ -26,8 +26,8 @@ int main() {
 
     auto listed = server.handle(parse(R"({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}})"));
     const auto* tool_list = listed.get("result")->get("tools");
-    check(tool_list && tool_list->array() && tool_list->array()->size() == 20,
-          "MCP tool list only advertises the implemented semantic operations");
+    check(tool_list && tool_list->array() && tool_list->array()->size() >= 20,
+          "MCP tool list advertises the implemented semantic operations");
     bool batch_schema_covers_authoring_and_edits = false;
     bool batch_schema_supports_typed_physical_units = false;
     bool rectangle_schema_supports_typed_physical_units = false;

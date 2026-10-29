@@ -43,6 +43,11 @@ public:
     // Grants read/write/execute access to a dedicated per-job temporary directory.
     [[nodiscard]] static bool GrantDirectoryModifyAccess(const std::wstring& directory_path,
                                                          PSID appcontainer_sid) noexcept;
+    // Revokes access previously granted to an AppContainer SID on a directory.
+    [[nodiscard]] static bool RevokeDirectoryAccess(const std::wstring& directory_path,
+                                                    PSID appcontainer_sid) noexcept;
+    // Revokes session WindowStation/Desktop access.
+    static void RevokeSessionAccess(PSID sid) noexcept;
 
 private:
     std::wstring profile_name_;

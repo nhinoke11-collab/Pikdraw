@@ -104,7 +104,7 @@ struct GdiplusApi {
 
 private:
     GdiplusApi() {
-        hModule = LoadLibraryW(L"gdiplus.dll");
+        hModule = LoadLibraryExW(L"gdiplus.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
         if (!hModule) return;
 
         #define LOAD_PROC(member, name) \

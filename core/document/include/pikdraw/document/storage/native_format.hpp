@@ -14,7 +14,7 @@ namespace pikdraw::document {
 
 /// Legacy native container header (PKDR v2-v23): magic, version, flags, epoch,
 /// revision, payload-byte count and CRC32. All integers are little-endian; CRC
-/// offset 32. PKDR v24/v25 keep this prefix and add a 64-bit chunk table header.
+/// offset 32. PKDR v24-v26 keep this prefix and add a 64-bit chunk table header.
 /// v3 adds authoring paths, v4 appearance, v5 gradients, v6 multi-page roots,
 /// v7 text layout, v8 embedded raster assets, v9 page color/DPI, v10 PowerClip,
 /// v11 locked PDF sources, v12 screen-only PDF page preview caches, v13
@@ -25,11 +25,12 @@ namespace pikdraw::document {
 /// v19 disk-backed raster source descriptors with nondestructive edits, v20
 /// host-reviewed import fidelity reports, v21 text character properties,
 /// v22 persistent layer printable/color properties, v23 shared-scene artboards,
-/// and v24 deduplicated embedded raster source and decoded sample assets.
+/// v24 deduplicated embedded raster source and decoded sample assets, and v25
+/// stable layer IDs, annotation roles and group relationships.
 #pragma pack(push, 1)
 struct PikDrawHeader {
     uint8_t magic[4];       // {'P', 'K', 'D', 'R'}
-    uint32_t version;       // v2-v23 uncompressed containers
+    uint32_t version;       // v2-v23 legacy and v24-v26 chunked containers
     uint32_t flags;         // feature flags / compression
     uint64_t epoch;         // document epoch at save
     uint64_t revision;      // document revision at save
@@ -62,11 +63,13 @@ inline constexpr uint32_t kTextCharacterPropertiesFormatVersion = 21;
 inline constexpr uint32_t kLayerPropertiesFormatVersion = 22;
 inline constexpr uint32_t kArtboardsFormatVersion = 23;
 inline constexpr uint32_t kRasterAssetTableFormatVersion = 24;
-/// Document payload schema version. The v25 container wraps this schema in
-/// independently checksummed, optionally DEFLATE-compressed chunks.
-inline constexpr uint32_t kCurrentFormatVersion = kRasterAssetTableFormatVersion;
+inline constexpr uint32_t kLayerHierarchyFormatVersion = 25;
+/// Document payload schema version. The v25 and v26 containers wrap payload
+/// schemas v24 and v25 in independently checksummed chunks.
+inline constexpr uint32_t kCurrentFormatVersion = kLayerHierarchyFormatVersion;
 inline constexpr uint32_t kLegacyChunkedContainerFormatVersion = 24;
 inline constexpr uint32_t kChunkedContainerFormatVersion = 25;
+inline constexpr uint32_t kLayerHierarchyContainerVersion = 26;
 inline constexpr uint32_t kChunkedContainerHeaderBytes = 52;
 inline constexpr uint32_t kChunkedContainerChunkBytes = 16;
 inline constexpr uint32_t kNativeChunkBytes = 1024u * 1024u;

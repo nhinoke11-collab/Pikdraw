@@ -28,8 +28,8 @@ public:
 
 private:
     AnnotationObject annotation_;
-    std::optional<size_t> created_layer_index_;
-    std::optional<size_t> created_group_header_index_;
+    std::optional<LayerId> created_layer_id_;
+    std::optional<LayerId> created_group_header_id_;
     bool executed_{false};
 };
 
@@ -43,7 +43,6 @@ public:
 
 private:
     ObjectId id_{kInvalidObjectId};
-    AnnotationObject old_annotation_;
     AnnotationObject new_annotation_;
     PathObject old_path_object_;
     bool executed_{false};
@@ -61,8 +60,8 @@ public:
 
 private:
     DetailViewObject detail_view_;
-    std::optional<size_t> created_layer_index_;
-    std::optional<size_t> created_group_header_index_;
+    std::optional<LayerId> created_layer_id_;
+    std::optional<LayerId> created_group_header_id_;
     bool executed_{false};
 };
 
@@ -76,7 +75,6 @@ public:
 
 private:
     ObjectId id_{kInvalidObjectId};
-    DetailViewObject old_detail_view_;
     DetailViewObject new_detail_view_;
     PathObject old_path_object_;
     bool executed_{false};

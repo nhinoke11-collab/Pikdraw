@@ -415,7 +415,7 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
                             : get_visible_row_for_slot(ToolboxSlotId::Knife);
         const int flyout_top = content_top + 10 + (group_row >= 0 ? group_row : 1) * 42;
         const int item = (mouse_y - flyout_top - 26) / 29;
-        const int max_items = toolbox_open_group_ == 6 ? 2
+        const int max_items = toolbox_open_group_ == 6 ? 3
             : toolbox_open_group_ == 3 ? 5
             : toolbox_open_group_ == 2 ? 4 : 3;
         if (mouse_y >= flyout_top + 26 && item >= 0 && item < max_items) {
@@ -423,8 +423,8 @@ void NativeWindow::update_hover_tooltip(int mouse_x, int mouse_y) {
                 if (item == 0) tip_text = is_vi ? L"Dao cắt (Knife) · Kéo đường qua hình đóng để cắt rời" : L"Knife · Drag across shapes to slice";
                 else if (item == 1) tip_text = is_vi ? L"Tẩy vector (Eraser) · Kéo quét đầu tẩy theo mm để trừ vùng" : L"Vector Eraser · Sweep nib to erase vector areas";
                 else tip_text = is_vi
-                    ? L"Tẩy vector · Quét qua path kín có fill; path mở chưa được hỗ trợ"
-                    : L"Vector Eraser · Sweep across closed filled paths; open paths are not supported yet";
+                    ? L"Scissors · Nhấp node hoặc đoạn path để tách; Ctrl+Z hoàn tác"
+                    : L"Scissors · Click a path node or segment to split; Ctrl+Z undoes";
             } else if (toolbox_open_group_ == 1) {
                 if (item == 0)
                     tip_text = is_vi ? L"Hình chữ nhật · Shift vuông · Ctrl từ tâm"

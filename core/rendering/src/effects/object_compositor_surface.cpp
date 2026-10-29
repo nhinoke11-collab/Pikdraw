@@ -478,24 +478,34 @@ FilterPixel sample_linear_surface(std::span<const FilterPixel> pixels,
   const auto y0 = static_cast<int64_t>(floor_y);
   const double fx = x - floor_x;
   const double fy = y - floor_y;
-  FilterPixel result{};
+  double red = 0.0;
+  double green = 0.0;
+  double blue = 0.0;
+  double alpha = 0.0;
   const auto add = [&](int64_t sx, int64_t sy, double weight) {
     if (weight == 0.0 || sx < 0 || sy < 0 || sx >= width || sy >= height)
       return;
     const auto &pixel = pixels[static_cast<size_t>(sy) *
                                    static_cast<size_t>(width) +
                                static_cast<size_t>(sx)];
-    const float amount = static_cast<float>(weight);
-    result.r += pixel.r * amount;
-    result.g += pixel.g * amount;
-    result.b += pixel.b * amount;
-    result.a += pixel.a * amount;
+    red += static_cast<double>(pixel.r) * weight;
+    green += static_cast<double>(pixel.g) * weight;
+    blue += static_cast<double>(pixel.b) * weight;
+    alpha += static_cast<double>(pixel.a) * weight;
   };
   add(x0, y0, (1.0 - fx) * (1.0 - fy));
   add(x0 + 1, y0, fx * (1.0 - fy));
   add(x0, y0 + 1, (1.0 - fx) * fy);
   add(x0 + 1, y0 + 1, fx * fy);
-  return result;
+  // Bilinear weights are convex in real arithmetic, but float accumulation
+  // can push a fully opaque sample just above alpha=1. Preserve the
+  // premultiplied invariant after interpolation to avoid rejecting a valid
+  // edge/center pixel later in the effect compositor.
+  alpha = std::clamp(alpha, 0.0, 1.0);
+  return {static_cast<float>(std::clamp(red, 0.0, alpha)),
+          static_cast<float>(std::clamp(green, 0.0, alpha)),
+          static_cast<float>(std::clamp(blue, 0.0, alpha)),
+          static_cast<float>(alpha)};
 }
 
 bool is_default_appearance(const document::Appearance &appearance) {

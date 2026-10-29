@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "../performance/canvas_trace.hpp"
 #include "pikdraw/desktop/shell/native_font_picker.hpp"
 #include "native_window_paint_icons.hpp"
 #include "native_window_text_properties.hpp"
@@ -12,6 +13,7 @@
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/gradient_tool_controller.hpp"
+#include "../tools/annotation/annotation_tool_controller.hpp"
 #include "native_window_drop_shadow_paint.hpp"
 
 #include <iostream>
@@ -89,12 +91,21 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
         RECT rc_full = { 0, 0, w, h };
         FillRect(mem_dc, &rc_full, br_canvas);
         DeleteObject(br_canvas);
+        if (canvas_trace_)
+            record_performance_event(CanvasTraceKind::CanvasOverlayBegin,
+                active_trace_event_id_, active_trace_frame_id_);
         paint_document_canvas(mem_dc, w, h);
 
         if (!direct_present_frame_)
             paint_canvas_interaction_handles(mem_dc, w, h);
+        if (canvas_trace_)
+            record_performance_event(CanvasTraceKind::CanvasOverlayEnd,
+                active_trace_event_id_, active_trace_frame_id_);
 
         // Document Tab Bar
+        if (canvas_trace_)
+            record_performance_event(CanvasTraceKind::ChromeOverlayBegin,
+                active_trace_event_id_, active_trace_frame_id_);
         paint_document_tab_bar(mem_dc, w, topbar_h, tabbar_h);
 
         // Context Tool Ribbon
@@ -176,7 +187,10 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
 
         bool is_text_mode = (active_tool_ == 4 || is_inline_text_editing_ || is_text_object_selected());
 
-        if ((active_tool_ == 8 && pen_tool_ && pen_tool_->active()) ||
+        if ((active_tool_ == 17 && annotation_tool_ && annotation_tool_->active()) ||
+            (active_tool_ == 0 && has_annotation_properties_target())) {
+            paint_annotation_property_bar(mem_dc, w, content_top, topbar_h, tabbar_h);
+        } else if ((active_tool_ == 8 && pen_tool_ && pen_tool_->active()) ||
             ((active_tool_ == 6 || active_tool_ == 7) && drawing_tool_ && drawing_tool_->active())) {
             SelectObject(mem_dc, font_be_vietnam_bold);
             SetTextColor(mem_dc, col_teal);
@@ -197,6 +211,108 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
             draw_rib_btn(495, 605, is_vi ? L"⚙ Thuộc tính..." : L"⚙ Properties...",
                          false, col_teal);
         } else if (active_tool_ == 0 && paint_powerclip_controls(mem_dc, 10, 70, w - inspect_w - 10, false)) {
+        } else if (active_tool_ == 5) {
+            SelectObject(mem_dc, font_be_vietnam_bold);
+            SetTextColor(mem_dc, col_teal);
+            RECT label{10, topbar_h + tabbar_h, 70, content_top};
+            DrawTextW(mem_dc, is_vi ? L"Dao cắt:" : L"Knife:", -1, &label,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            draw_rib_btn(75, 147, is_vi ? L"Thẳng" : L"Straight",
+                         !knife_freehand_mode_, !knife_freehand_mode_ ? col_teal : col_text_white);
+            draw_rib_btn(151, 239, is_vi ? L"Tự do" : L"Freehand",
+                         knife_freehand_mode_, knife_freehand_mode_ ? col_teal : col_text_white);
+            draw_num_input(245, 365, is_vi ? L"Hở:" : L"Gap:",
+                           format_mm_display_utf8(knife_gap_mm_, display_length_unit_, 3),
+                           NumericFieldId::KnifeGap, false);
+            draw_rib_btn(372, 484, is_vi ? L"⚙ Thuộc tính" : L"⚙ Properties",
+                         false, col_teal);
+        } else if (active_tool_ == 16) {
+            SelectObject(mem_dc, font_be_vietnam_bold);
+            SetTextColor(mem_dc, col_teal);
+            RECT label{10, topbar_h + tabbar_h, 70, content_top};
+            DrawTextW(mem_dc, is_vi ? L"Tẩy vector:" : L"Vector Eraser:", -1, &label,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            draw_num_input(112, 233, is_vi ? L"Ø:" : L"Ø:",
+                           format_mm_display_utf8(vector_eraser_diameter_mm_, display_length_unit_, 3),
+                           NumericFieldId::VectorEraserDiameter, false);
+            draw_rib_btn(240, 350, vector_eraser_round_nib_
+                         ? (is_vi ? L"Nét tròn" : L"Round nib")
+                         : (is_vi ? L"Nét vuông" : L"Square nib"),
+                         false, col_text_white);
+            draw_rib_btn(357, 469, is_vi ? L"⚙ Thuộc tính" : L"⚙ Properties",
+                         false, col_teal);
+        } else if (active_tool_ == 19) {
+            SelectObject(mem_dc, font_be_vietnam_bold);
+            SetTextColor(mem_dc, col_teal);
+            RECT label{10, topbar_h + tabbar_h, 150, content_top};
+            DrawTextW(mem_dc, is_vi ? L"Kéo cắt (X):" : L"Scissors (X):", -1, &label,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            draw_rib_btn(160, 286, is_vi ? L"⚙ Hướng dẫn" : L"⚙ Properties",
+                         false, col_teal);
+        } else if (active_tool_ == 20) {
+            SelectObject(mem_dc, font_be_vietnam_bold);
+            SetTextColor(mem_dc, col_teal);
+            RECT label{10, topbar_h + tabbar_h, 104, content_top};
+            DrawTextW(mem_dc, L"Trim Objects:", -1, &label,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            draw_rib_btn(110, 222,
+                trim_objects_keep_sources_ ? (is_vi ? L"✓ Giữ Source" : L"✓ Keep Source")
+                                           : (is_vi ? L"Giữ Source" : L"Keep Source"),
+                trim_objects_keep_sources_, trim_objects_keep_sources_ ? col_teal : col_text_white);
+            draw_rib_btn(228, 336,
+                cut_geometry_preview_ready(CutGeometryOperation::TrimObjects)
+                    ? (is_vi ? L"Áp dụng" : L"Apply")
+                    : (is_vi ? L"Xem trước" : L"Preview"),
+                trim_objects_target_id_ != document::kInvalidObjectId && !trim_objects_source_ids_.empty(), col_teal);
+            draw_rib_btn(342, 430, is_vi ? L"Đặt lại" : L"Reset", false, col_text_white);
+            draw_rib_btn(436, 548, is_vi ? L"⚙ Thuộc tính" : L"⚙ Properties", false, col_teal);
+        } else if (active_tool_ == 21) {
+            SelectObject(mem_dc, font_be_vietnam_bold);
+            SetTextColor(mem_dc, col_teal);
+            RECT label{10, topbar_h + tabbar_h, 150, content_top};
+            DrawTextW(mem_dc, L"Smart Trim:", -1, &label,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            draw_rib_btn(160, 286, is_vi ? L"⚙ Thuộc tính" : L"⚙ Properties", false, col_teal);
+        } else if (active_tool_ == 22) {
+            SelectObject(mem_dc, font_be_vietnam_bold);
+            SetTextColor(mem_dc, col_teal);
+            RECT label{10, topbar_h + tabbar_h, 104, content_top};
+            DrawTextW(mem_dc, L"Shape Builder:", -1, &label,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            const bool builder_preview_ready =
+                cut_geometry_preview_ready(CutGeometryOperation::ShapeBuilder);
+            draw_rib_btn(110, 222,
+                         builder_preview_ready
+                             ? (is_vi ? L"Áp dụng ghép" : L"Apply Merge")
+                             : (is_vi ? L"Xem ghép" : L"Preview Merge"),
+                         !shape_builder_seed_points_.empty() || builder_preview_ready,
+                         col_teal);
+            draw_rib_btn(228, 336,
+                         builder_preview_ready
+                             ? (is_vi ? L"Áp dụng xóa" : L"Apply Erase")
+                             : (is_vi ? L"Xem xóa" : L"Preview Erase"),
+                         !shape_builder_seed_points_.empty() || builder_preview_ready,
+                         col_text_white);
+            draw_rib_btn(342, 430, is_vi ? L"Đặt lại" : L"Reset", false, col_text_white);
+            draw_rib_btn(436, 548, is_vi ? L"⚙ Thuộc tính" : L"⚙ Properties", false, col_teal);
+        } else if (active_tool_ == 23) {
+            SelectObject(mem_dc, font_be_vietnam_bold);
+            SetTextColor(mem_dc, col_teal);
+            RECT label{10, topbar_h + tabbar_h, 120, content_top};
+            DrawTextW(mem_dc, L"Smart Fill:", -1, &label,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            draw_rib_btn(130, 252, is_vi ? L"⚙ Thuộc tính" : L"⚙ Properties", false, col_teal);
+        } else if (active_tool_ == 24) {
+            SelectObject(mem_dc, font_be_vietnam_bold);
+            SetTextColor(mem_dc, col_teal);
+            RECT label{10, topbar_h + tabbar_h, 120, content_top};
+            DrawTextW(mem_dc, is_vi ? L"Tẩy ảnh:" : L"Raster Eraser:", -1, &label,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            const std::wstring diameter = L"Ø " + std::to_wstring(
+                static_cast<int>(std::lround(raster_eraser_diameter_px_))) + L" px";
+            draw_rib_btn(130, 252, diameter.c_str(), false, col_teal);
+            draw_rib_btn(260, 382, is_vi ? L"⚙ Thuộc tính" : L"⚙ Properties",
+                         false, col_teal);
         } else if (active_tool_ == 11 && node_tool_ && node_tool_->active()) {
             SelectObject(mem_dc, font_be_vietnam_bold);
             SetTextColor(mem_dc, col_teal);
@@ -689,6 +805,10 @@ void NativeWindow::paint(HDC hdc, int w, int h) {
 
     if (!direct_present_frame_)
         paint_topmost_ui_layer(mem_dc, w, h);
+
+    if (!show_home_screen_ && canvas_trace_)
+        record_performance_event(CanvasTraceKind::ChromeOverlayEnd,
+            active_trace_event_id_, active_trace_frame_id_);
 
     SetMapMode(mem_dc, MM_TEXT);
     BitBlt(hdc, 0, 0, device_w, device_h, mem_dc, 0, 0, SRCCOPY);

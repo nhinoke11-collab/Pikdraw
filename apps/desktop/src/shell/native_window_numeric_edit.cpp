@@ -16,6 +16,7 @@
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/gradient_tool_controller.hpp"
 #include "pikdraw/vector/tools/shape_tools.hpp"
+#include "../tools/annotation/annotation_tool_controller.hpp"
 #include <iostream>
 #include <fstream>
 #include <vector>
@@ -39,13 +40,254 @@ ScopeExit(Callback) -> ScopeExit<Callback>;
 
 void NativeWindow::commit_numeric_field() {
     if (active_num_field_ == NumericFieldId::None) return;
+    if (active_num_field_ == NumericFieldId::KnifeGap ||
+        active_num_field_ == NumericFieldId::VectorEraserDiameter) {
+        const bool knife_field = active_num_field_ == NumericFieldId::KnifeGap;
+        if ((knife_field && active_tool_ != 5) || (!knife_field && active_tool_ != 16)) {
+            cancel_numeric_field();
+            return;
+        }
+        const auto snapshot = root().document().current_snapshot();
+        const bool stale = !numeric_input_context_.valid ||
+            numeric_input_context_.root_identity != static_cast<const void*>(&root()) ||
+            numeric_input_context_.page_id != (snapshot ? snapshot->active_page_id() : 0) ||
+            numeric_input_context_.document_revision != root().document().revision() ||
+            numeric_input_context_.view_generation != view_generation_ ||
+            numeric_input_context_.active_tool != active_tool_ ||
+            numeric_input_context_.selection_ids != root().vector_controller().selection().selected_ids();
+        if (stale) {
+            cancel_numeric_field();
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Ngữ cảnh công cụ đã đổi · giá trị chưa áp dụng"
+                : "Tool context changed · value was not applied";
+            return;
+        }
+        double value = std::numeric_limits<double>::quiet_NaN();
+        try { value = parse_length_input_mm(num_input_buffer_, display_length_unit_); }
+        catch (...) {}
+        const double minimum = knife_field ? 0.0 : 0.01;
+        const double maximum = knife_field ? 1.0 : 1000.0;
+        if (!std::isfinite(value) || value < minimum || value > maximum) {
+            status_msg_ = knife_field
+                ? (language_ == UILanguage::Vietnamese
+                    ? "Khoảng hở Knife phải từ 0 đến 1 mm; chưa áp dụng"
+                    : "Knife gap must be between 0 and 1 mm; not applied")
+                : (language_ == UILanguage::Vietnamese
+                    ? "Đường kính Tẩy phải từ 0,01 đến 1000 mm; chưa áp dụng"
+                    : "Eraser diameter must be between 0.01 and 1000 mm; not applied");
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        if (knife_field) knife_gap_mm_ = value;
+        else vector_eraser_diameter_mm_ = value;
+        active_num_field_ = NumericFieldId::None;
+        num_input_buffer_.clear();
+        numeric_input_context_ = {};
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đã cập nhật thiết lập công cụ · không tạo Undo"
+            : "Tool preference updated · no document Undo created";
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    const auto annotation_numeric_context_is_current = [this] {
+        const auto snapshot = root().document().current_snapshot();
+        return numeric_input_context_.valid &&
+            numeric_input_context_.root_identity == static_cast<const void*>(&root()) &&
+            numeric_input_context_.page_id == (snapshot ? snapshot->active_page_id() : 0) &&
+            numeric_input_context_.document_revision == root().document().revision() &&
+            numeric_input_context_.view_generation == view_generation_ &&
+            numeric_input_context_.active_tool == active_tool_ &&
+            numeric_input_context_.selection_ids == root().vector_controller().selection().selected_ids();
+    };
+    const bool annotation_geometry_field =
+        active_num_field_ == NumericFieldId::AnnotationSourceX ||
+        active_num_field_ == NumericFieldId::AnnotationSourceY ||
+        active_num_field_ == NumericFieldId::AnnotationSourceWidth ||
+        active_num_field_ == NumericFieldId::AnnotationSourceHeight ||
+        active_num_field_ == NumericFieldId::AnnotationFrameX ||
+        active_num_field_ == NumericFieldId::AnnotationFrameY;
+    if (annotation_geometry_field) {
+        const bool draft = active_tool_ == 17 && annotation_tool_ && annotation_tool_->active() &&
+            annotation_tool_->mode() == tools::AnnotationToolMode::DetailView;
+        if (!annotation_numeric_context_is_current()) {
+            cancel_numeric_field();
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Ngữ cảnh Detail View đã đổi · giá trị chưa áp dụng"
+                : "Detail View context changed · value was not applied";
+            return;
+        }
+        double value = 0.0;
+        try { value = parse_length_input_mm(num_input_buffer_, display_length_unit_); }
+        catch (...) { value = std::numeric_limits<double>::quiet_NaN(); }
+        if (!std::isfinite(value) || std::abs(value) > geometry::kMaxCanvasDimensionMm) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Tọa độ/kích thước phải hữu hạn và nằm trong vùng vẽ"
+                : "Coordinate or size must be finite and within the canvas range";
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        std::optional<document::DetailViewObject> detail;
+        const auto field = active_num_field_;
+        if (draft) detail = annotation_tool_->draft_detail_view();
+        else {
+            const auto& ids = root().vector_controller().selection().selected_ids();
+            if (ids.size() == 1) detail = document::get_detail_view(root().document(), ids.front());
+        }
+        if (!detail) { cancel_numeric_field(); return; }
+        auto region = detail->source_region;
+        auto frame = detail->frame_rect;
+        if (field == NumericFieldId::AnnotationSourceX) {
+            if (detail->shape == document::DetailViewShape::Circle)
+                region.x = value - region.width * 0.5;
+            else region.x = value;
+        } else if (field == NumericFieldId::AnnotationSourceY) {
+            if (detail->shape == document::DetailViewShape::Circle)
+                region.y = value - region.height * 0.5;
+            else region.y = value;
+        } else if (field == NumericFieldId::AnnotationSourceWidth) {
+            if (detail->shape == document::DetailViewShape::Circle) {
+                const auto center = region.center();
+                region = {center.x - value, center.y - value, value * 2.0, value * 2.0};
+            } else region.width = value;
+        } else if (field == NumericFieldId::AnnotationSourceHeight) {
+            region.height = value;
+        } else if (field == NumericFieldId::AnnotationFrameX) {
+            frame.x = value;
+        } else {
+            frame.y = value - frame.height;
+        }
+        if (field == NumericFieldId::AnnotationSourceX ||
+            field == NumericFieldId::AnnotationSourceY ||
+            field == NumericFieldId::AnnotationSourceWidth ||
+            field == NumericFieldId::AnnotationSourceHeight) {
+            const double top = frame.y + frame.height;
+            frame.width = region.width * detail->scale_ratio;
+            frame.height = region.height * detail->scale_ratio;
+            frame.y = top - frame.height;
+        }
+        detail->source_region = region;
+        detail->frame_rect = frame;
+        std::string validation_error;
+        if (!document::validate_detail_view_object(*detail, &validation_error)) {
+            status_msg_ = validation_error;
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        if (draft) {
+            if (field == NumericFieldId::AnnotationFrameX || field == NumericFieldId::AnnotationFrameY)
+                (void)annotation_tool_->set_frame_top_left({frame.x, frame.y + frame.height});
+            else (void)annotation_tool_->set_source_region(region);
+        } else {
+            const auto& ids = root().vector_controller().selection().selected_ids();
+            const auto result = root().document().execute_command(
+                std::make_unique<document::UpdateDetailViewCommand>(ids.front(), *detail));
+            if (!result.success) { status_msg_ = result.error_message; return; }
+        }
+        active_num_field_ = NumericFieldId::None;
+        num_input_buffer_.clear();
+        numeric_input_context_ = {};
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    if (active_num_field_ == NumericFieldId::AnnotationTextSize) {
+        const bool draft = active_tool_ == 17 && annotation_tool_ && annotation_tool_->active() &&
+            annotation_tool_->mode() != tools::AnnotationToolMode::DetailView;
+        if (!annotation_numeric_context_is_current()) {
+            cancel_numeric_field();
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Ngữ cảnh ghi chú đã đổi · giá trị chưa áp dụng"
+                : "Annotation context changed · value was not applied";
+            return;
+        }
+        double size_mm = 0.0;
+        try {
+            size_t parsed = 0;
+            size_mm = std::stod(num_input_buffer_, &parsed);
+            if (parsed != num_input_buffer_.size()) size_mm = 0.0;
+        } catch (...) {
+            size_mm = 0.0;
+        }
+        if (!std::isfinite(size_mm) || size_mm < 0.1 || size_mm > 1000.0) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Cỡ chữ phải từ 0,1 đến 1000 mm"
+                : "Text height must be between 0.1 and 1000 mm";
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        if (draft) {
+            annotation_tool_->set_note_text_size_mm(size_mm);
+        } else {
+            const auto& ids = root().vector_controller().selection().selected_ids();
+            auto annotation = ids.size() == 1 ? document::get_annotation(root().document(), ids.front()) : std::nullopt;
+            if (!annotation) { cancel_numeric_field(); return; }
+            annotation->style.text_size_mm = size_mm;
+            const auto result = root().document().execute_command(
+                std::make_unique<document::UpdateAnnotationCommand>(ids.front(), *annotation));
+            if (!result.success) {
+                status_msg_ = result.error_message;
+                return;
+            }
+        }
+        active_num_field_ = NumericFieldId::None;
+        num_input_buffer_.clear();
+        numeric_input_context_ = {};
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    if (active_num_field_ == NumericFieldId::AnnotationScale) {
+        const bool draft = active_tool_ == 17 && annotation_tool_ && annotation_tool_->active() &&
+            annotation_tool_->mode() == tools::AnnotationToolMode::DetailView;
+        if (!annotation_numeric_context_is_current()) {
+            cancel_numeric_field();
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Ngữ cảnh Detail View đã đổi · giá trị chưa áp dụng"
+                : "Detail View context changed · value was not applied";
+            return;
+        }
+        const auto parsed_ratio = document::parse_detail_scale_ratio(num_input_buffer_);
+        if (!parsed_ratio) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Tỉ lệ phải trong khoảng 0,1–50; nhập dạng 2:1 hoặc 1:2"
+                : "Scale must be between 0.1 and 50; enter 2:1 or 1:2";
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+        const double ratio = *parsed_ratio;
+        if (draft) {
+            annotation_tool_->set_scale_ratio(ratio);
+        } else {
+            const auto& ids = root().vector_controller().selection().selected_ids();
+            auto detail = ids.size() == 1 ? document::get_detail_view(root().document(), ids.front()) : std::nullopt;
+            if (!detail) { cancel_numeric_field(); return; }
+            detail->scale_ratio = ratio;
+            const double width = detail->source_region.width * ratio;
+            const double height = detail->source_region.height * ratio;
+            const double top = detail->frame_rect.y + detail->frame_rect.height;
+            detail->frame_rect = {detail->frame_rect.x, top - height, width, height};
+            const auto result = root().document().execute_command(
+                std::make_unique<document::UpdateDetailViewCommand>(ids.front(), *detail));
+            if (!result.success) {
+                status_msg_ = result.error_message;
+                return;
+            }
+        }
+        active_num_field_ = NumericFieldId::None;
+        num_input_buffer_.clear();
+        numeric_input_context_ = {};
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đã cập nhật tỉ lệ Detail View · Enter nhận · Esc hủy"
+            : "Detail View scale updated · Enter applies · Esc cancels";
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
     const ScopeExit clear_numeric_context{[this] {
         if (active_num_field_ == NumericFieldId::None)
             numeric_input_context_ = {};
     }};
 
     const auto field_uses_document_context = [](NumericFieldId field) {
-        return field != NumericFieldId::None && field != NumericFieldId::TacLimitPercent &&
+        return field != NumericFieldId::None && field != NumericFieldId::AnnotationScale &&
+            field != NumericFieldId::TacLimitPercent &&
             field != NumericFieldId::ModalWidth && field != NumericFieldId::ModalHeight;
     };
     if (field_uses_document_context(active_num_field_)) {
@@ -187,11 +429,26 @@ void NativeWindow::commit_numeric_field() {
             std::replace(normalized.begin(), normalized.end(), ',', '.');
             size_t parsed = 0;
             const double value = std::stod(normalized, &parsed);
-            const double minimum = hue ? -180.0 : -100.0;
-            const double maximum = hue ? 180.0 : 100.0;
-            if (parsed != normalized.size() || !std::isfinite(value) ||
-                value < minimum || value > maximum ||
-                !set_selected_bitmap_color_adjustment(field, value))
+            const bool selective = raster_hsl_active_channel_ > 0 &&
+                field != NumericFieldId::RasterVibranceAmount;
+            const double minimum = hue
+                ? (selective ? -30.0 : -180.0) : -100.0;
+            const double maximum = hue
+                ? (selective ? 30.0 : 180.0) : 100.0;
+            bool applied = false;
+            if (parsed == normalized.size() && std::isfinite(value) &&
+                value >= minimum && value <= maximum) {
+                if (selective) {
+                    const int component = field == NumericFieldId::RasterHslHue
+                        ? 0 : (field == NumericFieldId::RasterHslSaturation ? 1 : 2);
+                    applied = set_selected_bitmap_selective_hsl_value(
+                        static_cast<document::RasterHueRange>(
+                            raster_hsl_active_channel_ - 1), component, value);
+                } else {
+                    applied = set_selected_bitmap_color_adjustment(field, value);
+                }
+            }
+            if (!applied)
                 throw std::out_of_range("raster HSL/Vibrance field");
         } catch (...) {
             status_msg_ = hue

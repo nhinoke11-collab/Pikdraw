@@ -201,8 +201,16 @@ std::shared_ptr<document::DocumentSnapshot> load_granted_automation_file(
 #endif
 
 bool document_write_busy(const NativeWindow& window) {
-    return window.is_inline_editing() || window.drawing_path_point_count() > 0 ||
-           window.active_tool() == 8;
+    return window.has_active_document_interaction();
+}
+
+bool is_write_operation(std::string_view op) noexcept {
+    if (op == "batch.apply" || op == "history.undo" || op == "history.redo" ||
+        op.starts_with("object.create") || op.starts_with("object.delete") ||
+        op.starts_with("object.update") || op.starts_with("document.apply")) {
+        return true;
+    }
+    return false;
 }
 
 uint32_t current_process_id() noexcept {
@@ -456,9 +464,14 @@ automation::JsonValue NativeWindowAutomationRuntime::handle(
                 {"object_count", static_cast<double>(state->object_count())}, {"dirty", false},
                 {"instructions", "Connect to this new document with pikdraw.connect before editing."}};
         }
-        if ((*operation == "batch.apply" || *operation == "object.create_rectangle") && document_write_busy(window))
-            return error("BUSY_INTERACTION", "Finish the current text or path interaction before applying document edits.");
+        if (is_write_operation(*operation) && document_write_busy(window))
+            return error("BUSY_INTERACTION", "Finish the current user interaction before applying document edits.");
+        const uint64_t rev_before = it->first->revision();
         auto result = it->second->rpc.handle(request);
+        const auto* result_status = string_field(result, "status");
+        if (result_status && *result_status == "ok" && it->first->revision() != rev_before) {
+            window.on_external_document_change();
+        }
         if (*operation == "session.disconnect" && it->second->rpc.session_count() == 0)
             documents.erase(it);
         return result;

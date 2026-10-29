@@ -74,6 +74,14 @@ if(PIKDRAW_BUILD_TESTS)
     add_test(NAME test_pikdraw_raster_vertical_slice
         COMMAND test_pikdraw_raster_vertical_slice)
 
+    add_executable(test_pikdraw_raster_edit_graph_command
+        tests/test_raster_edit_graph_command.cpp)
+    target_include_directories(test_pikdraw_raster_edit_graph_command PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(test_pikdraw_raster_edit_graph_command PRIVATE pikdraw_raster)
+    add_test(NAME test_pikdraw_raster_edit_graph_command
+        COMMAND test_pikdraw_raster_edit_graph_command)
+
     add_executable(test_pikdraw_raster_preview_service
         tests/test_raster_edit_preview.cpp)
     target_include_directories(test_pikdraw_raster_preview_service PRIVATE

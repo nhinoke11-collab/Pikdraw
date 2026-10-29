@@ -940,7 +940,7 @@ void NativeWindow::handle_import_worker_message(WPARAM kind) {
         choice = kImportChoiceApply;
     } else {
         using TaskDialogFunction = HRESULT(WINAPI*)(const TASKDIALOGCONFIG*, int*, int*, BOOL*);
-        HMODULE common_controls = LoadLibraryW(L"comctl32.dll");
+        HMODULE common_controls = LoadLibraryExW(L"comctl32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
         const auto task_dialog = common_controls ? reinterpret_cast<TaskDialogFunction>(
             GetProcAddress(common_controls, "TaskDialogIndirect")) : nullptr;
         const HRESULT dialog_result = task_dialog

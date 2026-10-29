@@ -72,8 +72,7 @@ class GlyphCollector final : public IDWriteTextRenderer {
         if (!description || glyph_run->isSideways || glyph_run->bidiLevel != 0)
             throw std::runtime_error(
                 "Directional/sideways typography is unsupported by the current run model");
-        ComPtr<IDWriteFontCollection> collection;
-        check(factory()->GetSystemFontCollection(collection.put()), "GetSystemFontCollection");
+        IDWriteFontCollection *collection = system_font_collection();
         ComPtr<IDWriteFont> actual;
         check(collection->GetFontFromFontFace(glyph_run->fontFace, actual.put()), "GetFontFromFontFace");
         const auto identity = describe(actual.get(), run_.font.size_pt);

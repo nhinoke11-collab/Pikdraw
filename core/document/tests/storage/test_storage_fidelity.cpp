@@ -3,7 +3,10 @@
 #include "pikdraw/document/commands/contour_commands.hpp"
 #include "pikdraw/document/commands/dimension_commands.hpp"
 #include "pikdraw/document/commands/path_commands.hpp"
+#include "pikdraw/document/commands/path_cut_commands.hpp"
+#include "pikdraw/document/commands/node_commands.hpp"
 #include "pikdraw/document/commands/layer_commands.hpp"
+#include "pikdraw/document/model/path_adapter.hpp"
 #include "pikdraw/document/storage/native_format.hpp"
 #include "pikdraw/document/storage/save_recovery.hpp"
 #include "../../src/storage/byte_codec.hpp"
@@ -914,23 +917,188 @@ void layer_properties_survive_native_roundtrip() {
         "native reopen lost layer printable or color state");
 }
 
+void cut_and_smart_trim_results_survive_native_reopen() {
+  const auto profile = make_test_icc_profile("Cut result RGB", 0x71);
+  Page page = Page::make_default();
+  page.color_profile_name = profile->identity().name;
+  page.color_profile_resource = profile;
+  page.color_mode_explicit = true;
+  Document doc("cut-result-native-roundtrip", page);
+
+  GroupObject parent;
+  parent.id = generate_object_id();
+  parent.name = "Transformed cut group";
+  parent.transform = geometry::Transform2D::translation(71.25, -18.5) *
+      geometry::Transform2D::rotation_degrees(23.0);
+  const auto parent_id = parent.id;
+  check(doc.execute_command(std::make_unique<AddObjectCommand>(parent)).success,
+        "cut result parent group could not be added");
+
+  auto make_profiled_path = [&profile](std::string name, double x) {
+    PathObject path;
+    path.id = generate_object_id();
+    path.name = std::move(name);
+    path.path = geometry::Path2D::make_rect(x, 0.0, 100.0, 50.0);
+    path.fill = color::ColorValue::make_rgb(0.2, 0.45, 0.8, 0.73);
+    path.stroke = color::ColorValue::make_rgb(0.08, 0.1, 0.13, 1.0);
+    check(path.fill.set_profile_resource(profile) &&
+              path.stroke.set_profile_resource(profile),
+          "cut path paints could not bind to the page ICC profile");
+    path.stroke_width_mm = 0.375;
+    path.appearance.object_opacity = 0.73;
+    path.appearance.blend_mode = BlendMode::Multiply;
+    path.transform = geometry::Transform2D::translation(x * 0.1, -3.25);
+    return path;
+  };
+
+  auto before = make_profiled_path("Before cut", -130.0);
+  auto target = make_profiled_path("Cut target", 0.0);
+  auto after = make_profiled_path("After cut", 130.0);
+  EffectNode blur;
+  blur.id = generate_effect_instance_id();
+  blur.parameters = GaussianBlurEffect{0.4, 0.6};
+  target.appearance.effects.push_back(blur);
+  const auto before_id = before.id;
+  const auto target_id = target.id;
+  const auto after_id = after.id;
+  check(doc.execute_command(std::make_unique<AddScopedObjectCommand>(before, parent_id)).success &&
+            doc.execute_command(std::make_unique<AddScopedObjectCommand>(target, parent_id)).success &&
+            doc.execute_command(std::make_unique<AddScopedObjectCommand>(after, parent_id)).success,
+        "transformed cut fixture objects could not be added to their parent");
+  target = std::get<PathObject>(
+      *doc.current_snapshot()->objects().get(target_id));
+
+  PathObject first_piece = target;
+  first_piece.name = "Cut target piece 1";
+  first_piece.path = geometry::Path2D::make_rect(0.0, 0.0, 40.0, 50.0);
+  PathObject second_piece = target;
+  second_piece.id = generate_object_id();
+  second_piece.name = "Cut target piece 2";
+  second_piece.path = geometry::Path2D::make_rect(40.0, 0.0, 60.0, 50.0);
+  second_piece.appearance.effects.front().id = generate_effect_instance_id();
+  const auto second_piece_id = second_piece.id;
+  std::vector<ObjectVariant> pieces;
+  pieces.emplace_back(std::move(first_piece));
+  pieces.emplace_back(std::move(second_piece));
+  check(doc.execute_command(std::make_unique<ReplaceObjectWithPiecesCommand>(
+            target_id, std::move(pieces), "Knife Cut")).success,
+        "Knife cut result could not be committed");
+
+  auto outline = make_profiled_path("Smart Trim outline", 260.0);
+  outline.has_fill = false;
+  const auto editable = editable_path_from_path2d(outline.path, nullptr);
+  check(editable.has_value(), "Smart Trim fixture could not become editable");
+  outline.set_authoring_source(*editable);
+  const auto outline_id = outline.id;
+  const auto subpath_id = editable->subpaths.front().id;
+  const auto segment_id = editable->subpaths.front().segments.front().id;
+  check(doc.execute_command(std::make_unique<AddScopedObjectCommand>(outline, parent_id)).success,
+        "Smart Trim outline could not be added to its parent");
+  check(doc.execute_command(std::make_unique<SmartTrimPathCommand>(
+            outline_id, subpath_id, SmartTrimBoundary{segment_id, 0.25},
+            SmartTrimBoundary{segment_id, 0.75}, false)).success,
+        "Smart Trim result could not be committed");
+
+  const auto saved_snapshot = doc.current_snapshot();
+  const auto* saved_parent = saved_snapshot->hierarchy().find(parent_id);
+  const auto saved_world = saved_parent->world;
+  const auto saved_stack = std::get<GroupObject>(
+      *saved_snapshot->objects().get(parent_id)).children_ids;
+  const std::vector<ObjectId> expected_stack{
+      before_id, target_id, second_piece_id, after_id, outline_id};
+  check(saved_stack == expected_stack,
+        "cut replacement changed parent stack order or Smart Trim ownership");
+
+  const auto bytes = NativeFormat::serialize(*saved_snapshot);
+  std::string error;
+  const auto loaded = NativeFormat::deserialize(bytes.data(), bytes.size(), &error);
+  check(loaded && error.empty(), "cut and Smart Trim document failed native reopen");
+  Document reopened(*loaded);
+  const auto* reopened_parent = reopened.current_snapshot()->hierarchy().find(parent_id);
+  check(reopened_parent &&
+            reopened_parent->world.map_point({7.0, 9.0}).distance_to(
+                saved_world.map_point({7.0, 9.0})) < 1e-8,
+        "native reopen changed the transformed parent mapping");
+  const auto restored_stack = std::get<GroupObject>(
+      *reopened.current_snapshot()->objects().get(parent_id)).children_ids;
+  check(restored_stack == expected_stack,
+        "native reopen changed cut piece IDs or parent z-order");
+
+  const auto restored_piece = std::get<PathObject>(
+      *reopened.current_snapshot()->objects().get(target_id));
+  const auto restored_piece_2 = std::get<PathObject>(
+      *reopened.current_snapshot()->objects().get(second_piece_id));
+  const auto* restored_fill = std::get_if<color::RGBColor>(
+      &restored_piece.fill.payload());
+  const auto* expected_fill = std::get_if<color::RGBColor>(&target.fill.payload());
+  const auto* restored_stroke = std::get_if<color::RGBColor>(
+      &restored_piece.stroke.payload());
+  const auto* expected_stroke = std::get_if<color::RGBColor>(&target.stroke.payload());
+  const auto* restored_blur = restored_piece.appearance.effects.empty() ? nullptr :
+      std::get_if<GaussianBlurEffect>(
+          &restored_piece.appearance.effects.front().parameters);
+  check(restored_piece.fill.color_space() == color::ColorSpace::Rgb &&
+            restored_piece.fill.profile_resource() &&
+            restored_piece.fill.profile_resource()->identity().checksum_sha256 ==
+                profile->identity().checksum_sha256 &&
+            restored_fill && expected_fill && restored_fill->approx_equal(*expected_fill, 0.0) &&
+            restored_piece.fill.has_same_profile_binding(target.fill) &&
+            restored_piece.fill.overprint().fill == target.fill.overprint().fill &&
+            restored_piece.fill.overprint().stroke == target.fill.overprint().stroke &&
+            restored_stroke && expected_stroke &&
+            restored_stroke->approx_equal(*expected_stroke, 0.0) &&
+            restored_piece.stroke.has_same_profile_binding(target.stroke) &&
+            restored_piece.stroke_width_mm == target.stroke_width_mm &&
+            restored_piece.appearance.object_opacity == target.appearance.object_opacity &&
+            restored_piece.appearance.blend_mode == target.appearance.blend_mode &&
+            restored_piece.appearance.effects.size() == 1 && restored_blur &&
+            restored_piece.appearance.effects.front().id == blur.id &&
+            restored_piece.appearance.effects.front().enabled &&
+            restored_blur->sigma_x_mm == 0.4 && restored_blur->sigma_y_mm == 0.6 &&
+            restored_piece_2.transform.tx == target.transform.tx &&
+            restored_piece.transform.ty == target.transform.ty,
+        "native reopen changed cut style, ICC binding, effect, or local transform");
+
+  const auto restored_outline = std::get<PathObject>(
+      *reopened.current_snapshot()->objects().get(outline_id));
+  check(restored_outline.authoring_source &&
+            !restored_outline.authoring_source->subpaths.front().closed &&
+            restored_outline.authoring_source->subpaths.front().segments.size() == 5 &&
+            restored_outline.fill.profile_resource() &&
+            restored_outline.fill.profile_resource()->identity().checksum_sha256 ==
+                profile->identity().checksum_sha256,
+        "native reopen changed Smart Trim topology or its ICC paint");
+  check(reopened.execute_command(std::make_unique<TransformObjectCommand>(
+            second_piece_id, geometry::Transform2D::translation(2.0, 3.0))).success &&
+            reopened.undo(),
+        "reopened cut result is no longer editable through Undo");
+}
+
 int main() {
-  powerclip_source_and_flags_roundtrip();
+  const auto run_case = [](const char* name, auto&& test) {
+    try {
+      test();
+    } catch (const std::exception& error) {
+      throw std::runtime_error(std::string(name) + ": " + error.what());
+    }
+  };
   try {
-    source_roundtrip();
-    authoring_source_roundtrip_and_legacy_migration();
-    appearance_codec_matches_independent_byte_fixtures();
-    appearance_survives_native_v4_path_and_text_roundtrip();
-    extended_effects_reject_legacy_node_schema();
-    versioned_recovery_draft_isolated_from_documents();
-    document_path_ids_are_globally_unique();
-    image_source_roundtrip();
-    locked_pdf_source_roundtrip();
-    page_icc_resources_roundtrip_and_deduplicate();
-    path_feature_specs_survive_native_roundtrip();
-    paint_icc_bindings_roundtrip_across_native_color_sites();
-    layer_properties_survive_native_roundtrip();
-    save_faults_and_paths();
+    run_case("powerclip roundtrip", powerclip_source_and_flags_roundtrip);
+    run_case("source roundtrip", source_roundtrip);
+    run_case("authoring source migration", authoring_source_roundtrip_and_legacy_migration);
+    run_case("appearance byte fixtures", appearance_codec_matches_independent_byte_fixtures);
+    run_case("appearance v4 roundtrip", appearance_survives_native_v4_path_and_text_roundtrip);
+    run_case("legacy effect schema", extended_effects_reject_legacy_node_schema);
+    run_case("recovery draft isolation", versioned_recovery_draft_isolated_from_documents);
+    run_case("document path identities", document_path_ids_are_globally_unique);
+    run_case("image source roundtrip", image_source_roundtrip);
+    run_case("locked PDF roundtrip", locked_pdf_source_roundtrip);
+    run_case("page ICC roundtrip", page_icc_resources_roundtrip_and_deduplicate);
+    run_case("path feature specs", path_feature_specs_survive_native_roundtrip);
+    run_case("paint ICC roundtrip", paint_icc_bindings_roundtrip_across_native_color_sites);
+    run_case("layer property roundtrip", layer_properties_survive_native_roundtrip);
+    run_case("cut and smart trim roundtrip", cut_and_smart_trim_results_survive_native_reopen);
+    run_case("save faults and paths", save_faults_and_paths);
     std::cout << "PASS source fidelity, malformed file quotas, checksum, save "
                  "faults, UTF8 paths and reopen\n";
   } catch (const std::exception &error) {

@@ -3,7 +3,13 @@
 #include "pikdraw/color/preview/icc_preview.hpp"
 #include "pikdraw/color/preview/profile_color_transform.hpp"
 #include "pikdraw/document/document.hpp"
+#include "pikdraw/document/storage/native_format.hpp"
+#include "pikdraw/document/commands/clip_commands.hpp"
+#include "pikdraw/document/commands/path_cut_commands.hpp"
+#include "pikdraw/document/commands/node_commands.hpp"
+#include "pikdraw/document/model/path_adapter.hpp"
 #include "pikdraw/document/commands/color_commands.hpp"
+#include "pikdraw/document/commands/annotation_commands.hpp"
 #include <algorithm>
 #include <cassert>
 #include <cmath>
@@ -195,6 +201,77 @@ void test_svg_export_and_roundtrip() {
     assert(std::abs(re_text.font.size_pt - 32.0) < 1e-12);
 }
 
+void test_cut_and_smart_trim_results_export_as_editable_svg() {
+    Document doc("svg-cut-and-trim-results");
+    GroupObject parent;
+    parent.id = generate_object_id();
+    parent.transform = geometry::Transform2D::translation(35.0, 18.0) *
+        geometry::Transform2D::rotation_degrees(17.0);
+    const auto parent_id = parent.id;
+    assert(doc.execute_command(std::make_unique<AddObjectCommand>(parent)).success);
+
+    PathObject target;
+    target.id = generate_object_id();
+    target.name = "Cut target";
+    target.path = geometry::Path2D::make_rect(0.0, 0.0, 100.0, 50.0);
+    target.fill = color::RGBColor{0.2, 0.45, 0.8, 0.75};
+    target.stroke = color::RGBColor{0.08, 0.1, 0.13, 1.0};
+    target.stroke_width_mm = 0.5;
+    const auto target_id = target.id;
+    assert(doc.execute_command(std::make_unique<AddScopedObjectCommand>(
+        target, parent_id)).success);
+    target = std::get<PathObject>(*doc.current_snapshot()->objects().get(target_id));
+
+    PathObject first_piece = target;
+    first_piece.path = geometry::Path2D::make_rect(0.0, 0.0, 40.0, 50.0);
+    PathObject second_piece = target;
+    second_piece.id = generate_object_id();
+    second_piece.path = geometry::Path2D::make_rect(40.0, 0.0, 60.0, 50.0);
+    std::vector<ObjectVariant> pieces;
+    pieces.emplace_back(std::move(first_piece));
+    pieces.emplace_back(std::move(second_piece));
+    assert(doc.execute_command(std::make_unique<ReplaceObjectWithPiecesCommand>(
+        target_id, std::move(pieces), "Knife Cut")).success);
+
+    PathObject outline;
+    outline.id = generate_object_id();
+    outline.name = "Smart Trim outline";
+    outline.path = geometry::Path2D::make_rect(130.0, 0.0, 100.0, 50.0);
+    outline.has_fill = false;
+    outline.has_stroke = true;
+    const auto source = editable_path_from_path2d(outline.path, nullptr);
+    assert(source);
+    outline.set_authoring_source(*source);
+    const auto outline_id = outline.id;
+    assert(doc.execute_command(std::make_unique<AddScopedObjectCommand>(
+        outline, parent_id)).success);
+    assert(doc.execute_command(std::make_unique<SmartTrimPathCommand>(
+        outline_id, source->subpaths.front().id,
+        SmartTrimBoundary{source->subpaths.front().segments.front().id, 0.25},
+        SmartTrimBoundary{source->subpaths.front().segments.front().id, 0.75},
+        false)).success);
+
+    const auto bytes = NativeFormat::serialize(*doc.current_snapshot());
+    std::string reopen_error;
+    const auto reopened = NativeFormat::deserialize(
+        bytes.data(), bytes.size(), &reopen_error);
+    assert(reopened && reopen_error.empty());
+    const auto exported = SvgExporter::export_with_report(*reopened);
+    assert(exported.success && !exported.report.has_unsupported());
+    assert(exported.svg.find("<g") != std::string::npos &&
+           exported.svg.find("transform=") != std::string::npos);
+    size_t exported_paths = 0;
+    for (size_t position = 0;
+         (position = exported.svg.find("<path", position)) != std::string::npos;
+         position += 5) {
+        ++exported_paths;
+    }
+    assert(exported_paths == 3);
+    assert(exported.svg.find("fill-opacity=\"0.75\"") != std::string::npos);
+    const auto imported = SvgImporter::import_from_string(exported.svg);
+    assert(imported.success);
+}
+
 void test_svg_analytic_arc_and_loss_report() {
     Document doc("svg-arc-source");
     PathObject object;
@@ -291,6 +368,38 @@ void test_svg_unsupported_appearance_is_rejected_before_output() {
     assert(effect_result.report.has_unsupported());
     assert(effect_result.report.issues().front().feature == "Appearance effects");
     assert(SvgExporter::export_to_string(*effect_doc.current_snapshot()).empty());
+}
+
+void test_svg_annotation_and_detail_view_are_rejected_before_output() {
+    Document annotation_doc("svg-unsupported-annotation");
+    AnnotationObject annotation;
+    annotation.id = generate_object_id();
+    annotation.kind = AnnotationKind::LeaderNote;
+    annotation.text = "Editable note";
+    annotation.anchor.anchor_pt = {5.0, 6.0};
+    annotation.text_point = {20.0, 6.0};
+    assert(annotation_doc.execute_command(
+        std::make_unique<AddAnnotationCommand>(annotation)).success);
+    const auto annotation_result =
+        SvgExporter::export_with_report(*annotation_doc.current_snapshot());
+    assert(!annotation_result.success && annotation_result.svg.empty());
+    assert(annotation_result.report.has_unsupported());
+    assert(annotation_result.report.issues().front().feature ==
+           "Annotation object");
+
+    Document detail_doc("svg-unsupported-detail-view");
+    DetailViewObject detail_view;
+    detail_view.id = generate_object_id();
+    detail_view.source_page_id = detail_doc.active_page_id();
+    detail_view.label = "DETAIL A";
+    assert(detail_doc.execute_command(
+        std::make_unique<AddDetailViewCommand>(detail_view)).success);
+    const auto detail_result =
+        SvgExporter::export_with_report(*detail_doc.current_snapshot());
+    assert(!detail_result.success && detail_result.svg.empty());
+    assert(detail_result.report.has_unsupported());
+    assert(detail_result.report.issues().front().feature ==
+           "Detail view object");
 }
 
 void test_svg_stream_export_respects_resolved_object_scope() {
@@ -425,9 +534,11 @@ int main() {
     std::cout << "[test_svg_exporter] Running SVG exporter tests...\n";
     test_profile_bound_rgb_is_converted_to_srgb_for_svg();
     test_svg_export_and_roundtrip();
+    test_cut_and_smart_trim_results_export_as_editable_svg();
     test_svg_analytic_arc_and_loss_report();
     test_svg_path_and_text_opacity_mapping();
     test_svg_unsupported_appearance_is_rejected_before_output();
+    test_svg_annotation_and_detail_view_are_rejected_before_output();
     test_svg_stream_export_respects_resolved_object_scope();
     test_svg_export_clipping_mask_roundtrip();
     std::cout << "[test_svg_exporter] All tests passed!\n";

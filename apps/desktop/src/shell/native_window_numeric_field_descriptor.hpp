@@ -27,8 +27,18 @@ struct NumericFieldDescriptor {
     using Field = NativeWindow::NumericFieldId;
     using Quantity = NumericQuantityKind;
     switch (field) {
+    case Field::KnifeGap: return {"cut.knife.gap", Quantity::Length};
+    case Field::VectorEraserDiameter: return {"cut.vector_eraser.diameter", Quantity::Length};
     case Field::PageWidth: return {"page.width", Quantity::Length};
     case Field::PageHeight: return {"page.height", Quantity::Length};
+    case Field::AnnotationScale: return {"annotation.detail.scale", Quantity::Scalar};
+    case Field::AnnotationTextSize: return {"annotation.note.text_size", Quantity::Length};
+    case Field::AnnotationSourceX: return {"annotation.detail.source.x", Quantity::Length};
+    case Field::AnnotationSourceY: return {"annotation.detail.source.y", Quantity::Length};
+    case Field::AnnotationSourceWidth: return {"annotation.detail.source.width", Quantity::Length};
+    case Field::AnnotationSourceHeight: return {"annotation.detail.source.height", Quantity::Length};
+    case Field::AnnotationFrameX: return {"annotation.detail.frame.x", Quantity::Length};
+    case Field::AnnotationFrameY: return {"annotation.detail.frame.y", Quantity::Length};
     case Field::RasterExposureEv: return {"raster.exposure_ev", Quantity::Scalar};
     case Field::RasterColorBalanceRedCyan:
         return {"raster.color_balance.red_cyan", Quantity::Percent};

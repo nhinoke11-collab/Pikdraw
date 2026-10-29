@@ -1,9 +1,11 @@
 #include "pikdraw/document/commands/command.hpp"
 #include "pikdraw/document/commands/path_commands.hpp"
 #include "pikdraw/document/document.hpp"
+#include "pikdraw/document/annotations/annotation_object.hpp"
 #include "path_command_lifecycle.hpp"
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 
 namespace pikdraw::document {
 using detail::add_mapping;
@@ -51,83 +53,9 @@ SplitPathSegmentCommand::SplitPathSegmentCommand(ObjectId object_id, SubpathId s
 
 bool SplitPathSegmentCommand::apply_edit(EditablePath& path, PathTopologyMapping& mapping,
                                          std::string& error) {
-    if (!std::isfinite(parameter_) || parameter_ <= 0.0 || parameter_ >= 1.0) {
-        error = "Segment split parameter must be strictly between zero and one";
-        return false;
-    }
-    auto* subpath = find_subpath(path, subpath_id_);
-    if (!subpath) {
-        error = "Subpath ID was not found";
-        return false;
-    }
-    const auto segment_it = std::find_if(subpath->segments.begin(), subpath->segments.end(),
-        [&](const EditableSegment& segment) { return segment.id == segment_id_; });
-    if (segment_it == subpath->segments.end()) {
-        error = "Segment ID was not found";
-        return false;
-    }
-    const size_t index = static_cast<size_t>(segment_it - subpath->segments.begin());
-    geometry::CurveSplitResult split;
-    try { split = geometry::split_curve(segment_curve(*subpath, index), parameter_); }
-    catch (const std::exception& exception) { error = exception.what(); return false; }
-    if (split.status != geometry::GeometryOperationStatus::Success || !split.first || !split.second) {
-        error = "Geometry kernel could not split this source segment";
-        return false;
-    }
-    const auto new_segment_id = generate_path_element_id<SegmentId>();
-    const auto new_node_id = generate_path_element_id<NodeId>();
-    if (!new_segment_id.valid() || !new_node_id.valid()) {
-        error = "Path identity allocator exhausted";
-        return false;
-    }
-    const auto middle = geometry::curve_point_at(segment_curve(*subpath, index), parameter_);
-    EditableSegment first{segment_id_, PathSegmentKind::Line};
-    EditableSegment second{new_segment_id, PathSegmentKind::Line};
-    PathNode split_node{new_node_id, middle};
-
-    auto assign_curve = [&](const geometry::CurveSegment& curve, EditableSegment& target,
-                            bool is_first) -> bool {
-        if (std::holds_alternative<geometry::LineSegment>(curve)) {
-            target.kind = PathSegmentKind::Line;
-        } else if (const auto* quad = std::get_if<geometry::QuadraticBezier>(&curve)) {
-            target.kind = PathSegmentKind::QuadraticBezier;
-            target.quadratic_control = quad->p1;
-        } else if (const auto* cubic = std::get_if<geometry::CubicBezier>(&curve)) {
-            target.kind = PathSegmentKind::CubicBezier;
-            if (is_first) {
-                set_manual_handle(subpath->nodes[index], false, cubic->p1);
-                split_node.mode = PathNodeMode::Cusp;
-                split_node.has_incoming_handle = true;
-                split_node.incoming_handle = cubic->p2;
-            } else {
-                split_node.mode = PathNodeMode::Cusp;
-                split_node.has_outgoing_handle = true;
-                split_node.outgoing_handle = cubic->p1;
-                const size_t end_index = (index + 1) % subpath->nodes.size();
-                set_manual_handle(subpath->nodes[end_index], true, cubic->p2);
-            }
-        } else if (const auto* arc = std::get_if<geometry::EllipticArc>(&curve)) {
-            target.kind = PathSegmentKind::EllipticArc;
-            target.arc = *arc;
-        }
-        return true;
-    };
-
-    if (!assign_curve(*split.first, first, true) || !assign_curve(*split.second, second, false))
-        return false;
-    subpath->segments[index] = first;
-    subpath->segments.insert(subpath->segments.begin() + static_cast<std::ptrdiff_t>(index + 1), second);
-    if (subpath->closed && index + 1 == subpath->nodes.size())
-        subpath->nodes.push_back(split_node);
-    else
-        subpath->nodes.insert(subpath->nodes.begin() + static_cast<std::ptrdiff_t>(index + 1), split_node);
-    add_mapping(mapping, PathElementKind::Segment, segment_id_.value(), segment_id_.value(),
-                IdMappingRelation::Preserved);
-    add_mapping(mapping, PathElementKind::Segment, std::nullopt, new_segment_id.value(),
-                IdMappingRelation::Created);
-    add_mapping(mapping, PathElementKind::Node, std::nullopt, new_node_id.value(),
-                IdMappingRelation::Created);
-    return true;
+    const auto split_node_id = detail::split_path_segment(
+        path, subpath_id_, segment_id_, parameter_, mapping, error);
+    return split_node_id.valid();
 }
 
 DeletePathNodeCommand::DeletePathNodeCommand(ObjectId object_id, SubpathId subpath_id,
@@ -430,13 +358,28 @@ CommandResult RemoveObjectCommand::execute(Document& doc) {
         map = map.set(parent.id, parent);
     } else std::erase(page.layers[entry->layer].object_ids, id_);
     std::vector<ObjectId> pending{id_};
+    std::unordered_set<ObjectId> removed_ids;
     while (!pending.empty()) {
         const auto id = pending.back(); pending.pop_back();
         if (auto object = map.get(id)) {
+            removed_ids.insert(id);
             if (const auto* group = std::get_if<GroupObject>(&*object))
                 pending.insert(pending.end(), group->children_ids.begin(), group->children_ids.end());
             map = map.remove(id);
         }
+    }
+    for (const auto& [candidate_id, candidate] : map.all()) {
+        const auto* path = std::get_if<PathObject>(&candidate);
+        if (!path || !path->contour_spec.starts_with("annotation:v1")) continue;
+        auto annotation = deserialize_annotation_spec(path->contour_spec);
+        if (!annotation || !removed_ids.contains(annotation->anchor.source_object_id) ||
+            (annotation->anchor.state != AssociationState::Valid &&
+             annotation->anchor.state != AssociationState::Partial))
+            continue;
+        annotation->anchor.state = AssociationState::Broken;
+        auto updated = *path;
+        updated.contour_spec = serialize_annotation_spec(*annotation);
+        map = map.set(candidate_id, std::move(updated));
     }
     before_remove_ = snapshot;
     doc.apply_mutation(std::move(page), std::move(map)); return CommandResult::ok();

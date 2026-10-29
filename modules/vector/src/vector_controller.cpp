@@ -61,8 +61,9 @@ geometry::Rect2D conservative_hit_bounds(const document::ObjectVariant &object,
 } // namespace
 
 bool VectorController::valid_layer(const document::DocumentSnapshot &snapshot) const {
-    return layer_ < snapshot.page().layers.size() && snapshot.page().layers[layer_].visible &&
-           !snapshot.page().layers[layer_].locked;
+    return layer_ < snapshot.page().layers.size() &&
+           snapshot.page().effective_layer_visible(layer_) &&
+           !snapshot.page().effective_layer_locked(layer_);
 }
 void VectorController::bind_selection(const document::DocumentSnapshot &snapshot) {
     if (selection_stamp_.document_id != snapshot.document_id() || selection_stamp_.epoch != snapshot.epoch() || selection_stamp_.page_id != snapshot.active_page_id())

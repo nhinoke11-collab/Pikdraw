@@ -51,13 +51,13 @@ struct SpatialIndex::Impl {
 
   [[nodiscard]] bool matches(const document::DocumentSnapshot &snapshot,
                              double camera_zoom, double margin) const {
+    (void)camera_zoom;
+    (void)margin;
     return cache_initialized && cached_snapshot == &snapshot &&
            cached_document_id == snapshot.document_id() &&
            cached_epoch == snapshot.epoch() &&
            cached_revision == snapshot.revision() &&
-           cached_page_id == snapshot.active_page_id() &&
-           std::abs(cached_zoom - camera_zoom) < 1e-6 &&
-           std::abs(cached_margin - margin) < 1e-6;
+           cached_page_id == snapshot.active_page_id();
   }
 
   void build(const document::DocumentSnapshot &snapshot, double camera_zoom,
@@ -113,11 +113,11 @@ struct SpatialIndex::Impl {
         const size_t item_index = items.size();
         items.push_back({id, object, bounds});
 
-        // The linear reference keeps non-path objects conservatively. Invalid
-        // path bounds also remain visible so renderer validation can report them.
-        const bool indexable_path =
-            std::holds_alternative<document::PathObject>(*object) && bounds_valid;
-        const auto query_bounds = indexable_path ? bounds : invalid_bounds();
+        const bool indexable_object =
+            (std::holds_alternative<document::PathObject>(*object) ||
+             std::holds_alternative<document::ImageObject>(*object) ||
+             std::holds_alternative<document::TextObject>(*object)) && bounds_valid;
+        const auto query_bounds = indexable_object ? bounds : invalid_bounds();
         // Keep the stable object ID in items; the BVH only needs a compact
         // lookup token, so its ID field stores the already-resolved vector index.
         entries.push_back({static_cast<uint64_t>(item_index), query_bounds, z_order});
@@ -171,7 +171,14 @@ std::vector<CulledObjectRef> SpatialIndex::query_visible_refs(
         snapshot, visible_bounds_mm, camera_zoom,
         conservative_world_margin_mm);
 
-  const auto matches = impl_->index.query(visible_bounds_mm);
+  auto query_rect = visible_bounds_mm;
+  if (conservative_world_margin_mm > 0.0) {
+    query_rect.x -= conservative_world_margin_mm;
+    query_rect.y -= conservative_world_margin_mm;
+    query_rect.width += 2.0 * conservative_world_margin_mm;
+    query_rect.height += 2.0 * conservative_world_margin_mm;
+  }
+  const auto matches = impl_->index.query(query_rect);
   std::vector<CulledObjectRef> result;
   result.reserve(matches.size());
   for (const auto &entry : matches) {

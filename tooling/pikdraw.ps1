@@ -49,7 +49,7 @@ switch ($Command.ToLowerInvariant()) {
             modules        = $moduleCount
             issues         = $issues
             workflow       = "single-source"
-            agent_system   = "codex"
+            agent_system   = "shared AGENTS workflow"
             source_root    = $repoRoot
             app_executable = $appExe
         }

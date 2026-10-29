@@ -317,8 +317,7 @@ private:
                 !same_layer_layout(page.layout, old.layout) ||
                 !same_artboards(page.artboards, old.artboards) ||
                 page.pdf_source || old.pdf_source ||
-                !page.import_fidelity_reports.empty() ||
-                !old.import_fidelity_reports.empty())
+                page.import_fidelity_reports != old.import_fidelity_reports)
                 return {};
             if (page.id != current.active_page_id_) {
                 if (!page.objects.shares_root_with(old.objects)) return {};

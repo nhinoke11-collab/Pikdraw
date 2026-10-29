@@ -56,6 +56,53 @@ private:
     NodeId node_id_{};
 };
 
+/// Scissors operation: split a source curve at a parameter when needed, then
+/// open the path there in one topology mutation and one undo unit.
+class ScissorsPathCommand final : public PathTopologyCommand {
+public:
+    ScissorsPathCommand(ObjectId object_id, SubpathId subpath_id, SegmentId segment_id,
+                        double parameter, NodeId endpoint_node = {},
+                        std::shared_ptr<PathTopologyMapping> mapping_result = {}) noexcept;
+    [[nodiscard]] std::string_view name() const noexcept override { return "Scissors"; }
+
+protected:
+    bool apply_edit(EditablePath& path, PathTopologyMapping& mapping,
+                    std::string& error) override;
+
+private:
+    SubpathId subpath_id_{};
+    SegmentId segment_id_{};
+    double parameter_{0.5};
+    NodeId endpoint_node_{};
+};
+
+struct SmartTrimBoundary {
+    SegmentId segment_id{};
+    double parameter{0.5};
+};
+
+/// Removes the selected intersection-bounded interval from one editable
+/// subpath. Closed outline paths become open; filled paths are rejected by
+/// the caller because opening a filled contour changes its fill semantics.
+class SmartTrimPathCommand final : public PathTopologyCommand {
+public:
+    SmartTrimPathCommand(ObjectId object_id, SubpathId subpath_id,
+                         SmartTrimBoundary start, SmartTrimBoundary end,
+                         bool wraps_closed_subpath,
+                         std::shared_ptr<PathTopologyMapping> mapping_result = {}) noexcept;
+    [[nodiscard]] std::string_view name() const noexcept override { return "Smart Trim"; }
+
+protected:
+    bool apply_edit(EditablePath& path, PathTopologyMapping& mapping,
+                    std::string& error) override;
+
+private:
+    SubpathId subpath_id_{};
+    SmartTrimBoundary start_{};
+    SmartTrimBoundary end_{};
+    bool wraps_closed_subpath_{false};
+};
+
 class ReverseSubpathCommand final : public PathTopologyCommand {
 public:
     ReverseSubpathCommand(ObjectId object_id, SubpathId subpath_id,

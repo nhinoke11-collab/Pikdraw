@@ -204,6 +204,31 @@ bool NativeWindow::handle_drawing_key_down(WPARAM key) {
 
 bool NativeWindow::handle_key_down(WPARAM key) {
     if (show_recovery_modal_) return handle_recovery_key(key);
+    if (annotation_tool_ && annotation_tool_->note_text_editing()) {
+        if (key == VK_ESCAPE) {
+            annotation_tool_->handle_escape();
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Đã hủy ghi chú" : "Note cancelled";
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        } else if (key == VK_RETURN && (GetKeyState(VK_CONTROL) & 0x8000) != 0) {
+            if (annotation_tool_->commit()) {
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Đã tạo ghi chú" : "Note created";
+                if (annotation_tool_->last_committed_id()) {
+                    const auto id = *annotation_tool_->last_committed_id();
+                    set_active_tool(0);
+                    if (const auto snapshot = root().document().current_snapshot())
+                        root().vector_controller().set_selection({id}, *snapshot);
+                }
+            } else {
+                status_msg_ = annotation_tool_->last_error();
+            }
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        // Printable input, Backspace and Enter are handled by WM_CHAR. Keep
+        // application shortcuts from consuming text being entered into a note.
+        return true;
+    }
     if ((GetKeyState(VK_CONTROL) & 0x8000) != 0 && key == 'T') {
         open_inspector_properties_panel();
         return true;
@@ -372,6 +397,7 @@ bool NativeWindow::handle_key_down(WPARAM key) {
             return true;
         }
         if (key == 'Z' && !shift) {
+            cancel_canvas_interaction();
             workflow().undo();
             root().vector_controller().selection().clear();
             status_msg_ = language_ == UILanguage::Vietnamese ? "Đã hoàn tác" : "Undo complete";
@@ -380,6 +406,7 @@ bool NativeWindow::handle_key_down(WPARAM key) {
             return true;
         }
         if (key == 'Z' && shift) {
+            cancel_canvas_interaction();
             workflow().redo();
             root().vector_controller().selection().clear();
             status_msg_ = language_ == UILanguage::Vietnamese ? "Đã làm lại" : "Redo complete";
@@ -400,6 +427,7 @@ bool NativeWindow::handle_key_down(WPARAM key) {
                 execute_menu_action(static_cast<int>(MenuActionId::ViewProofColors));
                 return true;
             }
+            cancel_canvas_interaction();
             workflow().redo();
             root().vector_controller().selection().clear();
             status_msg_ = language_ == UILanguage::Vietnamese ? "Đã làm lại" : "Redo complete";
@@ -563,6 +591,14 @@ bool NativeWindow::handle_key_down(WPARAM key) {
         }
     }
     if (key == VK_ESCAPE) {
+        if (active_tool_ == 22) {
+            cancel_canvas_interaction();
+            shape_builder_seed_points_.clear();
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Đã hủy lựa chọn Shape Builder" : "Shape Builder selection cancelled";
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
         if (active_tool_ == 10 && dimension_tool_ && dimension_tool_->active()) {
             if (dimension_tool_->handle_escape()) {
                 InvalidateRect(hwnd_, nullptr, FALSE);
@@ -750,11 +786,7 @@ bool NativeWindow::handle_key_down(WPARAM key) {
     if (key == 'F') { fit_page_to_canvas(); return true; }
     if (key == 'H') { set_active_tool(3); return true; }
     if (key == '1') {
-        auto& camera = root().renderer().camera();
-        camera.set_viewport_size(std::max(1, width_ - 352), std::max(1, height_ - 148));
-        camera.set_zoom(1.0);
-        zoom_level_ = 100;
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        zoom_to_actual_size();
         return true;
     }
     if (key == VK_SPACE) {
@@ -788,8 +820,10 @@ bool NativeWindow::handle_key_down(WPARAM key) {
         return true;
     }
     if (key == 'R') { set_active_tool(1); return true; }
+    if (key == 'E' && shift) { set_active_tool(16); return true; }
     if (key == 'E') { set_active_tool(2); return true; }
     if (key == 'K' || key == 'C') { set_active_tool(5); return true; }
+    if (key == 'X' && !control && !alt) { set_active_tool(19); return true; }
     if (key == 'A' || key == 'T') { set_active_tool(4); return true; }
     if (key == 'D') { set_active_tool(10); InvalidateRect(hwnd_, nullptr, FALSE); return true; }
     if (key == 'I') { set_active_tool(15); InvalidateRect(hwnd_, nullptr, FALSE); return true; }

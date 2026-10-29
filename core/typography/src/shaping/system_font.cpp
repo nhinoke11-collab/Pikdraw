@@ -18,6 +18,15 @@ IDWriteFactory *factory() {
     (void)initialized;
     return value.get();
 }
+IDWriteFontCollection *system_font_collection() {
+    static ComPtr<IDWriteFontCollection> value;
+    static const bool initialized = [] {
+        check(factory()->GetSystemFontCollection(value.put()), "GetSystemFontCollection");
+        return true;
+    }();
+    (void)initialized;
+    return value.get();
+}
 std::wstring wide(std::string_view value) {
     if (value.empty())
         return {};
@@ -88,8 +97,7 @@ void load_font(const FontIdentity &identity, ComPtr<IDWriteFont> &font, ComPtr<I
         throw std::invalid_argument("Invalid font identity or size");
     if (identity.family_name.find('\0') != std::string::npos)
         throw std::invalid_argument("Embedded NUL in font family");
-    ComPtr<IDWriteFontCollection> collection;
-    check(factory()->GetSystemFontCollection(collection.put()), "GetSystemFontCollection");
+    IDWriteFontCollection *collection = system_font_collection();
     UINT32 index = 0;
     BOOL exists = FALSE;
     check(collection->FindFamilyName(wide(identity.family_name).c_str(), &index, &exists), "FindFamilyName");

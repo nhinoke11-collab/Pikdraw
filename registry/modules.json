@@ -89,7 +89,8 @@
       "dependencies": [
         "document",
         "geometry",
-        "typography"
+        "typography",
+        "color"
       ],
       "context": [
         "modules/vector/README.md",
@@ -105,7 +106,7 @@
       "path": "modules/automation",
       "status": "implemented",
       "dependencies": ["document", "vector", "geometry", "typography"],
-      "context": ["modules/automation/README.md"],
+      "context": ["modules/automation/AGENTS.md", "modules/automation/README.md"],
       "owned_paths": ["modules/automation"],
       "purpose": "Typed application service for automation adapters: capability discovery, snapshot inspection, object queries and validated semantic commands. MCP/COM transports and authorization are separate adapters."
     },
@@ -114,7 +115,7 @@
       "path": "apps/mcp-server",
       "status": "implemented",
       "dependencies": ["automation"],
-      "context": ["apps/mcp-server/CMakeLists.txt", "apps/mcp-server/README.md"],
+      "context": ["apps/mcp-server/AGENTS.md", "apps/mcp-server/CMakeLists.txt", "apps/mcp-server/README.md"],
       "owned_paths": ["apps/mcp-server"],
       "purpose": "MCP stdio sidecar for explicit local PikDraw instance discovery, scoped sessions and semantic document tools."
     },
@@ -124,7 +125,7 @@
       "status": "implemented",
       "dependencies": ["mcp-server"],
       "test_dependencies": ["automation", "desktop"],
-      "context": ["apps/com-server/CMakeLists.txt", "apps/com-server/README.md"],
+      "context": ["apps/com-server/AGENTS.md", "apps/com-server/CMakeLists.txt", "apps/com-server/README.md"],
       "owned_paths": ["apps/com-server"],
       "purpose": "Per-user Windows COM local server exposing late-bound IDispatch methods over the same MCP semantic tools, application sessions and authorization policy."
     },
@@ -135,6 +136,9 @@
       "dependencies": [
         "document",
         "color"
+      ],
+      "test_dependencies": [
+        "rendering"
       ],
       "context": [
         "modules/raster/README.md",

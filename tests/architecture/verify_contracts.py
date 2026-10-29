@@ -34,6 +34,10 @@ def verify_contracts(root: Path) -> list[str]:
         "c5-storage.md",
         "c6-workers.md",
         "c7-actions-ui.md",
+        "c8-import-fidelity.md",
+        "c9-appearance-effects.md",
+        "c10-agent-automation.md",
+        "c11-file-export-production.md",
     ]
 
     for c in required_contracts:

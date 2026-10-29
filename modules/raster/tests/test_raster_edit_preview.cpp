@@ -7,6 +7,7 @@
 #include "pikdraw/rendering/software_rasterizer.hpp"
 
 #include <array>
+#include <atomic>
 #include <cassert>
 #include <chrono>
 #include <condition_variable>
@@ -15,6 +16,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <thread>
 #include <cmath>
 #include <algorithm>
 #include <vector>
@@ -137,7 +139,55 @@ void verify_unresolved_profile_is_rendered_through_async_preview() {
 
 }  // namespace
 
+void test_adaptive_preview_retains_pixel_reservation_after_eviction() {
+  using namespace pikdraw::document::resources;
+  constexpr uint64_t GiB = 1024ull * 1024 * 1024;
+  std::atomic<uint64_t> available{3 * GiB};
+  auto policy = std::make_shared<MemoryBudgetPolicy>([&] {
+    return SystemMemoryStatus{4 * GiB, available.load(), 4 * GiB, 4 * GiB};
+  });
+  Document doc("adaptive-preview");
+  ImageObject source;
+  source.id = generate_object_id();
+  source.width_px = 2; source.height_px = 1;
+  source.bounds_rect = {0, 0, 2, 1};
+  source.pixels_rgba = {0x404040ff, 0x808080ff};
+  source.source.preview_pixel_color_basis = RasterPixelColorBasis::AssumedSRgb;
+  source.edit_graph.nodes.push_back({RasterEditNodeId{1}, true, RasterExposureParams{1}});
+  assert(doc.execute_command(std::make_unique<AddObjectCommand>(source)).success);
+  const auto snapshot = doc.current_snapshot();
+  const auto& image = std::get<ImageObject>(*snapshot->objects().lookup_ref(source.id));
+  std::mutex mutex;
+  std::condition_variable condition;
+  bool completed = false;
+  const auto callback = [&] {
+    { std::lock_guard lock(mutex); completed = true; }
+    condition.notify_one();
+  };
+  std::shared_ptr<const ImageObject> pinned;
+  {
+    raster::RasterEditPreviewService previews(0, 0, {}, policy);
+    previews.request(snapshot, callback);
+    {
+      std::unique_lock lock(mutex);
+      assert(condition.wait_for(lock, std::chrono::seconds(5), [&] { return completed; }));
+    }
+    pinned = previews.find(*snapshot, image);
+    assert(pinned && pinned->rgba_pixels()[0] == 0x5a5a5aff);
+    available = GiB / 8;
+    assert(!previews.find(*snapshot, image)); // pressure trims the cache
+    assert(policy->reserved_bytes() >= 8); // external pixel owner is still charged
+  }
+  assert(policy->reserved_bytes() == 8 && pinned->rgba_pixels().size() == 2);
+  pinned.reset();
+  assert(policy->reserved_bytes() == 0);
+  available = 3 * GiB;
+  assert(policy->try_reserve(768ull * 1024 * 1024));
+  std::cout << "[PASS] adaptive preview eviction preserves pinned pixels and their memory charge\n";
+}
+
 int main() {
+  test_adaptive_preview_retains_pixel_reservation_after_eviction();
   Document document("raster-edit-preview-test");
   ImageObject image;
   image.id = generate_object_id();
@@ -148,6 +198,9 @@ int main() {
   image.pixels_rgba = {
       0x404040ffu, 0xffffffffu,
       0x202020ffu, 0xff0000ffu};
+  image.shared_pixels_rgba = std::make_shared<const std::vector<uint32_t>>(
+      image.pixels_rgba);
+  image.pixels_rgba.clear();
   image.source.media_type = "application/x-pikdraw-rgba8";
   image.source.original_bytes = {0x52, 0x47, 0x42, 0x41};
   assert(document.execute_command(
@@ -208,6 +261,21 @@ int main() {
   assert(preview->bounds_rect.height == 2.0);
   assert(preview->rgba_pixels()[0] == 0x5a5a5affu);
   assert(preview->rgba_pixels()[1] == 0x2f2f2fffU);
+
+  assert(document.execute_command(std::make_unique<SetRasterEditNodeCommand>(
+      image.id, RasterEditNode{RasterEditNodeId{12}, true,
+          RasterExposureParams{2.0}})).success);
+  const auto pending_snapshot = document.current_snapshot();
+  const auto* pending_value = pending_snapshot->objects().lookup_ref(image.id);
+  assert(pending_value && std::holds_alternative<ImageObject>(*pending_value));
+  const auto& pending_image = std::get<ImageObject>(*pending_value);
+  assert(!previews.find(*pending_snapshot, pending_image));
+  const auto last_good = previews.find_last_good(*pending_snapshot, pending_image);
+  assert(last_good && last_good->rgba_pixels()[0] == preview->rgba_pixels()[0]);
+  assert(last_good->edit_graph.nodes.size() ==
+      pending_image.edit_graph.nodes.size());
+  assert(std::get<RasterExposureParams>(
+      last_good->edit_graph.nodes[1].parameters).exposure_ev == 2.0);
 
   const auto* high_precision_value =
       snapshot->objects().lookup_ref(high_precision_image.id);

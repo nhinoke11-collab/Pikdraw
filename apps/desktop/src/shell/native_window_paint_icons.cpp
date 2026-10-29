@@ -1,6 +1,9 @@
 #include "native_window_paint_icons.hpp"
 #ifdef _WIN32
 #include "native_gdiplus_api.hpp"
+#include "pikdraw/desktop/shell/cut_shape_svg_path.hpp"
+#include "pikdraw/desktop/shell/cut_shape_tool_catalog.hpp"
+#include "cut_shape_svg_icons.hpp"
 #endif
 #include <cmath>
 #include <numbers>
@@ -277,6 +280,48 @@ void draw_tool_icon_gdiplus(GdiplusApi* api, GpGraphics* g, int tool, float cx, 
             {cx + 7.0f, cy + 5.0f}
         };
         api->DrawLines(g, pen, leader, 3);
+    } else if (tool == 21) {
+        // Scissors: crossed blades and two finger rings.
+        api->DrawLine(g, pen, cx - 5.0f, cy - 5.0f, cx + 6.0f, cy + 6.0f);
+        api->DrawLine(g, pen, cx - 5.0f, cy + 5.0f, cx + 6.0f, cy - 6.0f);
+        api->DrawEllipse(g, pen, cx - 8.0f, cy - 8.0f, 5.0f, 5.0f);
+        api->DrawEllipse(g, pen, cx - 8.0f, cy + 3.0f, 5.0f, 5.0f);
+    } else if (tool == 22) {
+        // Trim Objects: a source contour subtracting from a target shape.
+        api->DrawRectangle(g, pen, cx - 6.5f, cy - 5.5f, 12.0f, 11.0f);
+        api->DrawEllipse(g, pen, cx - 1.5f, cy - 2.5f, 7.0f, 7.0f);
+        api->DrawLine(g, pen, cx - 7.5f, cy + 7.0f, cx + 7.0f, cy + 7.0f);
+    } else if (tool == 23) {
+        // Smart Trim: two intersecting paths with a removed middle interval.
+        api->DrawLine(g, pen, cx - 7.5f, cy - 5.5f, cx - 1.5f, cy + 0.5f);
+        api->DrawLine(g, pen, cx + 1.5f, cy + 4.5f, cx + 7.5f, cy + 7.0f);
+        api->DrawLine(g, pen, cx - 7.0f, cy + 6.5f, cx + 7.0f, cy - 6.5f);
+        api->FillEllipse(g, fill_brush, cx - 2.0f, cy - 2.0f, 4.0f, 4.0f);
+    } else if (tool == 24) {
+        // Shape Builder: overlapping regions and a merge pointer.
+        api->DrawEllipse(g, pen, cx - 7.0f, cy - 6.0f, 9.0f, 9.0f);
+        api->DrawEllipse(g, pen, cx - 1.0f, cy - 6.0f, 9.0f, 9.0f);
+        api->DrawEllipse(g, pen, cx - 4.0f, cy - 1.0f, 9.0f, 9.0f);
+        const GpPointF cursor[] = {
+            {cx + 1.0f, cy - 1.0f}, {cx + 7.0f, cy + 3.0f},
+            {cx + 4.0f, cy + 3.0f}, {cx + 5.0f, cy + 7.0f}
+        };
+        api->DrawLines(g, pen, cursor, 4);
+    } else if (tool == 25) {
+        // Smart Fill: a closed face with a visible filled center.
+        api->DrawRectangle(g, pen, cx - 7.0f, cy - 7.0f, 14.0f, 14.0f);
+        api->DrawLine(g, pen, cx - 7.0f, cy, cx + 7.0f, cy);
+        api->DrawLine(g, pen, cx, cy - 7.0f, cx, cy + 7.0f);
+        api->FillRectangle(g, fill_brush, cx - 3.0f, cy - 3.0f, 6.0f, 6.0f);
+    } else if (tool == 26) {
+        // Raster Eraser: bitmap pixels with a checker hole and eraser nib.
+        api->DrawRectangle(g, pen, cx - 7.0f, cy - 6.0f, 12.0f, 12.0f);
+        api->DrawLine(g, pen, cx - 3.0f, cy - 6.0f, cx - 3.0f, cy + 6.0f);
+        api->DrawLine(g, pen, cx + 1.0f, cy - 6.0f, cx + 1.0f, cy + 6.0f);
+        api->DrawLine(g, pen, cx - 7.0f, cy - 2.0f, cx + 5.0f, cy - 2.0f);
+        api->DrawLine(g, pen, cx - 7.0f, cy + 2.0f, cx + 5.0f, cy + 2.0f);
+        api->DrawLine(g, pen, cx + 0.5f, cy + 7.0f, cx + 7.5f, cy + 0.0f);
+        api->DrawLine(g, pen, cx + 3.0f, cy + 8.0f, cx + 8.0f, cy + 3.0f);
     }
 
     api->DeleteBrush(fill_brush);
@@ -415,6 +460,54 @@ void draw_tool_icon_gdi_fallback(HDC dc, int tool, int center_x, int center_y, C
         MoveToEx(dc, center_x - 2, center_y + 1, nullptr);
         LineTo(dc, center_x + 2, center_y + 5);
         LineTo(dc, center_x + 7, center_y + 5);
+    } else if (tool == 21) {
+        MoveToEx(dc, center_x - 5, center_y - 5, nullptr);
+        LineTo(dc, center_x + 6, center_y + 6);
+        MoveToEx(dc, center_x - 5, center_y + 5, nullptr);
+        LineTo(dc, center_x + 6, center_y - 6);
+        Ellipse(dc, center_x - 8, center_y - 8, center_x - 3, center_y - 3);
+        Ellipse(dc, center_x - 8, center_y + 3, center_x - 3, center_y + 8);
+    } else if (tool == 22) {
+        Rectangle(dc, center_x - 6, center_y - 5, center_x + 6, center_y + 6);
+        Ellipse(dc, center_x - 1, center_y - 2, center_x + 6, center_y + 5);
+        MoveToEx(dc, center_x - 7, center_y + 8, nullptr);
+        LineTo(dc, center_x + 7, center_y + 8);
+    } else if (tool == 23) {
+        MoveToEx(dc, center_x - 7, center_y - 6, nullptr);
+        LineTo(dc, center_x - 2, center_y - 1);
+        MoveToEx(dc, center_x + 2, center_y + 3, nullptr);
+        LineTo(dc, center_x + 7, center_y + 7);
+        MoveToEx(dc, center_x - 7, center_y + 6, nullptr);
+        LineTo(dc, center_x + 7, center_y - 6);
+        Ellipse(dc, center_x - 2, center_y - 2, center_x + 2, center_y + 2);
+    } else if (tool == 24) {
+        Ellipse(dc, center_x - 7, center_y - 6, center_x + 2, center_y + 3);
+        Ellipse(dc, center_x - 1, center_y - 6, center_x + 8, center_y + 3);
+        Ellipse(dc, center_x - 4, center_y - 1, center_x + 5, center_y + 8);
+        MoveToEx(dc, center_x + 1, center_y - 1, nullptr);
+        LineTo(dc, center_x + 7, center_y + 3);
+        LineTo(dc, center_x + 4, center_y + 3);
+        LineTo(dc, center_x + 5, center_y + 7);
+    } else if (tool == 25) {
+        Rectangle(dc, center_x - 7, center_y - 7, center_x + 7, center_y + 7);
+        MoveToEx(dc, center_x - 7, center_y, nullptr);
+        LineTo(dc, center_x + 7, center_y);
+        MoveToEx(dc, center_x, center_y - 7, nullptr);
+        LineTo(dc, center_x, center_y + 7);
+        Rectangle(dc, center_x - 3, center_y - 3, center_x + 3, center_y + 3);
+    } else if (tool == 26) {
+        Rectangle(dc, center_x - 7, center_y - 6, center_x + 5, center_y + 6);
+        MoveToEx(dc, center_x - 3, center_y - 6, nullptr);
+        LineTo(dc, center_x - 3, center_y + 6);
+        MoveToEx(dc, center_x + 1, center_y - 6, nullptr);
+        LineTo(dc, center_x + 1, center_y + 6);
+        MoveToEx(dc, center_x - 7, center_y - 2, nullptr);
+        LineTo(dc, center_x + 5, center_y - 2);
+        MoveToEx(dc, center_x - 7, center_y + 2, nullptr);
+        LineTo(dc, center_x + 5, center_y + 2);
+        MoveToEx(dc, center_x + 1, center_y + 7, nullptr);
+        LineTo(dc, center_x + 7, center_y + 1);
+        LineTo(dc, center_x + 8, center_y + 4);
     }
     SelectObject(dc, old_brush);
     SelectObject(dc, old_pen);
@@ -461,6 +554,101 @@ void draw_toolbox_flyout_marker(HDC dc, int right_x, int bottom_y, COLORREF colo
 }
 
 void draw_tool_icon(HDC dc, int tool, int center_x, int center_y, COLORREF color) {
+    if (const auto* descriptor = cut_shape_tool_for_icon_id(tool)) {
+        const auto icon_index = static_cast<std::size_t>(
+            descriptor - kCutShapeToolCatalog.data());
+        const auto svg_path = kCutShapeToolSvgPaths[icon_index];
+        constexpr float icon_scale = 0.72f;
+        const auto map_x = [center_x](float x) {
+            return static_cast<float>(center_x) + (x - 12.0f) * icon_scale;
+        };
+        const auto map_y = [center_y](float y) {
+            return static_cast<float>(center_y) + (y - 12.0f) * icon_scale;
+        };
+
+        auto* api = GdiplusApi::get();
+        if (api) {
+            GpGraphics* graphics = nullptr;
+            if (api->CreateFromHDC(dc, &graphics) == 0 && graphics) {
+                api->SetSmoothingMode(graphics, kSmoothingModeAntiAlias);
+                api->SetPixelOffsetMode(graphics, kPixelOffsetModeHalf);
+                GpPen* pen = nullptr;
+                if (api->CreatePen1(MakeGdiplusARGB(color, 255), 1.55f,
+                                    kUnitPixel, &pen) == 0 && pen) {
+                    api->SetPenLineCap197819(pen, kLineCapRound, kLineCapRound, 2);
+                    api->SetPenLineJoin(pen, kLineJoinRound);
+                    float current_x = 0.0f;
+                    float current_y = 0.0f;
+                    float start_x = 0.0f;
+                    float start_y = 0.0f;
+                    bool has_current = false;
+                    bool drew_segment = false;
+                    bool draw_ok = true;
+                    const bool path_ok = visit_cut_shape_svg_path(
+                        svg_path, [&](CutShapeSvgPathVerb verb, float x, float y) {
+                            if (verb == CutShapeSvgPathVerb::MoveTo) {
+                                current_x = start_x = map_x(x);
+                                current_y = start_y = map_y(y);
+                                has_current = true;
+                            } else if (verb == CutShapeSvgPathVerb::LineTo && has_current) {
+                                const float next_x = map_x(x);
+                                const float next_y = map_y(y);
+                                draw_ok = draw_ok && api->DrawLine(
+                                    graphics, pen, current_x, current_y, next_x, next_y) == 0;
+                                current_x = next_x;
+                                current_y = next_y;
+                                drew_segment = true;
+                            } else if (verb == CutShapeSvgPathVerb::Close && has_current) {
+                                draw_ok = draw_ok && api->DrawLine(
+                                    graphics, pen, current_x, current_y, start_x, start_y) == 0;
+                                current_x = start_x;
+                                current_y = start_y;
+                                has_current = false;
+                                drew_segment = true;
+                            }
+                        });
+                    api->DeletePen(pen);
+                    api->DeleteGraphics(graphics);
+                    if (path_ok && draw_ok && drew_segment) return;
+                } else {
+                    api->DeleteGraphics(graphics);
+                }
+            }
+        }
+
+        HPEN pen = CreatePen(PS_SOLID, 1, color);
+        if (!pen) return;
+        const HGDIOBJ old_pen = SelectObject(dc, pen);
+        bool has_current = false;
+        bool drew_segment = false;
+        bool draw_ok = true;
+        POINT current{};
+        POINT start{};
+        const bool path_ok = visit_cut_shape_svg_path(
+            svg_path, [&](CutShapeSvgPathVerb verb, float x, float y) {
+                if (verb == CutShapeSvgPathVerb::MoveTo) {
+                    current = start = {static_cast<LONG>(std::lround(map_x(x))),
+                                       static_cast<LONG>(std::lround(map_y(y)))};
+                    draw_ok = draw_ok && MoveToEx(dc, current.x, current.y, nullptr) != FALSE;
+                    has_current = true;
+                } else if (verb == CutShapeSvgPathVerb::LineTo && has_current) {
+                    current = {static_cast<LONG>(std::lround(map_x(x))),
+                               static_cast<LONG>(std::lround(map_y(y)))};
+                    draw_ok = draw_ok && LineTo(dc, current.x, current.y) != FALSE;
+                    drew_segment = true;
+                } else if (verb == CutShapeSvgPathVerb::Close && has_current) {
+                    draw_ok = draw_ok && LineTo(dc, start.x, start.y) != FALSE;
+                    current = start;
+                    has_current = false;
+                    drew_segment = true;
+                }
+            });
+        SelectObject(dc, old_pen);
+        DeleteObject(pen);
+        if (path_ok && draw_ok && drew_segment) return;
+        return;
+    }
+
     auto* api = GdiplusApi::get();
     if (api) {
         GpGraphics* g = nullptr;

@@ -2,6 +2,7 @@
 #include "../src/shell/native_window_menus.hpp"
 #include "pikdraw/desktop/actions/action_id.hpp"
 #include "pikdraw/document/model/object.hpp"
+#include "../src/effects/object_compositor.hpp"
 
 #include <cassert>
 #include <algorithm>
@@ -252,6 +253,25 @@ void test_extended_effect_add_preview_and_stack_blend() {
             .appearance.effects.front();
     assert(preview_node.schema_minor ==
            pikdraw::document::kExtendedEffectNodeSchemaMinor);
+    std::vector<uint8_t> direct_pixels(256u * 192u * 4u, 0);
+    pikdraw::rendering::PixelBufferTarget direct_target{
+        direct_pixels.data(), 256, 192, 256 * 4};
+    std::string direct_failure;
+    const auto &preview_path = std::get<pikdraw::document::PathObject>(
+        *preview_object);
+    const int32_t preview_dpi =
+        (preview->page().color_mode_explicit ||
+         preview->page().raster_dpi_explicit)
+            ? preview->raster_dpi()
+            : 0;
+    const bool direct_rendered =
+        pikdraw::rendering::effects::render_path_with_appearance(
+            preview_path, preview_path.appearance,
+            window.root().renderer().camera(), direct_target, nullptr,
+            nullptr, nullptr, preview_dpi, &direct_failure);
+    if (!direct_rendered)
+        std::cerr << "Direct Feather preview failed: " << direct_failure << '\n';
+    assert(direct_rendered);
     const auto preview_pixels = window.workflow().render_snapshot(256, 192);
     if (preview_pixels.empty()) {
         std::cerr << "Extended effect preview render failed: zoom="

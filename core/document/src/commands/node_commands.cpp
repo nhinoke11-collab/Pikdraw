@@ -2,6 +2,7 @@
 #include "pikdraw/document/model/path_adapter.hpp"
 #include "path_command_support.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace pikdraw::document {
@@ -154,67 +155,222 @@ BreakPathAtNodeCommand::BreakPathAtNodeCommand(
 
 bool BreakPathAtNodeCommand::apply_edit(EditablePath& path, PathTopologyMapping& mapping,
                                         std::string& error) {
+    return detail::break_path_at_node(path, subpath_id_, node_id_, mapping, error);
+}
+
+ScissorsPathCommand::ScissorsPathCommand(
+    ObjectId object_id, SubpathId subpath_id, SegmentId segment_id,
+    double parameter, NodeId endpoint_node,
+    std::shared_ptr<PathTopologyMapping> mapping_result) noexcept
+    : PathTopologyCommand(object_id, std::move(mapping_result)), subpath_id_(subpath_id),
+      segment_id_(segment_id), parameter_(parameter), endpoint_node_(endpoint_node) {}
+
+bool ScissorsPathCommand::apply_edit(EditablePath& path, PathTopologyMapping& mapping,
+                                     std::string& error) {
+    if (!subpath_id_.valid()) {
+        error = "Scissors subpath identity is invalid";
+        return false;
+    }
+    if (endpoint_node_.valid())
+        return detail::break_path_at_node(path, subpath_id_, endpoint_node_, mapping, error);
+    if (!segment_id_.valid()) {
+        error = "Scissors segment identity is invalid";
+        return false;
+    }
+    const NodeId split_node = detail::split_path_segment(
+        path, subpath_id_, segment_id_, parameter_, mapping, error);
+    if (!split_node.valid()) return false;
+    return detail::break_path_at_node(path, subpath_id_, split_node, mapping, error);
+}
+
+SmartTrimPathCommand::SmartTrimPathCommand(
+    ObjectId object_id, SubpathId subpath_id, SmartTrimBoundary start,
+    SmartTrimBoundary end, bool wraps_closed_subpath,
+    std::shared_ptr<PathTopologyMapping> mapping_result) noexcept
+    : PathTopologyCommand(object_id, std::move(mapping_result)),
+      subpath_id_(subpath_id), start_(start), end_(end),
+      wraps_closed_subpath_(wraps_closed_subpath) {}
+
+bool SmartTrimPathCommand::apply_edit(EditablePath& path, PathTopologyMapping& mapping,
+                                      std::string& error) {
+    constexpr double kEndpointTolerance = 1e-9;
+    if (!subpath_id_.valid() || !start_.segment_id.valid() || !end_.segment_id.valid() ||
+        !std::isfinite(start_.parameter) || !std::isfinite(end_.parameter) ||
+        start_.parameter < 0.0 || start_.parameter > 1.0 ||
+        end_.parameter < 0.0 || end_.parameter > 1.0) {
+        error = "Smart Trim boundaries are invalid";
+        return false;
+    }
     auto* subpath = detail::find_subpath(path, subpath_id_);
     if (!subpath) {
-        error = "Subpath ID was not found";
+        error = "Smart Trim subpath was not found";
         return false;
     }
-    auto it = std::find_if(subpath->nodes.begin(), subpath->nodes.end(),
-        [&](const PathNode& n) { return n.id == node_id_; });
-    if (it == subpath->nodes.end()) {
-        error = "Node ID was not found";
+    const auto locate_segment = [&](SegmentId id) -> std::optional<size_t> {
+        const auto found = std::find_if(subpath->segments.begin(), subpath->segments.end(),
+            [&](const EditableSegment& segment) { return segment.id == id; });
+        if (found == subpath->segments.end()) return std::nullopt;
+        return static_cast<size_t>(found - subpath->segments.begin());
+    };
+    auto start_index = locate_segment(start_.segment_id);
+    auto end_index = locate_segment(end_.segment_id);
+    if (!start_index || !end_index) {
+        error = "Smart Trim boundary segment identity is stale";
         return false;
     }
-    const size_t index = static_cast<size_t>(it - subpath->nodes.begin());
-    const size_t n = subpath->nodes.size();
+    const bool same_segment = start_.segment_id == end_.segment_id;
+    if (same_segment && std::abs(start_.parameter - end_.parameter) <= kEndpointTolerance) {
+        error = "Smart Trim boundaries collapse to one point";
+        return false;
+    }
+    if (!subpath->closed && wraps_closed_subpath_) {
+        error = "An open path cannot wrap a Smart Trim interval";
+        return false;
+    }
 
-    if (subpath->closed) {
-        // Open the closed subpath at this node: rotate so node_id becomes index 0.
-        std::rotate(subpath->nodes.begin(), it, subpath->nodes.end());
-        std::rotate(subpath->segments.begin(),
-                    subpath->segments.begin() + static_cast<std::ptrdiff_t>(index),
-                    subpath->segments.end());
-        if (!subpath->segments.empty()) {
-            detail::add_mapping(mapping, PathElementKind::Segment,
-                                subpath->segments.back().id.value(), std::nullopt,
-                                IdMappingRelation::Removed);
-            subpath->segments.pop_back();
+    struct WorkBoundary {
+        SmartTrimBoundary boundary;
+        size_t original_index{0};
+        bool is_start{false};
+    };
+    std::array<WorkBoundary, 2> work{{
+        {start_, *start_index, true}, {end_, *end_index, false}}};
+    std::sort(work.begin(), work.end(), [](const auto& left, const auto& right) {
+        if (left.original_index != right.original_index)
+            return left.original_index > right.original_index;
+        return left.boundary.parameter > right.boundary.parameter;
+    });
+    NodeId start_node{};
+    NodeId end_node{};
+    std::optional<double> higher_split_parameter;
+    SegmentId higher_split_segment{};
+    for (const auto& item : work) {
+        double local_parameter = item.boundary.parameter;
+        if (same_segment && higher_split_segment == item.boundary.segment_id &&
+            higher_split_parameter && *higher_split_parameter < 1.0 - kEndpointTolerance) {
+            local_parameter /= *higher_split_parameter;
         }
-        subpath->closed = false;
-        detail::add_mapping(mapping, PathElementKind::Node, node_id_.value(), node_id_.value(),
-                            IdMappingRelation::Preserved);
-        return true;
-    } else {
-        if (index == 0 || index + 1 >= n) {
-            error = "Cannot break at an endpoint of an already open path";
+        const auto index = locate_segment(item.boundary.segment_id);
+        if (!index) {
+            error = "Smart Trim could not resolve a split segment after subdivision";
             return false;
         }
-        EditableSubpath second;
-        second.id = generate_path_element_id<SubpathId>();
-        second.closed = false;
-
-        PathNode split_node = subpath->nodes[index];
-        split_node.id = generate_path_element_id<NodeId>();
-        second.nodes.push_back(split_node);
-        for (size_t i = index + 1; i < n; ++i) {
-            second.nodes.push_back(subpath->nodes[i]);
+        NodeId node{};
+        if (local_parameter <= kEndpointTolerance) {
+            node = subpath->nodes[*index].id;
+        } else if (local_parameter >= 1.0 - kEndpointTolerance) {
+            node = subpath->nodes[(*index + 1) % subpath->nodes.size()].id;
+        } else {
+            node = detail::split_path_segment(path, subpath_id_, item.boundary.segment_id,
+                                              local_parameter, mapping, error);
+            if (!node.valid()) return false;
+            // Splitting keeps the original segment ID on the first half. If
+            // both boundaries are on this segment, the lower parameter is
+            // now relative to that first half.
+            higher_split_parameter = item.boundary.parameter;
+            higher_split_segment = item.boundary.segment_id;
         }
-        for (size_t i = index; i < subpath->segments.size(); ++i) {
-            second.segments.push_back(subpath->segments[i]);
+        if (item.is_start) start_node = node;
+        else end_node = node;
+    }
+    const auto node_index = [&](NodeId id) -> std::optional<size_t> {
+        const auto found = std::find_if(subpath->nodes.begin(), subpath->nodes.end(),
+            [&](const PathNode& node) { return node.id == id; });
+        if (found == subpath->nodes.end()) return std::nullopt;
+        return static_cast<size_t>(found - subpath->nodes.begin());
+    };
+    const auto first = node_index(start_node);
+    const auto last = node_index(end_node);
+    if (!first || !last || *first == *last) {
+        error = "Smart Trim interval endpoints are not distinct";
+        return false;
+    }
+    if (!subpath->closed && *first >= *last) {
+        error = "Smart Trim interval order does not match the open path";
+        return false;
+    }
+    if (subpath->closed && wraps_closed_subpath_ != (*first > *last)) {
+        error = "Smart Trim interval order does not match the closed path";
+        return false;
+    }
+
+    const auto old_nodes = subpath->nodes;
+    const auto old_segments = subpath->segments;
+    auto mark_removed = [&](size_t node_idx) {
+        detail::add_mapping(mapping, PathElementKind::Node, old_nodes[node_idx].id.value(),
+                            std::nullopt, IdMappingRelation::Removed);
+    };
+    auto mark_removed_segment = [&](size_t segment_idx) {
+        detail::add_mapping(mapping, PathElementKind::Segment,
+                            old_segments[segment_idx].id.value(), std::nullopt,
+                            IdMappingRelation::Removed);
+    };
+
+    if (subpath->closed) {
+        std::vector<EditableSegment> retained_segments;
+        std::vector<PathNode> retained_nodes;
+        size_t cursor = *last;
+        retained_nodes.push_back(old_nodes[cursor]);
+        while (cursor != *first) {
+            retained_segments.push_back(old_segments[cursor]);
+            cursor = (cursor + 1) % old_nodes.size();
+            retained_nodes.push_back(old_nodes[cursor]);
         }
-
-        subpath->nodes.erase(subpath->nodes.begin() + static_cast<std::ptrdiff_t>(index + 1),
-                             subpath->nodes.end());
-        subpath->segments.erase(subpath->segments.begin() + static_cast<std::ptrdiff_t>(index),
-                                subpath->segments.end());
-        path.subpaths.push_back(std::move(second));
-
-        detail::add_mapping(mapping, PathElementKind::Subpath, std::nullopt,
-                            path.subpaths.back().id.value(), IdMappingRelation::Created);
-        detail::add_mapping(mapping, PathElementKind::Node, std::nullopt,
-                            split_node.id.value(), IdMappingRelation::Created);
+        cursor = *first;
+        while (cursor != *last) {
+            mark_removed_segment(cursor);
+            cursor = (cursor + 1) % old_nodes.size();
+            if (cursor != *last) mark_removed(cursor);
+        }
+        if (retained_segments.empty()) {
+            error = "Smart Trim would remove the entire closed outline";
+            return false;
+        }
+        subpath->nodes = std::move(retained_nodes);
+        subpath->segments = std::move(retained_segments);
+        subpath->closed = false;
         return true;
     }
+
+    std::vector<PathNode> before_nodes(old_nodes.begin(), old_nodes.begin() + *first + 1);
+    std::vector<EditableSegment> before_segments(old_segments.begin(),
+        old_segments.begin() + static_cast<std::ptrdiff_t>(*first));
+    std::vector<PathNode> after_nodes(old_nodes.begin() + *last, old_nodes.end());
+    std::vector<EditableSegment> after_segments(old_segments.begin() + static_cast<std::ptrdiff_t>(*last),
+                                                 old_segments.end());
+    for (size_t segment = *first; segment < *last; ++segment)
+        mark_removed_segment(segment);
+    for (size_t node = *first + 1; node < *last; ++node)
+        mark_removed(node);
+    if (before_segments.empty() && after_segments.empty()) {
+        error = "Smart Trim would remove the entire open path";
+        return false;
+    }
+    if (before_segments.empty()) {
+        subpath->nodes = std::move(after_nodes);
+        subpath->segments = std::move(after_segments);
+        subpath->closed = false;
+        return true;
+    }
+    subpath->nodes = std::move(before_nodes);
+    subpath->segments = std::move(before_segments);
+    subpath->closed = false;
+    if (!after_segments.empty()) {
+        EditableSubpath remainder;
+        remainder.id = generate_path_element_id<SubpathId>();
+        if (!remainder.id.valid()) {
+            error = "Path identity allocator exhausted during Smart Trim";
+            return false;
+        }
+        remainder.nodes = std::move(after_nodes);
+        remainder.segments = std::move(after_segments);
+        remainder.closed = false;
+        detail::add_mapping(mapping, PathElementKind::Subpath, std::nullopt,
+                            remainder.id.value(), IdMappingRelation::Created);
+        path.subpaths.insert(path.subpaths.begin() +
+            static_cast<std::ptrdiff_t>(subpath - path.subpaths.data() + 1), std::move(remainder));
+    }
+    return true;
 }
 
 ReverseSubpathCommand::ReverseSubpathCommand(

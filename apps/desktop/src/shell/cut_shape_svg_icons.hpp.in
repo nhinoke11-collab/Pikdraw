@@ -1,0 +1,23 @@
+#pragma once
+
+#include <array>
+#include <string_view>
+
+namespace pikdraw::desktop {
+
+// Generated from apps/desktop/resources/icons/tool-*.svg at CMake configure time.
+// The renderer deliberately accepts only absolute M/L/Z path commands.
+inline constexpr std::array<std::string_view, 8> kCutShapeToolSvgPaths{{
+    R"PIKDRAW(@PIKDRAW_CUT_SHAPE_ICON_KNIFE@)PIKDRAW",
+    R"PIKDRAW(@PIKDRAW_CUT_SHAPE_ICON_VECTOR_ERASER@)PIKDRAW",
+    R"PIKDRAW(@PIKDRAW_CUT_SHAPE_ICON_SCISSORS@)PIKDRAW",
+    R"PIKDRAW(@PIKDRAW_CUT_SHAPE_ICON_TRIM@)PIKDRAW",
+    R"PIKDRAW(@PIKDRAW_CUT_SHAPE_ICON_SMART_TRIM@)PIKDRAW",
+    R"PIKDRAW(@PIKDRAW_CUT_SHAPE_ICON_SHAPE_BUILDER@)PIKDRAW",
+    R"PIKDRAW(@PIKDRAW_CUT_SHAPE_ICON_SMART_FILL@)PIKDRAW",
+    R"PIKDRAW(@PIKDRAW_CUT_SHAPE_ICON_RASTER_ERASER@)PIKDRAW",
+}};
+
+static_assert(kCutShapeToolSvgPaths.size() == 8);
+
+} // namespace pikdraw::desktop

@@ -83,6 +83,8 @@ class NativeBuildFixture:
         for name in ("build.ps1", "build_broker.py", "build_state.py"):
             shutil.copy2(ROOT / "tooling/native" / name, self.native / name)
         shutil.copy2(ROOT / "tooling/native/forward.ps1", self.native / "forward.ps1")
+        for name in ("clean-test-artifacts.ps1", "test-output.ps1"):
+            shutil.copy2(ROOT / "tooling/native" / name, self.native / name)
         shutil.copy2(ROOT / "tooling/pikdraw.ps1", self.repo / "tooling/pikdraw.ps1")
         fake = self.native / "fake_tool.py"
         fake.write_text(FAKE_TOOL, encoding="utf-8")

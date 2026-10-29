@@ -7,8 +7,8 @@
 
 namespace pikdraw::desktop {
 
-// Internal timing markers only. In particular, PaintEnd and RenderEnd are not
-// evidence that the corresponding pixels have been displayed by the OS.
+// Internal timing markers only. PresentSubmitted marks completion of the
+// Direct2D present call or GDI flush; it still does not prove scanout/display.
 enum class CanvasTraceKind : std::uint8_t {
     Input,
     InputDequeued,
@@ -25,6 +25,14 @@ enum class CanvasTraceKind : std::uint8_t {
     NativeSaveEnd,
     NativeOpenBegin,
     NativeOpenEnd,
+    CanvasOverlayBegin,
+    CanvasOverlayEnd,
+    ChromeOverlayBegin,
+    ChromeOverlayEnd,
+    PresentCallBegin,
+    PresentSubmitted,
+    CutGestureMove,
+    OverlayOnlyPaint,
 };
 
 struct CanvasTraceEvent {

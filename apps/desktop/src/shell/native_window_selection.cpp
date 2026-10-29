@@ -1,5 +1,6 @@
 #include "native_window_powerclip_ui.hpp"
 #include "native_window_selection_geometry.hpp"
+#include "pikdraw/desktop/shell/cut_shape_tool_catalog.hpp"
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/dimension_tool_controller.hpp"
 #include "../tools/artboard_tool_controller.hpp"
@@ -7,6 +8,7 @@
 #include "pikdraw/vector/gestures/selection_resize.hpp"
 #include "pikdraw/vector/tools/shape_tools.hpp"
 #include "native_window_length_input.hpp"
+#include "../performance/canvas_trace.hpp"
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -16,6 +18,96 @@
 #include <vector>
 
 namespace pikdraw::desktop {
+
+void NativeWindow::reset_trim_objects_roles() {
+    if ((cut_geometry_job_ &&
+         cut_geometry_job_->operation == CutGeometryOperation::TrimObjects) ||
+        cut_geometry_preview_ready(CutGeometryOperation::TrimObjects))
+        cancel_cut_geometry_job();
+    trim_objects_target_id_ = document::kInvalidObjectId;
+    trim_objects_source_ids_.clear();
+    status_msg_ = language_ == UILanguage::Vietnamese
+        ? "Đã đặt lại vai trò Target/Source"
+        : "Trim Target/Source roles reset";
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::reset_shape_builder() {
+    if ((cut_geometry_job_ &&
+         cut_geometry_job_->operation == CutGeometryOperation::ShapeBuilder) ||
+        cut_geometry_preview_ready(CutGeometryOperation::ShapeBuilder))
+        cancel_cut_geometry_job();
+    shape_builder_seed_points_.clear();
+    status_msg_ = language_ == UILanguage::Vietnamese
+        ? "Đã bỏ chọn các mặt Shape Builder" : "Shape Builder face selection cleared";
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::commit_shape_builder(bool erase_faces) {
+    if (cut_geometry_preview_ready(CutGeometryOperation::ShapeBuilder)) {
+        if (pending_cut_geometry_proposal_->proposal.erase_faces == erase_faces) {
+            (void)apply_pending_cut_geometry_proposal(CutGeometryOperation::ShapeBuilder,
+                                                      erase_faces);
+            return;
+        }
+        discard_pending_cut_geometry_proposal();
+    }
+    if (pending_cut_geometry_proposal_)
+        discard_pending_cut_geometry_proposal();
+    if (shape_builder_seed_points_.empty()) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Chọn ít nhất một mặt trước khi áp dụng Shape Builder"
+            : "Select at least one face before applying Shape Builder";
+    } else {
+        CutGeometryRequest request;
+        request.operation = CutGeometryOperation::ShapeBuilder;
+        request.snapshot = root().document().current_snapshot();
+        request.selected_ids = root().vector_controller().selection().selected_ids();
+        request.points_world = shape_builder_seed_points_;
+        request.erase_faces = erase_faces;
+        if (!start_cut_geometry_job(std::move(request))) {
+            // start_cut_geometry_job leaves the worker's failure reason in status_msg_.
+        }
+    }
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+void NativeWindow::commit_trim_objects() {
+    if (cut_geometry_preview_ready(CutGeometryOperation::TrimObjects)) {
+        (void)apply_pending_cut_geometry_proposal(CutGeometryOperation::TrimObjects);
+        return;
+    }
+    if (pending_cut_geometry_proposal_)
+        discard_pending_cut_geometry_proposal();
+    const auto snapshot = root().document().current_snapshot();
+    if (!snapshot || trim_objects_target_id_ == document::kInvalidObjectId || trim_objects_source_ids_.empty()) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Chọn một Target và ít nhất một Source trước khi áp dụng"
+            : "Choose a Target and at least one Source before applying";
+#ifdef _WIN32
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+        return;
+    }
+    CutGeometryRequest request;
+    request.operation = CutGeometryOperation::TrimObjects;
+    request.snapshot = snapshot;
+    request.selected_ids = root().vector_controller().selection().selected_ids();
+    request.target_id = trim_objects_target_id_;
+    request.source_ids = trim_objects_source_ids_;
+    request.keep_sources = trim_objects_keep_sources_;
+    (void)start_cut_geometry_job(std::move(request));
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
 #ifdef _WIN32
 namespace {
 constexpr int kPendingTextBodyMove = 10;
@@ -55,6 +147,7 @@ std::optional<geometry::Transform2D> text_resize_transform(
 
 WORD NativeWindow::canvas_cursor_at(int x, int y) const {
     if (show_settings_modal_ || show_file_menu_ || show_home_screen_ || !is_canvas_point(x, y)) return 32512;
+    if (active_tool_ == 17 && annotation_tool_ && annotation_tool_->note_text_editing()) return 32513;
     if (is_panning_) return 32646;
     if (active_tool_ == 3) return 32649;
     if (active_tool_ == 4 && resize_handle_ == kPendingTextBodyMove) return 32646;
@@ -79,7 +172,7 @@ WORD NativeWindow::canvas_cursor_at(int x, int y) const {
         constexpr WORD cursors[] = {32642, 32645, 32643, 32644, 32642, 32645, 32643, 32644};
         return cursors[handle];
     }
-    if (active_tool_ == 1 || active_tool_ == 2 || active_tool_ == 9)
+    if (active_tool_ == 1 || active_tool_ == 2 || active_tool_ == 9 || active_tool_ == 18)
         return (hover_object_ || is_dragging_) ? 32646 : 32515;
     if (active_tool_ == 0 && show_guidelines_) {
         const int g_idx = guideline_at(x, y);
@@ -109,7 +202,7 @@ int NativeWindow::selection_handle_at(int x, int y) const {
         return (near_h || near_v) ? kPendingTextBodyMove : -1;
     }
     const bool text_transform = active_tool_ == 4 && !is_inline_text_editing_ && is_text_object_selected();
-    const bool can_pick = (active_tool_ == 0 || active_tool_ == 1 || active_tool_ == 2 || active_tool_ == 9 ||
+    const bool can_pick = (active_tool_ == 0 || active_tool_ == 1 || active_tool_ == 2 || active_tool_ == 9 || active_tool_ == 18 ||
                            text_transform);
     if (!can_pick || !is_canvas_point(x, y))
         return -1;
@@ -139,7 +232,8 @@ int NativeWindow::selection_handle_at(int x, int y) const {
     return -1;
 }
 
-void NativeWindow::cancel_canvas_interaction() {
+void NativeWindow::cancel_canvas_interaction(bool cancel_cut_job) {
+    if (cancel_cut_job) cancel_cut_geometry_job();
     root().vector_controller().on_escape();
     if (text_editor_) {
         text_editor_->live_scale_baseline.reset();
@@ -148,6 +242,18 @@ void NativeWindow::cancel_canvas_interaction() {
     }
     pointer_active_ = is_dragging_ = is_creating_shape_ = is_marquee_ = is_panning_ = false;
     is_knife_cutting_ = false;
+    is_scissors_click_ = false;
+    is_trim_role_click_ = false;
+    is_smart_trim_click_ = false;
+    is_shape_builder_click_ = false;
+    is_smart_fill_click_ = false;
+    is_raster_eraser_stroke_ = false;
+    raster_eraser_stroke_.clear();
+    raster_eraser_stroke_overflow_ = false;
+    knife_stroke_.clear();
+    knife_stroke_overflow_ = false;
+    eraser_stroke_.clear();
+    eraser_stroke_overflow_ = false;
     is_contour_dragging_ = false;
     resize_handle_ = -1;
     drag_preview_bounds_.reset();
@@ -205,10 +311,48 @@ void NativeWindow::handle_canvas_mouse_down(int x, int y, unsigned modifiers) {
     pointer_stamp_ = vector::GestureStamp(*snapshot);
     pointer_start_revision_ = snapshot->revision();
     auto &controller = root().vector_controller();
+    if (active_tool_ == 24) {
+        if (start_raster_eraser_stroke(pointer_down_world_)) {
+            is_raster_eraser_stroke_ = true;
+        } else {
+            pointer_active_ = false;
+            if (GetCapture() == hwnd_) ReleaseCapture();
+        }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    if (active_tool_ == 19) {
+        is_scissors_click_ = true;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    if (active_tool_ == 20) {
+        is_trim_role_click_ = true;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    if (active_tool_ == 21) {
+        is_smart_trim_click_ = true;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    if (active_tool_ == 22) {
+        is_shape_builder_click_ = true;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    if (active_tool_ == 23) {
+        is_smart_fill_click_ = true;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
     if (active_tool_ == 5 || active_tool_ == 16) {
         is_knife_cutting_ = true;
         knife_start_world_ = pointer_down_world_;
         knife_current_world_ = pointer_down_world_;
+        if (active_tool_ == 5 && knife_freehand_mode_)
+            knife_stroke_.push_back(pointer_down_world_);
+        if (active_tool_ == 16) eraser_stroke_.push_back(pointer_down_world_);
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
@@ -330,7 +474,24 @@ void NativeWindow::handle_canvas_mouse_down(int x, int y, unsigned modifiers) {
         const double tolerance = 6.0 / zoom;
         const auto resolved = controller.pick(pointer_down_world_, *snapshot, tolerance);
         auto hit = resolved ? std::optional(resolved->id) : std::nullopt;
-        annotation_tool_->handle_pointer_press(pointer_down_world_, hit);
+        const double dip_scale = std::max(0.01, window_dpi_scale());
+        annotation_tool_->handle_pointer_press(pointer_down_world_, hit, std::nullopt,
+            {static_cast<double>(x) / dip_scale, static_cast<double>(y) / dip_scale});
+        if (annotation_tool_->note_text_editing()) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Nhập ghi chú · Enter xuống dòng · Ctrl+Enter hoàn tất · Esc hủy"
+                : "Type note text · Enter new line · Ctrl+Enter finishes · Esc cancels";
+        } else if (annotation_tool_->mode() == tools::AnnotationToolMode::LeaderNote &&
+                   annotation_tool_->state() == tools::AnnotationSessionState::LeaderAnchorPicked) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Chọn điểm gấp khúc của đường dẫn"
+                : "Choose the leader elbow point";
+        } else if (annotation_tool_->mode() == tools::AnnotationToolMode::LeaderNote &&
+                   annotation_tool_->state() == tools::AnnotationSessionState::LeaderElbowPicked) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Đặt vị trí ghi chú"
+                : "Place the note text position";
+        }
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
@@ -372,7 +533,7 @@ void NativeWindow::handle_canvas_mouse_down(int x, int y, unsigned modifiers) {
     if (quick_dimension_active_) {
         end_quick_dimension();
     }
-    const bool is_quick_shape = (active_tool_ == 1 || active_tool_ == 2 || active_tool_ == 9);
+    const bool is_quick_shape = (active_tool_ == 1 || active_tool_ == 2 || active_tool_ == 9 || active_tool_ == 18);
     if (active_tool_ == 0 || is_quick_shape || text_transform_handle) {
         if (active_tool_ == 0 && show_guidelines_) {
             const int g_idx = guideline_at(x, y);
@@ -479,7 +640,7 @@ void NativeWindow::handle_canvas_mouse_move(int x, int y, unsigned modifiers) {
     }
     if (!pointer_active_) {
         std::optional<document::ObjectId> hover;
-        const bool can_pick = (active_tool_ == 0 || active_tool_ == 1 || active_tool_ == 2 || active_tool_ == 9);
+        const bool can_pick = (active_tool_ == 0 || active_tool_ == 1 || active_tool_ == 2 || active_tool_ == 9 || active_tool_ == 18);
         if (can_pick && is_canvas_point(x, y))
             hover =
                 vector::SelectionModel::hit_test_in_scope(canvas_to_world(x, y), *root().document().current_snapshot(),
@@ -516,6 +677,10 @@ void NativeWindow::handle_canvas_mouse_move(int x, int y, unsigned modifiers) {
                 status_msg_ = wide_to_utf8(tooltip_.text);
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
+        update_smart_trim_hover_preview(
+            is_canvas_point(x, y) ? canvas_to_world(x, y) : geometry::Point2D{},
+            active_tool_ == static_cast<int>(CutShapeToolId::SmartTrim) &&
+                is_canvas_point(x, y));
         return;
     }
     pointer_current_world_ = canvas_to_world(x, y);
@@ -525,6 +690,21 @@ void NativeWindow::handle_canvas_mouse_move(int x, int y, unsigned modifiers) {
         page.width_mm * 0.5 - half_canvas, page.width_mm * 0.5 + half_canvas);
     pointer_current_world_.y = std::clamp(pointer_current_world_.y,
         page.height_mm * 0.5 - half_canvas, page.height_mm * 0.5 + half_canvas);
+    update_smart_trim_hover_preview(pointer_current_world_,
+        !pointer_active_ && is_canvas_point(x, y));
+    if (is_raster_eraser_stroke_) {
+        if (!raster_eraser_stroke_overflow_ &&
+            (raster_eraser_stroke_.empty() ||
+             std::hypot(pointer_current_world_.x - raster_eraser_stroke_.back().x,
+                        pointer_current_world_.y - raster_eraser_stroke_.back().y) > 1e-9)) {
+            if (raster_eraser_stroke_.size() >= document::RasterEraserParams::kMaxPoints)
+                raster_eraser_stroke_overflow_ = true;
+            else raster_eraser_stroke_.push_back(pointer_current_world_);
+        }
+        record_performance_event(CanvasTraceKind::CutGestureMove, last_trace_event_id_);
+        invalidate_canvas_overlay();
+        return;
+    }
     if (active_tool_ == 10 && dimension_tool_ && dimension_tool_->active()) {
         const double zoom = root().renderer().camera().zoom();
         const bool ortho = (GetKeyState(VK_SHIFT) < 0 || GetKeyState(VK_CONTROL) < 0);
@@ -534,7 +714,9 @@ void NativeWindow::handle_canvas_mouse_move(int x, int y, unsigned modifiers) {
         return;
     }
     if (active_tool_ == 17 && annotation_tool_ && annotation_tool_->active()) {
-        annotation_tool_->handle_pointer_move(pointer_current_world_);
+        const double dip_scale = std::max(0.01, window_dpi_scale());
+        annotation_tool_->handle_pointer_move(pointer_current_world_,
+            {static_cast<double>(x) / dip_scale, static_cast<double>(y) / dip_scale});
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
@@ -669,7 +851,20 @@ void NativeWindow::handle_canvas_mouse_move(int x, int y, unsigned modifiers) {
     }
     if (is_knife_cutting_) {
         knife_current_world_ = pointer_current_world_;
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        if (active_tool_ == 5 && knife_freehand_mode_ && !knife_stroke_overflow_ &&
+            (knife_stroke_.empty() || std::hypot(pointer_current_world_.x - knife_stroke_.back().x,
+                                                  pointer_current_world_.y - knife_stroke_.back().y) > 0.1)) {
+            if (knife_stroke_.size() >= 4096) knife_stroke_overflow_ = true;
+            else knife_stroke_.push_back(pointer_current_world_);
+        }
+        if (active_tool_ == 16 && !eraser_stroke_overflow_ &&
+            (eraser_stroke_.empty() || std::hypot(pointer_current_world_.x - eraser_stroke_.back().x,
+                                                   pointer_current_world_.y - eraser_stroke_.back().y) > 1e-9)) {
+            if (eraser_stroke_.size() >= 4096) eraser_stroke_overflow_ = true;
+            else eraser_stroke_.push_back(pointer_current_world_);
+        }
+        record_performance_event(CanvasTraceKind::CutGestureMove, last_trace_event_id_);
+        invalidate_canvas_overlay();
         return;
     }
     pointer_preserve_aspect_ = (modifiers & MK_SHIFT) != 0;
@@ -785,6 +980,13 @@ void NativeWindow::handle_canvas_mouse_move(int x, int y, unsigned modifiers) {
 }
 
 geometry::Rect2D NativeWindow::shape_drag_bounds(unsigned modifiers) const {
+    if (active_tool_ == 18) {
+        const auto end = is_creating_shape_ && shape_snap_effective_world_
+            ? *shape_snap_effective_world_ : pointer_current_world_;
+        const double radius = pointer_down_world_.distance_to(end);
+        return {pointer_down_world_.x - radius, pointer_down_world_.y - radius,
+                radius * 2.0, radius * 2.0};
+    }
     const bool ctrl = (modifiers & MK_CONTROL) != 0, shift = (modifiers & MK_SHIFT) != 0;
     return vector::ShapeFactory::constrained_drag_bounds(
         pointer_down_world_, is_creating_shape_ && shape_snap_effective_world_
@@ -815,8 +1017,10 @@ bool NativeWindow::commit_created_shape() {
         bounds.height * root().renderer().camera().zoom() < 2)
         return false;
     const auto snapshot = root().document().current_snapshot();
-    if (snapshot->page().layers.empty() || snapshot->page().layers.front().locked ||
-        !snapshot->page().layers.front().visible)
+    const size_t destination_layer = active_layer_index();
+    if (destination_layer >= snapshot->page().layers.size() ||
+        snapshot->page().effective_layer_locked(destination_layer) ||
+        !snapshot->page().effective_layer_visible(destination_layer))
         return false;
     document::PathObject object;
     try {
@@ -835,6 +1039,14 @@ bool NativeWindow::commit_created_shape() {
             object = vector::ShapeFactory::create_ellipse(bounds.center(), bounds.width * .5,
                 bounds.height * .5, default_style_.fill, default_style_.stroke,
                 default_style_.width_mm);
+        } else if (active_tool_ == 18) {
+            const auto end = is_creating_shape_ && shape_snap_effective_world_
+                ? *shape_snap_effective_world_ : pointer_current_world_;
+            const auto circle = geometry::circle_from_center_radius(
+                pointer_down_world_, pointer_down_world_.distance_to(end));
+            if (!circle) throw std::invalid_argument("Invalid circle radius");
+            object = vector::ShapeFactory::create_circle(*circle, default_style_.fill,
+                default_style_.stroke, default_style_.width_mm);
         } else {
             const double radius = std::min(bounds.width, bounds.height) * .5;
             object = vector::ShapeFactory::create_regular_polygon(bounds.center(), radius,
@@ -847,15 +1059,15 @@ bool NativeWindow::commit_created_shape() {
             : "Could not create a shape with the current settings";
         return false;
     }
-    object.has_fill = default_style_.has_fill;
+    object.has_fill = active_tool_ == 18 ? false : default_style_.has_fill;
     object.has_stroke = default_style_.has_stroke;
-    const auto result =
-        root().document().execute_command(std::make_unique<document::AddObjectCommand>(object, active_layer_index()));
+    const auto result = root().document().execute_command(
+        std::make_unique<document::AddObjectCommand>(object, destination_layer));
     if (result.success) {
         root().vector_controller().selection().clear();
 
         // Kích hoạt chế độ gõ nhanh kích thước ngang dài kiểu SketchUp (chỉ áp dụng cho lần vẽ đầu tiên)
-        quick_dimension_active_ = true;
+        quick_dimension_active_ = active_tool_ != 18;
         quick_dimension_object_id_ = object.id;
         quick_dimension_buffer_.clear();
         quick_dimension_origin_ = pointer_down_world_;
@@ -864,11 +1076,16 @@ bool NativeWindow::commit_created_shape() {
         quick_dimension_initial_w_ = bounds.width;
         quick_dimension_initial_h_ = bounds.height;
 
-        const std::string dims = format_mm_display_utf8(bounds.width, display_length_unit_, 5) +
-            " × " + format_mm_display_utf8(bounds.height, display_length_unit_, 5);
+        const std::string dims = active_tool_ == 18
+            ? ("R " + format_mm_display_utf8(bounds.width * 0.5, display_length_unit_, 5) +
+               " · Ø " + format_mm_display_utf8(bounds.width, display_length_unit_, 5))
+            : format_mm_display_utf8(bounds.width, display_length_unit_, 5) +
+              " × " + format_mm_display_utf8(bounds.height, display_length_unit_, 5);
         status_msg_ = language_ == UILanguage::Vietnamese
-            ? "Đã tạo hình [" + dims + "] · Gõ kích thước theo đơn vị trang; hậu tố ghi đè (vd: 30,40) · Enter nhận | Esc hủy"
-            : "Shape created [" + dims + "] · Type page-unit dimensions; suffix overrides (e.g. 30,40) · Enter applies | Esc cancels";
+            ? (active_tool_ == 18 ? "Đã tạo đường tròn [" + dims + "]" :
+               "Đã tạo hình [" + dims + "] · Gõ kích thước theo đơn vị trang; hậu tố ghi đè (vd: 30,40) · Enter nhận | Esc hủy")
+            : (active_tool_ == 18 ? "Circle created [" + dims + "]" :
+               "Shape created [" + dims + "] · Type page-unit dimensions; suffix overrides (e.g. 30,40) · Enter applies | Esc cancels");
     }
     return result.success;
 }
@@ -884,7 +1101,26 @@ void NativeWindow::handle_canvas_mouse_up(int x, int y, unsigned modifiers) {
         return;
     }
     if (active_tool_ == 17 && annotation_tool_ && annotation_tool_->active()) {
-        annotation_tool_->handle_pointer_release(pointer_current_world_);
+        pointer_current_world_ = canvas_to_world(x, y);
+        const double dip_scale = std::max(0.01, window_dpi_scale());
+        const geometry::Point2D screen_dip{static_cast<double>(x) / dip_scale,
+                                           static_cast<double>(y) / dip_scale};
+        annotation_tool_->handle_pointer_move(pointer_current_world_, screen_dip);
+        const auto state_before_release = annotation_tool_->state();
+        const bool handled = annotation_tool_->handle_pointer_release(pointer_current_world_, screen_dip);
+        pointer_active_ = false;
+        if (hwnd_ && GetCapture() == hwnd_) ReleaseCapture();
+        if (annotation_tool_->last_committed_id().has_value()) {
+            const auto id = *annotation_tool_->last_committed_id();
+            set_active_tool(0);
+            if (const auto snapshot = root().document().current_snapshot()) {
+                root().vector_controller().set_selection({id}, *snapshot);
+            }
+        } else if (state_before_release == tools::AnnotationSessionState::DetailSourceDragging && !handled) {
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Kéo xa hơn để chọn vùng nguồn"
+                : "Drag farther to select the source region";
+        }
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
@@ -943,14 +1179,32 @@ void NativeWindow::handle_canvas_mouse_up(int x, int y, unsigned modifiers) {
         page.height_mm * 0.5 - half_canvas, page.height_mm * 0.5 + half_canvas);
     const bool stale = !pointer_stamp_.matches(*root().document().current_snapshot());
     bool changed = false;
+    bool geometry_job_started = false;
+    bool geometry_job_attempted = false;
+    std::string geometry_job_start_status;
     const bool knife = is_knife_cutting_;
+    const bool trim_role_click = is_trim_role_click_;
+    const bool smart_trim_click = is_smart_trim_click_;
+    const bool shape_builder_click = is_shape_builder_click_;
+    const bool smart_fill_click = is_smart_fill_click_;
+    const bool raster_eraser_stroke = is_raster_eraser_stroke_;
+    const bool raster_eraser_overflow = raster_eraser_stroke && raster_eraser_stroke_overflow_;
+    const bool eraser_overflow = knife && active_tool_ == 16 && eraser_stroke_overflow_;
+    const bool knife_overflow = knife && active_tool_ == 5 && knife_stroke_overflow_;
     const bool is_corner_rotate = is_rotate_mode_ && (resize_handle_ == 0 || resize_handle_ == 2 ||
                                                       resize_handle_ == 4 || resize_handle_ == 6);
     const bool rotation = resize_handle_ == 8 || is_corner_rotate;
     const bool pivot_drag = resize_handle_ == 9;
     const bool clicked_without_drag = std::hypot(x - drag_start_x_, y - drag_start_y_) < 3;
     if (!stale) {
-        if (is_marquee_) {
+        if (raster_eraser_stroke) {
+            if (!raster_eraser_overflow)
+                changed = commit_raster_eraser_stroke(raster_eraser_stroke_);
+            else
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Nét tẩy ảnh vượt giới hạn; tài liệu giữ nguyên"
+                    : "Raster eraser stroke exceeded its limit; document unchanged";
+        } else if (is_marquee_) {
             const auto snapshot = root().document().current_snapshot();
             if (!clicked_without_drag) {
                 root().vector_controller().select_region(
@@ -972,10 +1226,223 @@ void NativeWindow::handle_canvas_mouse_up(int x, int y, unsigned modifiers) {
         } else if (is_knife_cutting_) {
             knife_current_world_ = pointer_current_world_;
             if (active_tool_ == 16) {
-                std::vector<geometry::Point2D> stroke{knife_start_world_, knife_current_world_};
-                changed = workflow().erase_objects_by_stroke(stroke, 2.0, true);
+                if (!eraser_stroke_overflow_) {
+                    CutGeometryRequest request;
+                    request.operation = CutGeometryOperation::VectorEraser;
+                    request.snapshot = root().document().current_snapshot();
+                    request.selected_ids = root().vector_controller().selection().selected_ids();
+                    request.points_world = eraser_stroke_;
+                    request.diameter_mm = vector_eraser_diameter_mm_;
+                    request.round_nib = vector_eraser_round_nib_;
+                    geometry_job_attempted = true;
+                    geometry_job_started = start_cut_geometry_job(std::move(request));
+                    if (!geometry_job_started) geometry_job_start_status = status_msg_;
+                } else status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Nét tẩy quá dài; thao tác đã hủy" : "Eraser stroke too long; operation cancelled";
+            } else if (knife_overflow) {
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Đường Knife quá dài; thao tác đã hủy" : "Knife gesture too long; operation cancelled";
+            } else if (knife_freehand_mode_) {
+                if (knife_stroke_.empty() ||
+                    knife_stroke_.back().distance_to(pointer_current_world_) > 1e-9) {
+                    if (knife_stroke_.size() >= 4096) knife_stroke_overflow_ = true;
+                    else knife_stroke_.push_back(pointer_current_world_);
+                }
+                if (!knife_stroke_overflow_) {
+                    CutGeometryRequest request;
+                    request.operation = CutGeometryOperation::Knife;
+                    request.snapshot = root().document().current_snapshot();
+                    request.selected_ids = root().vector_controller().selection().selected_ids();
+                    request.points_world = knife_stroke_;
+                    request.gap_mm = knife_gap_mm_;
+                    geometry_job_attempted = true;
+                    geometry_job_started = start_cut_geometry_job(std::move(request));
+                    if (!geometry_job_started) geometry_job_start_status = status_msg_;
+                }
             } else {
-                changed = workflow().split_objects_by_line(knife_start_world_, knife_current_world_);
+                CutGeometryRequest request;
+                request.operation = CutGeometryOperation::Knife;
+                request.snapshot = root().document().current_snapshot();
+                request.selected_ids = root().vector_controller().selection().selected_ids();
+                request.points_world = {knife_start_world_, knife_current_world_};
+                request.gap_mm = knife_gap_mm_;
+                geometry_job_attempted = true;
+                geometry_job_started = start_cut_geometry_job(std::move(request));
+                if (!geometry_job_started) geometry_job_start_status = status_msg_;
+            }
+            if (!geometry_job_attempted && !geometry_job_started && !changed && !eraser_overflow &&
+                !knife_overflow && !knife_stroke_overflow_)
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Không có path phù hợp bị tác động · tài liệu giữ nguyên"
+                    : "No eligible path was affected · document unchanged";
+        } else if (is_scissors_click_) {
+            if (clicked_without_drag && is_canvas_point(x, y)) {
+                const double zoom = std::max(0.01, root().renderer().camera().zoom());
+                CutGeometryRequest request;
+                request.operation = CutGeometryOperation::Scissors;
+                request.snapshot = root().document().current_snapshot();
+                request.selected_ids = root().vector_controller().selection().selected_ids();
+                request.points_world = {pointer_down_world_};
+                request.hit_tolerance_mm = 6.0 / zoom;
+                geometry_job_attempted = true;
+                geometry_job_started = start_cut_geometry_job(std::move(request));
+                if (!geometry_job_started) geometry_job_start_status = status_msg_;
+            } else {
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Scissors là thao tác nhấp; không kéo chuột"
+                    : "Scissors is a click tool; dragging does not cut";
+            }
+        } else if (trim_role_click) {
+            if (clicked_without_drag && is_canvas_point(x, y)) {
+                const double zoom = std::max(0.01, root().renderer().camera().zoom());
+                const auto hit = root().vector_controller().pick(
+                    pointer_down_world_, *root().document().current_snapshot(), 6.0 / zoom);
+                const auto snapshot = root().document().current_snapshot();
+                const auto* object = hit && snapshot ? snapshot->objects().lookup_ref(hit->id) : nullptr;
+                const auto* path = object ? std::get_if<document::PathObject>(object) : nullptr;
+                const auto* owner = hit && snapshot ? snapshot->hierarchy().find(hit->id) : nullptr;
+                if (!path || !path->has_fill || !owner || owner->mask ||
+                    !snapshot->hierarchy().editable(hit->id)) {
+                    status_msg_ = language_ == UILanguage::Vietnamese
+                        ? "Trim Objects chỉ nhận path có fill, hiển thị và mở khóa"
+                        : "Trim Objects requires a visible, unlocked filled path";
+                } else if (!trim_objects_target_id_) {
+                    discard_pending_cut_geometry_proposal();
+                    trim_objects_target_id_ = hit->id;
+                    trim_objects_source_ids_.clear();
+                    root().vector_controller().set_selection({hit->id}, *snapshot);
+                    status_msg_ = language_ == UILanguage::Vietnamese
+                        ? "Đã chọn Target · nhấp một hoặc nhiều Source"
+                        : "Target selected · click one or more Sources";
+                } else if (hit->id == trim_objects_target_id_) {
+                    status_msg_ = language_ == UILanguage::Vietnamese
+                        ? "Đây đã là Target · chọn Source khác hoặc áp dụng"
+                        : "This is already the Target · choose another Source or apply";
+                } else {
+                    discard_pending_cut_geometry_proposal();
+                    const auto source = std::find(trim_objects_source_ids_.begin(),
+                                                  trim_objects_source_ids_.end(), hit->id);
+                    if (source == trim_objects_source_ids_.end()) {
+                        if (trim_objects_source_ids_.size() >= 64) {
+                            status_msg_ = language_ == UILanguage::Vietnamese
+                                ? "Trim Objects giới hạn 64 Source cho mỗi giao dịch"
+                                : "Trim Objects is limited to 64 Source paths per transaction";
+                            InvalidateRect(hwnd_, nullptr, FALSE);
+                            return;
+                        }
+                        trim_objects_source_ids_.push_back(hit->id);
+                    } else {
+                        trim_objects_source_ids_.erase(source);
+                    }
+                    auto roles = trim_objects_source_ids_;
+                    roles.insert(roles.begin(), trim_objects_target_id_);
+                    root().vector_controller().set_selection(std::move(roles), *snapshot);
+                    status_msg_ = language_ == UILanguage::Vietnamese
+                        ? "Đã cập nhật danh sách Source · nhấp lại Source để bỏ"
+                        : "Source list updated · click a Source again to remove it";
+                }
+            } else {
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Chọn vai trò bằng từng lần nhấp; không kéo"
+                    : "Choose object roles with clicks; dragging is ignored";
+            }
+        } else if (smart_trim_click) {
+            if (clicked_without_drag && is_canvas_point(x, y)) {
+                const double zoom = std::max(0.01, root().renderer().camera().zoom());
+                CutGeometryRequest request;
+                request.operation = CutGeometryOperation::SmartTrim;
+                request.snapshot = root().document().current_snapshot();
+                request.selected_ids = root().vector_controller().selection().selected_ids();
+                request.points_world = {pointer_down_world_};
+                request.hit_tolerance_mm = 6.0 / zoom;
+                geometry_job_attempted = true;
+                const double preview_match_mm = 1.5 / zoom;
+                if (cut_geometry_preview_ready(CutGeometryOperation::SmartTrim) &&
+                    pending_cut_geometry_proposal_->state &&
+                    pending_cut_geometry_proposal_->state->points_world.size() == 1 &&
+                    pending_cut_geometry_proposal_->state->points_world.front().distance_to(
+                        pointer_down_world_) <= preview_match_mm) {
+                    changed = apply_pending_cut_geometry_proposal(
+                        CutGeometryOperation::SmartTrim);
+                    geometry_job_attempted = false;
+                } else if (cut_geometry_job_ &&
+                           cut_geometry_job_->operation == CutGeometryOperation::SmartTrim &&
+                           cut_geometry_job_->preview_only &&
+                           cut_geometry_job_->points_world.size() == 1 &&
+                           cut_geometry_job_->points_world.front().distance_to(
+                               pointer_down_world_) <= preview_match_mm) {
+                    // The hover worker already has the interval under this click.
+                    // Promote it to the click's commit so latency never changes the tool's gesture.
+                    cut_geometry_job_->preview_only = false;
+                    smart_trim_hover_world_ = pointer_down_world_;
+                    geometry_job_started = true;
+                    status_msg_ = language_ == UILanguage::Vietnamese
+                        ? "Đang áp dụng đoạn Smart Trim đã chọn · Esc để hủy"
+                        : "Applying the selected Smart Trim interval · Esc to cancel";
+                } else {
+                    if (cut_geometry_preview_ready(CutGeometryOperation::SmartTrim))
+                        discard_pending_cut_geometry_proposal();
+                    request.preview_only = false;
+                    if (cut_geometry_job_ &&
+                        cut_geometry_job_->operation == CutGeometryOperation::SmartTrim &&
+                        cut_geometry_job_->preview_only) {
+                        smart_trim_click_pending_request_ = request;
+                        smart_trim_hover_world_ = pointer_down_world_;
+                        ++cut_geometry_generation_;
+                        if (cut_geometry_worker_.joinable())
+                            cut_geometry_worker_.request_stop();
+                        geometry_job_started = true;
+                        if (hwnd_ && SetTimer(hwnd_,
+                                static_cast<UINT_PTR>(kSmartTrimHoverTimerId), 50, nullptr) == 0)
+                            status_msg_ = language_ == UILanguage::Vietnamese
+                                ? "Đang chờ hủy preview cũ · sau đó sẽ áp dụng thao tác đã nhấp"
+                                : "Waiting for the prior preview to cancel before applying this click";
+                    } else {
+                        geometry_job_started = start_cut_geometry_job(std::move(request));
+                        if (!geometry_job_started) geometry_job_start_status = status_msg_;
+                    }
+                }
+            } else {
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Smart Trim là thao tác nhấp vào đoạn nét giữa hai giao điểm"
+                    : "Smart Trim is a click tool; click a stroke interval between intersections";
+            }
+        } else if (shape_builder_click) {
+            if (clicked_without_drag && is_canvas_point(x, y)) {
+                if (shape_builder_seed_points_.size() >= 64) {
+                    status_msg_ = language_ == UILanguage::Vietnamese
+                        ? "Shape Builder giới hạn 64 mặt cho mỗi giao dịch"
+                        : "Shape Builder is limited to 64 faces per transaction";
+                } else {
+                    discard_pending_cut_geometry_proposal();
+                    shape_builder_seed_points_.push_back(pointer_down_world_);
+                    status_msg_ = (language_ == UILanguage::Vietnamese
+                        ? "Đã thêm điểm mặt cần kiểm tra · tổng số: "
+                        : "Added face point for validation · count: ") +
+                        std::to_string(shape_builder_seed_points_.size()) +
+                        (language_ == UILanguage::Vietnamese
+                            ? " · áp dụng trên thanh thuộc tính để tính và xem lỗi"
+                            : " · apply on the Property Bar to compute and validate");
+                }
+            } else {
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Shape Builder chọn từng mặt bằng nhấp; kéo chuột không chọn"
+                    : "Shape Builder selects faces with clicks; dragging does not select";
+            }
+        } else if (smart_fill_click) {
+            if (clicked_without_drag && is_canvas_point(x, y)) {
+                CutGeometryRequest request;
+                request.operation = CutGeometryOperation::SmartFill;
+                request.snapshot = root().document().current_snapshot();
+                request.selected_ids = root().vector_controller().selection().selected_ids();
+                request.points_world = {pointer_down_world_};
+                geometry_job_attempted = true;
+                geometry_job_started = start_cut_geometry_job(std::move(request));
+                if (!geometry_job_started) geometry_job_start_status = status_msg_;
+            } else {
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Smart Fill là thao tác nhấp vào bên trong một mặt kín"
+                    : "Smart Fill is a click tool; click inside a closed face";
             }
         } else if (pivot_drag) {
             custom_pivot_world_ = pointer_current_world_;
@@ -1001,7 +1468,7 @@ void NativeWindow::handle_canvas_mouse_up(int x, int y, unsigned modifiers) {
             }
         }
     }
-    cancel_canvas_interaction();
+    cancel_canvas_interaction(!geometry_job_started);
     const auto selected_after_pointer = root().vector_controller().selection().selected_ids();
     if (!selected_after_pointer.empty()) {
         const auto selected_snapshot = root().document().current_snapshot();
@@ -1013,7 +1480,22 @@ void NativeWindow::handle_canvas_mouse_up(int x, int y, unsigned modifiers) {
     }
     workflow().sync_status_bar();
     sync_rect_corner_controls_from_selection();
-    if (stale) {
+    if (geometry_job_started) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đang tính hình học Cut & Shape · Esc để hủy"
+            : "Computing Cut & Shape geometry · Esc to cancel";
+        // The worker owns the validated snapshot request; its completion
+        // handler publishes success, cancellation, or stale-result feedback.
+    } else if (geometry_job_attempted) {
+        status_msg_ = std::move(geometry_job_start_status);
+    } else if (eraser_overflow) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Nét tẩy quá dài; thao tác đã hủy" : "Eraser stroke too long; operation cancelled";
+    } else if (raster_eraser_overflow) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Nét tẩy ảnh vượt giới hạn; tài liệu giữ nguyên"
+            : "Raster eraser stroke exceeded its limit; document unchanged";
+    } else if (stale) {
         status_msg_ = language_ == UILanguage::Vietnamese ? "Bản vẽ đã đổi; thao tác đã được hủy an toàn." : "Document changed; interaction cancelled.";
     } else if (pivot_drag) {
         status_msg_ = language_ == UILanguage::Vietnamese ? "Đã điều chỉnh tâm xoay · kéo góc để xoay quanh tâm" : "Adjusted rotation pivot · drag corners to rotate";
@@ -1021,6 +1503,20 @@ void NativeWindow::handle_canvas_mouse_up(int x, int y, unsigned modifiers) {
         status_msg_ = language_ == UILanguage::Vietnamese ? "Chế độ xoay: kéo 4 góc để xoay quanh tâm, kéo tâm để dời vị trí" : "Rotate mode: drag 4 corners to rotate, drag pivot to reposition";
     } else if (clicked_without_drag && !is_rotate_mode_ && active_tool_ == 0) {
         status_msg_ = language_ == UILanguage::Vietnamese ? "Chế độ biến đổi: kéo tay nắm để đổi kích thước" : "Transform mode: drag handles to scale";
+    } else if (trim_role_click) {
+        // Keep the role-selection hint set by the click resolver.
+    } else if (smart_trim_click) {
+        // Keep the intersection/no-op explanation from the Smart Trim resolver.
+    } else if (shape_builder_click) {
+        // Preserve face-resolution feedback; this click only changes tool state.
+    } else if (raster_eraser_stroke && changed) {
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? "Đã tẩy alpha không phá hủy · ảnh gốc được giữ · Ctrl+Z để hoàn tác"
+            : "Applied non-destructive alpha erase · source pixels remain unchanged · Ctrl+Z to undo";
+    } else if (raster_eraser_stroke) {
+        // Keep the validation or command failure reported by the eraser.
+    } else if (geometry_job_attempted) {
+        // Keep the reason the geometry worker could not be started.
     } else if (changed && knife) {
         status_msg_ = language_ == UILanguage::Vietnamese ? "Đã dùng dao cắt phân tách hình khối thành công · Ctrl+Z để hoàn tác" : "Knife split completed · Ctrl+Z to undo";
     } else if (changed && rotation) {

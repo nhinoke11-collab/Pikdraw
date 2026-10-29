@@ -109,6 +109,13 @@ uint64_t hash_graph(const document::RasterEditGraph& graph) noexcept {
         mix(std::bit_cast<uint64_t>(parameters.radius_percent));
         mix(std::bit_cast<uint64_t>(parameters.hardness_percent));
         mix(std::bit_cast<uint64_t>(parameters.opacity_percent));
+      } else if constexpr (std::is_same_v<T, document::RasterEraserParams>) {
+        mix(std::bit_cast<uint64_t>(parameters.diameter_px));
+        mix(parameters.points.size());
+        for (const auto& point : parameters.points) {
+          mix(std::bit_cast<uint64_t>(point.x));
+          mix(std::bit_cast<uint64_t>(point.y));
+        }
       }
     }, node.parameters);
     mix(node.mask.has_value() ? 1u : 0u);
@@ -229,8 +236,12 @@ struct RasterEditPreviewService::Impl {
   };
 
   Impl(uint64_t working_bytes, uint64_t cache_bytes,
-       std::shared_ptr<const color::ProfileResource> output_profile)
-      : memory_budget(working_bytes), cache_capacity(cache_bytes),
+       std::shared_ptr<const color::ProfileResource> output_profile,
+       std::shared_ptr<document::resources::MemoryBudgetPolicy> policy)
+      : memory_policy(policy ? std::move(policy) :
+            document::resources::process_memory_budget_policy()),
+        memory_budget(working_bytes, {}, working_bytes == 0 ? memory_policy : nullptr),
+        cache_capacity(cache_bytes),
         preview_rgb_profile(std::move(output_profile)) {}
 
   ~Impl() {
@@ -276,13 +287,27 @@ struct RasterEditPreviewService::Impl {
     return !stopping && found != latest.end() && found->second == key;
   }
 
+  void evict_oldest_locked() {
+    auto oldest = cache.begin();
+    for (auto it = std::next(cache.begin()); it != cache.end(); ++it)
+      if (it->second.last_use < oldest->second.last_use) oldest = it;
+    cache_bytes -= oldest->second.frame->bytes;
+    cache.erase(oldest);
+  }
+
+  uint64_t current_cache_capacity() const noexcept {
+    return cache_capacity ? cache_capacity : memory_policy->cache_limit_bytes();
+  }
+
+  void trim_cache_locked() {
+    const auto capacity = current_cache_capacity();
+    while (cache_bytes > capacity && !cache.empty()) evict_oldest_locked();
+  }
+
   void evict_until_available_locked(uint64_t requested) {
+    trim_cache_locked();
     while (memory_budget.available_bytes() < requested && !cache.empty()) {
-      auto oldest = cache.begin();
-      for (auto it = std::next(cache.begin()); it != cache.end(); ++it)
-        if (it->second.last_use < oldest->second.last_use) oldest = it;
-      cache_bytes -= oldest->second.frame->bytes;
-      cache.erase(oldest);
+      evict_oldest_locked();
     }
   }
 
@@ -301,14 +326,12 @@ struct RasterEditPreviewService::Impl {
       pending.erase(job.key);
       const auto current = latest.find(job.object_key);
       if (!stopping && current != latest.end() && current->second == job.key) {
-        if (result && result->bytes <= cache_capacity) {
+        trim_cache_locked();
+        const auto capacity = current_cache_capacity();
+        if (result && result->bytes <= capacity) {
           while (!cache.empty() &&
-                 (cache.size() >= 1024 || cache_bytes > cache_capacity - result->bytes)) {
-            auto oldest = cache.begin();
-            for (auto it = std::next(cache.begin()); it != cache.end(); ++it)
-              if (it->second.last_use < oldest->second.last_use) oldest = it;
-            cache_bytes -= oldest->second.frame->bytes;
-            cache.erase(oldest);
+                 (cache.size() >= 1024 || cache_bytes > capacity - result->bytes)) {
+            evict_oldest_locked();
           }
           const auto bytes = result->bytes;
           cache_bytes += bytes;
@@ -316,7 +339,8 @@ struct RasterEditPreviewService::Impl {
               CacheEntry{std::move(result), ++clock});
           diagnostic.reset();
           notify_completion = true;
-        } else if (!error.empty()) {
+        } else if (result || !error.empty()) {
+          if (result) error = "Raster preview exceeds the current available cache memory.";
           diagnostic = std::move(error);
           notify_completion = true;
         }
@@ -468,8 +492,15 @@ struct RasterEditPreviewService::Impl {
         return;
       }
 
-      auto packed_pixels = std::make_shared<std::vector<uint32_t>>(
-          static_cast<size_t>(evaluated.image.width) * evaluated.image.height);
+      // Renderers may retain the pixels after cache eviction. Keep the memory
+      // reservation alive until the last pixel owner releases them.
+      auto packed_pixels = std::shared_ptr<std::vector<uint32_t>>(
+          new std::vector<uint32_t>(
+              static_cast<size_t>(evaluated.image.width) * evaluated.image.height),
+          [reservation = packed_reservation](std::vector<uint32_t>* value) {
+            (void)reservation;
+            delete value;
+          });
       for (size_t index = 0; index < packed_pixels->size(); ++index) {
         const size_t offset = index *
             (evaluated.image.encoding ==
@@ -531,6 +562,7 @@ struct RasterEditPreviewService::Impl {
 
   mutable std::mutex mutex;
   std::condition_variable_any condition;
+  const std::shared_ptr<document::resources::MemoryBudgetPolicy> memory_policy;
   RasterMemoryBudget memory_budget;
   const uint64_t cache_capacity;
   const std::shared_ptr<const color::ProfileResource> preview_rgb_profile;
@@ -547,9 +579,11 @@ struct RasterEditPreviewService::Impl {
 
 RasterEditPreviewService::RasterEditPreviewService(
     uint64_t working_memory_bytes, uint64_t cache_memory_bytes,
-    std::shared_ptr<const color::ProfileResource> preview_rgb_profile)
+    std::shared_ptr<const color::ProfileResource> preview_rgb_profile,
+    std::shared_ptr<document::resources::MemoryBudgetPolicy> memory_policy)
     : impl_(std::make_unique<Impl>(working_memory_bytes, cache_memory_bytes,
-                                  std::move(preview_rgb_profile))) {}
+                                  std::move(preview_rgb_profile),
+                                  std::move(memory_policy))) {}
 
 RasterEditPreviewService::~RasterEditPreviewService() = default;
 
@@ -562,6 +596,7 @@ void RasterEditPreviewService::request(
   {
     std::lock_guard lock(impl_->mutex);
     if (impl_->stopping) return;
+    impl_->trim_cache_locked();
     std::unordered_set<Impl::ObjectKey, Impl::ObjectKeyHash> active;
     for (const auto& [id, object] : objects) {
       (void)id;
@@ -603,11 +638,58 @@ std::shared_ptr<const document::ImageObject> RasterEditPreviewService::find(
     return nullptr;
   const auto key = Impl::make_key(snapshot, image);
   std::lock_guard lock(impl_->mutex);
+  impl_->trim_cache_locked();
   auto found = impl_->cache.find(key);
   if (found == impl_->cache.end()) return nullptr;
   found->second.last_use = ++impl_->clock;
   const auto frame = found->second.frame;
-  return std::shared_ptr<const document::ImageObject>(frame, &frame->image);
+  auto current = std::make_shared<document::ImageObject>(frame->image);
+  current->transform = image.transform;
+  current->bounds_rect = raster_edited_bounds(
+      image, static_cast<uint32_t>(frame->image.width_px),
+      static_cast<uint32_t>(frame->image.height_px));
+  current->clip_path = image.clip_path;
+  current->visible = image.visible;
+  current->locked = image.locked;
+  current->edit_graph = image.edit_graph;
+  return current;
+}
+
+std::shared_ptr<const document::ImageObject>
+RasterEditPreviewService::find_last_good(
+    const document::DocumentSnapshot& snapshot,
+    const document::ImageObject& image) const {
+  if (!needs_preview(image)) return nullptr;
+  const auto requested = Impl::make_key(snapshot, image);
+  std::lock_guard lock(impl_->mutex);
+  impl_->trim_cache_locked();
+  Impl::CacheEntry* best = nullptr;
+  for (auto& [key, entry] : impl_->cache) {
+    const bool same_source =
+        key.document_id == requested.document_id &&
+        key.epoch == requested.epoch && key.image_id == requested.image_id &&
+        key.pixel_storage == requested.pixel_storage &&
+        key.pixel_encoding == requested.pixel_encoding &&
+        key.profile_storage == requested.profile_storage &&
+        key.profile_size == requested.profile_size &&
+        key.color_basis == requested.color_basis &&
+        key.width == requested.width && key.height == requested.height;
+    if (!same_source || key.graph_hash == requested.graph_hash) continue;
+    if (!best || entry.last_use > best->last_use) best = &entry;
+  }
+  if (!best) return nullptr;
+  best->last_use = ++impl_->clock;
+  const auto& cached = best->frame->image;
+  auto current = std::make_shared<document::ImageObject>(cached);
+  current->transform = image.transform;
+  current->bounds_rect = raster_edited_bounds(
+      image, static_cast<uint32_t>(cached.width_px),
+      static_cast<uint32_t>(cached.height_px));
+  current->clip_path = image.clip_path;
+  current->visible = image.visible;
+  current->locked = image.locked;
+  current->edit_graph = image.edit_graph;
+  return current;
 }
 
 std::optional<std::string> RasterEditPreviewService::take_diagnostic() {

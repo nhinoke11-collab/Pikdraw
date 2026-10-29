@@ -10,7 +10,7 @@ Tài liệu này bổ sung phạm vi UX, raster, export và CNC cho roadmap `imp
 ## Tiến độ triển khai
 
 - **F00 — Baseline corpus:** đã khóa 16 mẫu trong `cdr/`, tổng 116.989.010 byte; manifest cục bộ có SHA-256, được `.gitignore` bảo vệ. Baseline xác nhận chưa có PNG/TIFF và chưa có lần chạy oracle Adobe/Corel được ghi nhận.
-- **F01 — Hợp đồng xuất file và sản xuất CNC (C10):** đã hoàn thành đặc tả `contracts/c10-file-export-production.md` (Version 0.1.0, Proposed) xác định rõ 10 gate nghiệm thu (C10-G1 đến C10-G10), ngân sách sai lệch Fine profile `0,01 mm` (0,002 mm nhập + 0,001 mm chuẩn hóa + 0,004 mm xấp xỉ + 0,003 mm serialize/đọc lại), tách bạch hoàn toàn khả năng render, editability, xuất file và nghiệm thu CAM thực tế.
+- **F01 — Hợp đồng xuất file và sản xuất CNC (C10):** đã hoàn thành đặc tả `contracts/c11-file-export-production.md` (Version 0.1.0, Proposed) xác định rõ 10 gate nghiệm thu (C10-G1 đến C10-G10), ngân sách sai lệch Fine profile `0,01 mm` (0,002 mm nhập + 0,001 mm chuẩn hóa + 0,004 mm xấp xỉ + 0,003 mm serialize/đọc lại), tách bạch hoàn toàn khả năng render, editability, xuất file và nghiệm thu CAM thực tế.
 - **F02–F03 — Document model và worker readiness:** snapshot đa trang và native storage v6/v7/v8 đã hoàn thành; lưu trữ đối tượng `ImageObject` giữ toàn vẹn source bytes, ICC profile, media type, DPI, bit depth và orientation. Dependency audit xác nhận WIC là Windows codec nội tại; PDFium/libcdr/Ghostscript đang trong hàng đợi pin build/license cách ly.
 - **F04 — Nền tảng File workflow và Atomic Export:** đã xây dựng hạ tầng `ExportJob` theo snapshot bất biến, `ExportOptions` có kiểm tra kiểu/phạm vi, `ExportReport` phân tách 7 trục đánh giá, và `AtomicExport` (ghi file tạm `.pikdraw-export-tmp-*`, flush, kiểm tra đọc lại qua validator độc lập rồi đổi tên nguyên tử qua `MoveFileExW`). Desktop UI đã tích hợp luồng xuất SVG tại `apps/desktop/src/shell/native_window_svg_export.cpp`, nối phím tắt Ctrl+E và menu.
 - **F05 — Raster nền tảng:** WIC decoder allowlist chạy trong AppContainer worker; PNG/JPEG/TIFF single-frame SDR được chuyển thành `ImageObject` RGBA8 an toàn với giới hạn 4M pixels/16 MiB. Native format v8 lưu trữ đầy đủ thuộc tính ảnh. Đang mở rộng sang xuất raster: schema encoder (JPEG quality/subsampling, PNG lossless/RGBA, TIFF single-frame LZW/Deflate), cơ chế tiling/streaming có effect halo chống tràn RAM và color pipeline bảo toàn sRGB/ICC.
@@ -45,7 +45,7 @@ Khảo sát dưới đây ghi lại baseline lúc soạn kế hoạch; phần �
 | Transport worker | `ipc_dto.hpp`, `platform/workers/src/worker_main.cpp` | Đã có wire v2, source handle, proposal stream và AppContainer; tái sử dụng/kiểm chứng luồng hiện có |
 | Document | `document_snapshot.hpp`, `native_format.cpp` (v8) | Snapshot đa trang thật; ImageObject lưu source bytes/DPI/ICC; cần cấu trúc reference cho đối tượng ngoài |
 | Raster model | `core/document/include/.../object.hpp`: `ImageObject` | Đã lưu pixel RGBA8, DPI, ICC, bit depth và orientation; cần hoàn thiện WIC encoder export |
-| Production | `registry/modules.json`, `modules/production`, `contracts/c10-file-export-production.md` | Đã có đặc tả C10; cần hiện thực hóa module production và preflight geometry cho CNC |
+| Production | `registry/modules.json`, `modules/production`, `contracts/c11-file-export-production.md` | Đã có đặc tả C10; cần hiện thực hóa module production và preflight geometry cho CNC |
 
 Runtime tiếp tục theo C++20/Win32/Direct2D 1.1/D3D11/WARP và SoftwareRasterizer hiện hành. Kế hoạch này không phụ thuộc việc chuyển Qt/Skia. Core không phụ thuộc ngược desktop; reader/vendor types không đi vào document model.
 
@@ -342,7 +342,7 @@ Lộ trình chia thành 12 gói công việc độc lập. Mỗi gói sở hữu
 | Gói | Nội dung thực hiện | Điều kiện tiên quyết (Entry) | Tiêu chí hoàn thành (Exit Gates) |
 | --- | --- | --- | --- |
 | **F00** | Corpus baseline & Fixture Manifest | Kho mẫu `cdr/` và thư mục fixture | Khóa SHA-256 manifest; thiết lập fixture ID trung tính; phân loại các nhóm định dạng |
-| **F01** | Hợp đồng C10 Export & Production | C1 đến C9 và yêu cầu người dùng | Hoàn thành `c10-file-export-production.md`; 10 gate C10-G1 đến C10-G10; ngân sách 0,01 mm |
+| **F01** | Hợp đồng C10 Export & Production | C1 đến C9 và yêu cầu người dùng | Hoàn thành `c11-file-export-production.md`; 10 gate C10-G1 đến C10-G10; ngân sách 0,01 mm |
 | **F02** | Document Model & Storage đa trang | F01; `core/document` | Snapshot đa trang thật; `ImageObject` native v8 lưu đầy đủ metadata; Undo/Redo hoàn hảo |
 | **F03** | Worker & Dependency Sandbox | F01; `platform/workers` | AppContainer worker v2; Job Object budget; cô lập filesystem và chặn gọi mạng 100% |
 | **F04** | File Workflow & Atomic Export nền tảng | F01–F03; `modules/interop/export` | `ExportJob`, `ExportOptions`, `ExportReport`, `AtomicExport` (file tạm + rename); UI wrapper SVG |

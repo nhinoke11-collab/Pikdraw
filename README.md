@@ -7,8 +7,8 @@ Trạng thái từng khả năng và giới hạn nằm trong [project-state](do
 
 File thiết kế chỉ dùng **.pr**. Payload schema v23 được lưu trong container v23 khi nhỏ hơn 1 MiB;
 payload lớn dùng container chunk v24, còn raster source/sample dedup dùng schema v24 trong container
-v25. Atomic save stream payload theo chunk vào file tạm; mở file vẫn đọc toàn container và dựng
-payload giải nén trong memory. Chi tiết nằm trong [định dạng PR](docs/architecture/native-pr-format.md).
+v25, và phân cấp LayerId/group/role dùng schema v25 trong container v26 (reader nhận v2–v26). Atomic save stream payload
+theo chunk vào file tạm; mở file vẫn đọc toàn container và dựng payload giải nén trong memory. Chi tiết nằm trong [định dạng PR](docs/architecture/native-pr-format.md).
 
 ## Phát triển
 
@@ -28,7 +28,8 @@ giữ cấu hình hiện có, chọn test, retry incremental và cleanup.
 
 Core gồm document, geometry, rendering, color và typography. Vector, interop, automation,
 workers và desktop có implementation. Raster đang tích hợp asset trên đĩa/tile/edit graph;
-production/nesting/CNC, scene3d và plugin SDK vẫn là kế hoạch.
+production (test sheet, TAC, CGATS ΔE00, .pdmr, WCS print) đang triển khai (`in_progress`);
+nesting/CNC/toolpath, scene3d và plugin SDK vẫn là kế hoạch.
 MCP HTTP trong app, sidecar stdio và COM đi qua cùng semantic automation service.
 Agent có thể query/batch/validate/save; capability công bố giới hạn thật của từng thao tác.
 

@@ -151,9 +151,9 @@ void ensure_shortcuts_initialized(NativeWindow& win) {
 
         // Edit
         { ActionId::kEditUndo, "Hoàn tác (Undo)", "Undo", "Ctrl+Z", ShortcutCategory::Edit,
-          [&win] { win.workflow().undo(); InvalidateRect(win.hwnd(), nullptr, FALSE); } },
+          [&win] { win.execute_menu_action(static_cast<int>(MenuActionId::EditUndo)); } },
         { ActionId::kEditRedo, "Làm lại (Redo)", "Redo", "Ctrl+Y", ShortcutCategory::Edit,
-          [&win] { win.workflow().redo(); InvalidateRect(win.hwnd(), nullptr, FALSE); } },
+          [&win] { win.execute_menu_action(static_cast<int>(MenuActionId::EditRedo)); } },
         { ActionId::kEditCut, "Cắt đối tượng (Cut)", "Cut", "Ctrl+X", ShortcutCategory::Edit,
           [&win] { win.workflow().cut_selected(win.hwnd()); InvalidateRect(win.hwnd(), nullptr, FALSE); } },
         { ActionId::kEditCopy, "Sao chép (Copy)", "Copy", "Ctrl+C", ShortcutCategory::Edit,
@@ -182,10 +182,16 @@ void ensure_shortcuts_initialized(NativeWindow& win) {
           [&win] { win.set_active_tool(2); InvalidateRect(win.hwnd(), nullptr, FALSE); } },
         { ActionId::kToolText, "Công cụ Văn bản (Text)", "Text Tool", "A", ShortcutCategory::Tools,
           [&win] { win.set_active_tool(4); InvalidateRect(win.hwnd(), nullptr, FALSE); } },
+        { ActionId::kToolKnife, "Công cụ Knife", "Knife Tool", "K", ShortcutCategory::Tools,
+          [&win] { win.set_active_tool(5); InvalidateRect(win.hwnd(), nullptr, FALSE); } },
+        { ActionId::kToolVectorEraser, "Tẩy vector", "Vector Eraser", "Shift+E", ShortcutCategory::Tools,
+          [&win] { win.set_active_tool(16); InvalidateRect(win.hwnd(), nullptr, FALSE); } },
+        { ActionId::kToolScissors, "Kéo Scissors", "Scissors Tool", "X", ShortcutCategory::Tools,
+          [&win] { win.set_active_tool(19); InvalidateRect(win.hwnd(), nullptr, FALSE); } },
         { ActionId::kViewFitAll, "Căn vừa trang (Fit Page)", "Fit to Page", "F", ShortcutCategory::Tools,
           [&win] { win.fit_page_to_canvas(); InvalidateRect(win.hwnd(), nullptr, FALSE); } },
         { ActionId::kViewZoom100, "Thu phóng 100%", "Zoom 100%", "1", ShortcutCategory::Tools,
-          [&win] { win.zoom_in(); InvalidateRect(win.hwnd(), nullptr, FALSE); } },
+          [&win] { win.zoom_to_actual_size(); } },
         // View / Color Proofing
         { ActionId::kViewProofColors, "Mô phỏng màu in (Proof Colors)", "Proof Colors", "Ctrl+Alt+Y", ShortcutCategory::View,
           [&win] { win.execute_menu_action(static_cast<int>(MenuActionId::ViewProofColors)); } },
@@ -205,13 +211,23 @@ void ensure_shortcuts_initialized(NativeWindow& win) {
 }
 
 bool dispatch_canvas_shortcuts(NativeWindow& win, WPARAM key) {
-    if (win.is_inline_text_editing() || win.active_numeric_field() != NumericFieldId::None) {
+    if (win.is_text_input_context()) {
         return false;
     }
 
     const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
     const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
     const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+
+    // In CorelDRAW profile: alignment keys (R, E, L, T, B, C, P) take precedence when >= 2 objects are selected
+    if (!ctrl && !shift && !alt) {
+        const auto sel_count = win.root().vector_controller().selection().count();
+        if (sel_count >= 2 || win.align_reference() == geometry::AlignReference::Page) {
+            if (key == 'R' || key == 'E' || key == 'C' || key == 'T' || key == 'B' || key == 'L' || key == 'P') {
+                return false;
+            }
+        }
+    }
 
     std::string sc = format_key_shortcut_string(key, ctrl, shift, alt);
     if (sc.empty()) return false;

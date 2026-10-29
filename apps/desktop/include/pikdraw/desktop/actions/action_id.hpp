@@ -106,10 +106,12 @@ struct ActionId {
     static constexpr std::string_view kToolKnife = "action.tool.knife";
     static constexpr std::string_view kToolVectorEraser = "action.tool.vector_eraser";
     static constexpr std::string_view kToolScissors = "action.tool.scissors";
+    static constexpr std::string_view kToolTrimObjects = "action.tool.trim_objects";
     static constexpr std::string_view kToolSmartTrim = "action.tool.smart_trim";
     static constexpr std::string_view kToolTrim = "action.tool.trim";
     static constexpr std::string_view kToolSmartFill = "action.tool.smart_fill";
     static constexpr std::string_view kToolShapeBuilder = "action.tool.shape_builder";
+    static constexpr std::string_view kToolRasterEraser = "action.tool.raster_eraser";
     static constexpr std::string_view kObjectTrimSourceTarget = "action.object.trim_source_target";
     static constexpr std::string_view kToolContour = "action.tool.contour";
     static constexpr std::string_view kEffectsContourFocus = "action.effects.contour.focus";

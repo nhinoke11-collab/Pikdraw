@@ -3,6 +3,7 @@
 #include "pikdraw/automation/json_value.hpp"
 
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <map>
 #include <string>
@@ -25,12 +26,15 @@ public:
     [[nodiscard]] automation::JsonValue handle(const automation::JsonValue& request);
     /// Releases all application sessions owned by this transport session.
     void disconnect_all();
+    /// Releases idle sessions older than ttl. Returns number of expired sessions.
+    size_t expire_idle_sessions(std::chrono::milliseconds ttl = std::chrono::minutes(30));
 
 private:
     struct Endpoint {
         std::string instance_id;
         std::wstring pipe_name;
         automation::JsonValue granted_scopes;
+        std::chrono::steady_clock::time_point last_seen{std::chrono::steady_clock::now()};
     };
 
     enum class ProtocolMode { Undecided, Modern, Legacy };

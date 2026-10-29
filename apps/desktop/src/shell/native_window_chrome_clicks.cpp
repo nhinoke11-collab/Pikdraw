@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "pikdraw/desktop/shell/cut_shape_tool_catalog.hpp"
 #include "native_window_toolbox.hpp"
 #include "native_window_text_properties.hpp"
 #include "native_window_file_menu.hpp"
@@ -15,6 +16,7 @@
 #include "native_window_drop_shadow_paint.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <iomanip>
 #include <sstream>
@@ -52,6 +54,18 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
     }
     if (active_tool_ == 14 && x >= w - 280 && y >= 138) {
         (void)handle_artboard_property_click(x, y);
+        return true;
+    }
+    if ((active_tool_ == 5 || active_tool_ == 16 || active_tool_ == 20) && active_dock_tab_ == 0 &&
+        x >= w - 280 && y >= 138 && handle_cut_tool_properties_click(x, y, true))
+        return true;
+    if (active_tool_ == 21 && active_dock_tab_ == 0 && x >= w - 280 && y >= 138) {
+        (void)handle_cut_tool_properties_click(x, y, true);
+        return true;
+    }
+    if ((active_tool_ == 22 || active_tool_ == 23 || active_tool_ == 24) && active_dock_tab_ == 0 &&
+        x >= w - 280 && y >= 138) {
+        (void)handle_cut_tool_properties_click(x, y, true);
         return true;
     }
     if (active_dock_tab_ == 0 && x >= w - 280 && y >= 138) {
@@ -124,6 +138,140 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
 
     // 3b. Context Tool Ribbon clicks (y: 66 to 102)
     if (y >= 66 && y <= 102) {
+        if (active_tool_ == 19) {
+            if (x >= 160 && x <= 286) {
+                active_dock_tab_ = 0;
+                properties_dock_scroll_ = 0;
+                show_style_inspector_ = false;
+                show_align_panel_ = false;
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Đã mở Hướng dẫn Scissors"
+                    : "Opened Scissors Properties";
+            }
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
+        if (active_tool_ == 21) {
+            active_dock_tab_ = 0;
+            properties_dock_scroll_ = 0;
+            show_style_inspector_ = false;
+            show_align_panel_ = false;
+            status_msg_ = language_ == UILanguage::Vietnamese
+                ? "Đã mở Thuộc tính Smart Trim"
+                : "Opened Smart Trim Properties";
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
+        if (active_tool_ == 22 || active_tool_ == 23) {
+            if (active_tool_ == 22 && x >= 110 && x < 222) {
+                commit_shape_builder(false);
+            } else if (active_tool_ == 22 && x >= 228 && x < 336) {
+                commit_shape_builder(true);
+            } else if (active_tool_ == 22 && x >= 342 && x < 430) {
+                reset_shape_builder();
+            } else if (x >= 436 && x <= 552) {
+                active_dock_tab_ = 0;
+                properties_dock_scroll_ = 0;
+                show_style_inspector_ = false;
+                show_align_panel_ = false;
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? (active_tool_ == 22 ? "Đã mở Thuộc tính Shape Builder" : "Đã mở Thuộc tính Smart Fill")
+                    : (active_tool_ == 22 ? "Opened Shape Builder Properties" : "Opened Smart Fill Properties");
+            }
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
+        if (active_tool_ == 24) {
+            if (x >= 130 && x < 252) {
+                constexpr std::array<double, 6> diameters{4.0, 8.0, 12.0, 24.0, 48.0, 96.0};
+                const auto current = std::find_if(diameters.begin(), diameters.end(), [&](double value) {
+                    return std::abs(value - raster_eraser_diameter_px_) < 0.01;
+                });
+                raster_eraser_diameter_px_ = current == diameters.end() || std::next(current) == diameters.end()
+                    ? diameters.front() : *std::next(current);
+                status_msg_ = (language_ == UILanguage::Vietnamese
+                    ? "Đường kính tẩy ảnh: " : "Raster eraser diameter: ") +
+                    std::to_string(static_cast<int>(std::lround(raster_eraser_diameter_px_))) + " px";
+            } else if (x >= 260 && x < 382) {
+                active_dock_tab_ = 0;
+                properties_dock_scroll_ = 0;
+                show_style_inspector_ = false;
+                show_align_panel_ = false;
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Đã mở Thuộc tính Tẩy ảnh" : "Opened Raster Eraser Properties";
+            }
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
+        if (active_tool_ == 20) {
+            if (x >= 110 && x < 222) {
+                discard_pending_cut_geometry_proposal();
+                trim_objects_keep_sources_ = !trim_objects_keep_sources_;
+            } else if (x >= 228 && x < 336) {
+                commit_trim_objects();
+            } else if (x >= 342 && x < 430) {
+                reset_trim_objects_roles();
+            } else if (x >= 436 && x < 548) {
+                active_dock_tab_ = 0;
+                properties_dock_scroll_ = 0;
+                show_style_inspector_ = false;
+                show_align_panel_ = false;
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Đã mở Thuộc tính Cắt bằng đối tượng"
+                    : "Opened Trim Objects Properties";
+            }
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
+        if (active_tool_ == 5) {
+            if (x >= 75 && x <= 147) {
+                if (active_num_field_ != NumericFieldId::None) {
+                    commit_numeric_field();
+                    if (active_num_field_ != NumericFieldId::None) return true;
+                }
+                knife_freehand_mode_ = false;
+            } else if (x >= 151 && x <= 239) {
+                if (active_num_field_ != NumericFieldId::None) {
+                    commit_numeric_field();
+                    if (active_num_field_ != NumericFieldId::None) return true;
+                }
+                knife_freehand_mode_ = true;
+            } else if (x >= 245 && x <= 365) {
+                start_numeric_input(NumericFieldId::KnifeGap);
+            } else if (x >= 372 && x <= 484) {
+                active_dock_tab_ = 0;
+                properties_dock_scroll_ = 0;
+                show_style_inspector_ = false;
+                show_align_panel_ = false;
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Đã mở Thuộc tính Knife"
+                    : "Opened Knife Properties";
+            }
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
+        if (active_tool_ == 16) {
+            if (x >= 112 && x <= 233) {
+                start_numeric_input(NumericFieldId::VectorEraserDiameter);
+            } else if (x >= 240 && x <= 350) {
+                if (active_num_field_ != NumericFieldId::None) {
+                    commit_numeric_field();
+                    if (active_num_field_ != NumericFieldId::None) return true;
+                }
+                vector_eraser_round_nib_ = !vector_eraser_round_nib_;
+            } else if (x >= 357 && x <= 469) {
+                active_dock_tab_ = 0;
+                properties_dock_scroll_ = 0;
+                show_style_inspector_ = false;
+                show_align_panel_ = false;
+                status_msg_ = language_ == UILanguage::Vietnamese
+                    ? "Đã mở Thuộc tính Tẩy vector"
+                    : "Opened Vector Eraser Properties";
+            }
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
+        if (has_annotation_properties_target() && handle_annotation_property_bar_click(x, y)) return true;
         if (active_tool_ == 0 && handle_powerclip_controls(x,y,10,70,
             w - AlignPanelMetrics::dock_width - 10,false)) return true;
         if (active_tool_ == 11 && node_tool_ && node_tool_->active()) {
@@ -608,25 +756,26 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
         const RECT slot_rc = get_toolbox_slot_rect(slot_idx >= 0 ? slot_idx : 0);
         const int flyout_top = slot_rc.top;
         const int flyout_left = toolbox_width() + 4;
-        const int flyout_height = toolbox_open_group_ == 6 ? 90
+        const int flyout_height = toolbox_open_group_ == 6
+            ? 26 + static_cast<int>(kCutShapeToolCatalog.size()) * 29 + 7
             : toolbox_open_group_ == 7 ? 116
             : toolbox_open_group_ == 3 ? 174
             : (toolbox_open_group_ == 2) ? 145
             : (toolbox_open_group_ == 5) ? 116
             : (toolbox_open_group_ == 4) ? 58
-            : 116;
+            : (toolbox_open_group_ == 1) ? 145 : 116;
         const int flyout_width = (toolbox_open_group_ == 6 || toolbox_open_group_ == 7) ? 220 : (toolbox_open_group_ == 3 || toolbox_open_group_ == 5) ? 214 : 188;
         const bool inside_flyout = x >= flyout_left && x <= flyout_left + flyout_width &&
             y >= flyout_top && y < flyout_top + flyout_height;
         if (inside_flyout && y >= flyout_top + 26) {
             const int item = (y - flyout_top - 26) / 29;
-            const int max_items = toolbox_open_group_ == 6 ? 2
+            const int max_items = toolbox_open_group_ == 6 ? static_cast<int>(kCutShapeToolCatalog.size())
                 : toolbox_open_group_ == 7 ? 3
                 : toolbox_open_group_ == 3 ? 5
                 : toolbox_open_group_ == 2 ? 4
                 : toolbox_open_group_ == 5 ? 3
                 : toolbox_open_group_ == 4 ? 1
-                : 3;
+                : toolbox_open_group_ == 1 ? 4 : 3;
             if (item >= 0 && item < max_items) {
                 if (toolbox_open_group_ == 7) {
                     toolbox_open_group_ = 0;
@@ -656,13 +805,25 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                 }
                 if (toolbox_open_group_ == 6) {
                     toolbox_open_group_ = 0;
-                    const int tools_grp6[] = {5, 16};
-                    set_active_tool(tools_grp6[item]);
+                    const auto* descriptor = cut_shape_tool_at(static_cast<size_t>(item));
+                    if (!descriptor) return true;
+                    if (descriptor->id == CutShapeToolId::TrimObjects) {
+                        reset_trim_objects_roles();
+                        trim_objects_keep_sources_ = true;
+                    }
+                    if (descriptor->id == CutShapeToolId::ShapeBuilder)
+                        shape_builder_seed_points_.clear();
+                    set_active_tool(static_cast<int>(descriptor->id));
+                    if (descriptor->id == CutShapeToolId::TrimObjects) {
+                        status_msg_ = language_ == UILanguage::Vietnamese
+                            ? "Cắt bằng đối tượng · nhấp Target trước, rồi nhấp một hoặc nhiều Source"
+                            : "Trim Objects · click the Target first, then one or more Sources";
+                    }
                     InvalidateRect(hwnd_, nullptr, FALSE);
                     return true;
                 }
                 const int tool = toolbox_open_group_ == 1
-                    ? (item == 0 ? 1 : item == 1 ? 2 : 9)
+                    ? (item == 0 ? 1 : item == 1 ? 2 : item == 2 ? 9 : 18)
                     : (item == 0 ? 6 : item == 1 ? 7 : item == 2 ? 8 : 11);
                 toolbox_open_group_ = 0;
                 set_active_tool(tool);
@@ -732,7 +893,7 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                     toolbox_focus_group_ = group;
                     if (on_arrow) {
                         toolbox_open_group_ = (toolbox_open_group_ == group) ? 0 : group;
-                        toolbox_flyout_index_ = quick_shapes_last_tool_ == 1 ? 0 : quick_shapes_last_tool_ == 2 ? 1 : 2;
+                        toolbox_flyout_index_ = quick_shapes_last_tool_ == 1 ? 0 : quick_shapes_last_tool_ == 2 ? 1 : quick_shapes_last_tool_ == 9 ? 2 : 3;
                     } else {
                         toolbox_open_group_ = 0;
                         set_active_tool(quick_shapes_last_tool_);
@@ -1028,8 +1189,8 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                             document::RasterToneChannel::Blue};
                         if (set_selected_bitmap_levels_channel(channels[channel])) {
                             status_msg_ = language_ == UILanguage::Vietnamese
-                                ? "Đã đổi kênh Levels · Ctrl+Z hoàn tác"
-                                : "Changed Levels channel · Ctrl+Z undoes";
+                                ? "Đang xem kênh Levels; các kênh khác được giữ nguyên"
+                                : "Viewing Levels channel; other channels are preserved";
                             InvalidateRect(hwnd_, nullptr, FALSE);
                         }
                         return true;
@@ -1070,8 +1231,8 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                             document::RasterToneChannel::Blue};
                         if (set_selected_bitmap_curves_channel(channels[channel])) {
                             status_msg_ = language_ == UILanguage::Vietnamese
-                                ? "Đã đổi kênh Curves · Ctrl+Z hoàn tác"
-                                : "Changed Curves channel · Ctrl+Z undoes";
+                                ? "Đang xem kênh Curves; các kênh khác được giữ nguyên"
+                                : "Viewing Curves channel; other channels are preserved";
                             InvalidateRect(hwnd_, nullptr, FALSE);
                         }
                         return true;
@@ -1176,6 +1337,11 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return true;
             }
+        }
+        if (active_dock_tab_ == 0 && has_annotation_properties_target() &&
+            handle_annotation_properties_panel_click(x, y)) {
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
         }
 
         // Transform controls & Rectangle corner controls in Inspector Dock (Objects tab)
@@ -1454,7 +1620,9 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
-            if (index >= pages.size() || !root().document().set_active_page(pages[index].id)) return;
+            if (index >= pages.size()) return;
+            cancel_canvas_interaction();
+            if (!root().document().set_active_page(pages[index].id)) return;
             const auto active_snapshot = root().document().current_snapshot();
             const auto* page = active_snapshot ? active_snapshot->find_page(active_snapshot->active_page_id()) : nullptr;
             if (!page) return;
@@ -1573,6 +1741,103 @@ bool NativeWindow::handle_workspace_chrome_mouse_down(int x, int y, unsigned mod
         return true;
     if (handle_drawing_click(x, y, modifiers))
         return true;
+    return false;
+}
+
+bool NativeWindow::handle_cut_tool_properties_click(int x, int y, bool in_properties_dock) {
+    if (active_tool_ != 5 && active_tool_ != 16 && active_tool_ != 20 && active_tool_ != 21 &&
+        active_tool_ != 22 && active_tool_ != 23 && active_tool_ != 24) return false;
+    int w = width_;
+    if (hwnd_) {
+        RECT client{};
+        if (GetClientRect(hwnd_, &client)) w = logical_pixel(client.right - client.left);
+    }
+    if (!in_properties_dock) return false;
+    const int content_y = 138 - properties_dock_scroll_;
+    const int left = w - inspector_width() + 14;
+    const int right = w - 14;
+    if (active_tool_ == 21 || active_tool_ == 23) return x >= left && x < right;
+    if (active_tool_ == 22) {
+        if (x < left || x >= right) return false;
+        if (y >= content_y + 76 && y < content_y + 106) {
+            commit_shape_builder(false);
+        } else if (y >= content_y + 110 && y < content_y + 140) {
+            commit_shape_builder(true);
+        } else if (y >= content_y + 144 && y < content_y + 174) {
+            reset_shape_builder();
+        } else {
+            return false;
+        }
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return true;
+    }
+    if (active_tool_ == 24) {
+        const int choice_left = left;
+        const int gap = 6;
+        const int button_width = std::max(1, (right - choice_left - gap * 2) / 3);
+        const int row_one = content_y + 142;
+        const int row_two = content_y + 178;
+        const bool in_row = (y >= row_one && y < row_one + 30) ||
+                            (y >= row_two && y < row_two + 30);
+        if (!in_row || x < choice_left || x >= right) return false;
+        const int row = y >= row_two ? 1 : 0;
+        const int column = std::clamp((x - choice_left) / (button_width + gap), 0, 2);
+        constexpr std::array<double, 6> diameters{4.0, 8.0, 12.0, 24.0, 48.0, 96.0};
+        raster_eraser_diameter_px_ = diameters[static_cast<size_t>(row * 3 + column)];
+        status_msg_ = (language_ == UILanguage::Vietnamese
+            ? "Đường kính tẩy ảnh: " : "Raster eraser diameter: ") +
+            std::to_string(static_cast<int>(std::lround(raster_eraser_diameter_px_))) + " px";
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return true;
+    }
+    if (active_tool_ == 20) {
+        if (y >= content_y + 84 && y < content_y + 112 && x >= left && x < right) {
+            trim_objects_keep_sources_ = !trim_objects_keep_sources_;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
+        if (y >= content_y + 118 && y < content_y + 146 && x >= left && x < right) {
+            commit_trim_objects();
+            return true;
+        }
+        if (y >= content_y + 152 && y < content_y + 180 && x >= left && x < right) {
+            reset_trim_objects_roles();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return true;
+        }
+        return false;
+    }
+    if (y >= content_y + 32 && y < content_y + 62 && active_tool_ == 5 &&
+        x >= left && x < right) {
+        if (active_num_field_ != NumericFieldId::None) {
+            commit_numeric_field();
+            if (active_num_field_ != NumericFieldId::None) return true;
+        }
+        knife_freehand_mode_ = x >= (left + right) / 2;
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? (knife_freehand_mode_ ? "Knife tự do · nhả chuột để cắt" : "Knife đường thẳng · nhả chuột để cắt")
+            : (knife_freehand_mode_ ? "Freehand Knife · release to cut" : "Straight Knife · release to cut");
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return true;
+    }
+    if (y >= content_y + 68 && y < content_y + 100 && x >= left && x < right) {
+        start_numeric_input(active_tool_ == 5
+            ? NumericFieldId::KnifeGap : NumericFieldId::VectorEraserDiameter);
+        return true;
+    }
+    if (active_tool_ == 16 && y >= content_y + 106 && y < content_y + 138 &&
+        x >= left && x < right) {
+        if (active_num_field_ != NumericFieldId::None) {
+            commit_numeric_field();
+            if (active_num_field_ != NumericFieldId::None) return true;
+        }
+        vector_eraser_round_nib_ = !vector_eraser_round_nib_;
+        status_msg_ = language_ == UILanguage::Vietnamese
+            ? (vector_eraser_round_nib_ ? "Đầu tẩy tròn" : "Đầu tẩy vuông")
+            : (vector_eraser_round_nib_ ? "Round eraser nib" : "Square eraser nib");
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return true;
+    }
     return false;
 }
 #endif

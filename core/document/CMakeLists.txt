@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(pikdraw_document STATIC
+    src/resources/memory_budget_policy.cpp
     src/async/proposal_validator.cpp
     src/snapshots/structure_validator.cpp
     src/commands/command.cpp
@@ -30,6 +31,7 @@ add_library(pikdraw_document STATIC
     src/annotations/annotation_layout.cpp
     src/commands/transaction_writer.cpp
     src/storage/native_format.cpp
+    src/storage/native_format_raster.cpp
     src/storage/native_chunk_encode.cpp
     src/storage/native_chunk_decode.cpp
     src/storage/crc32.cpp
@@ -82,6 +84,7 @@ if(PIKDRAW_BUILD_TESTS)
     endmacro()
 
     add_doc_test(test_pikdraw_document_commands tests/commands/test_commands.cpp)
+    add_doc_test(test_pikdraw_memory_budget_policy tests/resources/test_memory_budget_policy.cpp)
     target_sources(test_pikdraw_document_commands PRIVATE tests/commands/test_color_commands.cpp)
     add_doc_test(test_pikdraw_document_layer_commands tests/commands/test_layer_commands.cpp)
     add_doc_test(test_pikdraw_document_node_commands tests/commands/test_node_commands.cpp)

@@ -66,6 +66,7 @@ public:
     bool close_selected();
     bool move_selected_delta(geometry::Point2D delta);
     bool set_selected_node_position(geometry::Point2D new_pos);
+    bool ensure_authoring_source();
 
     // Selection query
     void select_all();
@@ -153,6 +154,7 @@ private:
 
     // Direct Segment Bending
     std::optional<ActiveSegmentDrag> active_segment_drag_;
+    mutable std::optional<document::EditablePath> fallback_ep_;
 };
 
 } // namespace pikdraw::vector::tools::node

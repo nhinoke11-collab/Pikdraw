@@ -13,6 +13,7 @@
 #include "pikdraw/document/commands/import_content_command.hpp"
 #include "pikdraw/document/model/clone_utils.hpp"
 #include "pikdraw/geometry/primitives/point.hpp"
+#include "pikdraw/desktop/workflows/cut_geometry_job.hpp"
 
 #include <functional>
 #include <algorithm>
@@ -503,6 +504,13 @@ public:
         double separate_offset_mm = 0.0
     );
 
+    /// Knife cut along captured freehand points in world millimeters.
+    bool split_objects_by_polyline(
+        const std::vector<geometry::Point2D>& points,
+        double gap_mm = 0.0,
+        double separate_offset_mm = 0.0
+    );
+
     /// Knife cut on selected or candidate objects using true geometric path bisecting
     bool cut_objects_by_line(
         const geometry::Point2D& p1,
@@ -511,12 +519,42 @@ public:
         double gap_mm = 0.0
     );
 
+    bool cut_objects_by_polyline(
+        const std::vector<geometry::Point2D>& points,
+        double separate_offset_mm = 0.0,
+        double gap_mm = 0.0
+    );
+    bool apply_cut_geometry_proposal(CutGeometryProposal proposal,
+                                     std::string* error = nullptr);
+
     /// Vector Eraser sweeping along stroke
     bool erase_objects_by_stroke(
         const std::vector<geometry::Point2D>& stroke,
         double diameter_mm = 2.0,
         bool round_nib = true
     );
+
+    /// Split the editable path nearest to a screen-space hit expressed in world mm.
+    bool scissors_split_at_point(const geometry::Point2D& point_world,
+                                 double hit_tolerance_mm);
+
+    /// Remove the intersection-bounded editable stroke interval under a hit.
+    /// Ambiguous/overlapping intersections fail without mutating the document.
+    bool smart_trim_at_point(const geometry::Point2D& point_world,
+                             double hit_tolerance_mm,
+                             std::string* error = nullptr);
+
+    /// Resolve a bounded face formed by visible editable closed filled paths.
+    bool resolve_smart_fill_face(const geometry::Point2D& point_world,
+                                 geometry::Path2D& face,
+                                 std::vector<document::ObjectId>& source_ids,
+                                 document::ObjectId& style_source_id,
+                                 std::string* error = nullptr);
+    bool smart_fill_at_point(const geometry::Point2D& point_world,
+                             std::string* error = nullptr);
+    bool shape_builder_apply_faces(const std::vector<geometry::Point2D>& seed_points,
+                                   bool erase_faces,
+                                   std::string* error = nullptr);
 
     /// Trim target object by subtracting source objects
     bool trim_objects_source_target(

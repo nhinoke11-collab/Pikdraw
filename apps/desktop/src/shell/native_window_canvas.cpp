@@ -1,4 +1,5 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "pikdraw/raster/edit_geometry.hpp"
 #include "pikdraw/raster/edit_preview_service.hpp"
 #include "../performance/canvas_trace.hpp"
 #include "native_window_page_navigation.hpp"
@@ -330,7 +331,7 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
             DeleteObject(pen);
         } else {
             draw_outline(dc, camera, preview, area.left, area.top,
-                         RGB(0, 242, 195), PS_DASH, active_tool_ == 2);
+                         RGB(0, 242, 195), PS_DASH, active_tool_ == 2 || active_tool_ == 18);
         }
     }
 
@@ -342,10 +343,27 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
         int sx1 = area.left + static_cast<int>(s1.x);
         int sy1 = area.top + static_cast<int>(s1.y);
 
-        HPEN laser_pen = CreatePen(PS_DASH, 2, RGB(239, 68, 68));
+        const bool eraser_preview = active_tool_ == 16 && !eraser_stroke_.empty();
+        const int preview_width = eraser_preview
+            ? std::clamp(static_cast<int>(std::lround(
+                  vector_eraser_diameter_mm_ * camera.zoom())), 1, 1024)
+            : 2;
+        HPEN laser_pen = CreatePen(eraser_preview ? PS_SOLID : PS_DASH,
+                                   preview_width, RGB(239, 68, 68));
         HGDIOBJ old_pen = SelectObject(dc, laser_pen);
         MoveToEx(dc, sx0, sy0, nullptr);
-        LineTo(dc, sx1, sy1);
+        if (eraser_preview || (active_tool_ == 5 && knife_freehand_mode_ && !knife_stroke_.empty())) {
+            const auto& preview_points = eraser_preview ? eraser_stroke_ : knife_stroke_;
+            for (const auto& point : preview_points) {
+                const auto screen = camera.world_to_screen(point);
+                LineTo(dc, area.left + static_cast<int>(screen.x),
+                       area.top + static_cast<int>(screen.y));
+            }
+            if (!preview_points.empty()) {
+                const auto screen = camera.world_to_screen({knife_current_world_.x, knife_current_world_.y});
+                LineTo(dc, area.left + static_cast<int>(screen.x), area.top + static_cast<int>(screen.y));
+            }
+        } else LineTo(dc, sx1, sy1);
         SelectObject(dc, old_pen);
         DeleteObject(laser_pen);
 
@@ -359,6 +377,64 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
         SelectObject(dc, ob);
         DeleteObject(marker_br);
         DeleteObject(marker_pen);
+    }
+
+    if (is_raster_eraser_stroke_ && !raster_eraser_stroke_.empty()) {
+        const auto& ids = root().vector_controller().selection().selected_ids();
+        const auto snapshot = root().document().current_snapshot();
+        const auto* object = snapshot && ids.size() == 1
+            ? snapshot->objects().lookup_ref(ids.front()) : nullptr;
+        const auto* image = object ? std::get_if<document::ImageObject>(object) : nullptr;
+        const auto* owner = snapshot && ids.size() == 1
+            ? snapshot->hierarchy().find(ids.front()) : nullptr;
+        const auto area = canvas_rect(width_, height_);
+        const auto current = camera.world_to_screen(pointer_current_world_);
+        const int sx = area.left + static_cast<int>(std::lround(current.x));
+        const int sy = area.top + static_cast<int>(std::lround(current.y));
+        int radius_x = 6;
+        int radius_y = 6;
+        if (image && owner) {
+            const auto [pixel_width, pixel_height] = raster::raster_edited_pixel_dimensions(*image);
+            const auto local_bounds = raster::raster_edited_bounds(*image, pixel_width, pixel_height);
+            // SceneHierarchy::Entry::world already includes this image's transform.
+            const auto world_transform = owner->world;
+            const auto inverse = world_transform.inverted();
+            if (pixel_width != 0 && pixel_height != 0 && inverse && local_bounds.is_finite() &&
+                local_bounds.width > 0.0 && local_bounds.height > 0.0) {
+                const auto local = inverse->map_point(pointer_current_world_);
+                const auto center_world = world_transform.map_point(local);
+                const double dx_local = local_bounds.width * raster_eraser_diameter_px_ /
+                    static_cast<double>(pixel_width) * 0.5;
+                const double dy_local = local_bounds.height * raster_eraser_diameter_px_ /
+                    static_cast<double>(pixel_height) * 0.5;
+                const auto x_world = world_transform.map_point({local.x + dx_local, local.y});
+                const auto y_world = world_transform.map_point({local.x, local.y + dy_local});
+                const auto center_screen = camera.world_to_screen(center_world);
+                const auto x_screen = camera.world_to_screen(x_world);
+                const auto y_screen = camera.world_to_screen(y_world);
+                radius_x = std::clamp(static_cast<int>(std::lround(std::hypot(
+                    x_screen.x - center_screen.x, y_screen.x - center_screen.x))), 2, 1024);
+                radius_y = std::clamp(static_cast<int>(std::lround(std::hypot(
+                    x_screen.y - center_screen.y, y_screen.y - center_screen.y))), 2, 1024);
+            }
+        }
+        HPEN stroke_pen = CreatePen(PS_SOLID, 1, RGB(239, 68, 68));
+        const auto old_pen = SelectObject(dc, stroke_pen);
+        bool has_previous = false;
+        for (const auto& point : raster_eraser_stroke_) {
+            const auto screen = camera.world_to_screen(point);
+            const POINT current_point{area.left + static_cast<LONG>(std::lround(screen.x)),
+                                      area.top + static_cast<LONG>(std::lround(screen.y))};
+            if (has_previous) LineTo(dc, current_point.x, current_point.y);
+            else MoveToEx(dc, current_point.x, current_point.y, nullptr);
+            has_previous = true;
+        }
+        if (has_previous) LineTo(dc, sx, sy);
+        const auto old_brush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        Ellipse(dc, sx - radius_x, sy - radius_y, sx + radius_x, sy + radius_y);
+        SelectObject(dc, old_brush);
+        SelectObject(dc, old_pen);
+        DeleteObject(stroke_pen);
     }
 
     paint_inline_text_overlay(dc);
@@ -494,6 +570,7 @@ void NativeWindow::paint_document_canvas(HDC dc, int width, int height) {
     paint_canvas_guidelines(dc, width, height);
     paint_canvas_rulers(dc, width, height);
     paint_selection_overlay(dc);
+    paint_cut_geometry_preview_overlay(dc, canvas_rect(width, height));
     paint_smart_guide_overlay(dc, canvas_rect(width, height));
     paint_import_placement_overlay(dc);
 }
@@ -506,6 +583,68 @@ void NativeWindow::paint_canvas_overlay_layer(HDC dc, int width, int height) {
     } restore{canvas_overlay_only_, canvas_overlay_only_};
     canvas_overlay_only_ = true;
     paint_document_canvas(dc, width, height);
+}
+
+void NativeWindow::invalidate_canvas_overlay() {
+    if (!hwnd_)
+        return;
+    const RECT area = canvas_rect(width_, height_);
+    if (area.right <= area.left || area.bottom <= area.top)
+        return;
+    if (!canvas_cache_valid_ || !cached_canvas_dc_ || !cached_canvas_bmp_) {
+        canvas_overlay_paint_pending_ = false;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
+    canvas_overlay_paint_pending_ = true;
+    const RECT dirty{dip(area.left), dip(area.top), dip(area.right), dip(area.bottom)};
+    InvalidateRect(hwnd_, &dirty, FALSE);
+}
+
+bool NativeWindow::paint_cached_canvas_overlay(HDC dc, int width, int height,
+                                               const RECT& dirty) {
+    if (!canvas_overlay_paint_pending_ || !canvas_cache_valid_ ||
+        !cached_canvas_dc_ || !cached_canvas_bmp_)
+        return false;
+
+    const RECT area = canvas_rect(width, height);
+    const int canvas_width = area.right - area.left;
+    const int canvas_height = area.bottom - area.top;
+    const RECT dirty_logical{logical_pixel(dirty.left), logical_pixel(dirty.top),
+                             logical_pixel(dirty.right), logical_pixel(dirty.bottom)};
+    if (canvas_width <= 0 || canvas_height <= 0 ||
+        canvas_width != cached_canvas_w_ || canvas_height != cached_canvas_h_ ||
+        dirty_logical.left < area.left || dirty_logical.top < area.top ||
+        dirty_logical.right > area.right || dirty_logical.bottom > area.bottom)
+        return false;
+
+    const auto snapshot = workflow().snapshot_for_canvas();
+    const auto& camera = root().renderer().camera();
+    if (!snapshot || snapshot != cached_canvas_snapshot_ ||
+        snapshot->revision() != cached_revision_ || camera.zoom() != cached_zoom_ ||
+        camera.center().x != cached_camera_x_ || camera.center().y != cached_camera_y_ ||
+        theme_ != cached_theme_ || artboard_overview_enabled() != cached_artboard_overview_ ||
+        active_tab().active_artboard_id != cached_active_artboard_id_ ||
+        effective_color_preview_owner() != cached_canvas_profile_)
+        return false;
+
+    const int saved_dc = SaveDC(dc);
+    configure_ui_dc(dc);
+    if (canvas_trace_)
+        record_performance_event(CanvasTraceKind::CanvasOverlayBegin,
+            active_trace_event_id_, active_trace_frame_id_);
+    BitBlt(dc, area.left, area.top, canvas_width, canvas_height,
+           cached_canvas_dc_, 0, 0, SRCCOPY);
+    paint_canvas_overlay_layer(dc, width, height);
+    paint_canvas_interaction_handles(dc, width, height);
+    if (canvas_trace_)
+        record_performance_event(CanvasTraceKind::CanvasOverlayEnd,
+            active_trace_event_id_, active_trace_frame_id_);
+    if (canvas_trace_)
+        record_performance_event(CanvasTraceKind::OverlayOnlyPaint,
+            active_trace_event_id_, active_trace_frame_id_);
+    RestoreDC(dc, saved_dc);
+    return true;
 }
 
 void NativeWindow::paint_drawing_overlay(HDC dc) {

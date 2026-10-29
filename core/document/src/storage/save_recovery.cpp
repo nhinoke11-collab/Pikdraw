@@ -17,6 +17,9 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -26,6 +29,79 @@ namespace {
 std::atomic<uint64_t> next_temp{0};
 constexpr size_t kRecoveryCandidateLimit = 128;
 constexpr size_t kRecoveryScanEntryLimit = 4096;
+
+class MappedNativeFile final {
+ public:
+  MappedNativeFile() = default;
+  MappedNativeFile(const MappedNativeFile&) = delete;
+  MappedNativeFile& operator=(const MappedNativeFile&) = delete;
+  ~MappedNativeFile() {
+#ifdef _WIN32
+    if (view_) UnmapViewOfFile(view_);
+    if (mapping_) CloseHandle(mapping_);
+    if (file_ != INVALID_HANDLE_VALUE) CloseHandle(file_);
+#else
+    if (view_) munmap(view_, size_);
+    if (file_ >= 0) close(file_);
+#endif
+  }
+
+  bool open(const std::filesystem::path& path, uint64_t budget,
+            uint64_t& size) {
+#ifdef _WIN32
+    file_ = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+        OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (file_ == INVALID_HANDLE_VALUE) return false;
+    LARGE_INTEGER length{};
+    if (!GetFileSizeEx(file_, &length) || length.QuadPart < 0) return false;
+    const auto length_bytes = static_cast<uint64_t>(length.QuadPart);
+    if (length_bytes > budget ||
+        length_bytes > std::numeric_limits<size_t>::max() ||
+        length_bytes > static_cast<uint64_t>(
+            std::numeric_limits<std::ptrdiff_t>::max()))
+      return false;
+    size_ = static_cast<size_t>(length_bytes);
+    if (size_ != 0) {
+      mapping_ = CreateFileMappingW(file_, nullptr, PAGE_READONLY, 0, 0, nullptr);
+      if (!mapping_) return false;
+      view_ = MapViewOfFile(mapping_, FILE_MAP_READ, 0, 0, size_);
+    }
+#else
+    file_ = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (file_ < 0) return false;
+    struct stat info{};
+    if (fstat(file_, &info) != 0 || info.st_size < 0) return false;
+    const auto length_bytes = static_cast<uint64_t>(info.st_size);
+    if (length_bytes > budget ||
+        length_bytes > std::numeric_limits<size_t>::max() ||
+        length_bytes > static_cast<uint64_t>(
+            std::numeric_limits<std::ptrdiff_t>::max()))
+      return false;
+    size_ = static_cast<size_t>(length_bytes);
+    if (size_ != 0) {
+      view_ = mmap(nullptr, size_, PROT_READ, MAP_PRIVATE, file_, 0);
+      if (view_ == MAP_FAILED) { view_ = nullptr; return false; }
+    }
+#endif
+    if (size_ != 0 && !view_) return false;
+    size = size_;
+    return true;
+  }
+
+  [[nodiscard]] const uint8_t* data() const noexcept {
+    return static_cast<const uint8_t*>(view_);
+  }
+
+ private:
+#ifdef _WIN32
+  HANDLE file_{INVALID_HANDLE_VALUE};
+  HANDLE mapping_{};
+#else
+  int file_{-1};
+#endif
+  void* view_{};
+  size_t size_{};
+};
 
 std::string recovery_timestamp(std::filesystem::file_time_type file_time) {
   const auto system_time = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
@@ -129,35 +205,26 @@ SaveRecoveryService::load(const std::string &path, std::string *out_error,
     if (cancel_requested &&
         cancel_requested->load(std::memory_order_acquire))
       throw std::runtime_error("Native load cancelled");
-    std::ifstream input(utf8_path(path), std::ios::binary | std::ios::ate);
-    if (!input)
-      throw std::runtime_error("Cannot open native file");
-    const auto size = input.tellg();
-    if (size < 36)
-      throw std::length_error("Native file is shorter than its header");
-    const auto size_bytes = static_cast<uint64_t>(
-        static_cast<std::streamoff>(size));
     const auto read_budget = native_read_memory_budget_bytes();
-    if (read_budget == 0 || size_bytes > read_budget ||
-        size_bytes > std::numeric_limits<size_t>::max() ||
-        size_bytes > static_cast<uint64_t>(
-            std::numeric_limits<std::streamsize>::max()))
+    if (read_budget == 0)
       throw std::length_error(
           "Native file exceeds the current available-memory quota");
-    input.seekg(0, std::ios::beg);
-    std::vector<uint8_t> bytes(static_cast<size_t>(size_bytes));
-    constexpr size_t kReadChunkBytes = 1024u * 1024u;
-    for (size_t offset = 0; offset < bytes.size();) {
-      if (cancel_requested &&
-          cancel_requested->load(std::memory_order_acquire))
-        throw std::runtime_error("Native load cancelled");
-      const auto count = std::min(kReadChunkBytes, bytes.size() - offset);
-      if (!input.read(reinterpret_cast<char *>(bytes.data() + offset),
-                      static_cast<std::streamsize>(count)))
-        throw std::runtime_error("Native file read incomplete");
-      offset += count;
-    }
-    return NativeFormat::deserialize(bytes.data(), bytes.size(), out_error,
+    MappedNativeFile input;
+    uint64_t size_bytes = 0;
+    if (!input.open(utf8_path(path), read_budget, size_bytes))
+      throw std::runtime_error(
+          "Cannot open native file within the current available-memory quota");
+    if (size_bytes < 36)
+      throw std::length_error("Native file is shorter than its header");
+    if (size_bytes > read_budget ||
+        size_bytes > std::numeric_limits<size_t>::max() ||
+        size_bytes > static_cast<uint64_t>(
+            std::numeric_limits<std::ptrdiff_t>::max()))
+      throw std::length_error(
+          "Native file exceeds the current available-memory quota");
+    if (cancel_requested && cancel_requested->load(std::memory_order_acquire))
+      throw std::runtime_error("Native load cancelled");
+    return NativeFormat::deserialize(input.data(), static_cast<size_t>(size_bytes), out_error,
                                      cancel_requested);
   } catch (const std::exception &error) {
     if (out_error)

@@ -503,7 +503,7 @@ void initialize_editor(HWND dialog, EditorState &state) {
     // Configure DWM attributes for crisp modern borders
     typedef HRESULT (WINAPI *DwmSetWindowAttributeFn)(HWND, DWORD, LPCVOID, DWORD);
     HMODULE dwm = GetModuleHandleW(L"dwmapi.dll");
-    if (!dwm) dwm = LoadLibraryW(L"dwmapi.dll");
+    if (!dwm) dwm = LoadLibraryExW(L"dwmapi.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (dwm) {
         auto set_attr = reinterpret_cast<DwmSetWindowAttributeFn>(
             GetProcAddress(dwm, "DwmSetWindowAttribute"));

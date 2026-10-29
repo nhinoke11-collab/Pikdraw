@@ -66,6 +66,18 @@ PIKDRAW_TEST(eraser_cut) {
     PIKDRAW_ASSERT(result.pieces.size() >= 2); // Split top and bottom
 }
 
+PIKDRAW_TEST(eraser_follows_bent_stroke_instead_of_its_chord) {
+    const auto rect = Path2D::make_rect(0.0, 0.0, 100.0, 100.0);
+    const auto result = erase_path(rect, {{10.0, 10.0}, {10.0, 90.0}, {90.0, 90.0}}, 4.0, true);
+    PIKDRAW_ASSERT(result.success && result.pieces.size() == 1);
+    const auto on_stroke = Path2D::make_rect(9.5, 49.5, 1.0, 1.0);
+    const auto on_chord = Path2D::make_rect(49.5, 49.5, 1.0, 1.0);
+    const auto erased = boolean_paths(result.pieces.front(), on_stroke, BooleanOp::Intersection);
+    const auto retained = boolean_paths(result.pieces.front(), on_chord, BooleanOp::Intersection);
+    PIKDRAW_ASSERT(erased.success && erased.status == BooleanStatus::Empty);
+    PIKDRAW_ASSERT(retained.success && retained.status == BooleanStatus::Success);
+}
+
 PIKDRAW_TEST(eraser_preserves_hole_topology_and_rejects_noop) {
     const auto rect = Path2D::make_rect(0.0, 0.0, 100.0, 100.0);
     const auto hole = erase_path(rect, {{50.0, 50.0}}, 10.0, true);
@@ -98,13 +110,26 @@ PIKDRAW_TEST(eraser_preserves_hole_topology_and_rejects_noop) {
     PIKDRAW_ASSERT(no_op.status == PathCutStatus::NoCut);
 }
 
-PIKDRAW_TEST(eraser_rejects_open_path_until_centerline_erase_exists) {
+PIKDRAW_TEST(eraser_removes_open_stroke_centerline_and_respects_nib_shape) {
     Path2D open_path;
     open_path.move_to(0.0, 0.0);
     open_path.line_to(100.0, 0.0);
-    const auto result = erase_path(open_path, {{50.0, -10.0}, {50.0, 10.0}}, 4.0);
-    PIKDRAW_ASSERT(!result.success);
-    PIKDRAW_ASSERT(result.status == PathCutStatus::Unsupported);
+    const auto result = erase_open_path_stroke(
+        open_path, {{50.0, -10.0}, {50.0, 10.0}}, 4.0, 2.0, true);
+    PIKDRAW_ASSERT(result.success && result.status == PathCutStatus::Success);
+    PIKDRAW_ASSERT(result.pieces.size() == 2);
+    PIKDRAW_ASSERT_NEAR(result.pieces[0].bounds().width, 47.0, 1e-6);
+    PIKDRAW_ASSERT_NEAR(result.pieces[1].bounds().width, 47.0, 1e-6);
+    PIKDRAW_ASSERT_NEAR(result.approximation_error_bound_mm, 0.01, 1e-12);
+
+    const auto square = erase_open_path_stroke(
+        open_path, {{50.0, 0.0}}, 4.0, 0.0, false);
+    PIKDRAW_ASSERT(square.success && square.pieces.size() == 2);
+    PIKDRAW_ASSERT_NEAR(square.pieces[0].bounds().width, 48.0, 1e-6);
+
+    const auto noop = erase_open_path_stroke(
+        open_path, {{50.0, 10.0}}, 4.0, 0.0, true);
+    PIKDRAW_ASSERT(!noop.success && noop.status == PathCutStatus::NoCut);
 }
 
 PIKDRAW_TEST(trim_target_with_sources) {

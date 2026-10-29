@@ -43,11 +43,25 @@ display projection; packed RGBA8 `ImageObject` pixels are analyzed without a
 full-frame byte copy. `RasterHistogramService` supports both source and edited
 RGB histograms asynchronously, keyed to immutable document/source/mode state.
 Edited mode evaluates RGBA8 packed samples directly into one budgeted frame or
-preserves RGBA16LE samples, with a 256 MiB working-memory limit. Properties shows
+preserves RGBA16LE samples, with live RAM/commit admission shared with previews and D2D image uploads. Properties shows
 the edited RGB chart, dotted alpha coverage, and labels that ICC/proof are not
 applied. Masks and beyond-quota tile analysis remain open. Pixel and worker-service
 tests cover source-versus-edited values, channel order, U16 precision and stale-job
 cancellation.
+
+Ngân sách preview/histogram mặc định tự điều chỉnh theo RAM và khả năng cấp phát của Windows,
+không còn trần 512/192/256 MiB. `MemoryBudgetPolicy` trong document/resources dùng chung cho
+preview, histogram chỉnh sửa và D2D image cache/upload: tổng reservation tối đa 25% RAM vật lý,
+mỗi cấp phát chỉ dùng tối đa một nửa headroom RAM/commit/address space còn lại sau khi chừa
+5% RAM vật lý. Cache preview tự thu nhỏ theo mức nhỏ hơn giữa 1/16 RAM và headroom; cache là
+một phần của reservation làm việc, không cộng thêm. Ngân sách không cấp phát sẵn và không giới
+hạn dữ liệu gốc/document/Undo. RAM được lấy lại sẽ cho phép cấp phát mới mà không cần khởi động
+lại; công việc thất bại trước đó cần request lại. Khi thiếu bộ nhớ, worker trả lỗi rõ ràng,
+không sửa source hoặc giảm chất lượng xuất. Pixel còn được renderer giữ sau eviction vẫn giữ
+reservation đến owner cuối cùng. Caller/test có thể truyền giới hạn byte tường minh hoặc policy
+với nguồn đo giả lập. Đây là logic nội bộ: menu/action, toolbox/toolbar, property bar/Properties,
+field, SVG icon, label, tooltip/focus help và status hint mới không áp dụng; giao diện giữ nguyên.
+Evaluator vẫn xử lý full-frame, chưa có tile evaluation hay benchmark peak RAM trên mọi cấu hình.
 The Release `test_pikdraw_raster_assets` regression also uses a sparse linked TIFF
 larger than 4 GiB and verifies random reads at a 64-bit offset without allocating
 the logical file size. This validates only the asset-store API; renderer/export

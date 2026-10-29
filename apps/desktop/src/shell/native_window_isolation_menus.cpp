@@ -14,6 +14,7 @@
 #include "../tools/node_tool_controller.hpp"
 #include "../tools/contour_tool_controller.hpp"
 #include "../tools/gradient_tool_controller.hpp"
+#include "../tools/annotation/annotation_tool_controller.hpp"
 #include "pikdraw/document/commands/path_commands.hpp"
 #include "pikdraw/vector/tools/shape_tools.hpp"
 #include <iostream>
@@ -87,6 +88,63 @@ void NativeWindow::zoom_out() noexcept {
         "Zoom level: " + std::to_string(zoom_level_) + "%";
 #ifdef _WIN32
     if (hwnd_) InvalidateRect(hwnd_, NULL, FALSE);
+#endif
+}
+
+void NativeWindow::zoom_to_actual_size() noexcept {
+    auto& camera = root().renderer().camera();
+    const auto area = canvas_rect(width_, height_);
+    camera.set_viewport_size(std::max(1, static_cast<int>(area.right - area.left)),
+                             std::max(1, static_cast<int>(area.bottom - area.top)));
+    camera.set_zoom(1.0);
+    zoom_level_ = 100;
+    status_msg_ = (language_ == UILanguage::Vietnamese) ?
+        "Tỉ lệ hiển thị: 100%" :
+        "Zoom level: 100%";
+#ifdef _WIN32
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+#endif
+}
+
+bool NativeWindow::is_text_input_context() const noexcept {
+    if (is_inline_text_editing_) return true;
+    if (active_num_field_ != NumericFieldId::None) return true;
+    if (is_dock_text_editing()) return true;
+    if (annotation_tool_ && annotation_tool_->note_text_editing()) return true;
+    return false;
+}
+
+bool NativeWindow::has_active_document_interaction() const noexcept {
+    if (cut_geometry_job_active()) return true;
+    if (is_text_input_context()) return true;
+    if (pointer_active_ || is_panning_ || is_dragging_guideline_) return true;
+    if (drawing_tool_ && drawing_tool_->active()) return true;
+    if (pen_tool_ && pen_tool_->active()) return true;
+    if (gradient_tool_ && gradient_tool_->active()) return true;
+    if (contour_tool_ && contour_tool_->active()) return true;
+    if (node_tool_ && node_tool_->active() && node_tool_->tool().is_rounding_corners()) return true;
+    return false;
+}
+
+void NativeWindow::on_external_document_change() noexcept {
+    cancel_cut_geometry_job();
+    const auto snapshot = root().document().current_snapshot();
+    if (snapshot) {
+        auto& sel = root().vector_controller().selection();
+        std::vector<document::ObjectId> valid_ids;
+        for (auto id : sel.selected_ids()) {
+            if (snapshot->contains_object(id)) {
+                valid_ids.push_back(id);
+            }
+        }
+        if (valid_ids.size() != sel.selected_ids().size()) {
+            root().vector_controller().set_selection(valid_ids, *snapshot);
+        }
+    }
+#ifdef _WIN32
+    if (hwnd_) {
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
 #endif
 }
 
@@ -423,7 +481,7 @@ void NativeWindow::trigger_export() noexcept {
     config.nDefaultButton = kActivePageScope;
     int choice = kActivePageScope;
     using TaskDialogFunction = HRESULT(WINAPI*)(const TASKDIALOGCONFIG*, int*, int*, BOOL*);
-    HMODULE common_controls = LoadLibraryW(L"comctl32.dll");
+    HMODULE common_controls = LoadLibraryExW(L"comctl32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
     const auto task_dialog = common_controls ? reinterpret_cast<TaskDialogFunction>(
         GetProcAddress(common_controls, "TaskDialogIndirect")) : nullptr;
     const HRESULT dialog_result = task_dialog

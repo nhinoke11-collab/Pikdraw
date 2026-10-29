@@ -25,6 +25,8 @@ void test_add_remove_layer() {
     assert(res.success);
     assert(doc.page().layers.size() == 2);
     assert(doc.page().layers[1].name == "Background");
+    assert(doc.page().layers[1].id != kInvalidLayerId &&
+           doc.page().layers[1].id != doc.page().layers[0].id);
 
     assert(doc.undo());
     assert(doc.page().layers.size() == 1);
@@ -192,6 +194,8 @@ void test_duplicate_and_move_multiple() {
     assert(doc.page().layers.size() == 2);
     assert(doc.page().layers[1].name == "Layer 1 Copy");
     assert(doc.page().layers[1].object_ids.size() == 2);
+    assert(doc.page().layers[1].id != kInvalidLayerId &&
+           doc.page().layers[1].id != doc.page().layers[0].id);
     ObjectId dup_id1 = doc.page().layers[1].object_ids[0];
     ObjectId dup_id2 = doc.page().layers[1].object_ids[1];
     assert(dup_id1 != id1 && dup_id1 != kInvalidObjectId);

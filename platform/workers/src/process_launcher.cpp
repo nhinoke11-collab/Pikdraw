@@ -149,12 +149,6 @@ bool WorkerProcessHost::Launch(const WorkerLaunchConfig& config) {
                 !AppContainerProfileGuard::GrantDirectoryAccess(config.worker_executable_path, app_container_.GetSid())) {
                 return false;
             }
-            std::error_code ec;
-            for (const auto& entry : std::filesystem::directory_iterator(bin_path, ec)) {
-                if (entry.is_regular_file()) {
-                    AppContainerProfileGuard::GrantDirectoryAccess(entry.path().wstring(), app_container_.GetSid());
-                }
-            }
         }
         for (const auto& directory : config.writable_directories) {
             if (!AppContainerProfileGuard::GrantDirectoryModifyAccess(

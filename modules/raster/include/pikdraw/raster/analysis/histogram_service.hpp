@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pikdraw/document/snapshots/document_snapshot.hpp"
+#include "pikdraw/document/resources/memory_budget_policy.hpp"
 #include "pikdraw/raster/analysis/histogram.hpp"
 
 #include <functional>
@@ -20,7 +21,9 @@ class RasterHistogramService final {
  public:
   using Completion = std::function<void()>;
 
-  RasterHistogramService();
+  explicit RasterHistogramService(
+      std::shared_ptr<document::resources::MemoryBudgetPolicy> memory_policy =
+          document::resources::process_memory_budget_policy());
   ~RasterHistogramService();
 
   RasterHistogramService(const RasterHistogramService&) = delete;

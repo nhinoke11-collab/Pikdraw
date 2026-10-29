@@ -42,7 +42,8 @@ enum class RasterEvaluationStatus : uint8_t {
   InvalidGraph,
   UnsupportedEncoding,
   InsufficientMemory,
-  AllocationFailure
+  AllocationFailure,
+  WorkBudgetExceeded
 };
 
 struct RasterEvaluationProgress {

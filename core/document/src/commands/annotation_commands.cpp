@@ -1,15 +1,117 @@
 #include "pikdraw/document/commands/annotation_commands.hpp"
 #include "pikdraw/document/document.hpp"
 
+#include <algorithm>
+#include <limits>
+#include <stdexcept>
+#include <unordered_set>
+
 namespace pikdraw::document {
 
+namespace {
+void remove_created_annotation_layers(Page& page,
+                                      std::optional<LayerId> child_id,
+                                      std::optional<LayerId> group_id) {
+    if (child_id) {
+        const auto child_index = page.find_layer_by_id(*child_id);
+        if (child_index && page.layers[*child_index].object_ids.empty() &&
+            (page.layers[*child_index].role == LayerRole::AnnotationNotes ||
+             page.layers[*child_index].role == LayerRole::AnnotationDetailView))
+            page.layers.erase(page.layers.begin() + static_cast<std::ptrdiff_t>(*child_index));
+    }
+    if (group_id) {
+        const auto group_index = page.find_layer_by_id(*group_id);
+        if (!group_index) return;
+        const auto& group = page.layers[*group_index];
+        const bool has_children = std::any_of(page.layers.begin(), page.layers.end(),
+            [&](const Layer& layer) { return layer.group_id == *group_id; });
+        if (group.role == LayerRole::AnnotationGroupHeader &&
+            group.object_ids.empty() && !has_children)
+            page.layers.erase(page.layers.begin() + static_cast<std::ptrdiff_t>(*group_index));
+    }
+}
+
+void remove_object_from_layers(Page& page, ObjectId id) {
+    for (auto& layer : page.layers) {
+        auto& ids = layer.object_ids;
+        ids.erase(std::remove(ids.begin(), ids.end(), id), ids.end());
+    }
+}
+
+void restore_path_backed_annotation_fields(AnnotationObject& annotation,
+                                          const PathObject& path,
+                                          ObjectId id) {
+    annotation.id = id;
+    annotation.name = path.name;
+    annotation.transform = path.transform;
+    annotation.visible = path.visible;
+    annotation.locked = path.locked;
+    annotation.style.color = path.stroke;
+}
+
+void restore_path_backed_detail_view_fields(DetailViewObject& view,
+                                            const PathObject& path,
+                                            ObjectId id) {
+    view.id = id;
+    view.name = path.name;
+    view.transform = path.transform;
+    view.visible = path.visible;
+    view.locked = path.locked;
+    view.color = path.stroke;
+}
+
+bool check_annotation_layer_editable(const Page& page, ObjectId id,
+                                     std::string& error) {
+    for (size_t index = 0; index < page.layers.size(); ++index) {
+        const auto& layer = page.layers[index];
+        if (std::find(layer.object_ids.begin(), layer.object_ids.end(), id) ==
+            layer.object_ids.end())
+            continue;
+        if (!page.effective_layer_visible(index)) {
+            error = "Annotation is on a hidden layer or group";
+            return false;
+        }
+        if (page.effective_layer_locked(index)) {
+            error = "Annotation is on a locked layer or group";
+            return false;
+        }
+        return true;
+    }
+    error = "Annotation is not assigned to a document layer";
+    return false;
+}
+} // namespace
+
 size_t ensure_annotation_layer(Page& page, LayerRole role) {
+    if (role != LayerRole::AnnotationNotes && role != LayerRole::AnnotationDetailView)
+        throw std::invalid_argument("Unsupported annotation child layer role");
+    std::unordered_set<LayerId> seen_ids;
+    seen_ids.reserve(page.layers.size());
+    for (const auto& layer : page.layers) {
+        if (layer.id != kInvalidLayerId && !seen_ids.insert(layer.id).second)
+            throw std::invalid_argument("Duplicate layer identity on annotation page");
+    }
+    for (auto& layer : page.layers) {
+        if (layer.id != kInvalidLayerId) continue;
+        const LayerId next_id = page.generate_next_layer_id();
+        if (next_id == kInvalidLayerId)
+            throw std::overflow_error("Layer identity space is exhausted");
+        layer.id = next_id;
+        seen_ids.insert(next_id);
+    }
+    const auto generate_layer_id = [&page] {
+        const LayerId next_id = page.generate_next_layer_id();
+        if (next_id == kInvalidLayerId)
+            throw std::overflow_error("Layer identity space is exhausted");
+        return next_id;
+    };
     LayerId group_header_id = kInvalidLayerId;
 
     // Check if group header layer "Chú thích" already exists
     const auto hdr_idx = page.find_layer_by_role(LayerRole::AnnotationGroupHeader);
     if (hdr_idx.has_value()) {
         group_header_id = page.layers[*hdr_idx].id;
+        page.layers[*hdr_idx].group_id = kInvalidLayerId;
     } else {
         Layer group_hdr;
         group_hdr.name = "Chú thích";
@@ -17,7 +119,7 @@ size_t ensure_annotation_layer(Page& page, LayerRole role) {
         group_hdr.locked = false;
         group_hdr.printable = true;
         group_hdr.color_rgba = 0x8B5CF6FF; // Purple
-        group_hdr.id = page.generate_next_layer_id();
+        group_hdr.id = generate_layer_id();
         group_hdr.group_id = kInvalidLayerId;
         group_hdr.role = LayerRole::AnnotationGroupHeader;
         group_header_id = group_hdr.id;
@@ -36,7 +138,7 @@ size_t ensure_annotation_layer(Page& page, LayerRole role) {
     child_lyr.locked = false;
     child_lyr.printable = true;
     child_lyr.color_rgba = (role == LayerRole::AnnotationDetailView) ? 0x00F2C3FF : 0xF59E0BFF;
-    child_lyr.id = page.generate_next_layer_id();
+    child_lyr.id = generate_layer_id();
     child_lyr.group_id = group_header_id;
     child_lyr.role = role;
     page.layers.push_back(std::move(child_lyr));
@@ -49,24 +151,45 @@ AddAnnotationCommand::AddAnnotationCommand(AnnotationObject annotation)
     : annotation_(std::move(annotation)) {}
 
 CommandResult AddAnnotationCommand::execute(Document& doc) {
+    created_layer_id_.reset();
+    created_group_header_id_.reset();
+    std::string validation_error;
+    if (!validate_annotation_object(annotation_, &validation_error))
+        return CommandResult::fail("Invalid annotation: " + validation_error);
+    if ((annotation_.anchor.state == AssociationState::Valid ||
+         annotation_.anchor.state == AssociationState::Partial) &&
+        !doc.objects().contains(annotation_.anchor.source_object_id))
+        return CommandResult::fail(
+            "Associated annotation source is not present on the active page");
+
     Page page = doc.page();
 
     const bool had_group = page.find_layer_by_role(LayerRole::AnnotationGroupHeader).has_value();
     const bool had_child = page.find_layer_by_role(LayerRole::AnnotationNotes).has_value();
 
     const size_t layer_idx = ensure_annotation_layer(page, LayerRole::AnnotationNotes);
+    const auto group_idx = page.find_layer_by_role(LayerRole::AnnotationGroupHeader);
+    if (!group_idx || page.layers[layer_idx].group_id != page.layers[*group_idx].id)
+        return CommandResult::fail("Annotation child layer has an invalid group parent");
+    if (!page.effective_layer_visible(layer_idx))
+        return CommandResult::fail("Annotation group or child layer is hidden");
+    if (page.effective_layer_locked(layer_idx))
+        return CommandResult::fail("Annotation group or child layer is locked");
 
     if (!had_group) {
-        created_group_header_index_ = *page.find_layer_by_role(LayerRole::AnnotationGroupHeader);
+        created_group_header_id_ = page.layers[*page.find_layer_by_role(
+            LayerRole::AnnotationGroupHeader)].id;
     }
     if (!had_child) {
-        created_layer_index_ = layer_idx;
+        created_layer_id_ = page.layers[layer_idx].id;
     }
 
     if (annotation_.id == kInvalidObjectId) {
         annotation_.id = generate_object_id();
     }
     const ObjectId id = annotation_.id;
+    if (id == kInvalidObjectId)
+        return CommandResult::fail("Object ID allocator exhausted");
 
     if (doc.objects().contains(id)) {
         return CommandResult::fail("Annotation ID already exists in document");
@@ -80,7 +203,6 @@ CommandResult AddAnnotationCommand::execute(Document& doc) {
     doc.apply_mutation(std::move(page), std::move(map));
     reserve_object_id(id);
 
-    AnnotationRegistry::instance().set(id, annotation_);
     executed_ = true;
     return CommandResult::ok();
 }
@@ -93,20 +215,12 @@ CommandResult AddAnnotationCommand::undo(Document& doc) {
     Page page = doc.page();
     const ObjectId id = annotation_.id;
 
-    for (auto& lyr : page.layers) {
-        auto& ids = lyr.object_ids;
-        for (auto it = ids.begin(); it != ids.end(); ++it) {
-            if (*it == id) {
-                ids.erase(it);
-                break;
-            }
-        }
-    }
+    remove_object_from_layers(page, id);
+    remove_created_annotation_layers(page, created_layer_id_, created_group_header_id_);
 
     PersistentObjectMap map = doc.objects().remove(id);
     doc.apply_mutation(std::move(page), std::move(map));
 
-    AnnotationRegistry::instance().remove(id);
     executed_ = false;
     return CommandResult::ok();
 }
@@ -126,24 +240,31 @@ CommandResult UpdateAnnotationCommand::execute(Document& doc) {
     if (!current_path) {
         return CommandResult::fail("Annotation target is not a PathObject");
     }
+    std::string layer_error;
+    if (current_path->locked || !check_annotation_layer_editable(doc.page(), id_, layer_error))
+        return CommandResult::fail(current_path->locked
+            ? "Annotation object is locked" : layer_error);
 
     old_path_object_ = *current_path;
-    const auto reg_opt = AnnotationRegistry::instance().get(id_);
-    if (reg_opt.has_value()) {
-        old_annotation_ = *reg_opt;
-    } else {
-        auto parsed = deserialize_annotation_spec(current_path->contour_spec);
-        if (parsed) old_annotation_ = *parsed;
-    }
+    if (!get_annotation(doc, id_))
+        return CommandResult::fail("Annotation specification is invalid");
+    std::string validation_error;
+    if (!validate_annotation_object(new_annotation_, &validation_error))
+        return CommandResult::fail("Invalid annotation: " + validation_error);
 
     new_annotation_.id = id_;
+    new_annotation_.transform = current_path->transform;
+    new_annotation_.visible = current_path->visible;
+    new_annotation_.locked = current_path->locked;
+    new_annotation_.name = current_path->name;
     const auto layout = evaluate_annotation_layout(new_annotation_);
     auto new_path_obj = annotation_to_path_object(new_annotation_, layout);
+    new_path_obj.appearance = current_path->appearance;
+    new_path_obj.contour_paints = current_path->contour_paints;
 
     PersistentObjectMap map = doc.objects().set(id_, ObjectVariant{new_path_obj});
     doc.apply_mutation(doc.page(), std::move(map));
 
-    AnnotationRegistry::instance().set(id_, new_annotation_);
     executed_ = true;
     return CommandResult::ok();
 }
@@ -156,7 +277,6 @@ CommandResult UpdateAnnotationCommand::undo(Document& doc) {
     PersistentObjectMap map = doc.objects().set(id_, ObjectVariant{old_path_object_});
     doc.apply_mutation(doc.page(), std::move(map));
 
-    AnnotationRegistry::instance().set(id_, old_annotation_);
     executed_ = false;
     return CommandResult::ok();
 }
@@ -167,24 +287,42 @@ AddDetailViewCommand::AddDetailViewCommand(DetailViewObject detail_view)
     : detail_view_(std::move(detail_view)) {}
 
 CommandResult AddDetailViewCommand::execute(Document& doc) {
+    created_layer_id_.reset();
+    created_group_header_id_.reset();
+    std::string validation_error;
+    if (!validate_detail_view_object(detail_view_, &validation_error))
+        return CommandResult::fail("Invalid detail view: " + validation_error);
+    if (detail_view_.source_page_id != doc.active_page_id())
+        return CommandResult::fail("Detail View must reference the active source page");
+
     Page page = doc.page();
 
     const bool had_group = page.find_layer_by_role(LayerRole::AnnotationGroupHeader).has_value();
     const bool had_child = page.find_layer_by_role(LayerRole::AnnotationDetailView).has_value();
 
     const size_t layer_idx = ensure_annotation_layer(page, LayerRole::AnnotationDetailView);
+    const auto group_idx = page.find_layer_by_role(LayerRole::AnnotationGroupHeader);
+    if (!group_idx || page.layers[layer_idx].group_id != page.layers[*group_idx].id)
+        return CommandResult::fail("Detail View child layer has an invalid group parent");
+    if (!page.effective_layer_visible(layer_idx))
+        return CommandResult::fail("Annotation group or child layer is hidden");
+    if (page.effective_layer_locked(layer_idx))
+        return CommandResult::fail("Annotation group or child layer is locked");
 
     if (!had_group) {
-        created_group_header_index_ = *page.find_layer_by_role(LayerRole::AnnotationGroupHeader);
+        created_group_header_id_ = page.layers[*page.find_layer_by_role(
+            LayerRole::AnnotationGroupHeader)].id;
     }
     if (!had_child) {
-        created_layer_index_ = layer_idx;
+        created_layer_id_ = page.layers[layer_idx].id;
     }
 
     if (detail_view_.id == kInvalidObjectId) {
         detail_view_.id = generate_object_id();
     }
     const ObjectId id = detail_view_.id;
+    if (id == kInvalidObjectId)
+        return CommandResult::fail("Object ID allocator exhausted");
 
     if (doc.objects().contains(id)) {
         return CommandResult::fail("Detail view ID already exists in document");
@@ -198,7 +336,6 @@ CommandResult AddDetailViewCommand::execute(Document& doc) {
     doc.apply_mutation(std::move(page), std::move(map));
     reserve_object_id(id);
 
-    DetailViewRegistry::instance().set(id, detail_view_);
     executed_ = true;
     return CommandResult::ok();
 }
@@ -211,20 +348,12 @@ CommandResult AddDetailViewCommand::undo(Document& doc) {
     Page page = doc.page();
     const ObjectId id = detail_view_.id;
 
-    for (auto& lyr : page.layers) {
-        auto& ids = lyr.object_ids;
-        for (auto it = ids.begin(); it != ids.end(); ++it) {
-            if (*it == id) {
-                ids.erase(it);
-                break;
-            }
-        }
-    }
+    remove_object_from_layers(page, id);
+    remove_created_annotation_layers(page, created_layer_id_, created_group_header_id_);
 
     PersistentObjectMap map = doc.objects().remove(id);
     doc.apply_mutation(std::move(page), std::move(map));
 
-    DetailViewRegistry::instance().remove(id);
     executed_ = false;
     return CommandResult::ok();
 }
@@ -244,24 +373,33 @@ CommandResult UpdateDetailViewCommand::execute(Document& doc) {
     if (!current_path) {
         return CommandResult::fail("Detail view target is not a PathObject");
     }
+    std::string layer_error;
+    if (current_path->locked || !check_annotation_layer_editable(doc.page(), id_, layer_error))
+        return CommandResult::fail(current_path->locked
+            ? "Detail View object is locked" : layer_error);
 
     old_path_object_ = *current_path;
-    const auto reg_opt = DetailViewRegistry::instance().get(id_);
-    if (reg_opt.has_value()) {
-        old_detail_view_ = *reg_opt;
-    } else {
-        auto parsed = deserialize_detail_view_spec(current_path->contour_spec);
-        if (parsed) old_detail_view_ = *parsed;
-    }
+    if (!get_detail_view(doc, id_))
+        return CommandResult::fail("Detail View specification is invalid");
+    std::string validation_error;
+    if (!validate_detail_view_object(new_detail_view_, &validation_error))
+        return CommandResult::fail("Invalid detail view: " + validation_error);
+    if (new_detail_view_.source_page_id != doc.active_page_id())
+        return CommandResult::fail("Detail View must reference the active source page");
 
     new_detail_view_.id = id_;
+    new_detail_view_.transform = current_path->transform;
+    new_detail_view_.visible = current_path->visible;
+    new_detail_view_.locked = current_path->locked;
+    new_detail_view_.name = current_path->name;
     const auto layout = evaluate_detail_view_layout(new_detail_view_);
     auto new_path_obj = detail_view_to_path_object(new_detail_view_, layout);
+    new_path_obj.appearance = current_path->appearance;
+    new_path_obj.contour_paints = current_path->contour_paints;
 
     PersistentObjectMap map = doc.objects().set(id_, ObjectVariant{new_path_obj});
     doc.apply_mutation(doc.page(), std::move(map));
 
-    DetailViewRegistry::instance().set(id_, new_detail_view_);
     executed_ = true;
     return CommandResult::ok();
 }
@@ -274,7 +412,6 @@ CommandResult UpdateDetailViewCommand::undo(Document& doc) {
     PersistentObjectMap map = doc.objects().set(id_, ObjectVariant{old_path_object_});
     doc.apply_mutation(doc.page(), std::move(map));
 
-    DetailViewRegistry::instance().set(id_, old_detail_view_);
     executed_ = false;
     return CommandResult::ok();
 }
@@ -343,50 +480,30 @@ CommandResult ToggleAnnotationGroupCommand::undo(Document& doc) {
 
 std::optional<AnnotationObject> get_annotation(const Document& doc, ObjectId id) {
     auto obj = doc.objects().get(id);
-    if (!obj.has_value()) {
-        AnnotationRegistry::instance().remove(id);
-        return std::nullopt;
-    }
+    if (!obj.has_value()) return std::nullopt;
     const auto* path = std::get_if<PathObject>(&(*obj));
-    if (!path) {
-        AnnotationRegistry::instance().remove(id);
-        return std::nullopt;
-    }
+    if (!path) return std::nullopt;
     if (path->contour_spec.starts_with("annotation:")) {
         auto ann_deser = deserialize_annotation_spec(path->contour_spec);
-        if (!ann_deser) {
-            AnnotationRegistry::instance().remove(id);
-            return std::nullopt;
-        }
-        ann_deser->id = id;
-        AnnotationRegistry::instance().set(id, *ann_deser);
+        if (!ann_deser) return std::nullopt;
+        restore_path_backed_annotation_fields(*ann_deser, *path, id);
         return ann_deser;
     }
-    return AnnotationRegistry::instance().get(id);
+    return std::nullopt;
 }
 
 std::optional<DetailViewObject> get_detail_view(const Document& doc, ObjectId id) {
     auto obj = doc.objects().get(id);
-    if (!obj.has_value()) {
-        DetailViewRegistry::instance().remove(id);
-        return std::nullopt;
-    }
+    if (!obj.has_value()) return std::nullopt;
     const auto* path = std::get_if<PathObject>(&(*obj));
-    if (!path) {
-        DetailViewRegistry::instance().remove(id);
-        return std::nullopt;
-    }
+    if (!path) return std::nullopt;
     if (path->contour_spec.starts_with("detail_view:")) {
         auto dv_deser = deserialize_detail_view_spec(path->contour_spec);
-        if (!dv_deser) {
-            DetailViewRegistry::instance().remove(id);
-            return std::nullopt;
-        }
-        dv_deser->id = id;
-        DetailViewRegistry::instance().set(id, *dv_deser);
+        if (!dv_deser) return std::nullopt;
+        restore_path_backed_detail_view_fields(*dv_deser, *path, id);
         return dv_deser;
     }
-    return DetailViewRegistry::instance().get(id);
+    return std::nullopt;
 }
 
 } // namespace pikdraw::document

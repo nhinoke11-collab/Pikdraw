@@ -581,11 +581,31 @@ void McpServer::disconnect_all() {
     sessions_.clear();
 }
 
+size_t McpServer::expire_idle_sessions(std::chrono::milliseconds ttl) {
+    const auto now = std::chrono::steady_clock::now();
+    size_t expired_count = 0;
+    for (auto it = sessions_.begin(); it != sessions_.end(); ) {
+        if (now - it->second.last_seen > ttl) {
+            JsonValue response;
+            std::string error;
+            const JsonValue request(JsonValue::Object{
+                {"operation", "session.disconnect"}, {"session_handle", it->first}});
+            (void)call_app(it->second, request, response, error);
+            it = sessions_.erase(it);
+            ++expired_count;
+        } else {
+            ++it;
+        }
+    }
+    return expired_count;
+}
+
 JsonValue McpServer::dispatch_tool(std::string_view name, const JsonValue& arguments) {
     if (!arguments.object()) return JsonValue::Object{{"status", "error"}, {"code", "INVALID_ARGUMENT"},
         {"message", "Tool arguments must be a JSON object."}};
     if (name == "pikdraw.instances") return list_instances();
     if (name == "pikdraw.connect") {
+        (void)expire_idle_sessions();
         if (sessions_.size() >= 64)
             return JsonValue::Object{{"status", "error"}, {"code", "RESOURCE_LIMIT"},
                 {"message", "This MCP sidecar allows at most 64 active application sessions."}};
@@ -606,6 +626,7 @@ JsonValue McpServer::dispatch_tool(std::string_view name, const JsonValue& argum
         const auto* status = string_field(response, "status");
         const auto* handle = string_field(response, "session_handle");
         if (!status || *status != "ok" || !handle) return response;
+        endpoint.last_seen = std::chrono::steady_clock::now();
         sessions_[*handle] = endpoint;
         return response;
     }
@@ -616,6 +637,7 @@ JsonValue McpServer::dispatch_tool(std::string_view name, const JsonValue& argum
     const auto endpoint_it = sessions_.find(*session);
     if (endpoint_it == sessions_.end()) return JsonValue::Object{{"status", "error"},
         {"code", "SESSION_EXPIRED"}, {"message", "The session handle is unknown to this MCP process."}};
+    endpoint_it->second.last_seen = std::chrono::steady_clock::now();
     std::string operation;
     if (name == "pikdraw.capabilities") operation = "capabilities";
     else if (name == "pikdraw.document.inspect") operation = "document.inspect";

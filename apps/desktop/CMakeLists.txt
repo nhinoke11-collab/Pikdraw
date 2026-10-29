@@ -5,6 +5,44 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Cut & Shape icons are authored as SVG assets and embedded as validated path data.
+set(_cut_shape_icon_names
+    knife vector-eraser scissors trim smart-trim shape-builder smart-fill raster-eraser)
+set(_cut_shape_icon_dir "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons")
+set(_cut_shape_icon_generated_dir "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(MAKE_DIRECTORY "${_cut_shape_icon_generated_dir}")
+foreach(_icon_name IN LISTS _cut_shape_icon_names)
+    set(_icon_file "${_cut_shape_icon_dir}/tool-${_icon_name}.svg")
+    if(NOT EXISTS "${_icon_file}")
+        message(FATAL_ERROR "Missing Cut & Shape SVG icon: ${_icon_file}")
+    endif()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_icon_file}")
+    file(READ "${_icon_file}" _icon_svg)
+    if(NOT _icon_svg MATCHES "viewBox=\"0 0 24 24\"" OR
+       NOT _icon_svg MATCHES "stroke=\"currentColor\"")
+        message(FATAL_ERROR "Cut & Shape icon must use the 24x24 currentColor contract: ${_icon_file}")
+    endif()
+    string(REGEX MATCHALL "<path[^>]*d=\"[^\"]*\"[^>]*/?>" _icon_paths "${_icon_svg}")
+    if(NOT _icon_paths)
+        message(FATAL_ERROR "Cut & Shape icon has no supported path: ${_icon_file}")
+    endif()
+    set(_icon_path_data "")
+    foreach(_path_tag IN LISTS _icon_paths)
+        string(REGEX REPLACE "^.*d=\"([^\"]*)\".*$" "\\1" _path_data "${_path_tag}")
+        if(_path_data MATCHES "[^MLZ0-9., -]")
+            message(FATAL_ERROR "Cut & Shape icon uses unsupported SVG path commands: ${_icon_file}")
+        endif()
+        string(APPEND _icon_path_data " ${_path_data}")
+    endforeach()
+    string(REPLACE "-" "_" _icon_variable "${_icon_name}")
+    string(TOUPPER "${_icon_variable}" _icon_variable)
+    set("PIKDRAW_CUT_SHAPE_ICON_${_icon_variable}" "${_icon_path_data}")
+endforeach()
+configure_file(
+    src/shell/cut_shape_svg_icons.hpp.in
+    "${_cut_shape_icon_generated_dir}/cut_shape_svg_icons.hpp"
+    @ONLY)
+
 # Desktop core shell and presenters library
 add_library(pikdraw_desktop STATIC
     src/performance/canvas_trace.cpp
@@ -33,6 +71,9 @@ add_library(pikdraw_desktop STATIC
     src/workflows/document_workflow_effect_draft.cpp
     src/workflows/document_workflow_io_shaping.cpp
     src/workflows/document_workflow_cut.cpp
+    src/workflows/cut_geometry_operations.cpp
+    src/shell/native_window_cut_geometry.cpp
+    src/shell/native_window_cut_geometry_preview.cpp
     src/workflows/document_workflow_import.cpp
     src/clipboard/native_clipboard.cpp
     src/tools/drawing_preferences.cpp
@@ -57,6 +98,7 @@ add_library(pikdraw_desktop STATIC
     src/shell/native_font_picker.cpp
     src/shell/native_window_text_property_bar_paint.cpp
     src/shell/native_window_dimension_property_bar.cpp
+    src/shell/native_window_annotation_properties.cpp
     src/shell/native_window_dimension_panel.cpp
     src/shell/native_window_text_editor.cpp
     src/shell/native_window_text_input.cpp
@@ -101,6 +143,7 @@ add_library(pikdraw_desktop STATIC
     src/shell/native_window_measurement.cpp
     src/shell/raster_bitmap_export.cpp
     src/shell/native_window_raster_edits.cpp
+    src/shell/native_window_raster_eraser.cpp
     src/shell/native_window_raster_properties.cpp
     src/shell/native_window_raster_dock_paint.cpp
     src/shell/native_window_eyedropper.cpp
@@ -127,6 +170,7 @@ add_library(pikdraw_desktop STATIC
 target_include_directories(pikdraw_desktop PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}>
+    $<BUILD_INTERFACE:${_cut_shape_icon_generated_dir}>
 )
 
 target_link_libraries(pikdraw_desktop PUBLIC

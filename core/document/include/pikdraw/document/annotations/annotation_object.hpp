@@ -12,7 +12,6 @@
 #include <optional>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
 
 namespace pikdraw::document {
@@ -77,7 +76,7 @@ struct DetailViewObject {
     ObjectId label_id{kInvalidObjectId};
     uint64_t source_page_id{1};
     geometry::Rect2D source_region{0.0, 0.0, 20.0, 20.0}; // Circle center & extent or Rect bounds
-    geometry::Rect2D frame_rect{40.0, 40.0, 60.0, 60.0};   // Target placed frame
+    geometry::Rect2D frame_rect{40.0, 40.0, 40.0, 40.0};   // Target frame at the default 2:1 scale
     double scale_ratio{2.0};                              // e.g. 2.0 = 2:1, 3.0 = 3:1
     DetailViewShape shape{DetailViewShape::Circle};
     bool show_connector{true};
@@ -95,35 +94,15 @@ struct DetailViewObject {
 [[nodiscard]] std::string serialize_annotation_spec(const AnnotationObject& ann);
 [[nodiscard]] std::optional<AnnotationObject> deserialize_annotation_spec(
     std::string_view spec, std::string* error_reason = nullptr);
+[[nodiscard]] bool validate_annotation_object(
+    const AnnotationObject& ann, std::string* error_reason = nullptr);
 
 [[nodiscard]] std::string serialize_detail_view_spec(const DetailViewObject& dv);
 [[nodiscard]] std::optional<DetailViewObject> deserialize_detail_view_spec(
     std::string_view spec, std::string* error_reason = nullptr);
-
-class AnnotationRegistry {
-public:
-    static AnnotationRegistry& instance();
-    void set(ObjectId id, AnnotationObject ann);
-    void remove(ObjectId id);
-    [[nodiscard]] std::optional<AnnotationObject> get(ObjectId id) const;
-    [[nodiscard]] bool contains(ObjectId id) const;
-    void clear();
-
-private:
-    std::unordered_map<ObjectId, AnnotationObject> annotations_;
-};
-
-class DetailViewRegistry {
-public:
-    static DetailViewRegistry& instance();
-    void set(ObjectId id, DetailViewObject dv);
-    void remove(ObjectId id);
-    [[nodiscard]] std::optional<DetailViewObject> get(ObjectId id) const;
-    [[nodiscard]] bool contains(ObjectId id) const;
-    void clear();
-
-private:
-    std::unordered_map<ObjectId, DetailViewObject> views_;
-};
+[[nodiscard]] bool validate_detail_view_object(
+    const DetailViewObject& dv, std::string* error_reason = nullptr);
+[[nodiscard]] std::optional<double> parse_detail_scale_ratio(std::string_view text) noexcept;
+[[nodiscard]] std::string format_detail_scale_ratio(double ratio);
 
 } // namespace pikdraw::document

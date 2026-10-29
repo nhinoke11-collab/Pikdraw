@@ -12,11 +12,13 @@
 #include <d2d1effects.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>
+#include <dxgi1_4.h>
 #include <dwrite.h>
 #include <wrl/client.h>
 
 #include "pikdraw/color/values/color_value.hpp"
 #include "pikdraw/document/snapshots/document_snapshot.hpp"
+#include "pikdraw/document/resources/memory_budget_policy.hpp"
 #include "pikdraw/geometry/primitives/bounds.hpp"
 #include "pikdraw/geometry/primitives/point.hpp"
 #include "pikdraw/geometry/primitives/transform.hpp"
@@ -72,16 +74,46 @@ struct ImageCacheKeyHash {
 // revision: moving an image, Undo or editing a path does not re-upload pixels.
 class D2DImageCache {
 public:
-  explicit D2DImageCache(size_t max_bytes = 256u * 1024u * 1024u,
-                         size_t max_images = 1024)
-      : max_bytes_(max_bytes), max_images_(max_images) {}
-  void clear() { images_.clear(); cached_bytes_ = 0; }
-  void begin_frame() noexcept { memory_pressure_encountered_ = false; }
+  explicit D2DImageCache(size_t max_bytes = 0, size_t max_images = 1024,
+      std::shared_ptr<document::resources::MemoryBudgetPolicy> policy =
+          document::resources::process_memory_budget_policy())
+      : policy_(policy ? std::move(policy) :
+            document::resources::process_memory_budget_policy()), fixed_max_bytes_(max_bytes),
+        max_images_(max_images) {}
+  void clear() {
+    images_.clear(); cached_bytes_ = cached_video_bytes_ = 0;
+    adapter_device_.Reset(); adapter3_.Reset(); dedicated_bytes_ = 0;
+    frame_started_ = false;
+  }
+  void begin_frame(ID3D11Device* device = nullptr) noexcept {
+    memory_pressure_encountered_ = false;
+    frame_started_ = true;
+    if (device && device != adapter_device_.Get()) {
+      ComPtr<IDXGIDevice> dxgi_device;
+      ComPtr<IDXGIAdapter> adapter;
+      if (SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&dxgi_device))) &&
+          SUCCEEDED(dxgi_device->GetAdapter(&adapter))) {
+        adapter_device_ = device;
+        DXGI_ADAPTER_DESC desc{};
+        if (SUCCEEDED(adapter->GetDesc(&desc))) dedicated_bytes_ = desc.DedicatedVideoMemory;
+        ComPtr<IDXGIAdapter1> adapter1;
+        DXGI_ADAPTER_DESC1 desc1{};
+        const bool software = SUCCEEDED(adapter.As(&adapter1)) &&
+            SUCCEEDED(adapter1->GetDesc1(&desc1)) &&
+            (desc1.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
+        adapter3_.Reset();
+        if (!software) adapter.As(&adapter3_);
+        else dedicated_bytes_ = 0;
+      }
+    }
+    refresh_capacity();
+  }
   [[nodiscard]] bool memory_pressure_encountered() const noexcept {
     return memory_pressure_encountered_;
   }
   [[nodiscard]] size_t cached_image_count() const noexcept { return images_.size(); }
   [[nodiscard]] size_t cached_bytes() const noexcept { return cached_bytes_; }
+  [[nodiscard]] size_t capacity_bytes() const noexcept { return max_bytes_; }
   [[nodiscard]] uint64_t upload_count() const noexcept { return upload_count_; }
 
   ComPtr<ID2D1Bitmap1> get(ID2D1DeviceContext* context,
@@ -93,6 +125,9 @@ public:
     if (pixels.empty() || pixels.size() != expected_pixels ||
         pixels.size() > std::numeric_limits<size_t>::max() / sizeof(uint32_t))
       return nullptr;
+    // Runtime refreshes once per frame; cached image hits need no OS query.
+    // Standalone cache callers without begin_frame still refresh on each get.
+    if (!frame_started_) refresh_capacity();
     const ImageCacheKey key{pixels.data(), image.width_px, image.height_px};
     if (auto it = images_.find(key); it != images_.end()) {
       // Inline legacy buffers are mutable. Compare against the retained copy
@@ -103,6 +138,7 @@ public:
         return it->second.bitmap;
       }
       cached_bytes_ -= it->second.bytes;
+      cached_video_bytes_ -= it->second.video_bytes;
       images_.erase(it);
     }
 
@@ -117,8 +153,16 @@ public:
     }
     // Account for both the temporary premultiplied upload buffer and the
     // persistent Direct2D bitmap when deciding whether this allocation fits.
-    while (!has_system_memory_headroom(bytes * 3) && !images_.empty()) evict_oldest();
-    if (!has_system_memory_headroom(bytes * 3)) {
+    auto upload_reservation = policy_->try_reserve(bytes);
+    auto retained_reservation = policy_->try_reserve(retained_bytes);
+    while ((!upload_reservation || !retained_reservation) && !images_.empty()) {
+      upload_reservation.reset();
+      retained_reservation.reset();
+      evict_oldest();
+      upload_reservation = policy_->try_reserve(bytes);
+      retained_reservation = policy_->try_reserve(retained_bytes);
+    }
+    if (!upload_reservation || !retained_reservation) {
       memory_pressure_encountered_ = true;
       return nullptr;
     }
@@ -156,8 +200,10 @@ public:
       auto owner = image.shared_pixels_rgba;
       if (!owner) owner = std::make_shared<const std::vector<uint32_t>>(
           pixels.begin(), pixels.end());
-      images_.emplace(key, Entry{bitmap, std::move(owner), retained_bytes, ++clock_});
+      images_.emplace(key, Entry{bitmap, std::move(owner), retained_bytes,
+          ++clock_, bytes, std::move(retained_reservation)});
       cached_bytes_ += retained_bytes;
+      cached_video_bytes_ += bytes;
     }
     return bitmap;
   }
@@ -169,6 +215,8 @@ private:
     std::shared_ptr<const std::vector<uint32_t>> owner;
     size_t bytes{};
     uint64_t last_use{};
+    size_t video_bytes{};
+    std::shared_ptr<document::resources::MemoryBudgetPolicy::Reservation> reservation;
   };
   void evict_oldest() {
     const auto oldest = std::min_element(images_.begin(), images_.end(),
@@ -176,24 +224,36 @@ private:
           return lhs.second.last_use < rhs.second.last_use;
         });
     cached_bytes_ -= oldest->second.bytes;
+    cached_video_bytes_ -= oldest->second.video_bytes;
     images_.erase(oldest);
   }
-  static bool has_system_memory_headroom(size_t additional_bytes) noexcept {
-    MEMORYSTATUSEX status{};
-    status.dwLength = sizeof(status);
-    if (!GlobalMemoryStatusEx(&status) || status.ullTotalPhys == 0 ||
-        status.ullAvailPhys > status.ullTotalPhys) return false;
-    constexpr uint64_t limit_percent = 95;
-    const uint64_t threshold = (status.ullTotalPhys / 100) * limit_percent +
-        ((status.ullTotalPhys % 100) * limit_percent) / 100;
-    const uint64_t used = status.ullTotalPhys - status.ullAvailPhys;
-    return used < threshold && static_cast<uint64_t>(additional_bytes) < threshold - used;
+  void refresh_capacity() noexcept {
+    uint64_t limit = fixed_max_bytes_ ? fixed_max_bytes_ : policy_->cache_limit_bytes();
+    if (!fixed_max_bytes_) {
+      DXGI_QUERY_VIDEO_MEMORY_INFO video{};
+      if (adapter3_ && SUCCEEDED(adapter3_->QueryVideoMemoryInfo(
+          0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &video)))
+        limit = document::resources::video_cache_limit_bytes(
+            limit, video.Budget, video.CurrentUsage, cached_video_bytes_);
+      else if (dedicated_bytes_)
+        limit = std::min(limit, dedicated_bytes_ / 4);
+    }
+    max_bytes_ = static_cast<size_t>(std::min<uint64_t>(
+        limit, std::numeric_limits<size_t>::max()));
+    while (cached_bytes_ > max_bytes_ && !images_.empty()) evict_oldest();
   }
 
   std::unordered_map<ImageCacheKey, Entry, ImageCacheKeyHash> images_;
+  const std::shared_ptr<document::resources::MemoryBudgetPolicy> policy_;
+  ComPtr<ID3D11Device> adapter_device_;
+  ComPtr<IDXGIAdapter3> adapter3_;
+  bool frame_started_{};
+  uint64_t dedicated_bytes_{};
+  size_t fixed_max_bytes_{};
   size_t max_bytes_{};
   size_t max_images_{};
   size_t cached_bytes_{};
+  size_t cached_video_bytes_{};
   uint64_t clock_{};
   uint64_t upload_count_{};
 };
@@ -251,27 +311,29 @@ public:
 private:
   struct CacheKey {
     document::ObjectId id{document::kInvalidObjectId};
-    uint64_t revision{0};
     uint8_t kind{0};
     bool even_odd{false};
 
     bool operator==(const CacheKey &other) const noexcept {
-      return id == other.id && revision == other.revision &&
-             kind == other.kind && even_odd == other.even_odd;
+      return id == other.id && kind == other.kind && even_odd == other.even_odd;
     }
   };
 
   struct KeyHash {
     size_t operator()(const CacheKey &k) const noexcept {
       size_t h1 = std::hash<uint64_t>{}(k.id);
-      size_t h2 = std::hash<uint64_t>{}(k.revision);
-      size_t result = h1 ^ (h2 << 1);
-      result ^= std::hash<uint8_t>{}(k.kind) + (result << 6) + (result >> 2);
+      size_t result = h1 ^ (std::hash<uint8_t>{}(k.kind) << 1);
       return result ^ (std::hash<bool>{}(k.even_odd) + (result << 6) + (result >> 2));
     }
   };
 
-  std::unordered_map<CacheKey, ComPtr<ID2D1PathGeometry>, KeyHash> cache_;
+  struct GeometryEntry {
+    ComPtr<ID2D1PathGeometry> geometry;
+    uint64_t path_hash{0};
+    uint64_t last_used_revision{0};
+  };
+
+  std::unordered_map<CacheKey, GeometryEntry, KeyHash> cache_;
   uint64_t last_revision_{0};
 };
 

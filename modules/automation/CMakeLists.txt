@@ -17,6 +17,7 @@ target_include_directories(pikdraw_automation PUBLIC
 )
 target_link_libraries(pikdraw_automation PUBLIC
     pikdraw_document
+    pikdraw_geometry
     pikdraw_vector
     pikdraw_typography
 )

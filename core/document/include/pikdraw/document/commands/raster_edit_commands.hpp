@@ -26,4 +26,26 @@ class SetRasterEditNodeCommand final : public DocumentCommand {
   bool executed_{false};
 };
 
+/// Atomically replaces an image's ordered raster edit graph as one Undo step.
+class SetRasterEditGraphCommand final : public DocumentCommand {
+ public:
+  SetRasterEditGraphCommand(ObjectId image_id, RasterEditGraph graph,
+      std::optional<uint64_t> expected_epoch = {},
+      std::optional<uint64_t> expected_revision = {});
+
+  [[nodiscard]] std::string_view name() const noexcept override {
+    return "Reset Raster Adjustments";
+  }
+  CommandResult execute(Document& doc) override;
+  CommandResult undo(Document& doc) override;
+
+ private:
+  ObjectId image_id_{kInvalidObjectId};
+  RasterEditGraph graph_;
+  std::optional<uint64_t> expected_epoch_;
+  std::optional<uint64_t> expected_revision_;
+  std::optional<RasterEditGraph> previous_graph_;
+  bool executed_{false};
+};
+
 }  // namespace pikdraw::document

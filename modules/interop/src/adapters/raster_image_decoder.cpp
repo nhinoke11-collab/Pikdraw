@@ -195,7 +195,7 @@ struct WicDll {
 
     WicDll() {
         module = GetModuleHandleW(L"windowscodecs.dll");
-        if (!module) module = LoadLibraryW(L"windowscodecs.dll");
+        if (!module) module = LoadLibraryExW(L"windowscodecs.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
         if (module) {
             create_factory = reinterpret_cast<CreateFn>(GetProcAddress(module, "WICCreateImagingFactory_Proxy"));
         }
@@ -221,7 +221,7 @@ struct Ole32Dll {
 
     Ole32Dll() {
         module = GetModuleHandleW(L"ole32.dll");
-        if (!module) module = LoadLibraryW(L"ole32.dll");
+        if (!module) module = LoadLibraryExW(L"ole32.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
         if (module) {
             co_init = reinterpret_cast<CoInitFn>(GetProcAddress(module, "CoInitializeEx"));
             co_uninit = reinterpret_cast<CoUninitFn>(GetProcAddress(module, "CoUninitialize"));
@@ -230,7 +230,7 @@ struct Ole32Dll {
         }
         if (!prop_clear) {
             HMODULE propsys = GetModuleHandleW(L"propsys.dll");
-            if (!propsys) propsys = LoadLibraryW(L"propsys.dll");
+            if (!propsys) propsys = LoadLibraryExW(L"propsys.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
             if (propsys) {
                 prop_clear = reinterpret_cast<PropClearFn>(GetProcAddress(propsys, "PropVariantClear"));
             }

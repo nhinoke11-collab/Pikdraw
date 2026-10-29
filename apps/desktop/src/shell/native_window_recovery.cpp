@@ -343,15 +343,10 @@ void NativeWindow::paint_recovery_modal(HDC dc, int width, int height) {
     DeleteObject(card_brush);
     DeleteObject(card_pen);
 
-    HFONT title_font = CreateFontW(16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    HFONT normal_font = CreateFontW(12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-    HFONT bold_font = CreateFontW(12, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-        DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    ensure_ui_fonts();
+    HFONT title_font = font_title_;
+    HFONT normal_font = font_secondary_;
+    HFONT bold_font = font_be_vietnam_bold_;
     auto old_font = SelectObject(dc, title_font);
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, accent);
@@ -464,9 +459,6 @@ void NativeWindow::paint_recovery_modal(HDC dc, int width, int height) {
         }
     }
     SelectObject(dc, old_font);
-    DeleteObject(title_font);
-    DeleteObject(normal_font);
-    DeleteObject(bold_font);
 }
 #endif
 

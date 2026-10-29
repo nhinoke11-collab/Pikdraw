@@ -42,20 +42,41 @@ bool same_color_payload(const color::ColorValue& lhs,
 
 bool same_parameters(const EffectParameters& lhs,
                      const EffectParameters& rhs) {
-  if (lhs.index() != rhs.index())
-    return false;
-  if (const auto* left = std::get_if<GaussianBlurEffect>(&lhs)) {
-    const auto& right = std::get<GaussianBlurEffect>(rhs);
-    return left->sigma_x_mm == right.sigma_x_mm &&
-           left->sigma_y_mm == right.sigma_y_mm;
-  }
-  const auto& left = std::get<DropShadowEffect>(lhs);
-  const auto& right = std::get<DropShadowEffect>(rhs);
-  return left.dx_mm == right.dx_mm && left.dy_mm == right.dy_mm &&
-         left.sigma_x_mm == right.sigma_x_mm &&
-         left.sigma_y_mm == right.sigma_y_mm &&
-         left.opacity == right.opacity && left.blend_mode == right.blend_mode &&
-         same_color_payload(left.color, right.color);
+  return std::visit([](const auto& left, const auto& right) {
+    using Left = std::decay_t<decltype(left)>;
+    using Right = std::decay_t<decltype(right)>;
+    if constexpr (!std::is_same_v<Left, Right>) {
+      return false;
+    } else if constexpr (std::is_same_v<Left, GaussianBlurEffect>) {
+      return left.sigma_x_mm == right.sigma_x_mm &&
+             left.sigma_y_mm == right.sigma_y_mm;
+    } else if constexpr (std::is_same_v<Left, DropShadowEffect>) {
+      return left.dx_mm == right.dx_mm && left.dy_mm == right.dy_mm &&
+             left.sigma_x_mm == right.sigma_x_mm &&
+             left.sigma_y_mm == right.sigma_y_mm &&
+             left.opacity == right.opacity &&
+             left.blend_mode == right.blend_mode &&
+             same_color_payload(left.color, right.color);
+    } else if constexpr (std::is_same_v<Left, FeatherEffect>) {
+      return left.radius_mm == right.radius_mm;
+    } else if constexpr (std::is_same_v<Left, OuterGlowEffect> ||
+                         std::is_same_v<Left, InnerGlowEffect>) {
+      return left.radius_mm == right.radius_mm &&
+             left.opacity == right.opacity &&
+             same_color_payload(left.color, right.color);
+    } else if constexpr (std::is_same_v<Left, InnerShadowEffect>) {
+      return left.dx_mm == right.dx_mm && left.dy_mm == right.dy_mm &&
+             left.sigma_x_mm == right.sigma_x_mm &&
+             left.sigma_y_mm == right.sigma_y_mm &&
+             left.opacity == right.opacity &&
+             left.blend_mode == right.blend_mode &&
+             same_color_payload(left.color, right.color);
+    } else {
+      return left.opacity == right.opacity &&
+             left.blend_mode == right.blend_mode &&
+             same_color_payload(left.color, right.color);
+    }
+  }, lhs, rhs);
 }
 
 bool same_appearance(const Appearance& lhs, const Appearance& rhs) {

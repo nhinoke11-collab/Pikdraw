@@ -542,6 +542,68 @@ void clone_stamp_freezes_source_and_blends_u16_alpha() {
   assert(rejected.status == RasterEvaluationStatus::InvalidGraph);
 }
 
+void raster_eraser_changes_alpha_non_destructively_with_u8_and_u16_coverage() {
+  using pikdraw::document::RasterEraserParams;
+  std::vector<uint8_t> source(5u * 5u * 4u);
+  for (size_t offset = 0; offset < source.size(); offset += 4) {
+    source[offset] = 100;
+    source[offset + 1] = 50;
+    source[offset + 2] = 25;
+    source[offset + 3] = 255;
+  }
+  const auto original = source;
+  RasterEditGraph graph;
+  RasterEraserParams eraser;
+  eraser.diameter_px = 2.0;
+  eraser.points = {{0.5, 0.0}, {0.5, 1.0}};
+  graph.nodes.push_back(node(86, eraser));
+  const auto result = evaluate(source, 5, 5, std::move(graph));
+  assert(result.succeeded());
+  assert(source == original);
+  const size_t center = (2u * 5u + 2u) * 4u;
+  const size_t edge = (2u * 5u + 1u) * 4u;
+  const size_t outside = (2u * 5u) * 4u;
+  assert(result.image.bytes[center] == 0 && result.image.bytes[center + 1] == 0 &&
+      result.image.bytes[center + 2] == 0 && result.image.bytes[center + 3] == 0);
+  assert(result.image.bytes[edge] == 100 && result.image.bytes[edge + 1] == 50 &&
+      result.image.bytes[edge + 2] == 25 && result.image.bytes[edge + 3] >= 126 &&
+      result.image.bytes[edge + 3] <= 129);
+  assert(result.image.bytes[outside + 3] == 255);
+
+  std::vector<uint8_t> source16;
+  for (size_t index = 0; index < 9; ++index) {
+    append_u16_le(source16, 10000);
+    append_u16_le(source16, 20000);
+    append_u16_le(source16, 30000);
+    append_u16_le(source16, 40000);
+  }
+  RasterEditGraph graph16;
+  RasterEraserParams eraser16;
+  eraser16.diameter_px = 2.0;
+  eraser16.points = {{0.5, 0.0}, {0.5, 1.0}};
+  graph16.nodes.push_back(node(87, eraser16));
+  RasterMemoryBudget budget(4096);
+  const auto result16 = RasterEditEvaluator::evaluate(
+      {source16, 3, 3, 24,
+       RasterPixelEncoding::SRgbRgba16LEStraightAlpha}, graph16, budget);
+  assert(result16.succeeded());
+  const size_t center16 = (1u * 3u + 1u) * 8u;
+  const size_t edge16 = (1u * 3u) * 8u;
+  assert(read_u16_le(result16.image.bytes, center16) == 0 &&
+      read_u16_le(result16.image.bytes, center16 + 6) == 0);
+  assert(read_u16_le(result16.image.bytes, edge16) == 10000 &&
+      read_u16_le(result16.image.bytes, edge16 + 2) == 20000 &&
+      read_u16_le(result16.image.bytes, edge16 + 6) >= 19999 &&
+      read_u16_le(result16.image.bytes, edge16 + 6) <= 20001);
+
+  RasterEditGraph invalid;
+  RasterEraserParams invalid_params;
+  invalid_params.points.push_back({std::numeric_limits<double>::quiet_NaN(), 0.5});
+  invalid.nodes.push_back(node(88, invalid_params));
+  assert(evaluate(source, 5, 5, std::move(invalid)).status ==
+      RasterEvaluationStatus::InvalidGraph);
+}
+
 void hsl_rotates_hue_preserves_alpha_and_respects_u16_and_gray() {
   using pikdraw::document::RasterHslParams;
   const auto check = [](bool condition, const char* message) {
@@ -999,6 +1061,7 @@ int main() {
   channel_mixer_uses_linear_rgb_preserves_alpha_and_validates_matrix();
   color_balance_targets_tonal_range_preserves_alpha_and_mask();
   clone_stamp_freezes_source_and_blends_u16_alpha();
+  raster_eraser_changes_alpha_non_destructively_with_u8_and_u16_coverage();
   hsl_rotates_hue_preserves_alpha_and_respects_u16_and_gray();
   hsl_identity_is_bit_exact_and_out_of_range_values_are_rejected();
   curves_adjust_selected_channel_preserve_alpha_and_keep_u16_precision();

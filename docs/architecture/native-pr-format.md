@@ -2,19 +2,21 @@
 
 Ngày đối chiếu source: 25/10/2026. Đuôi file thiết kế duy nhất là **.pr**.
 Payload schema v23 vẫn dùng cho tài liệu không có encoded raster source; schema v24 có bảng raster
-source/sample deduplicate theo bytes và được mang trong container chunk PKDR v25. Container PKDR v24
-được giữ để đọc/ghi payload schema v23 lớn.
+source/sample deduplicate theo bytes và được mang trong container chunk PKDR v25. Schema v25 lưu
+LayerId/group/role và có cờ cho biết raster tables có mặt hay không; nó dùng container chunk PKDR v26.
+Container PKDR v24 vẫn đọc/ghi payload schema v23 lớn.
 
 ## 1. Hành vi hiện tại
 
 | Thành phần | Source hiện tại |
 | --- | --- |
 | Open/Save/Save As và MCP | Chỉ nhận .pr, không phân biệt hoa/thường; MCP tự thêm .pr nếu thiếu suffix |
-| Nội dung | Schema v23 cho tài liệu không có encoded raster source; schema v24 lưu raster sources trong bảng shared; reader nhận container v2–v25 |
-| Container | Schema v23 dưới 1 MiB ghi PKDR v23/header 36 byte, từ 1 MiB ghi PKDR v24. Schema v24 ghi PKDR v25 chunked ở mọi kích thước; chunks 1 MiB, tổng độ dài 64-bit |
+| Nội dung | Schema v23 cho tài liệu thường; schema v24 có raster tables; schema v25 có metadata layer hierarchy; reader nhận container v2–v26 |
+| Container | Schema v23 dưới 1 MiB ghi PKDR v23/header 36 byte, từ 1 MiB ghi PKDR v24. Schema v24 ghi PKDR v25 chunked; schema v25 ghi PKDR v26 chunked; chunks 1 MiB, tổng độ dài 64-bit |
 | Nén | Mỗi chunk chọn DEFLATE (zlib-ng compatibility, level Z_BEST_SPEED) nếu nhỏ hơn; nếu không thì STORE. CRC32 kiểm container và từng chunk sau giải nén |
 | Giới hạn codec | Không còn trần tổng 256 MiB, 100.000 objects hoặc 1.000.000 elements. Các count/length u32 của schema cũ vẫn có trần biểu diễn u32; string 16 MiB và các quota riêng theo trường vẫn giữ |
 | Raster | Profile, descriptor và edit graph theo object; encoded source cùng buffer RGBA8/RGBA16LE giống nhau được ghi một lần ở payload v24 và image record tham chiếu chỉ số |
+| Layer hierarchy | Payload v25 ghi LayerId, group_id và LayerRole; file v2–v24 được migration LayerId theo thứ tự layer và role Artwork. Payload v25 có raster-table flag nên tài liệu vector không cần tạo bảng asset giả |
 | Memory | Reader cấp quota theo một nửa RAM vật lý còn trống. Save mã hóa payload vào bộ đệm tối đa một chunk 1 MiB, nén rồi ghi chunk thẳng vào temp file; load vẫn đọc toàn file và dựng payload giải nén trước khi parse |
 | Recovery | Checkpoint nội bộ .pkdr, không phải định dạng thiết kế để trao đổi |
 
@@ -26,7 +28,7 @@ Asset descriptor trên đĩa chưa tự bảo đảm một file .pr có thể ch
 
 ## 2. Giai đoạn tiếp theo: package có index và dedup mở rộng
 
-PKDR v24/v25 nén payload tuần tự thành các chunk độc lập, chưa có index để đọc một object riêng.
+PKDR v24/v25/v26 nén payload tuần tự thành các chunk độc lập, chưa có index để đọc một object riêng.
 Save phát payload qua bộ đệm chunk 1 MiB; `NativeFormat::serialize()` vẫn giữ API trả vector cho
 các consumer cần bytes trong RAM, còn atomic save gọi `serialize_to()` và không giữ thêm vector payload
 toàn tài liệu. Reader vẫn đọc hết file và giải nén payload trước khi parse.
@@ -63,15 +65,18 @@ design.pr
 - Không lưu Undo/cache toàn bộ vào tài liệu mặc định. History/recovery là vòng đời riêng;
   cache thiếu hoặc không hợp lệ thì tính lại từ nguồn, không làm mất khả năng sửa.
 
-Wire format container v24/v25: giữ prefix PKDR 36 byte, version=24 hoặc 25, flags=1, payload length u32
+Wire format container v24-v26: giữ prefix PKDR 36 byte, version=24, 25 hoặc 26, flags=1, payload length u32
 dùng sentinel `0xffffffff`, CRC32 container ở offset 32; extension chứa tổng byte giải nén u64
 và chunk count u64. Mỗi chunk có record 16 byte: raw size u32, stored size u32, codec u8,
 3 byte reserved phải bằng 0, CRC32 của bytes giải nén u32, rồi dữ liệu chunk. Codec 0 là STORE,
 codec 1 là zlib-wrapped DEFLATE. Container v24 chứa schema v23. Payload v24 trong container
 v25 thêm ba bảng sau PDF và trước page count: encoded source blobs, packed RGBA8 pixels và
-RGBA16LE buffers. Các image record ghi chỉ số cho các buffer này (source/U16 index 0 nghĩa là
-không có); pixel payload được bỏ khỏi object record. Nội dung byte giống nhau dùng chung index;
-descriptor, ICC, dimensions, clip và edit graph vẫn giữ trong từng object.
+RGBA16LE buffers. Payload v25 trong container v26 thêm raster-table flag, rồi giữ nguyên ba bảng
+khi flag bật; khi tắt, image data tiếp tục dùng biểu diễn inline của schema cũ. Mỗi layer v25 ghi
+LayerId, group_id và role sau thuộc tính màu. Các image record v24/v25 có bảng ghi chỉ số cho các
+buffer này (source/U16 index 0 nghĩa là không có); pixel payload được bỏ khỏi object record.
+Nội dung byte giống nhau dùng chung index; descriptor, ICC, dimensions, clip và edit graph vẫn
+giữ trong từng object.
 Reader đòi chunk count khớp ceil(payload_size / 1 MiB), chunk cuối đúng kích thước còn lại,
 không có trailing bytes, CRC hợp lệ và tổng giải nén trong quota bộ nhớ động.
 
@@ -113,7 +118,7 @@ thay bằng thumbnail. Nguồn cũ được giữ tới khi snapshot/job/Undo cu
 6. Recovery dùng journal/checkpoint riêng có compact định kỳ; không append ZIP mãi làm file phình.
    Nhịp autosave có debounce/coalesce, không xếp hàng mọi revision.
 
-Atomic save v24/v25 hiện encode payload theo từng chunk 1 MiB, nén và ghi trực tiếp vào file tạm;
+Atomic save v24-v26 hiện encode payload theo từng chunk 1 MiB, nén và ghi trực tiếp vào file tạm;
 CRC container kết hợp checksum prefix/body rồi patch header sau khi biết kích thước và số chunk.
 `serialize()` vẫn tạo vector đầy đủ theo hợp đồng API. Load vẫn đọc toàn container và tạo payload giải nén
 trước khi parse; lazy/index và bounded whole-document memory vẫn là mục tiêu, nên chưa xử lý hết peak
@@ -126,11 +131,11 @@ cho crash, hết đĩa, flush failure và reopen.
 
 Không giải nén ra thư mục tùy ý. Chỉ đọc member whitelist; từ chối absolute/drive/UNC path,
 .., symlink, duplicate/case-collision names, nested archives và offsets chồng lấn.
-PKDR v24/v25 kiểm tổng decoded bytes theo quota động bằng một nửa RAM vật lý còn trống, count/length
+PKDR v24-v26 kiểm tổng decoded bytes theo quota động bằng một nửa RAM vật lý còn trống, count/length
 chunk, codec, checksum, chunk boundaries và trailing bytes trước khi công bố snapshot. Container
 không còn trần cố định 256 MiB; metadata/asset lengths của schema v23/v24 vẫn có trường u32, strings
 giữ cap 16 MiB, pages/layers/effects/ICC/path specs giữ quota theo miền. Độ dài tổng container
-v24/v25 và số chunk là u64, nhưng buffer hiện phải vừa trong `size_t` và quota bộ nhớ. Cancellation
+v24-v26 và số chunk là u64, nhưng buffer hiện phải vừa trong `size_t` và quota bộ nhớ. Cancellation
 được kiểm trong đọc theo khối 1 MiB, CRC/parse và cửa sổ inflate/CRC tối đa 64 KiB; atomic container save
 phát payload theo chunk và giữ tối đa một raw chunk cùng buffer nén, nhưng file-load progress và streaming load chưa có,
 nên quota tiếp tục là quota bộ nhớ chứ không phải giới hạn streaming. Không giải nén ra thư mục tùy ý,
@@ -145,7 +150,7 @@ native save giữ phần model đã có, không tự tái tạo semantics mà ad
 | Nguồn/representation | Đường hiện có | Gate còn cần trước khi cam kết |
 | --- | --- | --- |
 | .pr / PKDR v2–v23 | Legacy reader; schema v23 writer khi không có encoded raster source | Migration fixture và semantics theo suite storage |
-| .pr / PKDR v24/v25 | Chunked DEFLATE/STORE; v25 mang schema v24 source/sample tables | Encoded source và RGBA8/U16 dedup round-trip có regression; atomic save/open >256 MiB, peak RAM, UI/cancel latency và progress còn cần đo |
+| .pr / PKDR v24-v26 | Chunked DEFLATE/STORE; v25 mang schema v24 raster tables, v26 mang schema v25 layer hierarchy | Encoded source và RGBA8/U16 dedup round-trip có regression; layer identity/role/group round-trip được kiểm bằng regression; atomic save/open >256 MiB, peak RAM, UI/cancel latency và progress còn cần đo |
 | .pr / package ZIP64 có index | Đề xuất; chưa triển khai | Streaming trực tiếp, seekable object index, dedup cho PDF/profile/preview và malformed input |
 | PDF / từng page và object được hỗ trợ | PDFium mapping + nguồn tham chiếu | Appearance/editability/ICC, clipping, rotation theo fixture; export PDF gate riêng |
 | AI / PDF-compatible | PDF adapter | Không đại diện AI authoring/live effects; authoring khác từ chối nếu thiếu adapter |
@@ -166,7 +171,7 @@ Không thêm toolbox tool, property bar hoặc Properties vì suffix là thuộc
 Tooltip/focus help vẫn mô tả mở/lưu tài liệu; trạng thái lỗi nêu .pr nếu suffix không hợp lệ.
 MCP file_name là basename theo grant hiện hành; thiếu suffix thêm .pr, suffix khác không được lưu.
 
-Nén chunk v24/v25 chạy tự động lossless; không có lựa chọn nén riêng trong UI. Tùy chọn Optimize ảnh trong
+Nén chunk v24-v26 chạy tự động lossless; không có lựa chọn nén riêng trong UI. Tùy chọn Optimize ảnh trong
 Save As vẫn là hướng tương lai, chỉ bật quality/effective DPI khi người dùng chọn rõ chế độ đó.
 Properties ảnh tiếp tục hiển thị source/effective DPI và crop/edits; cùng validator/command nếu sửa
 dữ liệu document. Không thêm toolbox/property controls cho việc đổi container.

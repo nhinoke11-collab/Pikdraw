@@ -28,7 +28,9 @@ CLAUDE.md/GEMINI.md chỉ dẫn tới file này; tài liệu feature và roadmap
 - Tính toán nặng phải có cancellation, quota và progress; không chờ worker/network/AI trong UI event loop.
 - File thiết kế chỉ dùng .pr. Extension không cấp capability hoặc xác nhận schema.
   Payload schema v23 dùng container v23 dưới 1 MiB hoặc container chunk v24 với STORE/DEFLATE.
-  Schema v24 deduplicate encoded source và buffer RGBA8/RGBA16 giống nhau trong container chunk v25; reader nhận v2–v25. Không còn trần toàn file 256 MiB hoặc quota cứng
+  Schema v24 deduplicate encoded source và buffer RGBA8/RGBA16 trong container chunk v25;
+  schema v25 lưu LayerId/group/role trong container chunk v26; reader nhận v2–v26.
+  Không còn trần toàn file 256 MiB hoặc quota cứng
   100k object/1m path element; wire widths và memory quota vẫn giới hạn dữ liệu đọc.
   Streaming trực tiếp, index và lazy assets trong docs/architecture/native-pr-format.md chưa triển khai.
 - Mỗi file code tối đa 2000 dòng, khuyến nghị 300–1800. Tách theo domain trước khi thêm tính năng vào file quá dài.
@@ -62,6 +64,9 @@ Dùng bề mặt hiện có, agent tự quyết định lựa chọn thường l
 - Chỉ xóa path đã xác minh nằm trong workspace/output riêng và đã xác định là generated.
   Không xóa fixture dùng lại, test đã đăng ký, source, toolchain, build cache/binary canonical,
   dữ liệu khách hàng, backup hay recovery của người dùng.
+  PCH (*.pch/*.gch), object (*.obj/*.o), thư viện (*.a/*.lib), test executable, CMakeCache,
+  .ninja_log và .ninja_deps là build cache cần giữ, không phải output test tạm.
+  Dọn output bằng clean-test-artifacts.ps1; không quét/xóa theo extension trên toàn build tree.
 - Báo trực tiếp lệnh, kết quả, paths thay đổi và giới hạn. Không tạo handoff/snapshot trung gian;
   không suy ra FPS/UX/fidelity/containment từ build hoặc test không đo các thuộc tính đó.
 - Tài liệu hướng người dùng viết tiếng Việt; contract kỹ thuật có thể dùng tiếng Anh.

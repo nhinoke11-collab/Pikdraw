@@ -64,7 +64,7 @@ Không dùng preset/build folder cũ theo cấu hình riêng:
 
 ```powershell
 .\tooling\native\build.ps1
-.\tooling\native\build.ps1 -Test -TestTarget test_pikdraw_desktop_shell -TestRegex '^test_pikdraw_desktop_shell$'
+.\tooling\native\build.ps1 -Test -TestTarget test_pikdraw_desktop_shell
 .\tooling\native\build.ps1 -Configuration Release
 ```
 

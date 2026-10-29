@@ -1,4 +1,6 @@
 #include "pikdraw/desktop/shell/native_window.hpp"
+#include "pikdraw/desktop/shell/cut_shape_tool_catalog.hpp"
+#include "../tools/annotation/annotation_tool_controller.hpp"
 #include "../performance/canvas_trace.hpp"
 #include "pikdraw/desktop/shell/native_font_picker.hpp"
 #include "native_window_file_menu.hpp"
@@ -73,7 +75,8 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         self->native_file_job_user_activity_ = true;
     }
     if (self && uMsg != WM_MOUSEMOVE &&
-        !(uMsg == WM_TIMER && wParam == kPointerMoveCoalesceTimerId))
+        !(uMsg == WM_TIMER && (wParam == kPointerMoveCoalesceTimerId ||
+                               wParam == kSmartTrimHoverTimerId)))
         self->flush_coalesced_mouse_move();
     if (self && self->canvas_trace_ && uMsg >= WM_MOUSEFIRST && uMsg <= WM_MOUSELAST) {
         auto event_id = self->pending_trace_event_id_;
@@ -83,6 +86,18 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         }
         self->last_trace_event_id_ = event_id;
         self->record_performance_event(CanvasTraceKind::InputDequeued, event_id);
+    }
+    if (self && uMsg == WM_RBUTTONDOWN &&
+        (self->cut_geometry_job_active() ||
+         self->cut_geometry_preview_ready(CutGeometryOperation::TrimObjects) ||
+         self->cut_geometry_preview_ready(CutGeometryOperation::ShapeBuilder) ||
+         self->cut_geometry_preview_ready(CutGeometryOperation::SmartTrim))) {
+        self->cancel_cut_geometry_job();
+        self->status_msg_ = self->language_ == UILanguage::Vietnamese
+            ? "Đã yêu cầu hủy Cut & Shape · tài liệu chưa đổi"
+            : "Cut & Shape cancellation requested · document unchanged";
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
     }
 
     switch (uMsg) {
@@ -116,7 +131,41 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
     case kNativeFileWorkerMessage:
         if (self) self->handle_native_file_worker_message();
         return 0;
+    case kCutGeometryWorkerMessage:
+        if (self) self->handle_cut_geometry_worker_message(
+            static_cast<std::uint64_t>(wParam));
+        return 0;
+    case kCutGeometryProgressMessage:
+        if (self) self->handle_cut_geometry_progress_message(
+            static_cast<std::uint64_t>(wParam), static_cast<std::size_t>(lParam));
+        return 0;
     case WM_CHAR:
+        if (self && self->annotation_tool() &&
+            self->annotation_tool()->note_text_editing()) {
+            auto* annotation = self->annotation_tool();
+            if (wParam == VK_RETURN) {
+                if ((GetKeyState(VK_CONTROL) & 0x8000) != 0) {
+                    if (annotation->commit()) {
+                        self->status_msg_ = self->language_ == UILanguage::Vietnamese
+                            ? "Đã tạo ghi chú" : "Note created";
+                        if (annotation->last_committed_id()) {
+                            const auto id = *annotation->last_committed_id();
+                            self->set_active_tool(0);
+                            if (const auto snapshot = self->root().document().current_snapshot())
+                                self->root().vector_controller().set_selection({id}, *snapshot);
+                        }
+                    } else self->status_msg_ = annotation->last_error();
+                } else {
+                    annotation->append_note_character('\n');
+                }
+            } else if (wParam == VK_BACK) {
+                annotation->erase_note_character();
+            } else if (wParam >= 0x20) {
+                annotation->append_note_character(static_cast<uint32_t>(wParam));
+            }
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
         if (self && self->is_font_picker_open()) {
             if (self->font_picker()->handle_char_input(static_cast<wchar_t>(wParam))) {
                 InvalidateRect(hwnd, nullptr, FALSE);
@@ -225,9 +274,15 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         break;
     case WM_UNICHAR:
         if (wParam == UNICODE_NOCHAR) return TRUE;
+        if (self && self->annotation_tool() &&
+            self->annotation_tool()->append_note_character(static_cast<uint32_t>(wParam))) {
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
         if (self && self->handle_inline_text_character(static_cast<uint32_t>(wParam))) return 0;
         break;
     case WM_IME_COMPOSITION:
+        if (self && self->handle_annotation_note_ime(lParam)) return 0;
         if (self && self->handle_inline_text_ime(lParam)) return 0;
         break;
     case WM_IME_ENDCOMPOSITION:
@@ -307,6 +362,25 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         }
         if (self && wParam == VK_ESCAPE && self->raster_profile_conversion_active()) {
             self->request_cancel_raster_profile_conversion();
+            return 0;
+        }
+        if (self && wParam == VK_ESCAPE && self->cut_geometry_job_active()) {
+            self->cancel_cut_geometry_job();
+            self->status_msg_ = self->language_ == UILanguage::Vietnamese
+                ? "Đã yêu cầu hủy Cut & Shape · tài liệu chưa đổi"
+                : "Cut & Shape cancellation requested · document unchanged";
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        if (self && wParam == VK_ESCAPE &&
+            (self->cut_geometry_preview_ready(CutGeometryOperation::TrimObjects) ||
+             self->cut_geometry_preview_ready(CutGeometryOperation::ShapeBuilder) ||
+             self->cut_geometry_preview_ready(CutGeometryOperation::SmartTrim))) {
+            self->cancel_cut_geometry_job();
+            self->status_msg_ = self->language_ == UILanguage::Vietnamese
+                ? "Đã bỏ bản xem trước Cut & Shape · tài liệu chưa đổi"
+                : "Cut & Shape preview discarded · document unchanged";
+            InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
         if (self && self->handle_import_placement_escape(wParam)) return 0;
@@ -477,6 +551,20 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         break;
     case WM_KILLFOCUS:
         if (self) {
+            if (self->cut_geometry_job_active())
+                self->cancel_cut_geometry_job();
+            const bool cut_gesture_active = self->pointer_active_ &&
+                (self->is_knife_cutting_ || self->is_scissors_click_ ||
+                 self->is_trim_role_click_ || self->is_smart_trim_click_ ||
+                 self->is_shape_builder_click_ || self->is_smart_fill_click_ ||
+                 self->is_raster_eraser_stroke_);
+            if (cut_gesture_active) {
+                self->cancel_canvas_interaction();
+                self->status_msg_ = self->language_ == UILanguage::Vietnamese
+                    ? "Đã hủy thao tác Cut & Shape khi rời cửa sổ · tài liệu không đổi"
+                    : "Cut & Shape cancelled when the window lost focus · document unchanged";
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
             bool focus_remains_in_owned_dialog = false;
             for (HWND focus = reinterpret_cast<HWND>(wParam); focus;
                  focus = GetWindow(focus, GW_OWNER)) {
@@ -553,6 +641,21 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         if (self && !self->show_recovery_modal_) {
             const int mx = self->logical_pixel(GET_X_LPARAM(lParam));
             const int my = self->logical_pixel(GET_Y_LPARAM(lParam));
+            // Track actual pointer leave only for a native pointer position that
+            // matches this event. Tests and automation also dispatch WM_MOUSEMOVE
+            // directly; those synthetic coordinates must not be canceled because
+            // the OS cursor is elsewhere.
+            if (self->active_tool_ == static_cast<int>(CutShapeToolId::SmartTrim)) {
+                POINT cursor{};
+                if (GetCursorPos(&cursor) && ScreenToClient(hwnd, &cursor)) {
+                    const int cursor_x = self->logical_pixel(cursor.x);
+                    const int cursor_y = self->logical_pixel(cursor.y);
+                    if (std::abs(cursor_x - mx) <= 2 && std::abs(cursor_y - my) <= 2) {
+                        TRACKMOUSEEVENT tracking{sizeof(TRACKMOUSEEVENT), TME_LEAVE, hwnd, 0};
+                        TrackMouseEvent(&tracking);
+                    }
+                }
+            }
             if (self->active_dock_tab_ == 1 && self->layers_dock_state().pointer_pressed) {
                 self->handle_layers_dock_mouse_move(mx, my);
                 return 0;
@@ -569,19 +672,20 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
                                      (self->pen_tool_ && self->pen_tool_->active()) ||
                                      (self->gradient_tool_ && self->gradient_tool_->active());
 
-            const bool is_canvas = self->is_canvas_point(mx, my);
-
-            if (is_dragging || is_canvas) {
+            if (is_dragging) {
                 self->flush_coalesced_mouse_move();
                 self->handle_mouse_move(mx, my, static_cast<unsigned>(wParam));
-                if (is_dragging && hwnd) {
-                    UpdateWindow(hwnd);
-                }
                 return 0;
             }
             self->queue_coalesced_mouse_move(mx, my, static_cast<unsigned>(wParam));
         }
         return 0;
+    case WM_MOUSELEAVE:
+        if (self && self->active_tool_ == static_cast<int>(CutShapeToolId::SmartTrim)) {
+            self->update_smart_trim_hover_preview({}, false);
+            return 0;
+        }
+        break;
     case WM_LBUTTONUP:
         if (self) {
             const int lx = self->logical_pixel(GET_X_LPARAM(lParam));
@@ -714,8 +818,16 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         }
         return 0;
     case WM_TIMER:
+        if (self && wParam == kCutGeometryPollTimerId) {
+            self->poll_cut_geometry_job();
+            return 0;
+        }
         if (self && wParam == kPointerMoveCoalesceTimerId) {
             self->flush_coalesced_mouse_move();
+            return 0;
+        }
+        if (self && wParam == kSmartTrimHoverTimerId) {
+            self->process_smart_trim_hover_timer();
             return 0;
         }
         if (self && wParam == 12 && self->text_editor_) {
@@ -749,6 +861,37 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
             POINT cursor_point{};
             GetCursorPos(&cursor_point);
             ScreenToClient(hwnd, &cursor_point);
+            if (self->annotation_tool_ && self->annotation_tool_->active() &&
+                self->annotation_tool_->mode() == tools::AnnotationToolMode::DetailView &&
+                self->annotation_tool_->state() == tools::AnnotationSessionState::DetailFramePlacing &&
+                self->is_canvas_point(cursor_point.x, cursor_point.y)) {
+                if (!self->annotation_placement_cursor_) {
+                    const int side = (std::clamp)(static_cast<int>(std::lround(
+                        32.0 * self->window_dpi_scale())), 24, 64);
+                    const int stride = ((side + 15) / 16) * 2;
+                    std::vector<BYTE> and_mask(static_cast<size_t>(stride * side), 0xff);
+                    std::vector<BYTE> xor_mask(static_cast<size_t>(stride * side), 0x00);
+                    const int arm = (std::clamp)(static_cast<int>(std::lround(
+                        19.0 * self->window_dpi_scale())), 14, side - 2);
+                    const int stroke = (std::clamp)(static_cast<int>(std::lround(
+                        3.0 * self->window_dpi_scale())), 2, 6);
+                    for (int py = 0; py < side; ++py) {
+                        for (int px = 0; px < side; ++px) {
+                            if (!((px < arm && py < stroke) || (py < arm && px < stroke))) continue;
+                            const size_t byte_index = static_cast<size_t>(py * stride + px / 8);
+                            const BYTE bit = static_cast<BYTE>(0x80u >> (px % 8));
+                            and_mask[byte_index] &= static_cast<BYTE>(~bit);
+                        }
+                    }
+                    self->annotation_placement_cursor_ = CreateCursor(
+                        GetModuleHandleW(nullptr), 0, 0, side, side,
+                        and_mask.data(), xor_mask.data());
+                }
+                if (self->annotation_placement_cursor_) {
+                    SetCursor(self->annotation_placement_cursor_);
+                    return TRUE;
+                }
+            }
             const WORD cursor_id = self->canvas_cursor_at(cursor_point.x, cursor_point.y);
             SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(cursor_id)));
             return TRUE;
@@ -757,6 +900,7 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
+        bool gdi_output_submitted = false;
         if (self) {
             if (self->canvas_trace_) {
             self->active_trace_frame_id_ = self->next_trace_frame_id_++;
@@ -765,21 +909,36 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
                 self->active_trace_event_id_, self->active_trace_frame_id_);
             }
             const bool modal_active = !IsWindowEnabled(hwnd);
-            if (modal_active && self->backbuffer_dc_ && self->backbuffer_bmp_) {
+            bool overlay_only_paint = false;
+            if (!modal_active && self->canvas_overlay_paint_pending_) {
+                overlay_only_paint = self->paint_cached_canvas_overlay(
+                    hdc, self->width_, self->height_, ps.rcPaint);
+                self->canvas_overlay_paint_pending_ = false;
+                if (overlay_only_paint)
+                    gdi_output_submitted = true;
+            }
+            if (!overlay_only_paint && modal_active && self->backbuffer_dc_ && self->backbuffer_bmp_) {
                 const int rx = ps.rcPaint.left;
                 const int ry = ps.rcPaint.top;
                 const int rw = ps.rcPaint.right - ps.rcPaint.left;
                 const int rh = ps.rcPaint.bottom - ps.rcPaint.top;
                 if (rw > 0 && rh > 0) {
                     BitBlt(hdc, rx, ry, rw, rh, self->backbuffer_dc_, rx, ry, SRCCOPY);
+                    gdi_output_submitted = true;
                 }
-            } else if (!self->paint_direct_present_frame(
+            } else if (!overlay_only_paint && !self->paint_direct_present_frame(
                            self->width_, self->height_)) {
                 self->paint(hdc, self->width_, self->height_);
+                gdi_output_submitted = true;
             }
         }
         EndPaint(hwnd, &ps);
         if (self && self->canvas_trace_) {
+            if (gdi_output_submitted) {
+                (void)GdiFlush();
+                self->record_performance_event(CanvasTraceKind::PresentSubmitted,
+                    self->active_trace_event_id_, self->active_trace_frame_id_);
+            }
             self->record_performance_event(CanvasTraceKind::PaintEnd,
                 self->active_trace_event_id_, self->active_trace_frame_id_);
             if (!self->trace_first_frame_recorded_) {
@@ -794,6 +953,10 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
         return 0;
     }
     case WM_DPICHANGED:
+        if (self && self->annotation_placement_cursor_) {
+            DestroyCursor(self->annotation_placement_cursor_);
+            self->annotation_placement_cursor_ = nullptr;
+        }
         if (self && HIWORD(wParam) > 0) {
             self->cancel_canvas_interaction();
             self->dpi_scale_ = HIWORD(wParam) / 96.0f;
@@ -890,8 +1053,30 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
             }
             self->is_panning_ = false;
             self->is_dragging_guideline_ = false;
+            const bool lost_cut_tool_capture = self->pointer_active_ &&
+                (self->is_knife_cutting_ || self->is_scissors_click_ ||
+                 self->is_trim_role_click_ || self->is_smart_trim_click_ ||
+                 self->is_shape_builder_click_ || self->is_smart_fill_click_ ||
+                 self->is_raster_eraser_stroke_);
+            if (lost_cut_tool_capture) {
+                self->cancel_canvas_interaction();
+                self->status_msg_ = self->language_ == UILanguage::Vietnamese
+                    ? "Đã hủy Cut & Shape vì mất pointer capture · tài liệu không đổi"
+                    : "Cut & Shape cancelled after pointer capture was lost · document unchanged";
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
             if (self->pointer_active_) {
                 self->root().vector_controller().on_escape();
+                if (self->is_knife_cutting_) {
+                    self->is_knife_cutting_ = false;
+                    self->eraser_stroke_.clear();
+                    self->eraser_stroke_overflow_ = false;
+                    self->status_msg_ = self->language_ == UILanguage::Vietnamese
+                        ? "Đã hủy thao tác cắt/tẩy vì mất capture"
+                        : "Cut/erase cancelled after capture was lost";
+                }
+                self->is_scissors_click_ = false;
                 self->pointer_active_ = false;
                 self->is_dragging_ = false;
                 self->is_creating_shape_ = false;
@@ -900,11 +1085,31 @@ LRESULT CALLBACK NativeWindow::window_proc(HWND hwnd, UINT uMsg, WPARAM wParam, 
             }
         }
         return 0;
+    case WM_CANCELMODE:
+        if (self && self->cut_geometry_job_active())
+            self->cancel_cut_geometry_job();
+        if (self && self->pointer_active_) {
+            const bool cut_gesture_active = self->is_knife_cutting_ ||
+                self->is_scissors_click_ || self->is_trim_role_click_ ||
+                self->is_smart_trim_click_ || self->is_shape_builder_click_ ||
+                self->is_smart_fill_click_ || self->is_raster_eraser_stroke_;
+            self->cancel_canvas_interaction();
+            if (cut_gesture_active) {
+                self->status_msg_ = self->language_ == UILanguage::Vietnamese
+                    ? "Đã hủy thao tác Cut & Shape theo yêu cầu hệ thống · tài liệu không đổi"
+                    : "Cut & Shape cancelled by the system · document unchanged";
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+        }
+        return 0;
     case WM_DESTROY:
         KillTimer(hwnd, kAutoSaveTimerId);
+        KillTimer(hwnd, static_cast<UINT_PTR>(kCutGeometryPollTimerId));
         KillTimer(hwnd, kPointerMoveCoalesceTimerId);
         KillTimer(hwnd, 12);
         if (self) {
+            self->cancel_cut_geometry_job();
+            self->cancel_canvas_interaction();
             self->cancel_import_job();
             self->cancel_import_placement();
             self->cancel_export_job();

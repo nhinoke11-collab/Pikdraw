@@ -101,11 +101,22 @@ struct AutomationPipeHost::Impl {
         pending->completed.notify_one();
     }
 
-    static bool read_exact(HANDLE pipe, void* data, DWORD size) {
+    static constexpr DWORD kPipeTimeoutMs = 5000;
+
+    static bool read_exact(HANDLE pipe, void* data, DWORD size, DWORD timeout_ms = kPipeTimeoutMs) {
         auto* bytes = static_cast<std::byte*>(data); DWORD received = 0;
+        const auto start = GetTickCount64();
         while (received < size) {
+            DWORD bytes_avail = 0;
+            if (!PeekNamedPipe(pipe, nullptr, 0, nullptr, &bytes_avail, nullptr)) return false;
+            if (bytes_avail == 0) {
+                if (GetTickCount64() - start > timeout_ms) return false;
+                Sleep(5);
+                continue;
+            }
+            const DWORD to_read = (std::min)(size - received, bytes_avail);
             DWORD count = 0;
-            if (!ReadFile(pipe, bytes + received, size - received, &count, nullptr) || count == 0) return false;
+            if (!ReadFile(pipe, bytes + received, to_read, &count, nullptr) || count == 0) return false;
             received += count;
         }
         return true;
@@ -213,7 +224,7 @@ struct AutomationPipeHost::Impl {
             SECURITY_ATTRIBUTES attributes{sizeof(SECURITY_ATTRIBUTES), descriptor, FALSE};
             HANDLE handle = CreateNamedPipeW(name.c_str(), PIPE_ACCESS_DUPLEX,
                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-                1, kMaximumFrameBytes + 4, kMaximumFrameBytes + 4, 0, &attributes);
+                4, kMaximumFrameBytes + 4, kMaximumFrameBytes + 4, 0, &attributes);
             LocalFree(descriptor);
             if (handle == INVALID_HANDLE_VALUE) {
                 report_startup(false, "Could not create the named pipe endpoint."); break;

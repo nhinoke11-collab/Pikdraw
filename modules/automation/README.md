@@ -13,8 +13,7 @@ create operations accept the same typed-unit form for rectangle, ellipse, text p
 line/polyline points. Transform translation/pivot, duplicate offsets, and style stroke width also
 accept typed numeric lengths when paired with `length_unit`. All geometry is normalized to canonical
 millimeters before entering the document writer. The typed form cannot be mixed with explicit
-`*_mm` fields. Layer targeting uses the current layer index because the document model does not yet
-assign stable layer IDs. Capability descriptors report only handlers in this service. Read results,
+`*_mm` fields. Layer targeting currently operates on layer index; the document model schema v25 assigns stable LayerIds which will be supported across all automation query targets. Capability descriptors report only handlers in this service. Read results,
 text measurement, safe-margin validation, and legacy numeric fields remain explicitly expressed in
 millimeters in this service. The desktop `document.create` adapter accepts either the legacy mm page
 fields or a typed width/height plus physical `length_unit`, then validates canonical mm before it

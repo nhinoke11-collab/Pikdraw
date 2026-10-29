@@ -95,8 +95,8 @@ public:
                     build(page, objects);
                     return;
                 }
-                visible = page.layers[old_entry->layer].visible;
-                locked = page.layers[old_entry->layer].locked;
+                visible = page.effective_layer_visible(old_entry->layer);
+                locked = page.effective_layer_locked(old_entry->layer);
             }
             if (!rebuild_subtree(objects, id, parent, old_entry->layer,
                                  parent_world, visible, locked, mask)) {
@@ -247,7 +247,9 @@ private:
         for (size_t index = 0; index < page.layers.size(); ++index) {
             const auto& current = page.layers[index];
             const auto& old = previous.layers[index];
-            if (current.visible != old.visible || current.locked != old.locked ||
+            if (current.id != old.id || current.group_id != old.group_id ||
+                current.role != old.role || current.visible != old.visible ||
+                current.locked != old.locked ||
                 current.object_ids != old.object_ids) return false;
         }
         return true;
@@ -267,8 +269,9 @@ private:
         entries_.clear();
         for (size_t layer = 0; layer < page.layers.size(); ++layer)
             for (auto id : page.layers[layer].object_ids)
-                visit(objects, id, 0, layer, {}, page.layers[layer].visible,
-                      page.layers[layer].locked, false);
+                visit(objects, id, 0, layer, {},
+                      page.effective_layer_visible(layer),
+                      page.effective_layer_locked(layer), false);
     }
 
     std::optional<geometry::Rect2D> visit(

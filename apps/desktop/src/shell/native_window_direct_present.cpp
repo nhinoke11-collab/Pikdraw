@@ -11,9 +11,12 @@ namespace pikdraw::desktop {
 #ifdef _WIN32
 namespace {
 
-bool direct_present_requested() noexcept {
+bool direct_present_requested(bool warp_backend) noexcept {
   const char* value = std::getenv("PIKDRAW_DIRECT_PRESENT");
-  return value && std::string_view(value) == "1";
+  if (value) return std::string_view(value) == "1";
+  // WARP is a CPU renderer. Keep its frame on the swap chain instead of
+  // copying a full staging image back to CPU memory for GDI every repaint.
+  return warp_backend;
 }
 
 }  // namespace
@@ -32,10 +35,6 @@ void NativeWindow::cleanup_direct_present_target() noexcept {
 }
 
 bool NativeWindow::paint_direct_present_frame(int width, int height) {
-  if (!direct_present_requested()) {
-    cleanup_direct_present_target();
-    return false;
-  }
   if (!hwnd_ || width <= 0 || height <= 0) {
     cleanup_direct_present_target();
     return false;
@@ -43,10 +42,21 @@ bool NativeWindow::paint_direct_present_frame(int width, int height) {
 
   auto* backend = dynamic_cast<rendering::D2DRenderBackend*>(
       &root().renderer().backend());
-  if (!backend) {
+  if (!backend || !direct_present_requested(
+          !backend->is_hardware_accelerated())) {
     cleanup_direct_present_target();
     return false;
   }
+  const auto submit_present = [&] {
+    if (canvas_trace_)
+      record_performance_event(CanvasTraceKind::PresentCallBegin,
+          active_trace_event_id_, active_trace_frame_id_);
+    if (!backend->present_swap_chain_target(1)) return false;
+    if (canvas_trace_)
+      record_performance_event(CanvasTraceKind::PresentSubmitted,
+          active_trace_event_id_, active_trace_frame_id_);
+    return true;
+  };
   for (auto& tab : tabs_) {
     if (!tab.root || &tab.root->renderer().backend() == backend)
       continue;
@@ -90,7 +100,7 @@ bool NativeWindow::paint_direct_present_frame(int width, int height) {
     paint(fallback_dc, width, height);
     if (!backend->release_swap_chain_target_dc())
       return false;
-    return backend->present_swap_chain_target(1);
+    return submit_present();
   };
 
   if (!show_home_screen_) {
@@ -139,8 +149,14 @@ bool NativeWindow::paint_direct_present_frame(int width, int height) {
       return true;
     }
     configure_ui_dc(overlay_dc);
+    if (canvas_trace_)
+      record_performance_event(CanvasTraceKind::CanvasOverlayBegin,
+          active_trace_event_id_, active_trace_frame_id_);
     paint_canvas_overlay_layer(overlay_dc, width, height);
     paint_canvas_interaction_handles(overlay_dc, width, height);
+    if (canvas_trace_)
+      record_performance_event(CanvasTraceKind::CanvasOverlayEnd,
+          active_trace_event_id_, active_trace_frame_id_);
     if (!backend->release_swap_chain_target_dc()) {
       cleanup_direct_present_target();
       return false;
@@ -155,13 +171,19 @@ bool NativeWindow::paint_direct_present_frame(int width, int height) {
     }
     return true;
   }
+  if (canvas_trace_)
+    record_performance_event(CanvasTraceKind::ChromeOverlayBegin,
+        active_trace_event_id_, active_trace_frame_id_);
   paint_topmost_ui_layer(top_layer_dc, width, height);
+  if (canvas_trace_)
+    record_performance_event(CanvasTraceKind::ChromeOverlayEnd,
+        active_trace_event_id_, active_trace_frame_id_);
   if (!backend->release_swap_chain_target_dc()) {
     cleanup_direct_present_target();
     return false;
   }
 
-  if (!backend->present_swap_chain_target(1)) {
+  if (!submit_present()) {
     cleanup_direct_present_target();
     return false;
   }

@@ -25,6 +25,7 @@ void test_cut_erase_smart_tools_suite();
 void test_numeric_keyboard_input_property_bar();
 void test_corel_pick_auto_select_resume_guidelines_and_space_shortcut();
 void test_effects_toolbox_flyout();
+void test_annotation_flyout_keyboard_navigation();
 void test_align_and_distribute_tools();
 void test_selection_directional_scale_rotate_and_pivot();
 void test_object_opacity_property_bar_and_appearance_panel();
@@ -892,9 +893,9 @@ void test_source_color_models_and_object_overprint_patches() {
 
 void test_toolbox_customization_and_node_tool_slot() {
     NativeWindow win(1440, 900);
-    // 1. Initial defaults: 14 slots visible.
+    // 1. Initial defaults: the existing 14 slots plus Annotation.
     const auto initial_slots = win.visible_toolbox_slots();
-    assert(initial_slots.size() == 14);
+    assert(initial_slots.size() == 15);
     assert(initial_slots[0] == ToolboxSlotId::Pick);
     assert(initial_slots[1] == ToolboxSlotId::Node);
     assert(initial_slots[2] == ToolboxSlotId::QuickShapes);
@@ -909,6 +910,7 @@ void test_toolbox_customization_and_node_tool_slot() {
     assert(initial_slots[11] == ToolboxSlotId::Eyedropper);
     assert(initial_slots[12] == ToolboxSlotId::Dimension);
     assert(initial_slots[13] == ToolboxSlotId::Artboard);
+    assert(initial_slots[14] == ToolboxSlotId::Annotation);
 
     // 2. Direct click on Row 1 activates Node tool (tool 11).
     win.set_active_tool(0);
@@ -939,7 +941,7 @@ void test_toolbox_customization_and_node_tool_slot() {
     assert(win.is_toolbox_slot_visible(ToolboxSlotId::Knife));
     win.toggle_toolbox_slot_visible(ToolboxSlotId::Knife);
     assert(!win.is_toolbox_slot_visible(ToolboxSlotId::Knife));
-    assert(win.visible_toolbox_slots().size() == 13);
+    assert(win.visible_toolbox_slots().size() == 14);
 
     // Pick tool is mandatory and cannot be hidden
     assert(win.is_toolbox_slot_visible(ToolboxSlotId::Pick));
@@ -955,11 +957,11 @@ void test_toolbox_customization_and_node_tool_slot() {
     assert(win.is_toolbox_slot_visible(ToolboxSlotId::Node));
     win.handle_mouse_down(rc_node.right - 4, rc_node.top + 4); // Click [-] badge on row 1
     assert(!win.is_toolbox_slot_visible(ToolboxSlotId::Node));
-    assert(win.visible_toolbox_slots().size() == 12);
+    assert(win.visible_toolbox_slots().size() == 13);
 
-    // Reset defaults restores all 14 slots and disables edit mode
+    // Reset defaults restores all 15 slots and disables edit mode
     win.reset_toolbox_slots_default();
-    assert(win.visible_toolbox_slots().size() == 14);
+    assert(win.visible_toolbox_slots().size() == 15);
     assert(win.is_toolbox_slot_visible(ToolboxSlotId::Node));
     assert(win.is_toolbox_slot_visible(ToolboxSlotId::Knife));
     assert(win.is_toolbox_slot_visible(ToolboxSlotId::Dimension));
@@ -1016,6 +1018,7 @@ int main(int argc, char** argv) {
     test_fill_and_stroke_opacity_properties();
     test_blend_and_effect_properties_panel();
     test_effects_toolbox_flyout();
+    test_annotation_flyout_keyboard_navigation();
     test_page_preset_dropdown_and_modal_row_clicks();
     test_selection_directional_scale_rotate_and_pivot();
     test_double_click_rotate_and_flip_transform_suite();

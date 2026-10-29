@@ -1,4 +1,5 @@
 """Behavioral queue, failure and input-version regressions using isolated fake tools."""
+import io
 import json
 import os
 from pathlib import Path
@@ -7,11 +8,39 @@ import unittest
 from unittest.mock import patch
 
 from native_build_fixture import NativeBuildFixture
-from build_broker import auto_jobs, log_progress
+from build_broker import auto_jobs, configure_console_streams, configured_tools, log_progress, missing_pch_cache
 from build_state import BuildLock, is_build_process_name, safe_path, source_digest
 
 
 class BuildBrokerTests(NativeBuildFixture, unittest.TestCase):
+    def test_console_output_replaces_characters_missing_from_windows_code_page(self):
+        output = io.BytesIO()
+        stream = io.TextIOWrapper(output, encoding="cp1252", errors="strict")
+        with patch("build_broker.sys.stdout", stream), patch("build_broker.sys.stderr", stream):
+            configure_console_streams()
+            print("\ufffd")
+            stream.flush()
+        self.assertEqual(output.getvalue().replace(b"\r\n", b"\n"), b"?\n")
+
+    def test_existing_build_tree_keeps_its_configured_tool_pair(self):
+        build = self.repo / "build/win-dev"
+        build.mkdir(parents=True)
+        cmake, ninja = build / "pinned-cmake.exe", build / "pinned-ninja.exe"
+        cmake.write_bytes(b"configured cmake")
+        ninja.write_bytes(b"configured patched ninja")
+        (build / "CMakeCache.txt").write_text(
+            f"CMAKE_COMMAND:INTERNAL={cmake}\nCMAKE_MAKE_PROGRAM:FILEPATH={ninja}\n")
+        selected = configured_tools({"CMake": "other-cmake", "Ninja": "other-ninja"}, build)
+        self.assertEqual(selected["CMake"], str(cmake))
+        self.assertEqual(selected["Ninja"], str(ninja))
+
+    def test_cache_warning_distinguishes_deleted_pch_from_unbuilt_targets(self):
+        build = self.repo / "build/win-dev"
+        build.mkdir(parents=True)
+        (build / "kept.pch").write_bytes(b"cache")
+        (build / ".ninja_log").write_text(
+            "# ninja log v5\n0\t1\t1\tkept.pch\thash\n0\t1\t1\tdeleted.pch\thash\n")
+        self.assertEqual(missing_pch_cache(self.repo, build), ["deleted.pch"])
     def test_orphan_detection_recognizes_real_llvm_mingw_process_names(self):
         for name in ("clang-23.exe", "C__~1.EXE", "LLVM-R~1.EXE", "llvm-ar.exe", "ninja.exe"):
             self.assertTrue(is_build_process_name(name), name)
